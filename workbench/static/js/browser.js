@@ -31,6 +31,7 @@ async function loadAccountsAndSessions() {
     const s = sessions.get(a.id);
     const status = s ? s.status : 'stopped';
     const badgeCls = badgeFor(status) || (s ? 'warn' : '');
+    const saved = await api(`/api/browser/saved/${a.id}`).catch(() => ({ saved: false }));
     const card = document.createElement('div');
     card.className = 'acard';
     card.innerHTML = `
@@ -43,14 +44,24 @@ async function loadAccountsAndSessions() {
         <div style="flex:1"></div>
         <span class="status-badge ${badgeCls}">${status}</span>
       </div>
+      ${saved.saved ? '<div class="env">💾 已保存登录态（下次免密直达）</div>' : ''}
       ${s ? `<div class="env">标题：${s.title || '—'}${s.has_token ? ' · 已捕获 token' : ''}</div>` : ''}
       ${s && s.detail ? `<div class="env">${s.detail}</div>` : ''}
       <div class="actions">
         ${s && s.status !== 'stopped'
           ? '<button class="mbtn ghost" data-act="close">■ 关闭会话</button>'
           : '<button class="mbtn" data-act="open">🚀 启动并自动登录</button>'}
+        ${saved.saved ? '<button class="mbtn ghost" data-act="forget">🧹 忘记会话</button>' : ''}
       </div>`;
-    const btn = card.querySelector('button');
+    const forgetBtn = card.querySelector('[data-act="forget"]');
+    if (forgetBtn) {
+      forgetBtn.onclick = async () => {
+        if (!confirm(`清除 ${a.username} 的持久登录态？下次打开将重新走自动登录。`)) return;
+        await api(`/api/browser/forget/${a.id}`, { method: 'POST' });
+        loadAccountsAndSessions().catch(() => {});
+      };
+    }
+    const btn = card.querySelector('button[data-act]');
     btn.onclick = async () => {
       btn.disabled = true;
       try {
@@ -61,7 +72,7 @@ async function loadAccountsAndSessions() {
             result.status === 'error' ? 'err' : 'ok');
         } else {
           await api(`/api/browser/close/${a.id}`, { method: 'POST' });
-          logLine(log, `■ 已关闭 ${a.username}`, 'sys');
+          logLine(log, `■ 已关闭 ${a.username}（登录态已保存）`, 'sys');
         }
       } catch (e) {
         logLine(log, `✗ ${a.username}：${e.message}`, 'err');

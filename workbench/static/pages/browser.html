@@ -21,7 +21,7 @@
       <section class="mcard">
         <h2>账号会话</h2>
         <div class="card-wall" id="session-wall"><div class="empty" style="grid-column:1/-1">加载中…</div></div>
-        <p class="hint">一账号 = 一个独立 Playwright BrowserContext（原生隔离）。自动登录引擎：齐备门槛 → 提交前回读 → 即时填充 → 用户点击接管 → 失败让位。</p>
+        <p class="hint">一账号 = 一个独立 Playwright BrowserContext（原生隔离）。登录成功/正常关闭即持久化 storage_state——下次免密直达首页，失效自动重登（quick-login「Cookie 袋」的原生等价物）。自动登录引擎：齐备门槛 → 提交前回读 → 即时填充 → 用户点击接管 → 失败让位。</p>
       </section>
 
       <section class="mcard">

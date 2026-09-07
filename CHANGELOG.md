@@ -7,6 +7,7 @@
 
 ### Added
 
+- **quick-login 全量内化收口**：托管浏览器会话持久化（storage_state——登录成功/正常关闭落盘，重开免密直达、跨进程重启有效；Cookie 袋/DNR 回放的原生等价物）；会话自愈（直达首页被踢回登录页 → 自动重跑节奏门控）；`POST /api/browser/forget/{id}` 登出语义 + `GET /api/browser/saved/{id}`；状态墙持久会话徽章；`tests/test_browser_state.py`（5 项）。真机验证：重开 restored=True 且引擎 phase=idle（完全未走登录页）。迁移台账「不迁清单」重新定性：各项均为"被 Playwright 原生机制等价替代"，原仓库不再是功能归宿。
 - **阶段 3 全量完成：akso-cc / akso-auto 原生化（运行时零依赖原项目）**
   - 读路径 `egmp/insight/`：crawler（对象发现链）/assemble+report（盘点）/lifecycle+flowgraph+relations（L3/L2）/annotate/render/drawio/understand/spider（五步织网，step5 用 networkx 图分析）。
   - 写路径 `egmp/writers/`：blueprint（pydantic 两层校验+规范化+审阅三件套，替代 ajv）/idempotency/objects/fields/picklists/lifecycle/workflows（a-i 管道+两次提交连线）/layouts（全量替换语义）/menus/endpoints（自原仓库只读提取的实证常量表）。

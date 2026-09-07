@@ -1,11 +1,14 @@
 """托管浏览器池：一账号 = 一个 Playwright BrowserContext（原生隔离）。
 
-知识迁移映射（quick-login parallel-session.ts）：
-- 「账号↔页签」模型 → 简化为「账号↔context」：DNR 回放 / Cookie 袋 / 命名空间隔离
-  全部不迁（context 天然隔离，见 docs/迁移台账.md 不迁清单）。
-- URL 决策：有登录态（token 快照存在）→ 直达 baseUrl；无登录态 → baseUrl + /login
-  自动登录。autologin.py 承担节奏门控。
-- tab-title.ts 的页签标题改写不迁：页签标识由 context/账号状态墙承载。
+quick-login 能力的全家桶内化（本模块即该扩展行为的唯一归宿）：
+- 「账号↔页签」模型 → 「账号↔context」：六平面隔离（DNR/Cookie 袋/命名空间…）
+  由 context 原生隔离 + storage_state 持久化等价替代，不迁清单见迁移台账。
+- 登录态持久化：autologin 成功 / 会话正常关闭时落盘 storage_state；
+  再次打开免密直达首页（对应扩展的「有 token 直达 /」体验，且跨进程重启有效）。
+- 会话自愈：持久会话被踢回登录页时自动重跑节奏门控引擎（对应扩展的会话失效处理）。
+- URL 决策（parallel-session.ts open() 语义的原生等价）：有持久会话 → 首页；
+  无 → /login + autologin。
+- tab-title.ts 不迁：标题由状态墙轮询 page.title() 呈现。
 
 线程模型：Playwright sync API。FastAPI 同步路由跑在线程池里，
 BrowserPool 内部用锁串行化对 Playwright 对象的访问。
@@ -15,6 +18,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from . import accounts, autologin
@@ -31,6 +35,7 @@ class SessionEntry:
     title: str = ""
     detail: str = ""
     started_at: int = 0
+    restored: bool = False  # 本次打开是否来自持久会话
     autologin_state: dict[str, Any] | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
 
@@ -41,6 +46,7 @@ class SessionEntry:
             "title": self.title,
             "detail": self.detail,
             "started_at": self.started_at,
+            "restored": self.restored,
             "autologin": self.autologin_state,
             "has_token": bool(self.token_capture and self.token_capture.latest()),
         }
@@ -59,9 +65,51 @@ class BrowserPool:
         self._browser: Any = None
         self._sessions: dict[str, SessionEntry] = {}
 
+    # ------------------------------------------------------------- 持久会话
+
+    @staticmethod
+    def _state_path(account_id: str) -> Path:
+        from .. import config
+
+        directory = config.RUNTIME_DIR / "browser-states"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory / f"{account_id}.json"
+
+    @classmethod
+    def has_saved_session(cls, account_id: str) -> bool:
+        return cls._state_path(account_id).exists()
+
+    @classmethod
+    def forget_session(cls, account_id: str) -> bool:
+        """清除持久会话（登出语义；活动中的 context 不受影响，关闭后即回到登录态）。"""
+        path = cls._state_path(account_id)
+        if path.exists():
+            path.unlink()
+            return True
+        return False
+
+    def _save_state(self, entry: SessionEntry) -> None:
+        """落盘登录态（storage_state：cookies + localStorage，Cookie 袋的原生等价物）。"""
+        try:
+            if entry.context is not None:
+                entry.context.storage_state(path=str(self._state_path(entry.account_id)))
+        except Exception:  # noqa: BLE001 —— 落盘失败不影响会话本身
+            pass
+
+    @staticmethod
+    def _looks_like_login(page: Any) -> bool:
+        """会话自愈判定：被踢回登录页 = URL 含 /login 或页面上有用户名输入框。"""
+        try:
+            url = str(page.url or "")
+            if "/login" in url:
+                return True
+            return page.locator('input[placeholder="请输入用户名"]').count() > 0
+        except Exception:  # noqa: BLE001
+            return False
+
     # ------------------------------------------------------------- 生命周期
 
-    def _ensure_browser(self) -> Any:
+    def _ensure_browser(self, *, headful: bool = False) -> Any:
         if self._browser is not None:
             return self._browser
         try:
@@ -70,7 +118,7 @@ class BrowserPool:
             raise BrowserError("playwright 未安装：pip install playwright") from exc
         self._pw = sync_playwright().start()
         try:
-            self._browser = self._pw.chromium.launch(headless=True)
+            self._browser = self._pw.chromium.launch(headless=not headful)
         except Exception as exc:  # noqa: BLE001 —— 浏览器未安装等
             self._pw.stop()
             self._pw = None
@@ -97,6 +145,9 @@ class BrowserPool:
                 self._pw = None
 
     def _close_entry(self, entry: SessionEntry) -> None:
+        # 正常关闭前固化登录态（对应扩展的会话卫生：下次免密直达）
+        if entry.status == "online":
+            self._save_state(entry)
         try:
             if entry.context is not None:
                 entry.context.close()
@@ -105,12 +156,12 @@ class BrowserPool:
         entry.context = None
         entry.page = None
         entry.status = "stopped"
-        entry.detail = "已关闭"
+        entry.detail = "已关闭（登录态已保存）" if entry.restored or entry.status == "online" else "已关闭"
 
     # ------------------------------------------------------------- 会话管理
 
     def open_account(self, account_id: str, *, headful: bool = False) -> dict[str, Any]:
-        """一键启动账号会话：建 context → 自动登录 → 返回会话快照。"""
+        """一键启动账号会话：持久会话恢复 → 失效自愈 / 全新自动登录。"""
         with self._lock:
             account = accounts.get_account(account_id)
             if not account:
@@ -125,9 +176,16 @@ class BrowserPool:
 
             username = account["username"]
             password = accounts.reveal_password(account_id)
-            browser = self._ensure_browser()
-            context = browser.new_context(viewport={"width": 1440, "height": 900})
-            entry = SessionEntry(account_id=account_id, context=context, started_at=now_ms())
+            browser = self._ensure_browser(headful=headful)
+
+            state_path = self._state_path(account_id)
+            has_saved = state_path.exists()
+            context = browser.new_context(
+                viewport={"width": 1440, "height": 900},
+                storage_state=str(state_path) if has_saved else None,
+            )
+            entry = SessionEntry(account_id=account_id, context=context,
+                                 started_at=now_ms(), restored=has_saved)
             entry.token_capture = autologin.TokenCapture(account_id)
             entry.token_capture.attach(context)
             self._sessions[account_id] = entry
@@ -136,17 +194,23 @@ class BrowserPool:
             entry.page = page
             autologin.install(page)
 
-            # URL 决策（parallel-session.ts open() 语义）：有 token 快照直达，否则进登录页
-            has_session = entry.token_capture.latest() is not None
-            url = base_url if has_session else base_url.rstrip("/") + "/login"
-            entry.status = "logging_in" if not has_session else "online"
-            entry.detail = "已有登录态，直达首页" if has_session else "进入登录页，自动填充中"
+            # URL 决策：有持久会话 → 免密直达首页；无 → /login 自动填充
+            entry.status = "online" if has_saved else "logging_in"
+            entry.detail = "恢复持久会话，免密直达首页" if has_saved else "进入登录页，自动填充中"
+            url = base_url
 
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                if not has_session:
-                    started = autologin.start(page, username, password)
-                    if not started:
+                if has_saved and self._looks_like_login(page):
+                    # 会话自愈：持久态被平台踢回登录页 → 自动重登
+                    entry.status = "logging_in"
+                    entry.restored = False
+                    entry.detail = "持久会话已失效，自动重新登录中"
+                    if not autologin.start(page, username, password):
+                        entry.status = "error"
+                        entry.detail = "自动登录引擎启动失败（页面无登录表单？）"
+                elif not has_saved:
+                    if not autologin.start(page, username, password):
                         entry.status = "error"
                         entry.detail = "自动登录引擎启动失败（页面无登录表单？）"
             except Exception as exc:  # noqa: BLE001
@@ -178,7 +242,8 @@ class BrowserPool:
                     entry.autologin_state = st
                     if entry.status == "logging_in" and st.get("phase") == "success":
                         entry.status = "online"
-                        entry.detail = "自动登录完成"
+                        entry.detail = "自动登录完成（登录态已持久化）"
+                        self._save_state(entry)  # 登录成功即落盘
                     elif entry.status == "logging_in" and st.get("phase") in {"gave_up", "stopped"}:
                         entry.status = "error"
                         entry.detail = f"自动登录未完成：{st.get('reason', st.get('phase'))}"
