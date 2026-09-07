@@ -1,0 +1,49 @@
+/* ============================================================
+   Mogul Simulator — Design Tokens（Akso 蓝白版）
+   品牌蓝 #076ce0（aksoinfo.com）+ 白底
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  --ink-0: #f3f8ff;
+  --ink-1: #eef4fc;
+  --ink-2: #ffffff;
+  --ink-3: #e7f0fb;
+  --ink-4: #d9e8f9;
+
+  --line: rgba(7, 108, 224, 0.14);
+  --line-strong: rgba(7, 108, 224, 0.32);
+
+  --text-1: #17233b;
+  --text-2: #51637f;
+  --text-3: #8aa0bd;
+
+  --teal: #076ce0;        /* Akso 品牌蓝（主色） */
+  --teal-strong: #0a5fc4;
+  --teal-dim: rgba(7, 108, 224, 0.09);
+  --lime: #16a34a;
+  --lime-dim: rgba(22, 163, 74, 0.1);
+  --amber: #d97706;
+  --amber-dim: rgba(217, 119, 6, 0.1);
+  --red: #dc2626;
+  --red-dim: rgba(220, 38, 38, 0.09);
+  --sky: #0284c7;
+  --sky-dim: rgba(2, 132, 199, 0.1);
+
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 16px;
+  --radius-xl: 22px;
+
+  --glow-teal: 0 0 18px rgba(7, 108, 224, 0.22);
+  --shadow-panel: 0 8px 28px rgba(23, 43, 77, 0.1);
+
+  --font-display: "Space Grotesk", "HarmonyOS Sans SC", "MiSans",
+    "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-body: "HarmonyOS Sans SC", "MiSans", "PingFang SC",
+    "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>平台洞察 · Akso Workbench</title>
+    <link rel="stylesheet" href="/static/css/tokens.css" />
+    <link rel="stylesheet" href="/static/css/base.css" />
+    <link rel="stylesheet" href="/static/css/modules.css" />
+  </head>
+  <body>
+    <div class="module-shell">
+      <header class="module-topbar">
+        <a class="back" href="/">← 返回工作台</a>
+        <h1>平台洞察</h1>
+        <span class="sub">封装 akso-cc：登录 / 盘点 / 理解 / 蜘蛛（原仓库只读）</span>
+        <div class="spacer"></div>
+        <span class="status-badge" id="module-health">检测中…</span>
+      </header>
+
+      <section class="mcard">
+        <h2>执行洞察命令</h2>
+        <div class="mgrid cols-3">
+          <label class="mfield">
+            账号（统一账号库）
+            <select id="ins-account"></select>
+          </label>
+          <label class="mfield">
+            命令
+            <select id="ins-command">
+              <option value="login">login · 连通性验证</option>
+              <option value="inventory">inventory · 全量盘点</option>
+              <option value="understand">understand · 对象理解报告</option>
+              <option value="spider">spider · 五步织网</option>
+            </select>
+          </label>
+          <label class="mfield">
+            对象编码（understand/spider 必填，逗号分隔）
+            <input id="ins-objects" placeholder="capa_plan__c,change_control__c" spellcheck="false" />
+          </label>
+        </div>
+        <div class="mgrid cols-3" style="margin-top:10px">
+          <label class="mfield">
+            inventory 兜底白名单（可选）
+            <input id="ins-known" placeholder="capa_plan__c,…" spellcheck="false" />
+          </label>
+          <label class="mfield" style="justify-content:flex-end">
+            <span style="display:flex;align-items:center;gap:8px;height:36px">
+              <input type="checkbox" id="ins-llm" /> understand 启用 LLM 职责摘要
+            </span>
+          </label>
+          <div style="display:flex;align-items:flex-end;justify-content:flex-end">
+            <button class="mbtn" id="btn-insight-run">▶ 执行</button>
+          </div>
+        </div>
+        <p class="hint">凭证由统一账号库内联注入（--url/--user/--pass），不落盘；产物写运行时目录，原项目 output/ 不受影响。</p>
+      </section>
+
+      <section class="mcard">
+        <h2>执行日志</h2>
+        <div class="log-console" id="ins-log"><div class="sys">// 等待执行…</div></div>
+      </section>
+
+      <section class="mcard">
+        <h2>产物</h2>
+        <div id="ins-artifacts" class="empty">尚无产物</div>
+      </section>
+
+      <section class="mcard">
+        <h2>历史任务</h2>
+        <table class="mtable" id="ins-runs">
+          <thead><tr><th>时间</th><th>命令</th><th>对象</th><th>状态</th><th>产物</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </div>
+    <script type="module" src="/static/js/insight.js"></script>
+  </body>
+</html>

@@ -1,0 +1,60 @@
+[project]
+name = "akso-workbench"
+version = "0.1.0"
+description = "Akso Workbench 全家桶 —— 四项目融合重建（akso-cc / mogul_simulator / akso-auto / quick-login 的优点合一，技术栈升级到 Python 3.12+ / FastAPI / Playwright）"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Akso Workbench" }]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "cryptography>=43",
+    "playwright>=1.49",
+    "python-multipart>=0.0.18",
+    "networkx>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+akso-workbench = "workbench.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# 双人协作环境一致性：默认走清华镜像（直连 PyPI 本机不稳定时仍可拉齐依赖）
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["workbench"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["workbench/static", "output", "tools/import_accounts.py"]
+
+[tool.ruff.lint]
+# E4/E7/E9 缩进与语法级错误、F pyflakes（未用导入/未定义名）、I import 排序、
+# B 常见 bug 模式。fork 自 mogul 的存量代码一并覆盖，保持两人同一把尺子。
+select = ["E4", "E7", "E9", "F", "I", "B"]
+ignore = [
+    "B008", # FastAPI Depends() 默认参数是框架惯用法
+    "E741", # 单字符变量名在数学/算法局部可读
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["workbench"]

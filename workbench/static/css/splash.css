@@ -1,0 +1,244 @@
+/* ============================================================
+   Mogul Simulator — Splash 启动遮罩（Akso 蓝白版，浏览器内覆盖层）
+   ============================================================ */
+
+.splash-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(1100px 500px at 50% -20%, rgba(7, 108, 224, 0.12), transparent 70%),
+    radial-gradient(700px 420px at 85% 110%, rgba(7, 108, 224, 0.07), transparent 60%),
+    #f5f9ff;
+  transition: opacity 0.45s var(--ease-out);
+}
+
+.splash-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.splash {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  user-select: none;
+}
+
+.splash-aurora {
+  position: absolute;
+  inset: -40px;
+  background-image:
+    radial-gradient(1.2px 1.2px at 22% 28%, rgba(7, 108, 224, 0.4), transparent 55%),
+    radial-gradient(1px 1px at 68% 18%, rgba(2, 132, 199, 0.3), transparent 55%),
+    radial-gradient(1.4px 1.4px at 82% 64%, rgba(7, 108, 224, 0.5), transparent 55%),
+    radial-gradient(1px 1px at 38% 74%, rgba(2, 132, 199, 0.28), transparent 55%),
+    radial-gradient(1px 1px at 54% 12%, rgba(7, 108, 224, 0.25), transparent 55%),
+    radial-gradient(1.1px 1.1px at 12% 52%, rgba(7, 108, 224, 0.35), transparent 55%);
+  animation: aurora-flicker 4.2s ease-in-out infinite;
+}
+
+@keyframes aurora-flicker {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+.splash-scan {
+  position: absolute;
+  left: -10%;
+  right: -10%;
+  top: -20%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(7, 108, 224, 0.5), transparent);
+  animation: scan-sweep 3.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes scan-sweep {
+  0% { top: -6%; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: 106%; opacity: 0; }
+}
+
+.splash-emblem {
+  position: relative;
+  width: 118px;
+  height: 118px;
+  opacity: 0;
+  animation: emblem-in 0.9s var(--ease-out) 0.1s forwards;
+}
+
+@keyframes emblem-in {
+  from { opacity: 0; transform: scale(0.82) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(7, 108, 224, 0.28);
+}
+
+.ring-a { animation: orbit 5.5s linear infinite; }
+
+.ring-b {
+  transform: rotate(60deg);
+  animation: orbit-rev 6.8s linear infinite;
+  border-color: rgba(2, 132, 199, 0.22);
+}
+
+.ring-c {
+  transform: rotate(-60deg);
+  animation: orbit 8s linear infinite;
+  border-color: rgba(22, 163, 74, 0.18);
+}
+
+@keyframes orbit {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes orbit-rev {
+  from { transform: rotate(60deg); }
+  to { transform: rotate(420deg); }
+}
+
+.ring::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 10px 2px rgba(7, 108, 224, 0.7);
+}
+
+.ring-b::after {
+  background: #0284c7;
+  box-shadow: 0 0 10px 2px rgba(2, 132, 199, 0.7);
+}
+
+.ring-c::after {
+  background: #16a34a;
+  box-shadow: 0 0 10px 2px rgba(22, 163, 74, 0.6);
+}
+
+.core {
+  position: absolute;
+  inset: 34px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, rgba(7, 108, 224, 0.18), rgba(7, 108, 224, 0.04));
+  border: 1px solid rgba(7, 108, 224, 0.4);
+  box-shadow: 0 0 26px rgba(7, 108, 224, 0.2);
+  animation: core-breathe 3s ease-in-out infinite;
+}
+
+@keyframes core-breathe {
+  0%, 100% { box-shadow: 0 0 26px rgba(7, 108, 224, 0.2); }
+  50% { box-shadow: 0 0 40px rgba(7, 108, 224, 0.35); }
+}
+
+.core-glyph {
+  font-family: "Space Grotesk", var(--font-body);
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--teal);
+  text-shadow: 0 0 18px rgba(7, 108, 224, 0.5);
+}
+
+.splash-wordmark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  animation: wordmark-in 0.9s var(--ease-out) 0.32s forwards;
+}
+
+@keyframes wordmark-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.brand-en {
+  font-family: "Space Grotesk", var(--font-body);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.34em;
+  text-indent: 0.34em;
+  color: #17233b;
+}
+
+.brand-zh {
+  font-size: 12px;
+  letter-spacing: 0.28em;
+  text-indent: 0.28em;
+  color: var(--teal);
+}
+
+.splash-progress {
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  opacity: 0;
+  animation: wordmark-in 0.9s var(--ease-out) 0.56s forwards;
+}
+
+.progress-track {
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(7, 108, 224, 0.18);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 42%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--teal), transparent);
+  animation: progress-glide 2.1s ease-in-out infinite;
+}
+
+@keyframes progress-glide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(340%); }
+}
+
+.progress-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  color: var(--text-2);
+}
+
+.status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 8px rgba(7, 108, 224, 0.8);
+  animation: dot-pulse 1.9s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
+}

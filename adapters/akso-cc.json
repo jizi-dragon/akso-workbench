@@ -1,0 +1,43 @@
+{
+  "$schema": "docs/模块契约.md#adapters",
+  "id": "akso-cc",
+  "title": "Akso CC 平台配置洞察（gaia-inventory）",
+  "repoPath": "D:\\ai_assistant\\akso-cc",
+  "repoPathEnv": "AKSO_CC_REPO",
+  "entry": "dist/main.js",
+  "runtime": "node",
+  "nodeVersion": ">=18",
+  "mode": "native-python-internalized",
+  "nativeModule": "workbench.services.egmp.insight",
+  "frozen": true,
+  "deprecation": "阶段 3 已原生化：routes_insight 直接调用 egmp（httpx），不再调 node；本文件降级为只读参考存档（端点/产物口径对照）。",
+  "commands": {
+    "login": {
+      "args": ["dist/main.js", "login", "--url=<base>", "--user=<u>", "--pass=<p>"],
+      "description": "平台登录连通性检查 + token 预热（55 分钟复用）",
+      "credentials": "inline-override"
+    },
+    "inventory": {
+      "args": ["dist/main.js", "inventory", "--url=<base>", "--user=<u>", "--pass=<p>", "--known-objects=<csv>", "--output=<abs>"],
+      "description": "元数据全量盘点",
+      "artifacts": "inventory.json + inventory.md",
+      "note": "--output 必须显式传绝对路径（默认 output/ 相对原项目安装根）"
+    },
+    "understand": {
+      "args": ["dist/main.js", "understand", "--objects=<csv>", "--url=<base>", "--user=<u>", "--pass=<p>", "--llm", "--output=<abs>"],
+      "description": "对象三层理解报告（L1 内容 / L2 关系网 / L3 生命周期流转图）",
+      "artifacts": "{code}.json + {code}.md + {code}-wfN-{工作流名}.drawio"
+    },
+    "spider": {
+      "args": ["dist/main.js", "spider", "--objects=<csv>", "--url=<base>", "--user=<u>", "--pass=<p>", "--output=<abs>"],
+      "description": "蜘蛛计划五步织网",
+      "artifacts": "{code}/step1~4 + spider-network.{drawio,md,json}"
+    }
+  },
+  "credentials": {
+    "inlineFlags": ["--url", "--user", "--pass"],
+    "priority": "内联三者齐全 > env.json 默认环境（--env=<id> 换环境）",
+    "storage": "Workbench 凭证从统一账号库内联注入，不落盘、不写原项目 env.json"
+  },
+  "notes": "ROOT 相对 dist/main.js 所在目录解析（与 cwd 无关）；understand/spider 单对象失败不阻断整体（exit 0），完成数看末行「N/M 个对象成功」。"
+}

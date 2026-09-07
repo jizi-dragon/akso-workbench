@@ -1,0 +1,206 @@
+/* ============================================================
+   Mogul Simulator — Base（reset / 排版 / 原语）Akso 蓝白版
+   ============================================================ */
+
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("../assets/fonts/SpaceGrotesk.ttf") format("truetype");
+  font-weight: 300 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("../assets/fonts/IBMPlexMono.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ink-1);
+  color: var(--text-1);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* 视图切换关键规则：视图类的 display:flex 会覆盖 [hidden] 的 UA 默认值，
+   必须强制压制，否则多个视图同时可见（页面杂乱/超限/无法切换的根因） */
+[hidden] {
+  display: none !important;
+}
+
+::selection {
+  background: rgba(7, 108, 224, 0.22);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(7, 108, 224, 0.18);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(7, 108, 224, 0.32);
+  background-clip: content-box;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--text-1);
+  border-radius: var(--radius-m);
+  padding: 7px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  transition: all 0.18s var(--ease-out);
+}
+
+button:hover {
+  border-color: rgba(7, 108, 224, 0.55);
+  background: var(--teal-dim);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #1d86f5, #076ce0);
+  border-color: rgba(7, 108, 224, 0.5);
+  color: #ffffff;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow: 0 4px 18px rgba(7, 108, 224, 0.18);
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, #3b9bfa, #0a5fc4);
+  border-color: var(--teal);
+  box-shadow: 0 4px 24px rgba(7, 108, 224, 0.3);
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+.btn-ghost:hover {
+  background: var(--ink-3);
+  color: var(--text-1);
+  border-color: transparent;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-color: transparent;
+  color: var(--text-2);
+  border-radius: var(--radius-s);
+}
+
+.icon-btn:hover {
+  background: var(--ink-3);
+  color: var(--text-1);
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-1);
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  padding: 8px 12px;
+  transition: border-color 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: rgba(7, 108, 224, 0.6);
+  box-shadow: 0 0 0 3px rgba(7, 108, 224, 0.1);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-3);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--ink-3);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.badge-teal { color: var(--teal); border-color: rgba(7, 108, 224, 0.35); background: var(--teal-dim); }
+.badge-lime { color: var(--lime); border-color: rgba(22, 163, 74, 0.35); background: var(--lime-dim); }
+.badge-amber { color: var(--amber); border-color: rgba(217, 119, 6, 0.35); background: var(--amber-dim); }
+.badge-red { color: var(--red); border-color: rgba(220, 38, 38, 0.35); background: var(--red-dim); }
+.badge-sky { color: var(--sky); border-color: rgba(2, 132, 199, 0.35); background: var(--sky-dim); }
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.spin {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.rise-in {
+  animation: rise-in 0.5s var(--ease-out);
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}

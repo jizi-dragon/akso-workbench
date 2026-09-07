@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Akso Workbench · 全家桶工作台</title>
+    <link rel="stylesheet" href="/static/css/tokens.css" />
+    <link rel="stylesheet" href="/static/css/base.css" />
+    <link rel="stylesheet" href="/static/css/app.css" />
+    <link rel="stylesheet" href="/static/css/settings.css" />
+    <link rel="stylesheet" href="/static/css/knowledge.css" />
+    <link rel="stylesheet" href="/static/css/splash.css" />
+  </head>
+  <body>
+    <div id="root">
+      <!-- 启动遮罩 -->
+      <div id="splash-overlay" class="splash-overlay">
+        <div class="splash">
+          <div class="splash-aurora" aria-hidden="true"></div>
+          <div class="splash-scan" aria-hidden="true"></div>
+          <div class="splash-emblem" aria-hidden="true">
+            <div class="ring ring-a"></div>
+            <div class="ring ring-b"></div>
+            <div class="ring ring-c"></div>
+            <div class="core"><span class="core-glyph">A</span></div>
+          </div>
+          <div class="splash-wordmark">
+            <span class="brand-en">AKSO WORKBENCH</span>
+            <span class="brand-zh">四项目融合全家桶工作台</span>
+          </div>
+          <div class="splash-progress">
+            <div class="progress-track"><div class="progress-fill"></div></div>
+            <div class="progress-status" id="splash-status">
+              <span class="status-dot"></span><span id="splash-status-text">加载本地知识库…</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="shell">
+        <aside class="sidebar">
+          <div class="sidebar-brand">
+            <div class="brand-emblem">A</div>
+            <div class="brand-name">
+              <b>AKSO</b>
+              <small>全家桶工作台</small>
+            </div>
+          </div>
+
+          <nav class="sidebar-nav">
+            <button class="nav-item active" data-view="chat" id="nav-chat">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H4l2.2-3.2A8 8 0 1 1 21 12Z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/></svg>
+              合规对话
+            </button>
+            <button class="nav-item" data-view="knowledge" id="nav-knowledge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10a2 2 0 0 1 2 2v13a1.6 1.6 0 0 0-1.6-1.6H5.5A1.5 1.5 0 0 1 4 15.9Z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H14a2 2 0 0 0-2 2v13a1.6 1.6 0 0 1 1.6-1.6h4.9A1.5 1.5 0 0 0 20 15.9Z"/></svg>
+              知识库
+              <span class="nav-count" id="nav-knowledge-count">0</span>
+            </button>
+            <button class="nav-item" data-view="settings" id="nav-settings">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.14-1.4l2-1.55-2-3.46-2.35.94A7 7 0 0 0 14.1 5.1L13.7 2.6h-3.4l-.4 2.5a7 7 0 0 0-2.4 1.42l-2.36-.94-2 3.46 2 1.55A7 7 0 0 0 5 12c0 .48.05.94.14 1.4l-2 1.55 2 3.46 2.35-.94a7 7 0 0 0 2.4 1.42l.4 2.5h3.4l.4-2.5a7 7 0 0 0 2.4-1.42l2.36.94 2-3.46-2-1.55c.1-.46.15-.92.15-1.4Z"/></svg>
+              设置
+            </button>
+          </nav>
+
+          <div class="sidebar-section">
+            <div class="sidebar-section-title"><span>平台模块</span></div>
+            <nav class="sidebar-nav">
+              <a class="nav-item nav-link" href="/static/pages/insight.html" id="nav-insight">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+                平台洞察
+              </a>
+              <a class="nav-item nav-link" href="/static/pages/factory.html" id="nav-factory">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1.5"/><path d="M7 10V6l5 3 5-3v4"/></svg>
+                配置工厂
+              </a>
+              <a class="nav-item nav-link" href="/static/pages/accounts.html" id="nav-accounts">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 13.6c2.6.2 4.4 1.9 5 4.4"/></svg>
+                统一账号库
+              </a>
+              <a class="nav-item nav-link" href="/static/pages/browser.html" id="nav-browser">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 2.6 4 5.6 4 9s-1.2 6.4-4 9c-2.8-2.6-4-5.6-4-9s1.2-6.4 4-9Z"/></svg>
+                托管浏览器
+              </a>
+            </nav>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="sidebar-section-title">
+              <span>会话记录</span>
+              <button class="icon-btn" id="btn-new-conversation" title="新建会话">＋</button>
+            </div>
+            <ul class="conversation-list" id="conversation-list"></ul>
+          </div>
+
+          <div class="sidebar-footer">
+            <span class="engine-dot"></span>
+            <span id="engine-stats">知识引擎初始化…</span>
+          </div>
+        </aside>
+
+        <main class="main">
+          <!-- 对话视图 -->
+          <section id="view-chat" class="chat">
+            <header class="chat-header">
+              <span class="chat-header-title" id="chat-title">新会话</span>
+              <div class="chat-header-spacer"></div>
+              <span class="badge badge-amber" id="chat-running-badge" hidden>
+                <span class="spin">◌</span>&nbsp;生成中
+              </span>
+              <span class="badge badge-teal">🛡 合规模式</span>
+              <span class="badge mono" id="chat-model-badge">deepseek-v4-flash</span>
+            </header>
+            <div class="messages" id="messages">
+              <div class="chat-loading"><span class="spin">◌</span> 正在初始化…</div>
+            </div>
+            <div class="composer-wrap">
+              <div class="composer">
+                <textarea id="composer-input" rows="1" placeholder="向合规智能体提问…（Enter 发送，Shift+Enter 换行）"></textarea>
+                <div class="composer-footer">
+                  <div class="composer-hint">🛡 合规模式：回答附依据溯源，禁止编造条款</div>
+                  <button class="send-btn" id="btn-send" title="发送">➤</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 知识库视图 -->
+          <section id="view-knowledge" class="knowledge" hidden>
+            <header class="knowledge-header">
+              <div class="knowledge-title">
+                <h1>知识库</h1>
+                <span>钉钉知识库镜像 · 文档管理 · 检索测试台</span>
+              </div>
+              <span class="badge mono" id="stat-docs">0 文件</span>
+              <span class="badge mono" id="stat-chunks">0 块</span>
+              <span class="badge badge-lime mono" id="stat-adopt" hidden>采纳率 —</span>
+              <span class="badge mono" id="stat-index">索引 0/0</span>
+              <div class="knowledge-header-spacer"></div>
+              <button class="btn-ghost" id="btn-reindex">重建索引</button>
+              <div class="knowledge-search">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+                <input id="knowledge-search-input" placeholder="检索测试台：函数名 / 配置项 / 问题…" />
+              </div>
+              <button class="btn-primary upload-btn" id="btn-upload">↥ 上传文件</button>
+              <input type="file" id="file-input" multiple hidden
+                accept=".txt,.md,.json,.csv,.log,.xml,.html,.ts,.js,.py,.java,.sql" />
+            </header>
+            <div id="knowledge-notice-slot"></div>
+            <div class="knowledge-body">
+              <aside class="knowledge-files">
+                <div class="files-head">
+                  <span>知识文件</span>
+                  <button class="icon-btn" id="btn-upload-files" title="上传文件">↥</button>
+                </div>
+                <div class="files-search">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+                  <input id="files-filter" placeholder="筛选文件…" />
+                </div>
+                <ul class="files-list" id="files-list"></ul>
+              </aside>
+              <div class="knowledge-graph" id="knowledge-graph"></div>
+              <aside class="knowledge-panel" id="knowledge-panel">
+                <div class="document-list">
+                  <h2>知识库概览</h2>
+                  <p class="doc-hint">左侧选择文件查看内容；顶部搜索框体验检索。</p>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <!-- 设置视图 -->
+          <section id="view-settings" class="settings" hidden>
+            <header class="settings-header">
+              <div>
+                <h1>设置</h1>
+                <p>本地化配置，所有数据仅存于本机 SQLite</p>
+              </div>
+            </header>
+            <div class="settings-body">
+              <section class="settings-section">
+                <h2 class="settings-section-title">⚡ DeepSeek API Key</h2>
+                <div class="settings-card">
+                  <label class="field">
+                    <span>API Key</span>
+                    <div class="key-input-row">
+                      <input type="password" id="set-api-key" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+                      <button class="btn-ghost" id="btn-toggle-key" type="button">显示</button>
+                    </div>
+                    <small>🛡 Key 仅保存在本机 SQLite，只发送至 DeepSeek 官方端点。</small>
+                  </label>
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <h2 class="settings-section-title">⚡ 模型选择</h2>
+                <div class="model-grid" id="model-grid"></div>
+              </section>
+
+              <section class="settings-section">
+                <h2 class="settings-section-title">⚡ 推理参数</h2>
+                <div class="settings-card">
+                  <label class="field">
+                    <span>Temperature&nbsp;&nbsp;<b class="mono temp-value" id="temp-value">0.7</b></span>
+                    <input type="range" id="set-temperature" class="range-input" min="0" max="2" step="0.1" value="0.7" />
+                    <div class="range-labels">
+                      <small>严谨 · 合规分析建议 0.3</small>
+                      <small>发散 · 0.7 默认</small>
+                      <small>创意 · 1.3+</small>
+                    </div>
+                  </label>
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <h2 class="settings-section-title">⚡ Embedding 检索（千问）</h2>
+                <div class="settings-card">
+                  <div class="field" style="gap: 12px">
+                    <div class="field">
+                      <span>千问 API Key</span>
+                      <input type="password" id="set-emb-key" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+                    </div>
+                    <div class="field">
+                      <span>向量模型</span>
+                      <input type="text" id="set-emb-model" placeholder="qwen3.7-text-embedding" spellcheck="false" />
+                    </div>
+                    <div class="field">
+                      <span>接口端点（OpenAI 兼容）</span>
+                      <input type="text" id="set-emb-base" spellcheck="false" />
+                    </div>
+                    <small>🛡 用于知识库向量化与混合检索；Key 仅存本机 SQLite。</small>
+                    <div class="settings-actions">
+                      <button class="btn-primary save-btn" id="btn-save-emb">保存 Embedding 配置</button>
+                      <button class="btn-ghost" id="btn-test-emb">测试连接</button>
+                    </div>
+                    <div id="emb-test-result"></div>
+                  </div>
+                </div>
+              </section>
+
+              <div class="settings-actions">
+                <button class="btn-primary save-btn" id="btn-save-settings">保存设置</button>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script type="module" src="/static/js/app.js"></script>
+  </body>
+</html>

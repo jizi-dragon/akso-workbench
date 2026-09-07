@@ -1,0 +1,36 @@
+# Changelog
+
+本项目遵循语义化版本（SemVer），格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+从第一天开始记录（对齐行业月更节奏惯例）。
+
+## [Unreleased]
+
+### Added
+
+- **阶段 3 全量完成：akso-cc / akso-auto 原生化（运行时零依赖原项目）**
+  - 读路径 `egmp/insight/`：crawler（对象发现链）/assemble+report（盘点）/lifecycle+flowgraph+relations（L3/L2）/annotate/render/drawio/understand/spider（五步织网，step5 用 networkx 图分析）。
+  - 写路径 `egmp/writers/`：blueprint（pydantic 两层校验+规范化+审阅三件套，替代 ajv）/idempotency/objects/fields/picklists/lifecycle/workflows（a-i 管道+两次提交连线）/layouts（全量替换语义）/menus/endpoints（自原仓库只读提取的实证常量表）。
+  - 编排 `egmp/orchestrate.py`（runFullWorkflow/拓扑排序/checkpoint 落盘）+ `complexity.py`（规则移植）+ `generate.py`（DeepSeek 蓝图生成融合：规范化+校验回炉）。
+  - Monitor `egmp/monitor/`：Playwright 录制三级降噪/查询层与参数推断/segment 解读+reproduce-plan（API_MAP 对位 Python writers；DANGEROUS 永不回放）。
+  - `routes_insight` / `routes_factory` 切换原生调用；`routes_agent` 工具同步原生；`adapters/*.json` 降级为只读参考存档；Node 不再是运行时依赖。
+  - 测试：`tests/test_native.py`（12 项，FakeEgmpClient 内存平台离线验收校验/编排幂等/盘点/理解/蜘蛛/Monitor）+ `tests/fakes.py`；真机验收：原生 login / understand（training_hjy__c，1.4MB 理解模型）/ spider 均在真实平台跑通。
+- 架构分析文档 `docs/架构分析.md`：总体架构图、四条设计底线、模块分布地图（11 组 40+ 模块的职责/血统/依赖）、数据流图、DB 迁移版本账、三层测试策略与逐模块回归集、排障速查表、维护红线、新模块 checklist、演进触发器。
+- 双人协作基建：`CONTRIBUTING.md`（开发协作规范）、`.editorconfig`、`tools/setup.ps1`（环境自检脚本）；uv 默认走清华镜像（`[[tool.uv.index]]`，随仓库分发）。
+- 质量门禁：ruff 规则集（E4/E7/E9/F/I/B）入 `pyproject.toml`，全仓通过；修复 19 处（未用导入/未排序 import/zip strict/异常链 from exc 等）。
+- 模块契约 §1 补强 pydantic 约定：请求体强制 BaseModel，新代码响应强制 response_model。
+
+### Changed
+
+- `pyproject.toml`：uvicorn 对齐为 `[standard]` 变体（与实测环境一致）；依赖变更一律走 `uv lock && uv sync`。
+
+- 立项：四项目融合重建（akso-cc / mogul_simulator / akso-auto / quick-login），原项目冻结不动。
+- 阶段 0：uv 工程定义（`pyproject.toml`）、模块契约（`docs/模块契约.md`）、迁移台账（`docs/迁移台账.md`）、只读适配器声明（`adapters/akso-auto.json`、`adapters/akso-cc.json`）。
+- 阶段 1A：fork mogul_simulator/mogul → `workbench/`（包名、数据目录、端口可并存；数据库兼容接管 mogul.db）。
+- 阶段 1B：Node 子进程统一封装 `services/proc.py`；模块注册表 `services/modules.py` + `adapters`；模块健康体检路由 `api/routes_modules.py`。
+- 阶段 1B：平台洞察路由 `api/routes_insight.py`（封装 akso-cc login/inventory/understand/spider，产物读取回传）。
+- 阶段 1B：配置工厂路由 `api/routes_factory.py`（封装 akso-auto create/编排/monitor，蓝图暂存 + 断点状态展示）。
+- 阶段 1B：前端页 `factory.html` / `insight.html` + 对应 js/css（复用 mogul 设计系统，四模块 Tab 导航）。
+- 阶段 1B：pywebview 桌面壳 `shell/shell.py`（起 uvicorn + 开窗口 + 依赖体检首屏）。
+- 阶段 2A：统一账号库（DB 迁移 7：platform_env / account 表，Fernet 凭据加密；卡片墙 UI；三项目 env 一键导入脚本）。
+- 阶段 2B：托管浏览器 `services/browser_pool.py`（Playwright 账号↔context 池）；自动登录引擎 `services/autologin.py`（quick-login 节奏门控全量迁移：齐备门槛/提交前回读/MutationObserver 即时填充/用户点击接管/失败让位 + srcdoc iframe 探测 + token 捕获）；路由 `api/routes_browser.py`；前端页 `browser.html`；机器验收 `tests/test_autologin.py`（9 项断言）。
+- 阶段 3：egmp 平台客户端 Python 化内核（client/auth/cache/checkpoint + writers/insight/monitor 骨架）与 Agent 工具层（`routes_agent.py`：自然语言→登录/读配置/写配置/查知识）。

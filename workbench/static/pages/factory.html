@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>配置工厂 · Akso Workbench</title>
+    <link rel="stylesheet" href="/static/css/tokens.css" />
+    <link rel="stylesheet" href="/static/css/base.css" />
+    <link rel="stylesheet" href="/static/css/modules.css" />
+  </head>
+  <body>
+    <div class="module-shell">
+      <header class="module-topbar">
+        <a class="back" href="/">← 返回工作台</a>
+        <h1>配置工厂</h1>
+        <span class="sub">封装 akso-auto：蓝图校验/创建/编排（原仓库只读）</span>
+        <div class="spacer"></div>
+        <span class="status-badge" id="module-health">检测中…</span>
+      </header>
+
+      <section class="mcard">
+        <h2>① 上传蓝图</h2>
+        <div style="display:flex;gap:10px;align-items:center">
+          <input type="file" id="fac-file" accept=".json" />
+          <button class="mbtn ghost" id="btn-fac-upload">上传暂存</button>
+          <span class="hint" id="fac-upload-result" style="margin:0"></span>
+        </div>
+        <div id="fac-blueprints" style="margin-top:12px"></div>
+      </section>
+
+      <section class="mcard">
+        <h2>② 执行任务</h2>
+        <div class="mgrid cols-3">
+          <label class="mfield">
+            蓝图
+            <select id="fac-blueprint"></select>
+          </label>
+          <label class="mfield">
+            命令
+            <select id="fac-command">
+              <option value="create">create · 蓝图创建（原生 API 执行）</option>
+              <option value="orchestrate">orchestrate · 需求→蓝图生成（DeepSeek）+ 审阅三件套</option>
+            </select>
+          </label>
+          <label class="mfield">
+            凭证账号（统一账号库）
+            <select id="fac-account"></select>
+          </label>
+        </div>
+        <div style="display:flex;gap:14px;align-items:center;margin-top:12px">
+          <label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:#f0b429">
+            <input type="checkbox" id="fac-confirmed" />
+            环境强制确认：我确认以上环境/账号将执行配置写入（akso-auto 原则，由 UI 承担）
+          </label>
+          <div style="flex:1"></div>
+          <button class="mbtn" id="btn-fac-run">▶ 执行</button>
+        </div>
+        <p class="hint">凭证从统一账号库导出为临时 env 文件（任务后立即删除），绝不写原项目 resources/env/。</p>
+      </section>
+
+      <section class="mcard">
+        <h2>执行日志</h2>
+        <div class="log-console" id="fac-log"><div class="sys">// 等待执行…</div></div>
+      </section>
+
+      <section class="mcard">
+        <h2>任务历史（含断点状态）</h2>
+        <table class="mtable" id="fac-jobs">
+          <thead><tr><th>时间</th><th>命令</th><th>状态</th><th>详情</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </div>
+    <script type="module" src="/static/js/factory.js"></script>
+  </body>
+</html>

@@ -1,0 +1,39 @@
+{
+  "$schema": "docs/模块契约.md#adapters",
+  "id": "akso-auto",
+  "title": "Akso Auto 配置自动化引擎",
+  "repoPath": "D:\\ai_assistant\\akso-auto",
+  "repoPathEnv": "AKSO_AUTO_REPO",
+  "entry": "scripts/main.js",
+  "runtime": "node",
+  "nodeVersion": ">=18",
+  "mode": "native-python-internalized",
+  "nativeModule": "workbench.services.egmp.{writers,orchestrate,monitor}",
+  "frozen": true,
+  "deprecation": "阶段 3 已原生化：routes_factory 直接调用 egmp（httpx + pydantic），不再调 node；本文件降级为只读参考存档（端点常量见 egmp/writers/endpoints.py，自本仓库只读提取）。",
+  "commands": {
+    "create": {
+      "args": ["scripts/main.js", "create", "<blueprint.json>", "--url=<base>", "--user=<u>", "--pass=<p>"],
+      "description": "按蓝图执行配置创建（纯 HTTP API 模式）",
+      "credentials": "inline-override",
+      "stdin": "confirmEnv() 交互无法用参数跳过：管道喂 \\n\\n（环境编号行 + 凭据确认行）",
+      "envFallback": "AKSO_BASE_URL / AKSO_USERNAME / AKSO_PASSWORD（env.json 缺失时回退）",
+      "confirmPolicy": "环境强制确认由 UI 承担（confirmed=true 才发起）"
+    },
+    "orchestrate": {
+      "args": ["scripts/main.js", "orchestrate", "<需求描述>"],
+      "description": "蓝图编排闭环（复杂度评估→生成→校验→迭代确认）",
+      "capture": "stdout 标记行 ─── 蓝图 JSON ─── 之后为完整蓝图 JSON"
+    },
+    "monitor": {
+      "args": ["scripts/main.js", "start"],
+      "description": "Monitor 长驻监听（SIGINT 收尾；阶段 1 不封装，阶段 3 egmp.monitor 承接）"
+    }
+  },
+  "artifacts": {
+    "token": "output/.akso-token-{envId}.json（55 分钟复用）",
+    "review": "output/blueprint/<objectCode>/{spec.md,checklist.md,execute.js}",
+    "monitor": "output/monitor/<ts>/"
+  },
+  "notes": "凭证内联注入（--url/--user/--pass 不写回 env.json），绝不写原仓库。所有路径基于 __dirname 解析，与 cwd 无关。"
+}

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>统一账号库 · Akso Workbench</title>
+    <link rel="stylesheet" href="/static/css/tokens.css" />
+    <link rel="stylesheet" href="/static/css/base.css" />
+    <link rel="stylesheet" href="/static/css/modules.css" />
+  </head>
+  <body>
+    <div class="module-shell">
+      <header class="module-topbar">
+        <a class="back" href="/">← 返回工作台</a>
+        <h1>统一账号库</h1>
+        <span class="sub">平台环境 + 账号卡片墙（Fernet 加密；UI 范式学习 AdsPower）</span>
+        <div class="spacer"></div>
+        <button class="mbtn ghost" id="btn-import">⇊ 从原项目 env 导入</button>
+      </header>
+
+      <section class="mcard">
+        <h2>平台环境</h2>
+        <div class="mgrid cols-3">
+          <label class="mfield">名称<input id="env-name" placeholder="标准验证环境" /></label>
+          <label class="mfield">baseUrl<input id="env-url" placeholder="https://demo-val.example.com" spellcheck="false" /></label>
+          <label class="mfield" style="justify-content:flex-end"><button class="mbtn" id="btn-env-add">＋ 新增环境</button></label>
+        </div>
+        <div id="env-list" style="margin-top:12px"></div>
+      </section>
+
+      <section class="mcard">
+        <h2>新增账号</h2>
+        <div class="mgrid cols-3">
+          <label class="mfield">环境<select id="acc-env"></select></label>
+          <label class="mfield">用户名<input id="acc-username" autocomplete="off" /></label>
+          <label class="mfield">密码<input id="acc-password" type="password" autocomplete="new-password" /></label>
+        </div>
+        <div class="mgrid cols-3" style="margin-top:10px">
+          <label class="mfield">角色<input id="acc-role" placeholder="系统管理员 / 实施顾问…" /></label>
+          <label class="mfield">标签（逗号分隔）<input id="acc-tags" placeholder="验证环境,客户A" /></label>
+          <label class="mfield" style="justify-content:flex-end"><button class="mbtn" id="btn-acc-add">＋ 新增账号</button></label>
+        </div>
+        <p class="hint">🛡 密码以 Fernet 加密入库（密钥存本机 SQLite）；明文只在内联注入/自动登录的内存中出现。</p>
+      </section>
+
+      <section class="mcard">
+        <h2>账号卡片墙</h2>
+        <div class="card-wall" id="acc-wall"></div>
+      </section>
+
+      <dialog id="import-dialog" style="min-width:420px">
+        <h3 style="margin:0 0 10px">从原项目 env 文件导入（只读）</h3>
+        <p class="hint" style="margin:0 0 10px">扫描 akso-cc / akso-auto 的 env 文件与 mogul 数据库，原文件不动。</p>
+        <div id="import-preview" class="log-console" style="height:200px">…</div>
+        <div style="display:flex;gap:10px;margin-top:12px;justify-content:flex-end">
+          <button class="mbtn ghost" id="btn-import-close">取消</button>
+          <button class="mbtn" id="btn-import-run">开始导入</button>
+        </div>
+      </dialog>
+    </div>
+    <script type="module" src="/static/js/accounts.js"></script>
+  </body>
+</html>

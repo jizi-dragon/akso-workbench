@@ -1,0 +1,94 @@
+/* 模块页共享样式（复用 mogul 设计令牌 tokens/base） */
+
+.module-shell { max-width: 1180px; margin: 0 auto; padding: 24px 28px 60px; }
+
+.module-topbar {
+  display: flex; align-items: center; gap: 14px; margin-bottom: 22px;
+}
+.module-topbar .back {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text-dim, #8a93a6); text-decoration: none; font-size: 13px;
+  border: 1px solid var(--border, #2a3247); border-radius: 8px; padding: 6px 12px;
+  transition: all .15s ease;
+}
+.module-topbar .back:hover { color: var(--text, #e7ebf3); border-color: var(--primary, #4d7cfe); }
+.module-topbar h1 { font-size: 20px; margin: 0; }
+.module-topbar .sub { color: var(--text-dim, #8a93a6); font-size: 12.5px; margin-left: 4px; }
+.module-topbar .spacer { flex: 1; }
+
+.mcard {
+  background: var(--surface, #141a29); border: 1px solid var(--border, #26304a);
+  border-radius: 14px; padding: 18px 20px; margin-bottom: 16px;
+}
+.mcard h2 { font-size: 14.5px; margin: 0 0 12px; color: var(--text, #e7ebf3); }
+.mcard .hint { color: var(--text-dim, #8a93a6); font-size: 12px; margin: 6px 0 0; }
+
+.mgrid { display: grid; gap: 10px; }
+.mgrid.cols-2 { grid-template-columns: 1fr 1fr; }
+.mgrid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+label.mfield { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-dim, #8a93a6); }
+label.mfield input, label.mfield select, label.mfield textarea {
+  background: var(--bg, #0d1220); color: var(--text, #e7ebf3);
+  border: 1px solid var(--border, #2a3247); border-radius: 8px;
+  padding: 8px 10px; font-size: 13px; outline: none;
+}
+label.mfield input:focus, label.mfield select:focus { border-color: var(--primary, #4d7cfe); }
+
+.mbtn {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  background: var(--primary, #4d7cfe); color: #fff; border: none;
+  border-radius: 9px; padding: 9px 16px; font-size: 13px; font-weight: 600;
+  transition: filter .15s ease;
+}
+.mbtn:hover { filter: brightness(1.1); }
+.mbtn:disabled { opacity: .5; cursor: not-allowed; }
+.mbtn.ghost {
+  background: transparent; color: var(--text, #e7ebf3);
+  border: 1px solid var(--border, #2a3247);
+}
+.mbtn.danger { background: #d64550; }
+.mbtn:disabled { pointer-events: none; }
+
+.log-console {
+  background: #0a0e19; border: 1px solid var(--border, #26304a); border-radius: 10px;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; line-height: 1.65;
+  color: #9fb0cd; padding: 12px 14px; height: 340px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-all;
+}
+.log-console .ok { color: #58d68d; }
+.log-console .err { color: #ff7b72; }
+.log-console .sys { color: #6f7d99; }
+
+.status-badge {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
+  border-radius: 20px; padding: 3px 10px; border: 1px solid var(--border, #2a3247);
+  color: var(--text-dim, #8a93a6);
+}
+.status-badge.ok { color: #58d68d; border-color: #2c5a3d; }
+.status-badge.warn { color: #f0b429; border-color: #6b5416; }
+.status-badge.err { color: #ff7b72; border-color: #6b2c32; }
+
+table.mtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.mtable th {
+  text-align: left; color: var(--text-dim, #8a93a6); font-weight: 500;
+  padding: 7px 10px; border-bottom: 1px solid var(--border, #26304a); white-space: nowrap;
+}
+table.mtable td { padding: 8px 10px; border-bottom: 1px solid rgba(42,50,71,.4); color: var(--text, #dfe5f1); }
+table.mtable tr:hover td { background: rgba(77,124,254,.06); }
+
+.card-wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.acard {
+  background: var(--surface, #141a29); border: 1px solid var(--border, #26304a);
+  border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
+}
+.acard .row1 { display: flex; align-items: center; gap: 8px; }
+.acard .avatar {
+  width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  background: var(--primary, #4d7cfe); color: #fff; font-weight: 700; font-size: 14px;
+}
+.acard .name { font-size: 13.5px; font-weight: 600; color: var(--text, #e7ebf3); }
+.acard .env { font-size: 11.5px; color: var(--text-dim, #8a93a6); }
+.acard .actions { display: flex; gap: 8px; margin-top: 4px; }
+.acard .actions .mbtn { padding: 6px 12px; font-size: 12px; }
+
+.empty { color: var(--text-dim, #8a93a6); font-size: 13px; text-align: center; padding: 26px 0; }
