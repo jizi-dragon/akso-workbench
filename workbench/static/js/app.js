@@ -36,8 +36,16 @@ export function switchView(name) {
   if (name === "settings") fillSettings();
 }
 
+const SPLASH_KEY = "akso-splash-seen";
+
 async function bootstrap() {
-  const splashTimer = cycleSplash();
+  const overlay = document.getElementById("splash-overlay");
+  // 同一会话内只播一次启动动画：从平台模块返回工作台时直接进入（避免强制重看）
+  const seen = sessionStorage.getItem(SPLASH_KEY) === "1";
+  if (seen) {
+    overlay?.remove();
+  }
+  const splashTimer = seen ? null : cycleSplash();
   try {
     const data = await api.bootstrap();
     state.conversations = data.conversations;
@@ -52,15 +60,20 @@ async function bootstrap() {
     const el = document.getElementById("splash-status-text");
     if (el) el.textContent = `初始化失败：${error.message}`;
     console.error(error);
-    setTimeout(() => clearInterval(splashTimer), 100);
+    if (splashTimer) setTimeout(() => clearInterval(splashTimer), 100);
+    return;
+  }
+  if (seen) {
+    sessionStorage.setItem(SPLASH_KEY, "1");
     return;
   }
   // 让启动动画至少播放 1.1s
   setTimeout(() => {
-    clearInterval(splashTimer);
-    const overlay = document.getElementById("splash-overlay");
-    overlay.classList.add("hidden");
-    setTimeout(() => overlay.remove(), 600);
+    if (splashTimer) clearInterval(splashTimer);
+    const el = document.getElementById("splash-overlay");
+    el?.classList.add("hidden");
+    setTimeout(() => el?.remove(), 600);
+    sessionStorage.setItem(SPLASH_KEY, "1");
   }, 1100);
 }
 

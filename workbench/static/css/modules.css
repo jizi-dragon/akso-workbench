@@ -3,7 +3,16 @@
    令牌全部取自 tokens.css（Akso 蓝白版），无暗色兜底值
    ============================================================ */
 
-.module-shell { max-width: 1180px; margin: 0 auto; padding: 24px 28px 60px; }
+/* 主应用壳在 base.css 锁了 body overflow（SPA 自管滚动），
+   模块页是普通文档流，需要放开才能滚动 */
+html, body {
+  height: auto;
+  min-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.module-shell { max-width: 1180px; margin: 0 auto; padding: 24px 28px 60px; min-height: 100vh; }
 
 .module-topbar { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
 .module-topbar .back {
