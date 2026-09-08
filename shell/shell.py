@@ -104,11 +104,27 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
     finally:
-        server.terminate()
+        # 按进程树终止（uvicorn → playwright 驱动 → chromium 全链路），
+        # 避免 TerminateProcess 只杀直接子进程导致托管浏览器变孤儿
+        kill_tree(server.pid)
         try:
             server.wait(timeout=10)
         except subprocess.TimeoutExpired:
             server.kill()
+
+
+def kill_tree(pid: int) -> None:
+    """Windows：taskkill /T /F 杀整棵进程树；其他平台退化为 terminate。"""
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True, check=False,
+        )
+    else:
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
