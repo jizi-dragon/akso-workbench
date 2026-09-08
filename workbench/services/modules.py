@@ -34,14 +34,14 @@ BUILTIN_MODULES: list[dict[str, Any]] = [
     },
     {
         "id": "accounts",
-        "title": "统一账号库 + 托管浏览器（迁自 quick-login）",
+        "title": "账号中心（凭据托管 + 托管会话 + 分配池，迁自 quick-login）",
         "runtime": "python",
         "mode": "native",
         "repoPath": None,
         "entry": None,
         "commands": {
-            "accounts": {"description": "账号/环境 CRUD + 卡片墙"},
-            "browser": {"description": "一键启动托管浏览器 + 自动登录"},
+            "accounts": {"description": "账号/环境 CRUD + 卡片墙 + 分配池"},
+            "browser": {"description": "一键启动托管会话（轮盘快速入口）"},
         },
     },
 ]

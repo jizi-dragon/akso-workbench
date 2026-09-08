@@ -137,10 +137,50 @@ def get_account(account_id: str) -> dict[str, Any] | None:
     return _sanitize(row) if row else None
 
 
+# 分配池角色（账号中心「分配池」语义）：池内账号供配置/监听平台取用
+POOL_ROLES = ("config", "monitor")
+
+
+def _normalize_pool(pool: str | list[str] | tuple[str, ...] | None) -> str:
+    """规范化池角色：接受 'config' / 'monitor' / 'config,monitor' / 列表，返回逗号串。"""
+    if pool is None:
+        return ""
+    if isinstance(pool, str):
+        parts = [p.strip() for p in pool.split(",") if p.strip()]
+    else:
+        parts = [str(p).strip() for p in pool if str(p).strip()]
+    invalid = [p for p in parts if p not in POOL_ROLES]
+    if invalid:
+        raise AccountError(f"非法池角色：{','.join(invalid)}（可用：{'/'.join(POOL_ROLES)}）")
+    ordered = [role for role in POOL_ROLES if role in parts]
+    return ",".join(ordered)
+
+
+def pool_members(role: str) -> list[dict[str, Any]]:
+    """取分配池中指定角色的账号（如 config → 洞察/工厂下拉数据源）。
+
+    匹配语义：pool 列为逗号串（'config' / 'monitor' / 'config,monitor'），
+    用 ,包夹 LIKE 匹配，保证组合值命中。
+    """
+    normalized = _normalize_pool(role)
+    if not normalized:
+        return []
+    conditions = " OR ".join("(',' || pool || ',') LIKE ?" for _ in normalized.split(","))
+    params = [f"%,{r}%" for r in normalized.split(",")]
+    rows = db.query(
+        "SELECT a.*, e.name AS env_name, e.base_url AS env_base_url "
+        "FROM account a JOIN platform_env e ON e.id = a.env_id "
+        f"WHERE {conditions} ORDER BY a.created_at",
+        params,
+    )
+    return [_sanitize(row) for row in rows]
+
+
 def _sanitize(row: dict[str, Any]) -> dict[str, Any]:
     row = dict(row)
     enc = row.pop("password_enc", None)
     row["has_password"] = bool(enc)
+    row.setdefault("pool", "")
     try:
         row["tags"] = json.loads(row.get("tags") or "[]")
     except ValueError:
@@ -149,7 +189,8 @@ def _sanitize(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def create_account(*, env_id: str, username: str, password: str, role: str = "",
-                   tags: list[str] | None = None, note: str = "") -> dict[str, Any]:
+                   tags: list[str] | None = None, note: str = "",
+                   pool: str | list[str] | tuple[str, ...] | None = None) -> dict[str, Any]:
     if not get_env(env_id):
         raise AccountError(f"平台环境不存在：{env_id}")
     if not username.strip():
@@ -157,13 +198,14 @@ def create_account(*, env_id: str, username: str, password: str, role: str = "",
     if not password:
         raise AccountError("密码不能为空（自动登录依赖凭据）")
     tags_json = json.dumps(tags or [], ensure_ascii=False)
+    pool_value = _normalize_pool(pool)
     account_id = new_id()
     ts = now_ms()
     db.execute(
         "INSERT INTO account (id, env_id, username, password_enc, role, tags, note, status, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?)",
+        "pool, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?)",
         (account_id, env_id, username.strip(), encrypt_password(password), role.strip(),
-         tags_json, note, ts, ts),
+         tags_json, note, pool_value, ts, ts),
     )
     assert get_account(account_id)
     return get_account(account_id)  # type: ignore[return-value]
@@ -171,7 +213,9 @@ def create_account(*, env_id: str, username: str, password: str, role: str = "",
 
 def update_account(account_id: str, *, username: str | None = None, password: str | None = None,
                    role: str | None = None, tags: list[str] | None = None,
-                   note: str | None = None, status: str | None = None) -> dict[str, Any] | None:
+                   note: str | None = None, status: str | None = None,
+                   pool: str | list[str] | tuple[str, ...] | None = None,
+                   box: str | None = None) -> dict[str, Any] | None:
     row = db.query_one("SELECT * FROM account WHERE id = ?", (account_id,))
     if not row:
         return None
@@ -197,6 +241,12 @@ def update_account(account_id: str, *, username: str | None = None, password: st
     if status is not None:
         sets.append("status = ?")
         params.append(status)
+    if pool is not None:
+        sets.append("pool = ?")
+        params.append(_normalize_pool(pool))
+    if box is not None:
+        sets.append("box = ?")
+        params.append(box.strip())
     if not sets:
         return get_account(account_id)
     sets.append("updated_at = ?")
@@ -223,6 +273,189 @@ def account_env_base_url(account_id: str) -> str:
     if not account:
         raise AccountError(f"账号不存在：{account_id}")
     return account.get("env_base_url") or ""
+
+
+# ------------------------------------------------- 盒子管理（quick-login 盒子语义）
+
+DEFAULT_BOX = ""  # 空 = 默认盒子
+_REMEMBERED_KEY = "rememberedBoxes"
+_DEFAULT_BOX_NAME_KEY = "defaultBoxName"
+
+
+def _box_display(name: str) -> str:
+    """盒子的展示名（空串 = 默认盒子，可自定义其显示名）。"""
+    if name.strip():
+        return name.strip()
+    custom = get_setting(_DEFAULT_BOX_NAME_KEY)
+    return custom or "默认盒子"
+
+
+def list_boxes() -> list[dict[str, Any]]:
+    """记忆的盒子清单（空盒也保留，对齐原 ql:boxes 语义）+ 每盒账号数。"""
+    remembered: list[str] = []
+    raw = get_setting(_REMEMBERED_KEY)
+    if raw:
+        try:
+            remembered = [str(x) for x in json.loads(raw)]
+        except ValueError:
+            remembered = []
+    rows = db.query(
+        "SELECT box, COUNT(*) AS n FROM account WHERE box != '' GROUP BY box ORDER BY box"
+    )
+    counts = {str(r["box"]): int(r["n"]) for r in rows}
+    ordered: list[str] = []
+    for name in remembered:
+        if name not in ordered:
+            ordered.append(name)
+    for name in counts:
+        if name not in ordered:
+            ordered.append(name)
+    default_count = int(
+        (db.query_one("SELECT COUNT(*) AS n FROM account WHERE box = ''") or {}).get("n") or 0
+    )
+    return [
+        {"box": name, "displayName": _box_display(name), "count": counts.get(name, 0)}
+        for name in ordered
+    ] + [{"box": DEFAULT_BOX, "displayName": _box_display(DEFAULT_BOX), "count": default_count}]
+
+
+def _remember_box(name: str) -> None:
+    name = name.strip()
+    if not name:
+        return
+    remembered: list[str] = []
+    raw = get_setting(_REMEMBERED_KEY)
+    if raw:
+        try:
+            remembered = [str(x) for x in json.loads(raw)]
+        except ValueError:
+            remembered = []
+    if name not in remembered:
+        remembered.append(name)
+        set_setting(_REMEMBERED_KEY, json.dumps(remembered, ensure_ascii=False))
+
+
+def rename_box(from_name: str, to_name: str) -> int:
+    """盒子重命名 / 移动账号（to 为空 = 并入默认盒子）。返回随迁账号数。"""
+    from_name = from_name.strip()
+    to_name = to_name.strip()
+    if not from_name:
+        raise AccountError("来源盒子不能为空")
+    if to_name == from_name:
+        return 0
+    count = db.execute(
+        "UPDATE account SET box = ?, updated_at = ? WHERE box = ?",
+        (to_name, now_ms(), from_name),
+    )
+    if to_name:
+        _remember_box(to_name)
+    # 记忆清单更新：from 若不再有账号则保留清单语义由 list_boxes 展示（空盒保留）
+    return count
+
+
+def delete_box(name: str) -> int:
+    """删除盒子 = 并入默认盒子（原 clearBox 语义）。"""
+    return rename_box(name, DEFAULT_BOX)
+
+
+def set_default_box_name(name: str) -> None:
+    set_setting(_DEFAULT_BOX_NAME_KEY, name.strip())
+
+
+# ------------------------------------------------- 备份导出 / 导入（DataBackup v1 语义）
+
+
+def export_backup() -> dict[str, Any]:
+    """导出备份：加密凭据 + Fernet 密钥随文件走（原 cryptoSeed 语义）。
+
+    ⚠ 文件本身即凭据（含密钥），交付给用户自行保管。
+    """
+    key = get_setting(_KEY_SETTING) or ""
+    return {
+        "format": "akso-workbench-backup",
+        "version": 1,
+        "exportedAt": now_ms(),
+        "fernetKey": key,
+        "envs": [
+            {"id": e["id"], "name": e["name"], "baseUrl": e["base_url"], "note": e["note"]}
+            for e in list_envs()
+        ],
+        "boxes": {
+            "remembered": json.loads(get_setting(_REMEMBERED_KEY) or "[]"),
+            "defaultName": get_setting(_DEFAULT_BOX_NAME_KEY) or "",
+        },
+        "accounts": [
+            {
+                "envBaseUrl": a.get("env_base_url") or "",
+                "username": a["username"],
+                "passwordEnc": db.query_one(
+                    "SELECT password_enc FROM account WHERE id = ?", (a["id"],)
+                )["password_enc"],
+                "box": a.get("box") or "",
+                "role": a.get("role") or "",
+                "tags": a.get("tags") or [],
+            }
+            for a in list_accounts()
+        ],
+    }
+
+
+def import_backup(data: dict[str, Any]) -> dict[str, Any]:
+    """导入备份：用文件内密钥解密 → 本地密钥重加密 → 同站同名去重。"""
+    from cryptography.fernet import Fernet as _F
+
+    if data.get("format") != "akso-workbench-backup" or data.get("version") != 1:
+        raise AccountError("不是有效的 Akso Workbench 备份文件（format/version 不符）")
+    file_key = str(data.get("fernetKey") or "")
+    if not file_key:
+        raise AccountError("备份缺少密钥（fernetKey）")
+    file_fernet = _F(file_key.encode("ascii"))
+
+    env_by_url = {e["base_url"]: e["id"] for e in list_envs()}
+    existing = {(a.get("env_base_url") or "", a["username"]) for a in list_accounts()}
+    created = skipped = 0
+    for item in data.get("accounts") or []:
+        base_url = str(item.get("envBaseUrl") or "").strip().rstrip("/")
+        enc = str(item.get("passwordEnc") or "")
+        username = str(item.get("username") or "").strip()
+        if not base_url or not username or not enc:
+            skipped += 1
+            continue
+        try:
+            password = file_fernet.decrypt(enc.encode("ascii")).decode("utf-8")
+        except Exception:  # noqa: BLE001 —— 无法用文件密钥解开（损坏/篡改）→ 跳过
+            skipped += 1
+            continue
+        if (base_url, username) in existing:
+            skipped += 1
+            continue
+        env_id = env_by_url.get(base_url)
+        if not env_id:
+            env = create_env(name=base_url, base_url=base_url, note="导入自备份文件")
+            env_by_url[base_url] = env["id"]
+            env_id = env["id"]
+        create_account(
+            env_id=env_id, username=username, password=password,
+            role=str(item.get("role") or ""), tags=list(item.get("tags") or []),
+            note="导入自备份文件",
+        )
+        accounts_rows = db.query(
+            "SELECT id FROM account WHERE env_id = ? AND username = ?", (env_id, username)
+        )
+        if accounts_rows and item.get("box"):
+            db.execute("UPDATE account SET box = ? WHERE id = ?",
+                       (str(item["box"]).strip(), accounts_rows[0]["id"]))
+            _remember_box(str(item["box"]))
+        existing.add((base_url, username))
+        created += 1
+    # 盒子配置以文件为准覆盖（记忆盒/默认盒名）
+    boxes = data.get("boxes") or {}
+    if isinstance(boxes.get("remembered"), list):
+        set_setting(_REMEMBERED_KEY, json.dumps(
+            [str(x) for x in boxes["remembered"]], ensure_ascii=False))
+    if boxes.get("defaultName"):
+        set_setting(_DEFAULT_BOX_NAME_KEY, str(boxes["defaultName"]).strip())
+    return {"created": created, "skipped": skipped}
 
 
 # ------------------------------------------------- 原项目 env 一键导入（只读）

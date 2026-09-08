@@ -3,12 +3,24 @@ import { api, el, logLine, postSSE, fmtBytes, badgeFor } from './modules-common.
 const log = el('ins-log');
 
 async function loadAccounts() {
-  const data = await api('/api/accounts');
+  // 分配池语义：默认只列配置池账号；池为空时回退全量并提示
+  let data = await api('/api/accounts?pool=config');
+  if (!data.accounts.length) {
+    data = await api('/api/accounts');
+  }
   const sel = el('ins-account');
   sel.innerHTML = '';
   if (!data.accounts.length) {
-    sel.innerHTML = '<option value="">（请先在统一账号库添加账号）</option>';
+    sel.innerHTML = '<option value="">（请先在账号中心添加账号并加入配置池）</option>';
     return;
+  }
+  const note = data.accounts[0].pool ? '' : '（提示：分配池为空，已回退显示全部账号）';
+  if (note) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = note;
+    opt.disabled = true;
+    sel.appendChild(opt);
   }
   for (const a of data.accounts) {
     const opt = document.createElement('option');

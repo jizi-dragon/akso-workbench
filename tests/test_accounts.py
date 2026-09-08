@@ -58,3 +58,24 @@ def test_scan_original_env_files_readonly() -> None:
 def test_import_dry_run() -> None:
     lines = accounts.import_from_original_projects(dry_run=True)
     assert any("完成" in line["text"] for line in lines)
+
+
+def test_pool_assign_and_members(env: dict) -> None:
+    """分配池：加入/组合/移出 + 按角色取用（账号中心合并语义）。"""
+    a = accounts.create_account(env_id=env["id"], username="pool-a", password="p1")
+    b = accounts.create_account(env_id=env["id"], username="pool-b", password="p2")
+
+    accounts.update_account(a["id"], pool="config")
+    accounts.update_account(b["id"], pool=["config", "monitor"])
+
+    config_members = accounts.pool_members("config")
+    monitor_members = accounts.pool_members("monitor")
+    assert {x["username"] for x in config_members} >= {"pool-a", "pool-b"}
+    assert {x["username"] for x in monitor_members} == {"pool-b"}
+
+    accounts.update_account(a["id"], pool="")
+    assert accounts.pool_members("config") == [] or \
+        all(x["username"] != "pool-a" for x in accounts.pool_members("config"))
+
+    with pytest.raises(accounts.AccountError):
+        accounts.update_account(a["id"], pool="bad-role")

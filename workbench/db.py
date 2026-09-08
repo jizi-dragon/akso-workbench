@@ -194,6 +194,12 @@ CREATE TABLE IF NOT EXISTS agent_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_audit_tool ON agent_audit(tool);
 """),
+    (10, "add_account_pool", """
+ALTER TABLE account ADD COLUMN pool TEXT NOT NULL DEFAULT '';
+"""),
+    (11, "add_account_box", """
+ALTER TABLE account ADD COLUMN box TEXT NOT NULL DEFAULT '';
+"""),
 ]
 
 
