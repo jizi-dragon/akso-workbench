@@ -7,6 +7,7 @@
 
 ### Added
 
+- **桌面壳重构与实机调通**：`shell/shell.py` 改为「uvicorn 子进程 + webview 主线程」架构（服务与窗口生命周期解耦，关闭窗口即退出并回收服务）；pythonw 的 stdout/stderr=None 兜底；pywebview 以 `desktop` extra 入库（`uv sync --extra desktop`）；新增 `tools/start-desktop.vbs` 双击启动器。实机验证：原生窗口可见、服务就绪、首屏体检线程正常。
 - **quick-login 全量内化收口**：托管浏览器会话持久化（storage_state——登录成功/正常关闭落盘，重开免密直达、跨进程重启有效；Cookie 袋/DNR 回放的原生等价物）；会话自愈（直达首页被踢回登录页 → 自动重跑节奏门控）；`POST /api/browser/forget/{id}` 登出语义 + `GET /api/browser/saved/{id}`；状态墙持久会话徽章；`tests/test_browser_state.py`（5 项）。真机验证：重开 restored=True 且引擎 phase=idle（完全未走登录页）。迁移台账「不迁清单」重新定性：各项均为"被 Playwright 原生机制等价替代"，原仓库不再是功能归宿。
 - **阶段 3 全量完成：akso-cc / akso-auto 原生化（运行时零依赖原项目）**
   - 读路径 `egmp/insight/`：crawler（对象发现链）/assemble+report（盘点）/lifecycle+flowgraph+relations（L3/L2）/annotate/render/drawio/understand/spider（五步织网，step5 用 networkx 图分析）。
