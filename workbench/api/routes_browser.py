@@ -18,17 +18,29 @@ router = APIRouter(prefix="/api/browser", tags=["browser"])
 
 class OpenIn(BaseModel):
     account_id: str = Field(..., min_length=1)
-    headful: bool = Field(False, description="有头模式（真窗口调试用）")
+    headful: bool = Field(True, description="可见窗口（默认开启：以该身份操作的实际效果）")
 
 
 @router.post("/open")
 def open_account(body: OpenIn) -> dict:
-    """一键启动托管浏览器：建 context → 自动登录（节奏门控）→ 会话快照。"""
+    """一键启动托管会话：建 context → 自动登录（节奏门控）→ 会话快照。
+
+    已在线的会话重复调用 = 聚焦其窗口（切换身份）。
+    """
     try:
         return get_pool().open_account(body.account_id, headful=body.headful)
     except BrowserError as exc:
         code = 404 if "账号不存在" in str(exc) else 503
         raise HTTPException(code, str(exc)) from exc
+
+
+@router.post("/focus/{account_id}")
+def focus_account(account_id: str) -> dict:
+    """把该账号的会话窗口带到前台（在线会话的"切换身份"）。"""
+    snap = get_pool().focus_account(account_id)
+    if snap is None:
+        raise HTTPException(404, "该账号无活动会话")
+    return snap
 
 
 @router.post("/close/{account_id}")

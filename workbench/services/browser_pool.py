@@ -36,6 +36,8 @@ class SessionEntry:
     detail: str = ""
     started_at: int = 0
     restored: bool = False  # 本次打开是否来自持久会话
+    headful: bool = False  # 该会话是否为可见窗口
+    heal_count: int = 0  # 运行中自愈重登次数（上限 2，防死循环，对齐 TokenRenewer）
     autologin_state: dict[str, Any] | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
 
@@ -47,6 +49,8 @@ class SessionEntry:
             "detail": self.detail,
             "started_at": self.started_at,
             "restored": self.restored,
+            "headful": self.headful,
+            "heal_count": self.heal_count,
             "autologin": self.autologin_state,
             "has_token": bool(self.token_capture and self.token_capture.latest()),
         }
@@ -62,7 +66,7 @@ class BrowserPool:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._pw: Any = None
-        self._browser: Any = None
+        self._browsers: dict[bool, Any] = {}  # headful → browser（两种模式各自惰性创建）
         self._sessions: dict[str, SessionEntry] = {}
 
     # ------------------------------------------------------------- 持久会话
@@ -110,33 +114,33 @@ class BrowserPool:
     # ------------------------------------------------------------- 生命周期
 
     def _ensure_browser(self, *, headful: bool = False) -> Any:
-        if self._browser is not None:
-            return self._browser
+        """按模式惰性启动浏览器（可见窗口交付"以该身份操作"的实际效果）。"""
+        if self._browsers.get(headful) is not None:
+            return self._browsers[headful]
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
             raise BrowserError("playwright 未安装：pip install playwright") from exc
-        self._pw = sync_playwright().start()
+        if self._pw is None:
+            self._pw = sync_playwright().start()
         try:
-            self._browser = self._pw.chromium.launch(headless=not headful)
+            self._browsers[headful] = self._pw.chromium.launch(headless=not headful)
         except Exception as exc:  # noqa: BLE001 —— 浏览器未安装等
-            self._pw.stop()
-            self._pw = None
             raise BrowserError(
                 f"chromium 启动失败（先执行 playwright install chromium）：{exc}"
             ) from exc
-        return self._browser
+        return self._browsers[headful]
 
     def close_all(self) -> None:
         with self._lock:
             for entry in list(self._sessions.values()):
                 self._close_entry(entry)
-            if self._browser is not None:
+            for browser in list(self._browsers.values()):
                 try:
-                    self._browser.close()
+                    browser.close()
                 except Exception:  # noqa: BLE001
                     pass
-                self._browser = None
+            self._browsers.clear()
             if self._pw is not None:
                 try:
                     self._pw.stop()
@@ -160,8 +164,13 @@ class BrowserPool:
 
     # ------------------------------------------------------------- 会话管理
 
-    def open_account(self, account_id: str, *, headful: bool = False) -> dict[str, Any]:
-        """一键启动账号会话：持久会话恢复 → 失效自愈 / 全新自动登录。"""
+    def open_account(self, account_id: str, *, headful: bool = True) -> dict[str, Any]:
+        """一键启动账号会话：持久会话恢复 → 失效自愈 / 全新自动登录。
+
+        默认有头（可见窗口）——交付"以该身份操作"的实际效果；
+        纯后端自动化场景显式传 headful=False。
+        已在线的会话重复打开 = 聚焦其窗口（对齐扩展"切换身份"手感）。
+        """
         with self._lock:
             account = accounts.get_account(account_id)
             if not account:
@@ -172,6 +181,8 @@ class BrowserPool:
 
             old = self._sessions.get(account_id)
             if old is not None and old.context is not None:
+                if old.status == "online":
+                    self._focus(old)  # 切换身份 = 聚焦已有窗口
                 return {**old.snapshot(), "reused": True}
 
             username = account["username"]
@@ -185,7 +196,7 @@ class BrowserPool:
                 storage_state=str(state_path) if has_saved else None,
             )
             entry = SessionEntry(account_id=account_id, context=context,
-                                 started_at=now_ms(), restored=has_saved)
+                                 started_at=now_ms(), restored=has_saved, headful=headful)
             entry.token_capture = autologin.TokenCapture(account_id)
             entry.token_capture.attach(context)
             self._sessions[account_id] = entry
@@ -213,9 +224,27 @@ class BrowserPool:
                     if not autologin.start(page, username, password):
                         entry.status = "error"
                         entry.detail = "自动登录引擎启动失败（页面无登录表单？）"
+                else:
+                    self._focus(entry)  # 免密直达后窗口置前
             except Exception as exc:  # noqa: BLE001
                 entry.status = "error"
                 entry.detail = f"页面加载失败：{exc}"
+            return entry.snapshot()
+
+    def _focus(self, entry: SessionEntry) -> None:
+        """把该账号的窗口带到前台（尽力而为；headless 下为无害空操作）。"""
+        try:
+            if entry.page is not None:
+                entry.page.bring_to_front()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def focus_account(self, account_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            entry = self._sessions.get(account_id)
+            if entry is None or entry.context is None:
+                return None
+            self._focus(entry)
             return entry.snapshot()
 
     def close_account(self, account_id: str) -> bool:
@@ -242,11 +271,36 @@ class BrowserPool:
                     entry.autologin_state = st
                     if entry.status == "logging_in" and st.get("phase") == "success":
                         entry.status = "online"
-                        entry.detail = "自动登录完成（登录态已持久化）"
+                        entry.detail = ("自动登录完成（登录态已持久化）"
+                                        if entry.heal_count == 0
+                                        else f"自愈成功（第 {entry.heal_count} 次重登）")
                         self._save_state(entry)  # 登录成功即落盘
                     elif entry.status == "logging_in" and st.get("phase") in {"gave_up", "stopped"}:
                         entry.status = "error"
                         entry.detail = f"自动登录未完成：{st.get('reason', st.get('phase'))}"
+
+                # 运行中自愈（对齐扩展 TokenRenewer）：在线会话被踢回登录页 → 自动重登
+                if (entry.status == "online" and entry.page is not None
+                        and self._looks_like_login(entry.page)):
+                    if entry.heal_count >= 2:
+                        entry.status = "error"
+                        entry.detail = "会话反复失效（自愈 2 次未成功），请检查凭据"
+                    else:
+                        try:
+                            account = accounts.get_account(entry.account_id)
+                            username = account["username"] if account else ""
+                            password = accounts.reveal_password(entry.account_id)
+                        except Exception:  # noqa: BLE001
+                            username, password = "", ""
+                        if username and password:
+                            entry.heal_count += 1
+                            entry.status = "logging_in"
+                            entry.detail = f"会话已失效，自动重新登录中（第 {entry.heal_count} 次）"
+                            entry.restored = False
+                            autologin.install(entry.page)
+                            if not autologin.start(entry.page, username, password):
+                                entry.status = "error"
+                                entry.detail = "自愈失败：页面无登录表单"
             return entry.snapshot()
 
     def list_sessions(self) -> list[dict[str, Any]]:

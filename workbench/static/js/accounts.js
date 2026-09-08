@@ -313,8 +313,9 @@ function renderCards(accounts, sessions) {
       ${s && (s.title || s.detail) ? `<div class="env">${s.title || ''}${s.detail ? ` · ${s.detail}` : ''}</div>` : ''}
       <div class="actions">
         ${s && s.status !== 'stopped'
-          ? `<button class="mbtn ghost" data-act="close" data-id="${a.id}">关闭会话</button>`
-          : `<button class="mbtn" data-act="open" data-id="${a.id}">启动会话</button>`}
+          ? `<button class="mbtn" data-act="focus" data-id="${a.id}" title="把该账号的窗口带到前台">聚焦窗口</button>
+             <button class="mbtn ghost" data-act="close" data-id="${a.id}">关闭会话</button>`
+          : `<button class="mbtn" data-act="open" data-id="${a.id}">启动会话（可见窗口）</button>`}
         <button class="mbtn ghost" data-act="box" data-id="${a.id}" data-name="${a.username}" data-box="${boxName}">盒子</button>
         <button class="mbtn ghost ${poolList(a.pool).includes('config') ? 'chip-active' : ''}" data-act="pool" data-id="${a.id}" data-role="config"
           title="加入/移出配置池（洞察/工厂取用）">配置池</button>
@@ -329,6 +330,8 @@ function renderCards(accounts, sessions) {
         try {
           if (btn.dataset.act === 'open') {
             await openAccount(a.id);
+          } else if (btn.dataset.act === 'focus') {
+            await api(`/api/browser/focus/${a.id}`, { method: 'POST' });
           } else if (btn.dataset.act === 'close') {
             await api(`/api/browser/close/${a.id}`, { method: 'POST' });
           } else if (btn.dataset.act === 'box') {
