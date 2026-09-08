@@ -114,7 +114,7 @@ function buildSectorWheel(root, { pages, pageIndex, onPick }) {
     const a1 = (idx + 1) * sweep;
     const mid = (a0 + a1) / 2;
     const g = svgEl('g', { class: `sector${isOnline(a) ? ' is-online' : ''}` });
-    g.style.setProperty('--acc', colorOf(accounts.indexOf(a)));
+    g.style.setProperty('--acc', colorOf(cacheAccounts.indexOf(a)));
     const hit = svgEl('path', { class: 'sector-hit', d: sectorPath(a0, a1) });
     hit.addEventListener('click', () => onPick(a.id));
     g.appendChild(hit);
@@ -217,10 +217,6 @@ el('wheel-overlay')?.addEventListener('wheel', (e) => {
 
 function colorOf(index) { return COLORS[index % COLORS.length]; }
 function poolList(pool) { return String(pool || '').split(',').filter(Boolean); }
-function isOnline(account) {
-  const s = cacheSessions.get(account.id);
-  return Boolean(s && s.status === 'online');
-}
 
 async function loadAccountsAndSessions() {
   const [accData, sessData, boxData] = await Promise.all([
@@ -233,12 +229,11 @@ async function loadAccountsAndSessions() {
   cacheBoxes = boxData.boxes;
   renderBoxes(boxData.boxes);
   renderPool(cacheAccounts);
-  renderCards(cacheAccounts, cacheSessions, savedMapFrom(cacheAccounts));
+  renderCards(cacheAccounts, cacheSessions, savedCache);
   if (wheelOpen) renderWheelOverlay();
 }
 
 let savedCache = new Map();
-function savedMapFrom(accounts) { return savedCache; }
 
 async function loadSavedFlags(accounts) {
   const entries = await Promise.all(accounts.map(async (a) => {
