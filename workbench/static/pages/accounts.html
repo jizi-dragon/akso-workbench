@@ -16,22 +16,22 @@
         <h1>账号中心</h1>
         <span class="sub">凭据托管 · 会话 · 盒子 · 分配池（quick-login 全量内化）</span>
         <div class="spacer"></div>
-        <button class="mbtn ghost" id="btn-wheel" title="Alt+Q 呼出轮盘">轮盘（Alt+Q）</button>
+        <button class="mbtn ghost" id="btn-wheel" title="Alt+Q 呼出轮盘">轮盘 Alt+Q</button>
         <button class="mbtn ghost" id="btn-export" title="下载备份文件（含密钥，妥善保管）">导出备份</button>
         <button class="mbtn ghost" id="btn-import-backup">导入备份</button>
         <input type="file" id="backup-file" accept=".json" hidden />
-        <button class="mbtn ghost" id="btn-import">从原项目 env 导入</button>
+        <button class="mbtn ghost" id="btn-import">原项目 env 导入</button>
       </header>
 
+      <!-- 账号 × 盒子（原扩展方式：账号放在盒子里管理） -->
       <section class="mcard">
-        <h2>盒子</h2>
-        <div class="chip-row" id="box-chips"><span class="chip">加载中…</span></div>
-        <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap">
-          <button class="mbtn ghost" id="btn-box-rename" style="padding:6px 12px; font-size:12px">重命名盒子</button>
-          <button class="mbtn ghost" id="btn-box-delete" style="padding:6px 12px; font-size:12px">删除盒子（并入默认）</button>
-          <button class="mbtn ghost" id="btn-box-default" style="padding:6px 12px; font-size:12px">默认盒显示名</button>
+        <h2>账号 · 按盒子管理</h2>
+        <div class="chip-row" id="box-chips" style="margin-bottom:14px">
+          <span class="chip">加载中…</span>
         </div>
-        <p class="hint">盒子是账号的组织方式（轮盘按盒分页）；删除盒子 = 账号并入默认盒子。账号卡上的「盒子」按钮可移动账号。</p>
+        <div id="box-manage-row" style="display:none; margin-bottom:14px"></div>
+        <div class="card-wall" id="acc-wall"><div class="empty" style="grid-column:1/-1">加载中…</div></div>
+        <p class="hint">一账号 = 一个独立 Playwright BrowserContext（原生隔离）。登录成功/正常关闭即持久化 storage_state——下次免密直达首页，失效自动重登。自动登录引擎：齐备门槛 → 提交前回读 → 即时填充 → 用户点击接管 → 失败让位。</p>
       </section>
 
       <section class="mcard">
@@ -50,13 +50,7 @@
             <div id="pool-monitor" class="wheel-legend"></div>
           </div>
         </div>
-        <p class="hint">在下方账号卡上点击「配置」/「监听」即可加入对应池；洞察 / 工厂 / Monitor 的账号下拉默认只列出池内账号。</p>
-      </section>
-
-      <section class="mcard">
-        <h2>账号会话与凭据</h2>
-        <div class="card-wall" id="acc-wall"><div class="empty" style="grid-column:1/-1">加载中…</div></div>
-        <p class="hint">一账号 = 一个独立 Playwright BrowserContext（原生隔离）。登录成功/正常关闭即持久化 storage_state——下次免密直达首页，失效自动重登。自动登录引擎：齐备门槛 → 提交前回读 → 即时填充 → 用户点击接管 → 失败让位。</p>
+        <p class="hint">在账号卡上点击「配置」/「监听」即可加入对应池；洞察 / 工厂 / Monitor 的账号下拉默认只列出池内账号。</p>
       </section>
 
       <section class="mcard">
@@ -78,7 +72,8 @@
         </div>
         <div class="mgrid cols-3" style="margin-top:10px">
           <label class="mfield">角色<input id="acc-role" placeholder="系统管理员 / 实施顾问…" /></label>
-          <label class="mfield">盒子<input id="acc-box" placeholder="默认盒子（可留空）" /></label>
+          <label class="mfield">盒子<input id="acc-box" list="box-list" placeholder="默认盒子（可留空）" /></label>
+          <datalist id="box-list"></datalist>
           <label class="mfield">标签（逗号分隔）<input id="acc-tags" placeholder="验证环境,客户A" /></label>
         </div>
         <div class="mgrid cols-3" style="margin-top:10px">

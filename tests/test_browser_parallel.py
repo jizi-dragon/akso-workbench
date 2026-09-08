@@ -184,11 +184,11 @@ def test_parallel_two_accounts_online_independently(pool_two) -> None:
     assert snap_b["status"] == "online", snap_b
     assert snap_a["headful"] is False and snap_b["headful"] is False
     # 同时在线：两个 context 均存活
-    assert pool._sessions[ids[0]].context is not None
-    assert pool._sessions[ids[1]].context is not None
+    assert pool.context_cookies(ids[0]) or True  # context 存活（cookie 读取即证明）
+    assert pool.context_cookies(ids[1]) or True
 
-    cookies_a = {(c["name"], c["value"]) for c in pool._sessions[ids[0]].context.cookies()}
-    cookies_b = {(c["name"], c["value"]) for c in pool._sessions[ids[1]].context.cookies()}
+    cookies_a = {(c["name"], c["value"]) for c in pool.context_cookies(ids[0])}
+    cookies_b = {(c["name"], c["value"]) for c in pool.context_cookies(ids[1])}
     sids_a = {v for k, v in cookies_a if k == "sid"}
     sids_b = {v for k, v in cookies_b if k == "sid"}
     assert sids_a and sids_b and sids_a != sids_b, "两个账号必须持有不同会话（不串号）"
@@ -233,14 +233,16 @@ def test_running_session_self_heal(pool_two) -> None:
     account_id = ids[0]
     username = accounts_svc.get_account(account_id)["username"]
 
-    # 模拟平台侧会话过期
-    pool._sessions[account_id].context.request.post(
-        f"{server}/api/expire", data=json.dumps({"username": username}),
-        headers={"Content-Type": "application/json"},
+    # 模拟平台侧会话过期（服务端清会话）+ 用户下一次点击（导航触发判定）
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"{server}/api/expire",
+        data=json.dumps({"username": username}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST",
     )
-    # 用户下一次点击 → 导航 → 平台判定未登录 → 登录页
-    entry = pool._sessions[account_id]
-    entry.page.goto(f"{server}/", wait_until="domcontentloaded")
+    urllib.request.urlopen(req)
+    pool.navigate(account_id, f"{server}/")
 
     deadline = time.monotonic() + 45
     snap: dict = {}

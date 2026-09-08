@@ -227,13 +227,17 @@ async function loadAccountsAndSessions() {
   cacheAccounts = accData.accounts;
   cacheSessions = new Map(sessData.sessions.map((s) => [s.account_id, s]));
   cacheBoxes = boxData.boxes;
-  renderBoxes(boxData.boxes);
+  renderBoxChips(boxData.boxes);
   renderPool(cacheAccounts);
-  renderCards(cacheAccounts, cacheSessions, savedCache);
+  const visible = currentBox === ''
+    ? cacheAccounts
+    : cacheAccounts.filter((a) => (a.box || '').trim() === currentBox);
+  renderCards(visible, cacheSessions);
   if (wheelOpen) renderWheelOverlay();
 }
 
 let savedCache = new Map();
+let currentBox = ''; // '' = 全部盒子；否则按盒过滤（原扩展 box-chips 语义）
 
 async function loadSavedFlags(accounts) {
   const entries = await Promise.all(accounts.map(async (a) => {
@@ -243,11 +247,84 @@ async function loadSavedFlags(accounts) {
   savedCache = new Map(entries);
 }
 
-function renderBoxes(boxes) {
-  const box = el('box-chips');
-  box.innerHTML = boxes.map((b) =>
-    `<span class="chip ${b.count ? 'chip-active' : ''}" title="${b.count} 个账号">${b.displayName} · ${b.count}</span>`
-  ).join('');
+function renderBoxChips(boxes) {
+  const row = el('box-chips');
+  const total = cacheAccounts.length;
+  const parts = [`<span class="chip chip-btn ${currentBox === '' ? 'chip-active' : ''}" data-box="">全部 · ${total}</span>`];
+  for (const b of boxes) {
+    if (b.box === '' && b.displayName === '默认盒子') {
+      parts.push(`<span class="chip chip-btn" data-box="" title="默认盒子（未入盒账号）">默认盒子 · ${b.count}</span>`);
+      continue;
+    }
+    parts.push(`<span class="chip chip-btn ${currentBox === b.box ? 'chip-active' : ''}" data-box="${b.box}">${b.displayName} · ${b.count}</span>`);
+  }
+  parts.push('<span class="chip chip-btn chip-add" data-add="1">＋ 新建盒</span>');
+  row.innerHTML = parts.join('');
+
+  row.querySelectorAll('.chip-btn').forEach((chip) => {
+    chip.onclick = async () => {
+      if (chip.dataset.add) {
+        const name = prompt('新盒子名称：');
+        if (!name || !name.trim()) return;
+        await api('/api/accounts/boxes/create', { method: 'POST', body: { name: name.trim() } });
+        currentBox = name.trim();
+        refresh();
+        return;
+      }
+      currentBox = chip.dataset.box || '';
+      refresh();
+    };
+  });
+
+  // 选中具体盒子的内联管理行（重命名 / 删除 / 默认盒显示名）
+  const manage = el('box-manage-row');
+  if (currentBox === '') {
+    manage.style.display = 'none';
+    manage.innerHTML = '';
+  } else {
+    manage.style.display = 'flex';
+    manage.style.gap = '8px';
+    const isDefault = false; // 默认盒子归并入「全部」视图语义，管理行仅用于命名盒
+    manage.innerHTML = `
+      <span class="chip chip-active">正在管理：${currentBox}</span>
+      ${isDefault
+        ? '<button class="mbtn ghost" data-m="defname" style="padding:5px 11px; font-size:12px">默认盒显示名</button>'
+        : `<button class="mbtn ghost" data-m="rename" style="padding:5px 11px; font-size:12px">重命名</button>
+           <button class="mbtn danger ghost" data-m="delete" style="padding:5px 11px; font-size:12px">删除盒子（并入默认）</button>`}`;
+    manage.querySelectorAll('button[data-m]').forEach((btn) => {
+      btn.onclick = async () => {
+        const action = btn.dataset.m;
+        if (action === 'rename') {
+          const to = prompt(`重命名盒子「${currentBox}」为：`, currentBox) ?? '';
+          if (!to.trim() || to.trim() === currentBox) return;
+          const result = await api('/api/accounts/boxes/rename', {
+            method: 'POST', body: { from: currentBox, to: to.trim() },
+          });
+          alert(`已移动 ${result.moved} 个账号`);
+          currentBox = to.trim();
+        } else if (action === 'delete') {
+          if (!confirm(`删除盒子「${currentBox}」？其中账号将并入默认盒子。`)) return;
+          const result = await api('/api/accounts/boxes/delete', {
+            method: 'POST', body: { from: currentBox },
+          });
+          alert(`已并入 ${result.moved} 个账号`);
+          currentBox = '';
+        } else if (action === 'defname') {
+          const name = prompt('默认盒子的显示名：', '') ?? '';
+          await api('/api/accounts/boxes/default-name', { method: 'POST', body: { to: name } });
+        }
+        refresh();
+      };
+    });
+  }
+  // 新增账号表单的盒子下拉建议
+  const datalist = el('box-list');
+  if (datalist) {
+    datalist.innerHTML = boxes
+      .filter((b) => b.box)
+      .map((b) => `<option value="${b.box}"></option>`)
+      .join('');
+  }
 }
 
 function renderPool(accounts) {
@@ -507,26 +584,6 @@ el('backup-file').addEventListener('change', () => {
   el('backup-file').value = '';
   if (file) importBackup(file);
 });
-el('btn-box-rename').onclick = async () => {
-  const from = prompt('要重命名的盒子名：');
-  if (!from) return;
-  const to = prompt('新盒子名（留空 = 并入默认盒子）：', from) ?? '';
-  const result = await api('/api/accounts/boxes/rename', { method: 'POST', body: { from, to } });
-  alert(`已移动 ${result.moved} 个账号`);
-  refresh();
-};
-el('btn-box-delete').onclick = async () => {
-  const name = prompt('要删除的盒子名（账号将并入默认盒子）：');
-  if (!name) return;
-  const result = await api('/api/accounts/boxes/delete', { method: 'POST', body: { from: name } });
-  alert(`已并入 ${result.moved} 个账号`);
-  refresh();
-};
-el('btn-box-default').onclick = async () => {
-  const name = prompt('默认盒子的显示名：', '') ?? '';
-  await api('/api/accounts/boxes/default-name', { method: 'POST', body: { to: name } });
-  refresh();
-};
 
 async function boot() {
   await refresh();

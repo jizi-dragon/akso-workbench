@@ -353,6 +353,11 @@ def rename_box(from_name: str, to_name: str) -> int:
     return count
 
 
+def create_box(name: str) -> None:
+    """新建一个（可为空的）记忆盒子（原 ql:boxes 空盒保留语义）。"""
+    _remember_box(name.strip())
+
+
 def delete_box(name: str) -> int:
     """删除盒子 = 并入默认盒子（原 clearBox 语义）。"""
     return rename_box(name, DEFAULT_BOX)

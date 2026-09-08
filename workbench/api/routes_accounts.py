@@ -126,6 +126,20 @@ def rename_box(body: BoxRenameBody) -> dict:
     return {"moved": moved, "boxes": svc.list_boxes()}
 
 
+class BoxCreateBody(BaseModel):
+    name: str = Field(..., min_length=1)
+
+
+@router.post("/boxes/create")
+def create_box(body: BoxCreateBody) -> dict:
+    """新建一个记忆盒子（可为空盒）。"""
+    try:
+        svc.create_box(body.name)
+    except svc.AccountError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"boxes": svc.list_boxes()}
+
+
 @router.post("/boxes/delete")
 def delete_box(body: BoxRenameBody) -> dict:
     """删除盒子 = 并入默认盒子。"""
