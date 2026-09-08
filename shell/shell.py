@@ -71,7 +71,7 @@ def main() -> None:
         try:
             import webview
 
-            webview.create_window(
+            window = webview.create_window(
                 "Akso Workbench", url, width=1440, height=920, min_size=(1100, 700),
             )
 

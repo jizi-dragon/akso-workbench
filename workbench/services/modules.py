@@ -23,15 +23,13 @@ logger = logging.getLogger("workbench.modules")
 BUILTIN_MODULES: list[dict[str, Any]] = [
     {
         "id": "workbench",
-        "title": "知识工作台（fork mogul）",
+        "title": "AI 工作台（fork mogul）",
         "runtime": "python",
         "mode": "native",
         "repoPath": None,
         "entry": None,
         "commands": {
-            "chat": {"description": "合规对话（SSE 流式）"},
-            "knowledge": {"description": "知识库管理 + 混合检索"},
-            "sync": {"description": "钉钉知识库增量同步"},
+            "chat": {"description": "AI 对话（SSE 流式）"},
         },
     },
     {

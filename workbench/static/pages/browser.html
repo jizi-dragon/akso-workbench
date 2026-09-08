@@ -19,6 +19,14 @@
       </header>
 
       <section class="mcard">
+        <h2>快速轮盘</h2>
+        <div class="wheel-wrap" id="wheel">
+          <div class="empty" style="width:100%">加载中…</div>
+        </div>
+        <p class="hint">沿袭 quick-login 轮盘：每个账号一个色点，点击直接启动对应托管会话；中心为在线数 / 账号数。</p>
+      </section>
+
+      <section class="mcard">
         <h2>账号会话</h2>
         <div class="card-wall" id="session-wall"><div class="empty" style="grid-column:1/-1">加载中…</div></div>
         <p class="hint">一账号 = 一个独立 Playwright BrowserContext（原生隔离）。登录成功/正常关闭即持久化 storage_state——下次免密直达首页，失效自动重登（quick-login「Cookie 袋」的原生等价物）。自动登录引擎：齐备门槛 → 提交前回读 → 即时填充 → 用户点击接管 → 失败让位。</p>

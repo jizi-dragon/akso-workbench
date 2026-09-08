@@ -102,9 +102,7 @@ function renderEmpty() {
   messagesEl().innerHTML = `
     <div class="empty-state">
       <div class="empty-hero">
-        <div class="hero-emblem">🛡</div>
-        <h1>MOGUL · 药企合规工作台</h1>
-        <p>深度理解 Akso 系统配置与公司知识库，给出符合 NMPA / FDA 监管要求的合规分析</p>
+        <h1 class="empty-line">今天的安排是什么？</h1>
       </div>
     </div>`;
 }
@@ -140,9 +138,9 @@ function assistantRow(content, createdAt, metricId) {
   const row = document.createElement("div");
   row.className = "message-row";
   row.innerHTML = `
-    <div class="message-avatar">M</div>
+    <div class="message-avatar">A</div>
     <div class="message-body">
-      <div class="message-meta"><b>MOGUL</b>${createdAt ? `<span>${formatTime(createdAt)}</span>` : ""}
+      <div class="message-meta"><b>AKSO</b>${createdAt ? `<span>${formatTime(createdAt)}</span>` : ""}
         <div class="msg-actions"></div>
       </div>
       <div class="bubble bubble-assistant"><div class="prose"></div></div>
@@ -200,10 +198,10 @@ async function sendMessage(text) {
   const assistantRowEl = document.createElement("div");
   assistantRowEl.className = "message-row";
   assistantRowEl.innerHTML = `
-    <div class="message-avatar">M</div>
+    <div class="message-avatar">A</div>
     <div class="message-body">
-      <div class="message-meta"><b>MOGUL</b><span>${formatTime(Date.now())}</span><div class="msg-actions"></div></div>
-      <div class="bubble bubble-assistant thinking-bubble"><span class="spin">◌</span> 正在分析合规要点…</div>
+      <div class="message-meta"><b>AKSO</b><span>${formatTime(Date.now())}</span><div class="msg-actions"></div></div>
+      <div class="bubble bubble-assistant thinking-bubble"><span class="spin">◌</span> 正在思考…</div>
     </div>`;
   el.appendChild(assistantRowEl);
   scrollToBottom();

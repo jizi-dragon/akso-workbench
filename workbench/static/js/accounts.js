@@ -44,11 +44,12 @@ async function loadAccounts() {
   }
   data.accounts.forEach((a, i) => {
     const color = COLORS[i % COLORS.length];
+    const chips = (a.tags || []).map((t) => `<span class="chip">${t}</span>`).join('');
     const card = document.createElement('div');
     card.className = 'acard';
     card.innerHTML = `
       <div class="row1">
-        <div class="avatar" style="background:${color}">${a.username.slice(0, 1).toUpperCase()}</div>
+        <div class="avatar" style="background:${color}; --ql-ring: ${color}55">${a.username.slice(0, 1).toUpperCase()}</div>
         <div>
           <div class="name">${a.username}</div>
           <div class="env">${a.env_name}${a.env_base_url ? ` · ${a.env_base_url}` : ''}</div>
@@ -56,9 +57,10 @@ async function loadAccounts() {
         <div style="flex:1"></div>
         <span class="status-badge ${a.has_password ? 'ok' : 'warn'}">${a.has_password ? '凭据就绪' : '无凭据'}</span>
       </div>
-      <div class="env">${a.role || '未设角色'}${a.tags?.length ? ` · ${a.tags.join(' / ')}` : ''}</div>
+      ${a.role ? `<div class="env">${a.role}</div>` : ''}
+      ${chips ? `<div class="chip-row">${chips}</div>` : ''}
       <div class="actions">
-        <a class="mbtn ghost" href="/static/pages/browser.html?account=${a.id}">🚀 托管浏览器</a>
+        <a class="mbtn ghost" href="/static/pages/browser.html?account=${a.id}">托管浏览器</a>
         <button class="mbtn danger">删除</button>
       </div>`;
     card.querySelector('button.danger').onclick = async () => {

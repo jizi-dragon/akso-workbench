@@ -14,7 +14,7 @@ def client() -> TestClient:
 
 
 EXPECTED_PREFIXES = (
-    "/api/conversations", "/api/settings", "/api/knowledge", "/api/sync", "/api/chat",
+    "/api/conversations", "/api/settings", "/api/chat",
     "/api/modules", "/api/insight", "/api/factory", "/api/accounts", "/api/browser", "/api/agent",
 )
 
@@ -50,7 +50,8 @@ def test_agent_tools_listed(client: TestClient) -> None:
     resp = client.get("/api/agent/tools")
     assert resp.status_code == 200
     names = {t["name"] for t in resp.json()["tools"]}
-    assert {"search_knowledge", "login_platform", "read_config", "run_insight"} <= names
+    assert {"login_platform", "read_config", "run_insight", "browser_status"} <= names
+    assert "search_knowledge" not in names  # 知识库功能已下线
 
 
 def test_agent_unknown_tool_404(client: TestClient) -> None:

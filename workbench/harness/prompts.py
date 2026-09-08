@@ -31,7 +31,5 @@ COMPLIANCE_SYSTEM_PROMPT = """你是「Mogul」，阿克索（Akso）实施工�
 - 回答宁可简洁，不可冗长编造。"""
 
 
-def build_system_prompt(knowledge_context: str) -> str:
-    if not knowledge_context:
-        return COMPLIANCE_SYSTEM_PROMPT
-    return f"{COMPLIANCE_SYSTEM_PROMPT}\n\n# 本地知识库检索结果（仅供参考，请自行判断相关性）\n{knowledge_context}"
+def build_system_prompt() -> str:
+    return COMPLIANCE_SYSTEM_PROMPT

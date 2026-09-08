@@ -1,4 +1,4 @@
-/** 设置视图：DeepSeek Key / 模型 / 温度 / Embedding 配置 */
+/** 设置视图：DeepSeek Key / 模型 / 温度 */
 
 import { api } from "./api.js";
 import { state } from "./app.js";
@@ -54,23 +54,6 @@ export function initSettings() {
     state.settings = result.settings;
     flashButton("btn-save-settings", "✓ 已保存");
   });
-
-  document.getElementById("btn-save-emb").addEventListener("click", async () => {
-    const result = await api.saveEmbedding({
-      apiKey: document.getElementById("set-emb-key").value.trim() || null,
-      model: document.getElementById("set-emb-model").value.trim() || null,
-      baseUrl: document.getElementById("set-emb-base").value.trim() || null,
-    });
-    state.settings = result.settings;
-    flashButton("btn-save-emb", "✓ 已保存");
-  });
-
-  document.getElementById("btn-test-emb").addEventListener("click", async () => {
-    const slot = document.getElementById("emb-test-result");
-    slot.innerHTML = '<div class="embed-test"><span class="spin">◌</span> 测试中…</div>';
-    const result = await api.testEmbedding();
-    slot.innerHTML = `<div class="embed-test ${result.ok ? "ok" : "fail"}">${result.ok ? "✓" : "⚠"} ${result.message}</div>`;
-  });
 }
 
 export function fillSettings() {
@@ -78,10 +61,6 @@ export function fillSettings() {
   document.getElementById("set-api-key").value = settings.apiKey || "";
   document.getElementById("set-temperature").value = settings.temperature ?? 0.7;
   document.getElementById("temp-value").textContent = Number(settings.temperature ?? 0.7).toFixed(1);
-  document.getElementById("set-emb-key").value = settings.embedding?.apiKey || "";
-  document.getElementById("set-emb-model").value = settings.embedding?.model || "qwen3.7-text-embedding";
-  document.getElementById("set-emb-base").value =
-    settings.embedding?.baseUrl || "https://dashscope.aliyuncs.com/compatible-mode/v1";
   paintModelGrid();
 }
 

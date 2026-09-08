@@ -23,15 +23,6 @@ export const api = {
   deleteConversation: (id) => jsonFetch(`/api/conversations/${id}`, { method: "DELETE" }),
   listMessages: (id) => jsonFetch(`/api/conversations/${id}/messages`),
   saveSettings: (body) => jsonFetch("/api/settings", { method: "PUT", body: JSON.stringify(body) }),
-  saveEmbedding: (body) => jsonFetch("/api/settings/embedding", { method: "PUT", body: JSON.stringify(body) }),
-  testEmbedding: () => jsonFetch("/api/settings/test-embedding", { method: "POST" }),
-  knowledge: () => jsonFetch("/api/knowledge"),
-  uploadDocument: (name, content) =>
-    jsonFetch("/api/knowledge/documents", { method: "POST", body: JSON.stringify({ name, content }) }),
-  getDocument: (id) => jsonFetch(`/api/knowledge/documents/${id}`),
-  deleteDocument: (id) => jsonFetch(`/api/knowledge/documents/${id}`, { method: "DELETE" }),
-  reindex: () => jsonFetch("/api/knowledge/reindex", { method: "POST" }),
-  search: (query) => jsonFetch("/api/search", { method: "POST", body: JSON.stringify({ query }) }),
   feedback: (metricId, helpful) =>
     jsonFetch("/api/feedback", { method: "POST", body: JSON.stringify({ metricId, helpful }) }),
 

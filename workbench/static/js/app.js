@@ -2,7 +2,6 @@
 
 import { api } from "./api.js";
 import { initChat, renderConversations, setChatContext } from "./chat.js";
-import { initKnowledge, refreshKnowledge } from "./knowledge.js";
 import { initSettings, fillSettings } from "./settings.js";
 
 export const state = {
@@ -12,7 +11,7 @@ export const state = {
   settings: {},
 };
 
-const SPLASH_STAGES = ["加载本地知识库", "校准合规语义引擎", "启动监管智能体"];
+const SPLASH_STAGES = ["连接本地服务", "加载工作台", "启动助手"];
 
 function cycleSplash() {
   let index = 0;
@@ -25,29 +24,15 @@ function cycleSplash() {
 }
 
 export function updateEngineStats() {
-  const s = state.stats;
   const el = document.getElementById("engine-stats");
-  if (el) el.textContent = `知识引擎在线 · ${s.documents ?? 0} 文件 / ${s.chunks ?? 0} 块`;
-  const count = document.getElementById("nav-knowledge-count");
-  if (count) count.textContent = String(s.documents ?? 0);
-  const adopt = document.getElementById("stat-adopt");
-  if (adopt) {
-    if (s.qaTotal > 0) {
-      adopt.hidden = false;
-      adopt.textContent = `采纳率 ${s.adoptRate ?? "—"}%`;
-      adopt.title = `近 ${s.qaTotal} 次问答`;
-    } else {
-      adopt.hidden = true;
-    }
-  }
+  if (el) el.textContent = "就绪";
 }
 
 export function switchView(name) {
-  for (const view of ["chat", "knowledge", "settings"]) {
+  for (const view of ["chat", "settings"]) {
     document.getElementById(`view-${view}`).hidden = view !== name;
     document.getElementById(`nav-${view}`).classList.toggle("active", view === name);
   }
-  if (name === "knowledge") refreshKnowledge();
   if (name === "settings") fillSettings();
 }
 
@@ -63,7 +48,6 @@ async function bootstrap() {
     setChatContext();
     initChat();
     initSettings();
-    initKnowledge();
   } catch (error) {
     const el = document.getElementById("splash-status-text");
     if (el) el.textContent = `初始化失败：${error.message}`;

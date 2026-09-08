@@ -841,3 +841,12 @@
 .thinking-bubble svg {
   color: var(--teal);
 }
+
+/* 对话空态：单行引导语（知识库视图下线后的轻量版） */
+.empty-hero .empty-line {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text-1);
+  letter-spacing: 0.5px;
+}

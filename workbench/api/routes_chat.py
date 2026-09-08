@@ -2,9 +2,8 @@
 
 对话流程（_chat_events）：
   1. 会话准备（新建/首条消息作标题）
-  2. 三层检索 → 上下文块注入系统提示词（记忆注入）
-  3. run_agent_loop 逐事件转 SSE
-  4. 收尾：持久化回答 + qa_metrics 度量
+  2. run_agent_loop 逐事件转 SSE
+  3. 收尾：持久化回答 + qa_metrics 度量
 """
 
 from __future__ import annotations
@@ -19,11 +18,11 @@ from pydantic import BaseModel
 
 from ..harness.loop import run_agent_loop
 from ..harness.prompts import build_system_prompt
+from ..harness.tools import default_registry
 from ..harness.types import AgentConfig
 from ..services import storage
 from ..services.deepseek import DeepSeekClient
 from ..services.settings import load_deepseek
-from .routes_knowledge import _search, registry
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -70,16 +69,10 @@ async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
     history = [*history, {"role": "user", "content": body.message}]
 
     started = time.perf_counter()
-    try:
-        search_result = await _search(body.message)
-    except Exception:  # noqa: BLE001 —— 检索失败不阻塞对话
-        search_result = {"hits": [], "contextBlock": "", "hitKind": "none"}
-    hit_kind = search_result["hitKind"]
-
-    yield _sse({"type": "start", "conversationId": conversation_id, "hitKind": hit_kind})
+    yield _sse({"type": "start", "conversationId": conversation_id})
 
     result: dict = {"content": "", "error": None}
-    async for sse in _stream_agent(history, cfg, search_result["contextBlock"], result):
+    async for sse in _stream_agent(history, cfg, result):
         yield sse
 
     error_message = result["error"]
@@ -88,14 +81,13 @@ async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
         final_content = "（模型未返回内容）"
     storage.insert_message(conversation_id, "assistant", final_content)
 
-    metric_id = _record_metric(body.message, hit_kind, started)
+    metric_id = _record_metric(body.message, started)
     yield _sse({
         "type": "done",
         "conversationId": conversation_id,
         "content": final_content,
         "metricId": metric_id,
         "titleUpdated": title_updated,
-        "hitKind": hit_kind,
         "latencyMs": int((time.perf_counter() - started) * 1000),
     })
 
@@ -115,19 +107,18 @@ def _prepare_conversation(body: ChatBody) -> tuple[str, bool]:
 async def _stream_agent(
     history: list[dict],
     cfg,
-    knowledge_context: str,
     result: dict,
 ) -> AsyncIterator[str]:
     """跑 Agent 循环并逐事件转发 SSE；把最终内容/错误写入 result 供调用方收尾。"""
     client = DeepSeekClient(cfg.api_key, model=cfg.model)
     agent_config = AgentConfig(
         temperature=cfg.temperature,
-        system_prompt=build_system_prompt(knowledge_context),
+        system_prompt=build_system_prompt(),
     )
 
     assistant_content = ""
     try:
-        async for event in run_agent_loop(history, client, registry, agent_config):
+        async for event in run_agent_loop(history, client, default_registry(), agent_config):
             if event["type"] == "token":
                 assistant_content += event["text"]
             elif event["type"] == "final":
@@ -141,9 +132,9 @@ async def _stream_agent(
         yield _sse({"type": "error", "message": f"错误：{result['error']}"})
 
 
-def _record_metric(question: str, hit_kind: str, started: float) -> str | None:
+def _record_metric(question: str, started: float) -> str | None:
     latency_ms = int((time.perf_counter() - started) * 1000)
     try:
-        return storage.insert_qa_metric(question, hit_kind, latency_ms)
+        return storage.insert_qa_metric(question, "none", latency_ms)
     except Exception:  # noqa: BLE001 —— 度量失败不影响主流程
         return None

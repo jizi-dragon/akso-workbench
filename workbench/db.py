@@ -4,13 +4,13 @@
 - 单连接 + 线程锁（本地单用户场景，足够且最简单）
 - 迁移机制沿用旧版的 _sqlx_migrations 表，保证同一个 mogul.db 在
   旧 Tauri 版与本 Python 版之间无缝互认（版本 1-4 已含知识工作台全部表）
-- embedding 向量以 JSON 文本存储于 TEXT 列，与旧版完全一致
+- 迁移 1-6 为 fork 历史（含已下线的知识库表结构），按不可变纪律保留；
+  迁移 7-9 为 Workbench 新增（账号库/任务台账/Agent 审计）
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import sqlite3
 import threading
 import time
@@ -294,13 +294,3 @@ def execute(sql: str, params: Iterable[Any] = ()) -> int:
         cursor = conn.execute(sql, tuple(params))
         conn.commit()
         return cursor.rowcount
-
-
-def parse_embedding(raw: str | None) -> list[float] | None:
-    if not raw:
-        return None
-    try:
-        data = json.loads(raw)
-        return data if isinstance(data, list) else None
-    except (ValueError, TypeError):
-        return None

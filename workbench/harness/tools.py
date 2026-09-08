@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime
 from html.parser import HTMLParser
@@ -223,77 +222,9 @@ def _extract_text(html: str) -> tuple[str, str]:
     return extractor.title.strip(), "\n".join(extractor.parts)
 
 
-class SearchKnowledgeArgs(BaseModel):
-    query: str = Field(description="检索查询：关键词、函数名、参数名或自然语言问题")
-    limit: int = Field(default=6, ge=1, le=20, description="返回条数上限")
-
-
-@tool(
-    "在本地知识库中检索文档块（精确 / 关键词 / 向量混合，含钉钉知识库镜像）。"
-    "回答知识类问题前应先调用；结果自带来源与更新时间，回答时须注明来源",
-    SearchKnowledgeArgs,
-)
-async def search_knowledge(args: SearchKnowledgeArgs) -> str:
-    from ..services import embedding, retrieval, storage  # 局部导入避免循环依赖
-    from ..services.settings import load_embedding
-
-    emb = load_embedding()
-
-    async def embed_query(text: str) -> list[float]:
-        return await embedding.embed_text(text, emb)
-
-    result = await retrieval.search_knowledge(
-        args.query,
-        storage.list_chunks(),
-        embed_query if emb.ready else None,
-        limit=args.limit,
-    )
-    hits = result["hits"]
-    if not hits:
-        return "本地知识库未命中相关内容（可尝试换关键词重查，或如实告知用户知识库暂无）。"
-
-    lines = [f"共 {len(hits)} 条命中："]
-    for index, hit in enumerate(hits):
-        extra = ""
-        if hit.get("updatedAt"):
-            extra += f" · 更新于 {datetime.fromtimestamp(hit['updatedAt'] / 1000):%Y-%m-%d}"
-        if hit.get("originUrl"):
-            extra += f" · 原文 {hit['originUrl']}"
-        lines.append(
-            f"{index + 1}. {hit['ref']}（{hit['method']}，相关度 {hit['score']:.2f}{extra}）\n"
-            f"{hit['content'][:280]}"
-        )
-    return "\n".join(lines)
-
-
-class ReadDingtalkDocArgs(BaseModel):
-    doc: str = Field(description="钉钉文档 URL 或 nodeId")
-
-
-@tool(
-    "实时读取钉钉知识库文档正文（Markdown）。当本地镜像可能过期、"
-    "需要核实最新原文、或用户要求查看钉钉文档时使用；回答须注明「实时读取于 <时间>」与原文链接",
-    ReadDingtalkDocArgs,
-)
-async def read_dingtalk_doc(args: ReadDingtalkDocArgs) -> str:
-    from ..services import ddkb  # 局部导入避免循环依赖
-
-    data = await asyncio.to_thread(ddkb.doc_read, args.doc)
-    markdown = data["markdown"]
-    truncated = len(markdown) > MAX_PAGE_CHARS
-    notice = "\n（正文过长，已截断）" if truncated else ""
-    body = markdown[:MAX_PAGE_CHARS] + ("…" if truncated else "")
-    return (
-        f"【{data['title']}】\n来源：{data['docUrl']}"
-        f"（实时读取于 {datetime.now():%Y-%m-%d %H:%M}）{notice}\n\n{body}"
-    )
-
-
 def default_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(get_current_time)
     registry.register(read_local_file)
     registry.register(read_web_page)
-    registry.register(search_knowledge)
-    registry.register(read_dingtalk_doc)
     return registry

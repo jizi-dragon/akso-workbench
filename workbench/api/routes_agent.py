@@ -1,14 +1,13 @@
 """Agent 工具层（阶段 3E）：mogul harness 风格的工具注册 + 审计。
 
-目标：自然语言 → 登录 / 读配置 / 写配置 / 查知识 全链路的工具底座。
+目标：自然语言 → 登录 / 读配置 / 写配置 / 查洞察 全链路的工具底座。
 本文件提供工具的 HTTP 调用面与审计；与 LLM 的对话循环由前端复用
 routes_chat 的 SSE 流（工具结果作为上下文块注入）。
 
 工具清单（命名对齐 docs/模块契约.md §8）：
-- search_knowledge   本地三层混合检索（fork mogul retrieval）
-- login_platform     akso-cc login（子进程，验证连通 + 预热 token）
-- read_config        eGMP 对象元数据只读（egmp.client，阶段 3A 内核）
-- run_insight        akso-cc understand（子进程封装）
+- login_platform     平台登录验证（egmp client 原生，预热 token）
+- read_config        eGMP 对象元数据只读（egmp.client）
+- run_insight        egmp.insight understand 三层理解报告
 - browser_status     托管浏览器会话状态墙
 """
 
@@ -34,18 +33,6 @@ class InvokeIn(BaseModel):
 
 
 # ---------------------------------------------------------------- 工具实现
-
-
-def _tool_search_knowledge(args: dict[str, Any]) -> dict:
-    import asyncio
-
-    from ..services import retrieval
-
-    query = str(args.get("query") or "").strip()
-    if not query:
-        raise ValueError("query 不能为空")
-    hits = asyncio.run(retrieval.search_knowledge(query, limit=int(args.get("limit") or 5)))
-    return {"hits": hits}
 
 
 def _tool_login_platform(args: dict[str, Any]) -> dict:
@@ -110,14 +97,9 @@ def _tool_browser_status(args: dict[str, Any]) -> dict:
 
 
 TOOLS: dict[str, dict[str, Any]] = {
-    "search_knowledge": {
-        "fn": _tool_search_knowledge,
-        "description": "本地知识库三层混合检索（精确/关键词/向量），返回带来源与更新时间的文档块",
-        "args": {"query": "string（必填）", "limit": "int，默认 5"},
-    },
     "login_platform": {
         "fn": _tool_login_platform,
-        "description": "用统一账号库的账号跑 akso-cc login，验证平台连通并预热 token",
+        "description": "用统一账号库的账号验证平台登录连通并预热 token",
         "args": {"account_id": "string（必填）"},
     },
     "read_config": {
