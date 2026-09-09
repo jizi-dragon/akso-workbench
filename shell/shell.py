@@ -1,8 +1,11 @@
 """pywebview 桌面壳：uvicorn 子进程 + 原生窗口（关闭窗口即退出）。
 
-用法：.venv/Scripts/pythonw.exe shell/shell.py   （无控制台；python.exe 亦可）
-- 服务以子进程运行（与窗口线程解耦：pythonw 的 stdout 限制、uvicorn 日志互不干扰）；
-- 无 pywebview 时自动降级：打开系统浏览器 + 保持服务直至 Ctrl+C。
+用法：
+- 源码态：.venv/Scripts/pythonw.exe shell/shell.py（无控制台；python.exe 亦可）
+- 打包态：dist 里的 AksoWorkbench.exe（PyInstaller onedir；服务以 --server
+  参数重入自身 exe，保持"窗口与服务的进程隔离"架构）
+
+- 无 pywebview 时自动降级：打开系统浏览器 + 保持服务直至退出。
 """
 
 from __future__ import annotations
@@ -14,35 +17,54 @@ import threading
 import time
 import webbrowser
 
+import uvicorn
+
 from workbench import config
 
-# pythonw 模式下 stdout/stderr 为 None：本模块的 print 兜底
+# pythonw 模式下 stdout/stderr 为 None：print 与 uvicorn 日志会静默崩溃，先兜底
 if sys.stdout is None:
     sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
 
+FROZEN = getattr(sys, "frozen", False)
+
 
 def _python_exe() -> str:
-    """venv 里与当前解释器同源的 python.exe（pythonw 的兄弟文件）。"""
+    """服务子进程解释器：源码态 = venv 的 python.exe（pythonw 的兄弟文件）。"""
     candidate = Path(sys.executable).with_name("python.exe")
     return str(candidate) if candidate.exists() else sys.executable
 
 
-from pathlib import Path  # noqa: E402 —— 置顶导入下方使用
+def _run_server_blocking() -> None:
+    uvicorn.run("workbench.api:app", host=config.HOST, port=config.PORT,
+                log_level="warning", factory=False)
 
 
 def _start_server_process() -> subprocess.Popen:
-    """uvicorn 子进程（独立于窗口生命周期；stdout/stderr 丢弃）。"""
-    return subprocess.Popen(
-        [
+    """服务子进程（独立于窗口生命周期；stdout/stderr 丢弃）。
+
+    打包态：自身 exe 以 --server 参数重入（onedir 内含完整运行时）。
+    源码态：venv 的 python -m uvicorn。
+    """
+    if FROZEN:
+        args = [sys.executable, "--server"]
+        cwd = str(Path(sys.executable).parent)
+    else:
+        args = [
             _python_exe(), "-m", "uvicorn", "workbench.api:app",
             "--host", config.HOST, "--port", str(config.PORT),
-        ],
+        ]
+        cwd = str(Path(__file__).resolve().parent.parent)
+    return subprocess.Popen(
+        args,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        cwd=str(Path(__file__).resolve().parent.parent),
+        cwd=cwd,
     )
+
+
+from pathlib import Path  # noqa: E402 —— 置顶导入下方使用
 
 
 def _wait_ready(timeout_s: float = 30.0) -> bool:
@@ -61,6 +83,11 @@ def _wait_ready(timeout_s: float = 30.0) -> bool:
 
 
 def main() -> None:
+    if "--server" in sys.argv:
+        # 打包态服务重入：运行 API 后阻塞（由父进程 kill_tree 回收）
+        _run_server_blocking()
+        return
+
     server = _start_server_process()
     try:
         if not _wait_ready():

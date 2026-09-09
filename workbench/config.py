@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from pathlib import Path
 
 APP_NAME = "AksoWorkbench"
@@ -64,8 +65,13 @@ def bootstrap_database() -> Path:
 HOST = os.environ.get("WORKBENCH_HOST") or os.environ.get("MOGUL_HOST", "127.0.0.1")
 PORT = int(os.environ.get("WORKBENCH_PORT") or os.environ.get("MOGUL_PORT", "18765"))
 
+# 打包态（PyInstaller）：资源解包到 sys._MEIPASS
+FROZEN = getattr(sys, "frozen", False)
+_BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+
 # 项目根（workbench/ 的上一级）：adapters/、tools/、临时产物目录的锚点
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# 打包态下 adapters 作为数据文件打进 _MEIPASS/adapters
+PROJECT_ROOT = _BUNDLE_DIR if FROZEN else Path(__file__).resolve().parent.parent
 ADAPTERS_DIR = Path(os.environ.get("WORKBENCH_ADAPTERS") or (PROJECT_ROOT / "adapters"))
 RUNTIME_DIR = DATA_DIR / "runtime"  # 子进程日志 / 蓝图暂存 / env 导出
 

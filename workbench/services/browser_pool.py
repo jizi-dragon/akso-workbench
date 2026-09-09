@@ -17,7 +17,9 @@ quick-login 能力的全家桶内化：
 
 from __future__ import annotations
 
+import os
 import queue
+import sys
 import threading
 from concurrent.futures import Future
 from dataclasses import dataclass, field
@@ -76,6 +78,11 @@ class BrowserPool:
     # --------------------------------------------------- 专职线程（Playwright 家）
 
     def _worker(self) -> None:
+        # 打包态：优先使用随包分发的 chromium（须在 sync_playwright 启动前设置）
+        if getattr(sys, "frozen", False):
+            bundled = Path(getattr(sys, "_MEIPASS", ".")) / "ms-playwright"
+            if bundled.exists():
+                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
         pw: Any = None
         browsers: dict[bool, Any] = {}
         sessions: dict[str, SessionEntry] = {}
