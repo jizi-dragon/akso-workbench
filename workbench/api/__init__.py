@@ -37,6 +37,7 @@ def _optional_routers(app: FastAPI) -> None:
         routes_accounts,
         routes_agent,
         routes_browser,
+        routes_extension,
         routes_factory,
         routes_insight,
         routes_modules,
@@ -49,6 +50,7 @@ def _optional_routers(app: FastAPI) -> None:
         ("accounts", routes_accounts),
         ("browser", routes_browser),
         ("agent", routes_agent),
+        ("extension", routes_extension),
     )
     for name, mod in registrations:
         router = getattr(mod, "router", None)

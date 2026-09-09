@@ -82,6 +82,37 @@ def _wait_ready(timeout_s: float = 30.0) -> bool:
     return False
 
 
+def _global_hotkey_loop() -> None:
+    """全局热键 Alt+Q：任何应用/页面下呼出账号轮盘（系统级注册，按键被本应用接管）。"""
+    import ctypes
+    import ctypes.wintypes
+
+    user32 = ctypes.windll.user32
+    MOD_ALT = 0x0001
+    MOD_NOREPEAT = 0x4000
+    VK_Q = 0x51
+    WM_HOTKEY = 0x0312
+    if not user32.RegisterHotKey(None, 1, MOD_ALT | MOD_NOREPEAT, VK_Q):
+        print("全局热键 Alt+Q 注册失败（可能被其他程序占用）")
+        return
+    msg = ctypes.wintypes.MSG()
+    while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+        if msg.message == WM_HOTKEY:
+            picker = f"http://{config.HOST}:{config.PORT}/static/pages/wheel-picker.html"
+            try:
+                import webview  # noqa: PLC0415 —— 热键线程内延迟导入
+
+                webview.create_window(
+                    "Akso 轮盘", picker, width=430, height=580,
+                    on_top=True, focus=True, frameless=False,
+                )
+            except Exception:
+                try:
+                    webbrowser.open(picker)
+                except OSError:
+                    pass
+
+
 def main() -> None:
     if "--server" in sys.argv:
         # 打包态服务重入：运行 API 后阻塞（由父进程 kill_tree 回收）
@@ -119,6 +150,8 @@ def main() -> None:
                     pass
 
             threading.Thread(target=_health_check, daemon=True).start()
+            if sys.platform == "win32":
+                threading.Thread(target=_global_hotkey_loop, daemon=True).start()
             webview.start()  # 阻塞至窗口关闭
             return
         except ImportError:

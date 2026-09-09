@@ -1,0 +1,217 @@
+/* 账号轮盘独立小窗（v3.9 Hub 切盒 + 账号色扇区）——页面内无任何窗口控制元素，Esc 关闭 */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background:
+    radial-gradient(720px 420px at 78% -12%, rgba(30, 111, 255, 0.12), transparent 60%),
+    radial-gradient(620px 380px at 8% 108%, rgba(124, 92, 255, 0.09), transparent 55%),
+    #F4F7FD;
+  overflow: hidden;
+}
+
+.stage {
+  width: min(92vmin, 660px);
+  padding: 16px;
+}
+
+/* ---- 轮盘容器 ---- */
+.wheel-root {
+  width: 100%;
+  transition: opacity 0.18s ease, transform 0.22s ease;
+}
+.wheel-root:not(.in) {
+  opacity: 0.35;
+  transform: scale(0.985) rotate(3deg);
+}
+
+.sector-wheel svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 26px 60px rgba(23, 42, 84, 0.16)) drop-shadow(0 2px 10px rgba(23, 42, 84, 0.08));
+}
+
+/* ---- 右侧固定装饰轨道：120° 弧 + 盒子节点（半径/粗细/渐变恒定） ---- */
+.box-track {
+  fill: none;
+  stroke: url(#qlBoxGrad);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+.box-node {
+  fill: #b9c4d8;
+  opacity: 0.55;
+}
+.box-node-on-g {
+  /* 高亮节点 + 盒名标签（整体随切盒滑动） */
+}
+.box-node-on {
+  fill: #1e6fff;
+  stroke: #ffffff;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 6px rgba(30, 111, 255, 0.55));
+}
+.box-node-label {
+  fill: #64748b;
+  font-size: 15px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: #ffffff;
+  stroke-width: 3;
+}
+
+/* ---- 扇区（按账号色着色） ---- */
+.sector {
+  cursor: pointer;
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  transform: scale(0.96);
+  opacity: 0;
+  transition:
+    transform 0.34s cubic-bezier(0.22, 1.2, 0.36, 1),
+    opacity 0.3s ease;
+  transition-delay: var(--d, 0s);
+}
+.sector-wheel.in .sector {
+  opacity: 1;
+  transform: scale(1);
+}
+.sector:hover {
+  transform: scale(1.016);
+  transition-delay: 0s;
+}
+
+.sector-hit {
+  fill: color-mix(in srgb, var(--acc, #1e6fff) 7%, #ffffff);
+  stroke: color-mix(in srgb, var(--acc, #1e6fff) 26%, #e4eaf6);
+  stroke-width: 1.6;
+  transition: fill 0.16s ease, stroke 0.16s ease;
+}
+.sector:hover .sector-hit,
+.sector.hot .sector-hit {
+  fill: color-mix(in srgb, var(--acc, #1e6fff) 20%, #ffffff);
+  stroke: var(--acc, #1e6fff);
+}
+
+.sector-label {
+  font-size: 15px;
+  font-weight: 650;
+  fill: #1b2a4a;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  transition: fill 0.16s ease;
+}
+.sector:hover .sector-label {
+  fill: var(--acc, #1e6fff);
+}
+
+.sector-num circle {
+  fill: #ffffff;
+  stroke: color-mix(in srgb, var(--acc, #1e6fff) 30%, #e4eaf6);
+  stroke-width: 1.2;
+  transition: stroke 0.16s ease, fill 0.16s ease;
+}
+.sector:hover .sector-num circle {
+  fill: var(--acc, #1e6fff);
+  stroke: var(--acc, #1e6fff);
+}
+.sector-num text {
+  font-size: 11px;
+  font-weight: 700;
+  fill: #66759b;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  transition: fill 0.16s ease;
+}
+.sector:hover .sector-num text {
+  fill: #ffffff;
+}
+
+.sector-dot {
+  fill: #cbd5e1;
+  pointer-events: none;
+  transition: fill 0.16s ease;
+}
+.sector-dot.on {
+  fill: #22c55e;
+  filter: drop-shadow(0 0 4px rgba(34, 197, 94, 0.75));
+  animation: ql-pulse 2.4s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes ql-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* ---- 中心 Hub（点击切盒） ---- */
+.hub-click {
+  cursor: pointer;
+}
+.hub-bg {
+  fill: #ffffff;
+  stroke: #e4eaf6;
+  stroke-width: 1.5;
+  transition: stroke 0.16s ease;
+}
+.hub-click:hover .hub-bg {
+  stroke: #1e6fff;
+}
+.hub-box {
+  font-size: 15px;
+  font-weight: 700;
+  fill: #1b2a4a;
+  letter-spacing: 0.04em;
+}
+.hub-num {
+  font-size: 46px;
+  font-weight: 800;
+  fill: #1b2a4a;
+  font-variant-numeric: tabular-nums;
+}
+.hub-num .den {
+  font-size: 16px;
+  font-weight: 600;
+  fill: #66759b;
+  letter-spacing: 0.04em;
+}
+.hub-sub {
+  font-size: 11px;
+  fill: #66759b;
+  letter-spacing: 0.05em;
+}
+.hub-click:hover .hub-sub {
+  fill: #1e6fff;
+}
+
+/* ---- 空态 ---- */
+.hub-go {
+  cursor: pointer;
+}
+.hub-go-rect {
+  fill: #1e6fff;
+  transition: fill 0.15s ease;
+}
+.hub-go:hover .hub-go-rect {
+  fill: #185ed6;
+}
+.hub-go-text {
+  fill: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+}

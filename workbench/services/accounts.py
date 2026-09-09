@@ -397,6 +397,7 @@ def export_backup() -> dict[str, Any]:
         },
         "accounts": [
             {
+                "id": a["id"],
                 "envBaseUrl": a.get("env_base_url") or "",
                 "username": a["username"],
                 "passwordEnc": db.query_one(

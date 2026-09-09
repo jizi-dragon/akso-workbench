@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../theme.css" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="pop">
+      <header class="brand">
+        <span class="brand-ring" aria-hidden="true"><i></i></span>
+        <div class="brand-text">
+          <h1>QuickLogin</h1>
+          <p>多账号并行 · 纯浏览器隔离</p>
+        </div>
+        <span class="ver" id="ext-version">v—</span>
+      </header>
+
+      <section class="stats">
+        <div class="stat">
+          <b id="stat-accounts">—</b>
+          <span>账号</span>
+        </div>
+        <i class="divider"></i>
+        <div class="stat stat-online">
+          <b id="stat-online">—</b>
+          <span>在线</span>
+        </div>
+        <i class="divider"></i>
+        <div class="stat">
+          <b id="stat-sites">—</b>
+          <span>授权站点</span>
+        </div>
+      </section>
+
+      <button id="open-parallel" class="launch" type="button">
+        <span class="launch-ico" aria-hidden="true">
+          <svg viewBox="0 0 16 16" width="15" height="15">
+            <rect x="1.5" y="1.5" width="6" height="6" rx="1.8" fill="currentColor" opacity=".9" />
+            <rect x="8.5" y="1.5" width="6" height="6" rx="1.8" fill="currentColor" opacity=".55" />
+            <rect x="1.5" y="8.5" width="6" height="6" rx="1.8" fill="currentColor" opacity=".55" />
+            <rect x="8.5" y="8.5" width="6" height="6" rx="1.8" fill="currentColor" opacity=".9" />
+          </svg>
+        </span>
+        <span class="launch-text">
+          <b>打开并行管理页</b>
+          <i>添加账号 · 授权站点 · 管理并行标签</i>
+        </span>
+        <span class="launch-arrow" aria-hidden="true">→</span>
+      </button>
+
+      <footer class="foot">
+        <span><kbd>Alt+Q</kbd> 呼出账号轮盘</span>
+        <i></i>
+        <span>轮盘内点击扇区即可切换</span>
+      </footer>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

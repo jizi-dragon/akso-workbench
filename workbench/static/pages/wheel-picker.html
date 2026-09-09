@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Akso 轮盘</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body {
+        font-family: "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", sans-serif;
+        background: rgba(18, 28, 46, 0.92); color: #eef4fc;
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 14px; height: 100%;
+        user-select: none; overflow: hidden;
+      }
+      h1 { font-size: 15px; font-weight: 600; color: rgba(255,255,255,.85); margin: 0; letter-spacing: 2px; }
+      ul { list-style: none; margin: 0; padding: 0; width: min(360px, 86%); max-height: 70%;
+           overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+      li {
+        display: flex; align-items: center; gap: 10px;
+        background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+        border-radius: 12px; padding: 11px 14px; cursor: pointer;
+        transition: all .13s cubic-bezier(.22,1,.36,1);
+      }
+      li:hover { background: rgba(62,118,210,.35); border-color: rgba(255,255,255,.45); transform: translateX(4px); }
+      .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+      .name { font-size: 14px; font-weight: 600; flex: 1; }
+      .env { font-size: 11px; color: rgba(255,255,255,.55); }
+      .num { font-size: 11px; color: rgba(255,255,255,.5); font-family: Consolas, monospace; }
+      .tip { font-size: 11px; color: rgba(255,255,255,.45); }
+      .empty { color: rgba(255,255,255,.6); font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <h1>账号轮盘 · Alt+Q</h1>
+    <ul id="list"><li class="empty">加载中…</li></ul>
+    <span class="tip">点击账号 → Chrome 切换到对应页签（quick-login 扩展执行） · Esc 关闭</span>
+    <script type="module">
+      const COLORS = ['#1E6FFF', '#0FA3B1', '#7C5CFF', '#FF7A1A', '#22C55E'];
+      const list = document.getElementById('list');
+      let accountIds = [];
+
+      async function postCommand(type, payload) {
+        await fetch('/extension/commands', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, payload }),
+        });
+      }
+
+      async function render() {
+        const data = await fetch('/api/accounts').then((r) => r.json());
+        accountIds = data.accounts.map((a) => a.id);
+        list.innerHTML = '';
+        if (!data.accounts.length) {
+          list.innerHTML = '<li class="empty">暂无账号——请在账号中心添加</li>';
+          return;
+        }
+        data.accounts.forEach((a, i) => {
+          const li = document.createElement('li');
+          li.innerHTML = `
+            <span class="dot" style="background:${COLORS[i % COLORS.length]}"></span>
+            <span class="name">${a.username}</span>
+            <span class="env">${a.env_name || ''}</span>
+            <span class="num">${i + 1 < 10 ? i + 1 : ''}</span>`;
+          li.onclick = async () => {
+            await postCommand('par.open', { accountId: a.id });
+            window.close();
+          };
+          list.appendChild(li);
+        });
+      }
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') window.close();
+        const num = Number(e.key);
+        if (num >= 1 && num <= 9 && accountIds[num - 1]) {
+          postCommand('par.open', { accountId: accountIds[num - 1] }).then(() => window.close());
+        }
+      });
+
+      render();
+      setInterval(render, 2000);
+    </script>
+  </body>
+</html>
