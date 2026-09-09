@@ -92,6 +92,14 @@ class BrowserError(RuntimeError):
     """托管浏览器操作失败。"""
 
 
+class _CdpState:
+    """cdp 模式的 worker 级状态：Playwright 实例（单线程单实例！）+ 连接池。"""
+
+    def __init__(self) -> None:
+        self.pw: Any = None
+        self.connections: list[Any] = []
+
+
 class BrowserPool:
     """进程级单例（由 get_pool() 获取）。所有 Playwright 操作经专职线程串行执行。"""
 
@@ -172,21 +180,13 @@ class BrowserPool:
     @staticmethod
     def _ensure_browser(pw: Any, browsers: dict[bool, Any], headful: bool) -> Any:
         if SESSION_MODE == "cdp":
-            # 复用 Electron 壳的 Chromium：CDP 反向接管（headful/headless 共用壳实例）
-            if browsers.get(True) is not None:
-                return browsers[True]
-            if pw is None:
-                try:
-                    from playwright.sync_api import sync_playwright
-                except ImportError as exc:
-                    raise BrowserError("playwright 未安装：pip install playwright") from exc
-                pw = sync_playwright().start()
-            try:
-                browsers[True] = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
-            except Exception as exc:  # noqa: BLE001
-                raise BrowserError(
-                    f"CDP 连接失败（Electron 壳未运行或调试端口 {_CDP_PORT} 未开）：{exc}"
-                ) from exc
+            # 复用 Electron 壳的 Chromium：CDP 反向接管。
+            # 实测（Electron 33）：窗口先于 connect 存在才可见——因此 cdp 模式下
+            # 这里只负责初始化状态持有者，真正的 connect 在 _do_open_cdp 里
+            # 于"开户之后"执行（连接按开户次数追加，旧连接的会话句柄保持有效）。
+            # 注意：Playwright 实例缓存在持有者上——同线程第二个 sync 实例会死锁。
+            if not isinstance(browsers.get(True), _CdpState):
+                browsers[True] = _CdpState()
             return browsers[True]
         if browsers.get(headful) is not None:
             return browsers[headful]
@@ -254,7 +254,7 @@ class BrowserPool:
         browser = self._ensure_browser(pw, browsers, headful)
 
         if SESSION_MODE == "cdp":
-            return self._do_open_cdp(browser, sessions, account, account_id)
+            return self._do_open_cdp(pw, browser, sessions, account, account_id)
 
         state_path = self._state_path(account_id)
         has_saved = state_path.exists()
@@ -295,20 +295,40 @@ class BrowserPool:
             entry.detail = f"页面加载失败：{exc}"
         return entry.snapshot()
 
-    def _do_open_cdp(self, browser: Any, sessions: dict[str, SessionEntry],
+    def _do_open_cdp(self, pw: Any, state: Any, sessions: dict[str, SessionEntry],
                      account: dict[str, Any], account_id: str) -> dict[str, Any]:
-        """cdp 模式开户：壳建分区窗（persist:acc-<id>）→ CDP 定位 blank 标记页 → 导航平台。"""
+        """cdp 模式开户：壳建分区窗（persist:acc-<id>）→ 连接 CDP → 定位 blank 标记页 → 导航平台。
+
+        连接发生在开户之后（实测窗口先于 connect 存在才可被 Playwright 挂接），
+        每次开户追加一条连接；旧连接保持存活，其会话句柄继续有效。
+        """
         base_url = (account.get("env_base_url") or "").strip()
         window_id = f"acc-{account_id}"
         resp = _control_post("/windows", {"windowId": window_id})
         if not resp or not resp.get("ok"):
             raise BrowserError("会话窗口创建失败（Electron 壳控制服务 18767 不可达）")
+        time.sleep(0.5)  # 等 BrowserWindow 完成创建与首次 loadURL
 
+        if state.pw is None:
+            try:
+                from playwright.sync_api import sync_playwright
+            except ImportError as exc:
+                raise BrowserError("playwright 未安装：pip install playwright") from exc
+            state.pw = sync_playwright().start()
+        try:
+            conn = state.pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
+        except Exception as exc:  # noqa: BLE001
+            raise BrowserError(
+                f"CDP 连接失败（Electron 壳未运行或调试端口 {_CDP_PORT} 未开）：{exc}"
+            ) from exc
+        state.connections.append(conn)
+
+        # 定位壳刚开的窗（blank 标记页 → 之后由这里导航到平台）
         marker = f"/static/blank.html?w={window_id}"
         page: Any = None
-        deadline = time.time() + 10
+        deadline = time.time() + 8
         while page is None and time.time() < deadline:
-            for ctx in browser.contexts:
+            for ctx in conn.contexts:
                 for pg in ctx.pages:
                     if marker in str(pg.url):
                         page = pg
@@ -342,7 +362,17 @@ class BrowserPool:
                     entry.status = "error"
                     entry.detail = "自动登录引擎启动失败（页面无登录表单？）"
             else:
-                self._focus(entry)
+                # 平台前端异步鉴权：稍候复核，避免 online→自愈 的状态抖动
+                time.sleep(2.5)
+                if self._looks_like_login(page):
+                    entry.status = "logging_in"
+                    entry.restored = False
+                    entry.detail = "分区登录态被平台异步鉴权拒绝，自动登录中"
+                    if not autologin.start(page, username, password):
+                        entry.status = "error"
+                        entry.detail = "自动登录引擎启动失败（页面无登录表单？）"
+                else:
+                    self._focus(entry)
         except Exception as exc:  # noqa: BLE001
             entry.status = "error"
             entry.detail = f"页面加载失败：{exc}"
@@ -478,11 +508,26 @@ class BrowserPool:
             for entry in list(sessions.values()):
                 self._close_entry(entry)
             sessions.clear()
-            for browser in list(browsers.values()):
-                try:
-                    browser.close()
-                except Exception:  # noqa: BLE001
-                    pass
+            for state in list(browsers.values()):
+                # cdp 模式：值是 _CdpState（连接池 + pw 实例）；local 模式：单个 browser
+                if isinstance(state, _CdpState):
+                    for conn in state.connections:
+                        try:
+                            conn.close()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    state.connections.clear()
+                    try:
+                        if state.pw is not None:
+                            state.pw.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    state.pw = None
+                else:
+                    try:
+                        state.close()
+                    except Exception:  # noqa: BLE001
+                        pass
             browsers.clear()
 
         self._submit(job)
