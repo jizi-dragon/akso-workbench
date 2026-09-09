@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import webbrowser
+from typing import Any
 
 import uvicorn
 
