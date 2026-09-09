@@ -71,6 +71,7 @@ class SessionEntry:
     headful: bool = False
     heal_count: int = 0
     autologin_state: dict[str, Any] | None = None
+    monitor: Any = None  # egmp.monitor.MonitorSession（监听录制，生命周期随会话）
     history: list[dict[str, Any]] = field(default_factory=list)
 
     def snapshot(self) -> dict[str, Any]:
@@ -85,6 +86,8 @@ class SessionEntry:
             "heal_count": self.heal_count,
             "autologin": self.autologin_state,
             "has_token": bool(self.token_capture and self.token_capture.latest()),
+            "monitoring": bool(self.monitor is not None and getattr(self.monitor, "_active", False)),
+            "monitor_log": (str(self.monitor.log_path) if self.monitor is not None else None),
         }
 
 
@@ -124,7 +127,17 @@ class BrowserPool:
         while True:
             future, job = self._jobs.get()
             try:
-                future.set_result(job(pw, browsers, sessions))
+                result = job(pw, browsers, sessions)
+                # 监听录制补捞：sync-Playwright 的事件回调内禁止连接调用（重入死锁），
+                # 故响应体/动作缓冲在"作业间隙"（此处）统一出栈
+                for entry in sessions.values():
+                    monitor = entry.monitor
+                    if monitor is not None and getattr(monitor, "_active", False):
+                        try:
+                            monitor.drain()
+                        except Exception:  # noqa: BLE001 —— 补捞失败不影响主流程
+                            pass
+                future.set_result(result)
             except Exception as exc:  # noqa: BLE001 —— 异常回传给提交方
                 future.set_exception(exc)
 
@@ -245,9 +258,11 @@ class BrowserPool:
 
         old = sessions.get(account_id)
         if old is not None and old.context is not None:
-            if old.status == "online":
-                self._focus(old)  # 切换身份 = 聚焦已有窗口
-            return {**old.snapshot(), "reused": True}
+            if old.status in {"online", "logging_in", "launching"}:
+                # 已有活动会话（含登录中）= 复用，禁止重复开户（会二次连接 CDP 抢同一窗）
+                if old.status == "online":
+                    self._focus(old)
+                return {**old.snapshot(), "reused": True}
 
         username = account["username"]
         password = accounts.reveal_password(account_id)
@@ -500,6 +515,55 @@ class BrowserPool:
         def job(_pw: Any, _browsers: dict[bool, Any], sessions: dict[str, SessionEntry]) -> str | None:
             entry = sessions.get(account_id)
             return entry.token_capture.latest() if entry and entry.token_capture else None
+
+        return self._submit(job)
+
+    # ------------------------------------------------- 监听录制（Monitor 接入）
+
+    def monitor_start(self, account_id: str) -> dict[str, Any]:
+        """开始监听：确保托管会话在线（内置 Chromium），并在其页面挂载录制引擎。
+
+        浏览器分配政策（用户定稿）：监听/自动化 = 应用内置 Chromium（cdp 模式下
+        即 Electron 壳的 Chromium）；人工快捷登录 = 用户 Chrome（扩展指令）。
+        """
+
+        def job(pw: Any, browsers: dict[bool, Any], sessions: dict[str, SessionEntry]) -> dict[str, Any]:
+            from datetime import datetime
+
+            from .. import config
+            from .egmp.monitor import MonitorSession
+
+            entry = sessions.get(account_id)
+            if entry is None or entry.context is None or entry.page is None:
+                self._do_open(pw, browsers, sessions, account_id, True)
+                entry = sessions.get(account_id)
+            if entry is None or entry.page is None:
+                raise BrowserError("托管会话未就绪，无法开始监听")
+            if entry.monitor is not None and getattr(entry.monitor, "_active", False):
+                return {"monitoring": True, "log": str(entry.monitor.log_path),
+                        "stats": entry.monitor.stats, **entry.snapshot()}
+
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            output_dir = config.RUNTIME_DIR / "monitor" / f"{account_id[:8]}-{stamp}"
+            recorder = MonitorSession(entry.page, output_dir)
+            recorder.start()
+            entry.monitor = recorder
+            return {"monitoring": True, "log": str(recorder.log_path),
+                    "stats": recorder.stats, **entry.snapshot()}
+
+        return self._submit(job, timeout=90)
+
+    def monitor_stop(self, account_id: str) -> dict[str, Any]:
+        """停止监听：落盘 monitor-log.json / checkpoints / filter-stats（会话保留）。"""
+
+        def job(_pw: Any, _browsers: dict[bool, Any], sessions: dict[str, SessionEntry]) -> dict[str, Any]:
+            entry = sessions.get(account_id)
+            if entry is None or entry.monitor is None:
+                raise BrowserError("该账号没有进行中的监听")
+            recorder = entry.monitor
+            recorder.stop()
+            entry.monitor = None
+            return {"stopped": True, "stats": recorder.stats, "log": str(recorder.log_path)}
 
         return self._submit(job)
 

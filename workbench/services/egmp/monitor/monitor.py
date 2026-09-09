@@ -73,7 +73,14 @@ ACTION_BUFFER_JS = """
 
 
 class MonitorSession:
-    """一次录制会话：page 监听 → monitor-log.json（运行中纯数组覆盖写）。"""
+    """一次录制会话：page 监听 → monitor-log.json（运行中纯数组覆盖写）。
+
+    sync-Playwright 约束（血泪）：事件回调（request/response）内禁止再调连接方法
+    （response.text() / page.evaluate 都是重入——会死锁 worker 线程）。因此：
+    - 回调只做内存入队（response 对象延迟补捞）；
+    - 真正的响应体抓取与动作缓冲出栈由 drain() 完成，调用方须在
+      worker 线程的"作业间隙"（非事件分发中）周期调用。
+    """
 
     def __init__(self, page: Any, output_dir: Path,
                  on_log: Callable[[str], None] | None = None) -> None:
@@ -86,6 +93,8 @@ class MonitorSession:
         self.stats = {"total": 0, "dropped": 0, "trimmed": 0, "full": 0}
         self._lock = threading.Lock()
         self._on_log = on_log or (lambda line: None)
+        self._pending_bodies: list[tuple[dict[str, Any], Any]] = []  # (entry, response)
+        self._actions_dirty = False  # 动作缓冲待出栈标记
         self._active = True
 
     def start(self) -> None:
@@ -115,14 +124,14 @@ class MonitorSession:
         except Exception:  # noqa: BLE001
             pass
         with self._lock:
-            actions = self._drain_actions()
+            self._actions_dirty = True
             self.entries.append({
                 "method": method, "path": path, "url": url,
                 "timestamp": int(time.time() * 1000),
                 "direction": "request",
                 "postData": post_data,
                 "known": verdict == "RECORD_TRIMMED",
-                "precedingActions": actions,
+                "precedingActions": None,  # drain() 时统一补捞（避免事件内 evaluate）
             })
 
     def _on_response(self, response: Any) -> None:
@@ -132,22 +141,41 @@ class MonitorSession:
         with self._lock:
             entry = next((e for e in reversed(self.entries)
                           if e["url"] == url and e.get("body") is None), None)
-        if entry is None:
-            return
-        body: Any = None
-        try:
-            body = response.text()
-        except Exception:  # noqa: BLE001
-            pass
-        entry["status"] = response.status
-        entry["body"] = trim_body(body) if entry["known"] else body
+            if entry is None:
+                return
+            entry["status"] = response.status
+            # 响应体不在此处抓取（重入禁令）——登记后由 drain() 补捞
+            self._pending_bodies.append((entry, response))
 
-    def _drain_actions(self) -> list[dict[str, Any]]:
-        try:
-            buffer = self.page.evaluate("() => window.__aksoActionBuffer ? window.__aksoActionBuffer.splice(0) : []")
-            return list(buffer)[-5:]
-        except Exception:  # noqa: BLE001
-            return []
+    def drain(self) -> None:
+        """作业间隙调用（worker 线程、非事件分发中）：补捞动作缓冲与响应体。"""
+        if not self._active:
+            return
+        # 1) 动作缓冲出栈 → 挂到最近的无动作条目
+        if self._actions_dirty:
+            self._actions_dirty = False
+            try:
+                buffer = list(self.page.evaluate(
+                    "() => window.__aksoActionBuffer ? window.__aksoActionBuffer.splice(0) : []"
+                ))[-5:]
+            except Exception:  # noqa: BLE001 —— 页面可能正在跳转
+                buffer = []
+            with self._lock:
+                for entry in reversed(self.entries):
+                    if entry.get("precedingActions") is None:
+                        entry["precedingActions"] = buffer
+                    else:
+                        break
+        # 2) 响应体补捞（可能已被浏览器丢弃——尽力而为）
+        with self._lock:
+            pending, self._pending_bodies = self._pending_bodies, []
+        for entry, response in pending:
+            try:
+                body: Any = response.text()
+            except Exception:  # noqa: BLE001
+                body = None
+            with self._lock:
+                entry["body"] = trim_body(body) if entry["known"] else body
 
     def checkpoint(self, kind: str, **event: Any) -> None:
         with self._lock:

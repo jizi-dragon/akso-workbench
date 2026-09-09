@@ -248,6 +248,29 @@ function closeDialog(d) {
   }, 160);
 }
 
+/* 浏览器分配政策（用户定稿）：
+   快捷登录 = 用户 Chrome（扩展指令 par.open + 拉起 Chrome）；
+   监听/自动化 = 应用内置 Chromium（browser_pool，cdp 模式 = Electron 壳）。 */
+async function quickLogin(accountId) {
+  try {
+    await api('/extension/launch-chrome', { method: 'POST' });
+  } catch { /* 壳不可达时仍尝试指令（扩展可能已在轮询） */ }
+  await postExtCommand('par.open', { accountId });
+}
+
+async function monitorToggle(accountId, active) {
+  try {
+    if (active) {
+      await api('/api/monitor/stop', { method: 'POST', body: { account_id: accountId } });
+    } else {
+      await api('/api/monitor/start', { method: 'POST', body: { account_id: accountId } });
+    }
+  } catch (e) {
+    alert(`监听操作失败：${e.message}`);
+  }
+  refresh();
+}
+
 /* ———— 账号编辑（查改） ———— */
 
 let editTargetId = null;
@@ -472,6 +495,7 @@ function renderCards(accounts, sessions) {
     }
     if (savedCache.get(a.id)) chips.push('<span class="chip">已保存登录态</span>');
     if (s && s.has_token) chips.push('<span class="chip">已捕获 token</span>');
+    if (s && s.monitoring) chips.push('<span class="chip chip-active">监听中</span>');
     const boxName = (a.box || '').trim();
     chips.push(`<span class="chip">盒·${boxName || '默认'}</span>`);
     for (const t of a.tags || []) chips.push(`<span class="chip">${t}</span>`);
@@ -492,10 +516,11 @@ function renderCards(accounts, sessions) {
       ${chips.length ? `<div class="chip-row">${chips.join('')}</div>` : ''}
       ${s && (s.title || s.detail) ? `<div class="env">${s.title || ''}${s.detail ? ` · ${s.detail}` : ''}</div>` : ''}
       <div class="acard-actions-primary">
+        <button class="mbtn" data-act="quicklogin" data-id="${a.id}" title="经 quick-login 扩展，在你的 Chrome 中打开并切换到该账号">快捷登录</button>
         ${s && s.status !== 'stopped'
-          ? `<button class="mbtn" data-act="focus" data-id="${a.id}" title="把该账号的窗口带到前台">聚焦窗口</button>
-             <button class="mbtn ghost" data-act="close" data-id="${a.id}">关闭会话</button>`
-          : `<button class="mbtn" data-act="open" data-id="${a.id}">启动会话</button>`}
+          ? `<button class="mbtn ghost" data-act="focus" data-id="${a.id}" title="聚焦内置 Chromium 会话窗">聚焦</button>
+             <button class="mbtn ghost" data-act="close" data-id="${a.id}">关闭</button>`
+          : `<button class="mbtn ghost" data-act="monitor" data-id="${a.id}" title="在内置 Chromium 会话上开始监听录制">监听会话</button>`}
       </div>
       <div class="acard-actions-secondary">
         <button class="link-btn" data-act="edit" data-id="${a.id}">编辑</button>
@@ -504,6 +529,11 @@ function renderCards(accounts, sessions) {
           title="加入/移出配置池（洞察/工厂取用）">配置池</button>
         <button class="link-btn ${poolList(a.pool).includes('monitor') ? 'link-on' : ''}" data-act="pool" data-id="${a.id}" data-role="monitor"
           title="加入/移出监听池（Monitor 取用）">监听池</button>
+        ${s && s.monitoring
+          ? `<button class="link-btn link-on" data-act="monitor" data-id="${a.id}">停止监听</button>`
+          : (s && s.status !== 'stopped'
+            ? `<button class="link-btn" data-act="monitor" data-id="${a.id}">开始监听</button>`
+            : '')}
         ${savedCache.get(a.id) ? `<button class="link-btn" data-act="forget" data-id="${a.id}" data-name="${a.username}">忘记会话</button>` : ''}
         <button class="link-btn link-danger" data-act="del" data-id="${a.id}" data-name="${a.username}">删除</button>
       </div>`;
@@ -511,7 +541,11 @@ function renderCards(accounts, sessions) {
       btn.onclick = async () => {
         btn.disabled = true;
         try {
-          if (btn.dataset.act === 'open') {
+          if (btn.dataset.act === 'quicklogin') {
+            await quickLogin(a.id);
+          } else if (btn.dataset.act === 'monitor') {
+            await monitorToggle(a.id, Boolean(s && s.monitoring));
+          } else if (btn.dataset.act === 'open') {
             await openAccount(a.id);
           } else if (btn.dataset.act === 'focus') {
             await api(`/api/browser/focus/${a.id}`, { method: 'POST' });

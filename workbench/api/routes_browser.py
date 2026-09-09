@@ -50,6 +50,20 @@ def close_account(account_id: str) -> dict:
     return {"closed": True, "detail": "登录态已持久化，下次免密直达"}
 
 
+@router.post("/navigate/{account_id}")
+def navigate(account_id: str, body: dict) -> dict:
+    """驱动某账号会话页面导航（自动化/验收用；会话不存在时自动开户）。"""
+    url = str(body.get("url") or "")
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(400, "url 必须以 http(s):// 开头")
+    try:
+        get_pool().open_account(account_id, headful=True)
+        get_pool().navigate(account_id, url)
+    except BrowserError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"navigated": True, "url": url}
+
+
 @router.post("/forget/{account_id}")
 def forget_session(account_id: str) -> dict:
     """清除持久登录态（登出语义）：下次打开将回到登录页自动填充。"""
