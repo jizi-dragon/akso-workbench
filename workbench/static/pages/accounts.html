@@ -89,27 +89,37 @@
         <p class="hint">密码以 Fernet 加密入库（密钥存本机 SQLite）；明文只在内联注入/自动登录的内存中出现。</p>
       </section>
 
-      <dialog id="edit-dialog" style="min-width:480px">
-        <h3 style="margin:0 0 12px">编辑账号</h3>
-        <div class="mgrid cols-2">
-          <label class="mfield">环境<select id="edit-env"></select></label>
-          <label class="mfield">用户名<input id="edit-username" autocomplete="off" /></label>
-          <label class="mfield">密码（留空 = 不修改）<input id="edit-password" type="password" autocomplete="new-password" /></label>
-          <label class="mfield">角色<input id="edit-role" /></label>
-          <label class="mfield">盒子<input id="edit-box" list="box-list" placeholder="默认盒子（可留空）" /></label>
-          <label class="mfield">标签（逗号分隔）<input id="edit-tags" /></label>
+      <dialog id="edit-dialog" class="mdialog">
+        <div class="mdialog-head">
+          <h3>编辑账号</h3>
+          <button class="mdialog-close" data-close-dialog title="关闭">×</button>
         </div>
-        <div style="display:flex;gap:10px;margin-top:14px;justify-content:flex-end">
+        <div class="mdialog-body">
+          <div class="mgrid cols-2">
+            <label class="mfield">环境<select id="edit-env"></select></label>
+            <label class="mfield">用户名<input id="edit-username" autocomplete="off" /></label>
+            <label class="mfield">密码（留空 = 不修改）<input id="edit-password" type="password" autocomplete="new-password" /></label>
+            <label class="mfield">角色<input id="edit-role" /></label>
+            <label class="mfield">盒子<input id="edit-box" list="box-list" placeholder="默认盒子（可留空）" /></label>
+            <label class="mfield">标签（逗号分隔）<input id="edit-tags" /></label>
+          </div>
+        </div>
+        <div class="mdialog-foot">
           <button class="mbtn ghost" id="btn-edit-cancel">取消</button>
           <button class="mbtn" id="btn-edit-save">保存</button>
         </div>
       </dialog>
 
-      <dialog id="import-dialog" style="min-width:420px">
-        <h3 style="margin:0 0 10px">从原项目 env 文件导入（只读）</h3>
-        <p class="hint" style="margin:0 0 10px">扫描 akso-cc / akso-auto 的 env 文件，原文件不动。</p>
-        <div id="import-preview" class="log-console" style="height:200px">…</div>
-        <div style="display:flex;gap:10px;margin-top:12px;justify-content:flex-end">
+      <dialog id="import-dialog" class="mdialog">
+        <div class="mdialog-head">
+          <h3>从原项目 env 文件导入（只读）</h3>
+          <button class="mdialog-close" data-close-dialog title="关闭">×</button>
+        </div>
+        <div class="mdialog-body">
+          <p class="hint" style="margin:0">扫描 akso-cc / akso-auto 的 env 文件，原文件不动。</p>
+          <div id="import-preview" class="log-console" style="height:200px">…</div>
+        </div>
+        <div class="mdialog-foot">
           <button class="mbtn ghost" id="btn-import-close">取消</button>
           <button class="mbtn" id="btn-import-run">开始导入</button>
         </div>

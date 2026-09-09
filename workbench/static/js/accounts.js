@@ -229,6 +229,16 @@ async function openAccount(accountId) {
   refresh();
 }
 
+/* 弹窗淡出关闭（微交互）：加 .closing 播放退出动画后真正 close */
+function closeDialog(d) {
+  if (!d || !d.open) return;
+  d.classList.add('closing');
+  setTimeout(() => {
+    d.classList.remove('closing');
+    d.close();
+  }, 160);
+}
+
 /* ———— 账号编辑（查改） ———— */
 
 let editTargetId = null;
@@ -266,7 +276,7 @@ async function saveEdit() {
   const password = el('edit-password').value;
   if (password) body.password = password;
   await api(`/api/accounts/${editTargetId}`, { method: 'PATCH', body });
-  el('edit-dialog').close();
+  closeDialog(el('edit-dialog'));
   editTargetId = null;
   refresh();
 }
@@ -472,19 +482,21 @@ function renderCards(accounts, sessions) {
       ${a.role ? `<div class="env">${a.role}</div>` : ''}
       ${chips.length ? `<div class="chip-row">${chips.join('')}</div>` : ''}
       ${s && (s.title || s.detail) ? `<div class="env">${s.title || ''}${s.detail ? ` · ${s.detail}` : ''}</div>` : ''}
-      <div class="actions">
+      <div class="acard-actions-primary">
         ${s && s.status !== 'stopped'
           ? `<button class="mbtn" data-act="focus" data-id="${a.id}" title="把该账号的窗口带到前台">聚焦窗口</button>
              <button class="mbtn ghost" data-act="close" data-id="${a.id}">关闭会话</button>`
-          : `<button class="mbtn" data-act="open" data-id="${a.id}">启动会话（可见窗口）</button>`}
-        <button class="mbtn ghost" data-act="edit" data-id="${a.id}">编辑</button>
-        <button class="mbtn ghost" data-act="box" data-id="${a.id}" data-name="${a.username}" data-box="${boxName}">盒子</button>
-        <button class="mbtn ghost ${poolList(a.pool).includes('config') ? 'chip-active' : ''}" data-act="pool" data-id="${a.id}" data-role="config"
+          : `<button class="mbtn" data-act="open" data-id="${a.id}">启动会话</button>`}
+      </div>
+      <div class="acard-actions-secondary">
+        <button class="link-btn" data-act="edit" data-id="${a.id}">编辑</button>
+        <button class="link-btn" data-act="box" data-id="${a.id}" data-name="${a.username}" data-box="${boxName}">盒子</button>
+        <button class="link-btn ${poolList(a.pool).includes('config') ? 'link-on' : ''}" data-act="pool" data-id="${a.id}" data-role="config"
           title="加入/移出配置池（洞察/工厂取用）">配置池</button>
-        <button class="mbtn ghost ${poolList(a.pool).includes('monitor') ? 'chip-active' : ''}" data-act="pool" data-id="${a.id}" data-role="monitor"
+        <button class="link-btn ${poolList(a.pool).includes('monitor') ? 'link-on' : ''}" data-act="pool" data-id="${a.id}" data-role="monitor"
           title="加入/移出监听池（Monitor 取用）">监听池</button>
-        ${savedCache.get(a.id) ? `<button class="mbtn ghost" data-act="forget" data-id="${a.id}" data-name="${a.username}">忘记会话</button>` : ''}
-        <button class="mbtn danger" data-act="del" data-id="${a.id}" data-name="${a.username}">删除</button>
+        ${savedCache.get(a.id) ? `<button class="link-btn" data-act="forget" data-id="${a.id}" data-name="${a.username}">忘记会话</button>` : ''}
+        <button class="link-btn link-danger" data-act="del" data-id="${a.id}" data-name="${a.username}">删除</button>
       </div>`;
     card.querySelectorAll('button[data-act]').forEach((btn) => {
       btn.onclick = async () => {
@@ -662,10 +674,13 @@ el('btn-env-add').onclick = addEnv;
 el('btn-acc-add').onclick = addAccount;
 el('btn-acc-bulk').onclick = bulkAdd;
 el('btn-import').onclick = openImport;
-el('btn-import-close').onclick = () => el('import-dialog').close();
+el('btn-import-close').onclick = () => closeDialog(el('import-dialog'));
 el('btn-import-run').onclick = runImport;
-el('btn-edit-cancel').onclick = () => { el('edit-dialog').close(); editTargetId = null; };
+el('btn-edit-cancel').onclick = () => { closeDialog(el('edit-dialog')); editTargetId = null; };
 el('btn-edit-save').onclick = () => saveEdit().catch((e) => alert(`保存失败：${e.message}`));
+document.querySelectorAll('[data-close-dialog]').forEach((btn) => {
+  btn.onclick = () => closeDialog(btn.closest('dialog'));
+});
 el('btn-wheel').onclick = openWheel;
 el('btn-export').onclick = () => exportBackup().catch((e) => alert(`导出失败：${e.message}`));
 el('btn-import-backup').onclick = () => el('backup-file').click();
