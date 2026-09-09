@@ -1,6 +1,6 @@
 [project]
 name = "akso-workbench"
-version = "0.1.0"
+version = "0.0.1"
 description = "Akso Workbench 全家桶 —— 四项目融合重建（akso-cc / mogul_simulator / akso-auto / quick-login 的优点合一，技术栈升级到 Python 3.12+ / FastAPI / Playwright）"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -24,6 +24,9 @@ dev = [
 ]
 desktop = [
     "pywebview>=5.0",
+]
+build = [
+    "pyinstaller>=6.10",
 ]
 
 [project.scripts]
