@@ -66,9 +66,11 @@ class AccountIn(BaseModel):
     role: str = ""
     tags: list[str] = []
     note: str = ""
+    box: str = ""
 
 
 class AccountPatch(BaseModel):
+    env_id: str | None = None
     username: str | None = None
     password: str | None = None
     role: str | None = None

@@ -218,6 +218,90 @@ el('wheel-overlay')?.addEventListener('wheel', (e) => {
 function colorOf(index) { return COLORS[index % COLORS.length]; }
 function poolList(pool) { return String(pool || '').split(',').filter(Boolean); }
 
+async function openAccount(accountId) {
+  const head = accountId.slice(0, 6);
+  try {
+    const result = await api('/api/browser/open', { method: 'POST', body: { account_id: accountId } });
+    console.log(`[acc] ${head}: ${result.detail || result.status}`);
+  } catch (e) {
+    alert(`启动会话失败：${e.message}`);
+  }
+  refresh();
+}
+
+/* ———— 账号编辑（查改） ———— */
+
+let editTargetId = null;
+
+async function editAccount(accountId) {
+  const account = await api(`/api/accounts/${accountId}`);
+  editTargetId = accountId;
+  const envs = (await api('/api/accounts/envs')).envs;
+  const sel = el('edit-env');
+  sel.innerHTML = '';
+  for (const env of envs) {
+    const opt = document.createElement('option');
+    opt.value = env.id;
+    opt.textContent = `${env.name}${env.base_url ? ` · ${env.base_url}` : ''}`;
+    if (env.id === account.env_id) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  el('edit-username').value = account.username;
+  el('edit-password').value = '';
+  el('edit-role').value = account.role || '';
+  el('edit-box').value = (account.box || '').trim();
+  el('edit-tags').value = (account.tags || []).join(',');
+  el('edit-dialog').showModal();
+}
+
+async function saveEdit() {
+  if (!editTargetId) return;
+  const body = {
+    env_id: el('edit-env').value,
+    username: el('edit-username').value.trim(),
+    role: el('edit-role').value.trim(),
+    box: el('edit-box').value.trim(),
+    tags: el('edit-tags').value.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+  };
+  const password = el('edit-password').value;
+  if (password) body.password = password;
+  await api(`/api/accounts/${editTargetId}`, { method: 'PATCH', body });
+  el('edit-dialog').close();
+  editTargetId = null;
+  refresh();
+}
+
+/* ———— 批量添加（每行：用户名,密码[,盒子]） ———— */
+
+async function bulkAdd() {
+  const envId = el('acc-env').value;
+  if (!envId) return alert('请先选择/新增平台环境');
+  const lines = el('acc-bulk').value.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return alert('请粘贴账号行（用户名,密码[,盒子]）');
+  const slot = el('bulk-result');
+  slot.style.display = 'block';
+  slot.innerHTML = '';
+  let ok = 0, fail = 0;
+  for (const line of lines) {
+    const parts = line.split(/[,，]/).map((s) => s.trim());
+    if (parts.length < 2) { fail += 1; logLine(slot, `✗ 格式错误（应为 用户名,密码[,盒子]）：${line}`, 'err'); continue; }
+    try {
+      await api('/api/accounts', {
+        method: 'POST',
+        body: { env_id: envId, username: parts[0], password: parts[1],
+                box: parts[2] || '', tags: ['批量导入'] },
+      });
+      ok += 1;
+      logLine(slot, `✓ ${parts[0]}`, 'ok');
+    } catch (e) {
+      fail += 1;
+      logLine(slot, `✗ ${parts[0]}：${e.message}`, 'err');
+    }
+  }
+  logLine(slot, `■ 批量完成：成功 ${ok}，失败 ${fail}`, ok && !fail ? 'ok' : 'warn');
+  refresh();
+}
+
 async function loadAccountsAndSessions() {
   const [accData, sessData, boxData] = await Promise.all([
     api('/api/accounts'),
@@ -393,6 +477,7 @@ function renderCards(accounts, sessions) {
           ? `<button class="mbtn" data-act="focus" data-id="${a.id}" title="把该账号的窗口带到前台">聚焦窗口</button>
              <button class="mbtn ghost" data-act="close" data-id="${a.id}">关闭会话</button>`
           : `<button class="mbtn" data-act="open" data-id="${a.id}">启动会话（可见窗口）</button>`}
+        <button class="mbtn ghost" data-act="edit" data-id="${a.id}">编辑</button>
         <button class="mbtn ghost" data-act="box" data-id="${a.id}" data-name="${a.username}" data-box="${boxName}">盒子</button>
         <button class="mbtn ghost ${poolList(a.pool).includes('config') ? 'chip-active' : ''}" data-act="pool" data-id="${a.id}" data-role="config"
           title="加入/移出配置池（洞察/工厂取用）">配置池</button>
@@ -409,6 +494,8 @@ function renderCards(accounts, sessions) {
             await openAccount(a.id);
           } else if (btn.dataset.act === 'focus') {
             await api(`/api/browser/focus/${a.id}`, { method: 'POST' });
+          } else if (btn.dataset.act === 'edit') {
+            await editAccount(a.id);
           } else if (btn.dataset.act === 'close') {
             await api(`/api/browser/close/${a.id}`, { method: 'POST' });
           } else if (btn.dataset.act === 'box') {
@@ -573,9 +660,12 @@ async function refresh() {
 
 el('btn-env-add').onclick = addEnv;
 el('btn-acc-add').onclick = addAccount;
+el('btn-acc-bulk').onclick = bulkAdd;
 el('btn-import').onclick = openImport;
 el('btn-import-close').onclick = () => el('import-dialog').close();
 el('btn-import-run').onclick = runImport;
+el('btn-edit-cancel').onclick = () => { el('edit-dialog').close(); editTargetId = null; };
+el('btn-edit-save').onclick = () => saveEdit().catch((e) => alert(`保存失败：${e.message}`));
 el('btn-wheel').onclick = openWheel;
 el('btn-export').onclick = () => exportBackup().catch((e) => alert(`导出失败：${e.message}`));
 el('btn-import-backup').onclick = () => el('backup-file').click();

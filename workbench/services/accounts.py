@@ -190,7 +190,8 @@ def _sanitize(row: dict[str, Any]) -> dict[str, Any]:
 
 def create_account(*, env_id: str, username: str, password: str, role: str = "",
                    tags: list[str] | None = None, note: str = "",
-                   pool: str | list[str] | tuple[str, ...] | None = None) -> dict[str, Any]:
+                   pool: str | list[str] | tuple[str, ...] | None = None,
+                   box: str = "") -> dict[str, Any]:
     if not get_env(env_id):
         raise AccountError(f"平台环境不存在：{env_id}")
     if not username.strip():
@@ -203,9 +204,9 @@ def create_account(*, env_id: str, username: str, password: str, role: str = "",
     ts = now_ms()
     db.execute(
         "INSERT INTO account (id, env_id, username, password_enc, role, tags, note, status, "
-        "pool, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?)",
+        "pool, box, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?)",
         (account_id, env_id, username.strip(), encrypt_password(password), role.strip(),
-         tags_json, note, pool_value, ts, ts),
+         tags_json, note, pool_value, box.strip(), ts, ts),
     )
     assert get_account(account_id)
     return get_account(account_id)  # type: ignore[return-value]
@@ -215,7 +216,7 @@ def update_account(account_id: str, *, username: str | None = None, password: st
                    role: str | None = None, tags: list[str] | None = None,
                    note: str | None = None, status: str | None = None,
                    pool: str | list[str] | tuple[str, ...] | None = None,
-                   box: str | None = None) -> dict[str, Any] | None:
+                   box: str | None = None, env_id: str | None = None) -> dict[str, Any] | None:
     row = db.query_one("SELECT * FROM account WHERE id = ?", (account_id,))
     if not row:
         return None
@@ -247,6 +248,11 @@ def update_account(account_id: str, *, username: str | None = None, password: st
     if box is not None:
         sets.append("box = ?")
         params.append(box.strip())
+    if env_id is not None:
+        if not get_env(env_id):
+            raise AccountError(f"目标平台环境不存在：{env_id}")
+        sets.append("env_id = ?")
+        params.append(env_id)
     if not sets:
         return get_account(account_id)
     sets.append("updated_at = ?")
