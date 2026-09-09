@@ -29,6 +29,9 @@ if sys.stderr is None:
 
 FROZEN = getattr(sys, "frozen", False)
 
+# 轮盘单例窗口（全局热键 toggle 目标；js_api close/move 也操作它）
+_wheel_window: Any = None
+
 
 def _python_exe() -> str:
     """服务子进程解释器：源码态 = venv 的 python.exe（pythonw 的兄弟文件）。"""
@@ -82,6 +85,62 @@ def _wait_ready(timeout_s: float = 30.0) -> bool:
     return False
 
 
+class WheelApi:
+    """轮盘窗口的 js_api：拖动移动 / 程序化关闭（window.close 不可靠）。"""
+
+    def close(self) -> None:
+        global _wheel_window
+        w = _wheel_window
+        if w is not None:
+            try:
+                w.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+            _wheel_window = None
+
+    def move(self, dx: int, dy: int) -> None:
+        w = _wheel_window
+        if w is None:
+            return
+        try:
+            x = getattr(w, "x", None) or 100
+            y = getattr(w, "y", None) or 100
+            w.move(int(x) + int(dx), int(y) + int(dy))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _hotkey_open_wheel() -> None:
+    """轮盘单例 toggle：未开则建（frameless + 置顶 + js_api），已开则销毁。"""
+    import webview  # noqa: PLC0415 —— 热键线程内延迟导入
+
+    global _wheel_window
+    # 单例守卫：按标题+引用清扫（WebView2 可能把窗口标题改成页面标题，两种都匹配）
+    for w in list(webview.windows):
+        if w is _wheel_window or getattr(w, "title", "") in {"Akso 轮盘", "Akso Workbench · 账号轮盘"}:
+            try:
+                w.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+            if w is _wheel_window:
+                _wheel_window = None
+            return  # toggle：本次按键 = 关闭
+    try:
+        _wheel_window = webview.create_window(
+            "Akso 轮盘",
+            f"http://{config.HOST}:{config.PORT}/static/pages/wheel-picker.html",
+            width=560, height=640,
+            on_top=True, focus=True, frameless=True,
+            background_color="#121C2E",
+            js_api=WheelApi(),
+        )
+    except Exception:
+        try:
+            webbrowser.open(f"http://{config.HOST}:{config.PORT}/static/pages/wheel-picker.html")
+        except OSError:
+            pass
+
+
 def _global_hotkey_loop() -> None:
     """全局热键 Alt+Q：任何应用/页面下呼出账号轮盘（系统级注册，按键被本应用接管）。"""
     import ctypes
@@ -98,20 +157,7 @@ def _global_hotkey_loop() -> None:
     msg = ctypes.wintypes.MSG()
     while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
         if msg.message == WM_HOTKEY:
-            picker = f"http://{config.HOST}:{config.PORT}/static/pages/wheel-picker.html"
-            try:
-                import webview  # noqa: PLC0415 —— 热键线程内延迟导入
-
-                webview.create_window(
-                    "Akso 轮盘", picker, width=560, height=620,
-                    on_top=True, focus=True, frameless=True,
-                    background_color="#121C2E",
-                )
-            except Exception:
-                try:
-                    webbrowser.open(picker)
-                except OSError:
-                    pass
+            _hotkey_open_wheel()
 
 
 def main() -> None:

@@ -9,7 +9,7 @@
         font-family: "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", sans-serif;
         background: radial-gradient(circle at 50% 42%, #1d2c4a 0%, #121c2e 62%, #0c1422 100%);
         color: #eef4fc; user-select: none; cursor: default;
-        -webkit-app-region: drag;   /* 无边框窗口：整页可拖动 */
+        -webkit-app-region: drag;   /* 无边框窗口：空白区拖动 */
         display: flex; flex-direction: column; align-items: center;
         justify-content: center; gap: 6px; height: 100%;
       }
@@ -43,6 +43,7 @@
         position: fixed; top: 10px; right: 12px;
         background: none; border: none; color: rgba(255,255,255,.55);
         font-size: 18px; cursor: pointer; padding: 4px 8px; border-radius: 8px;
+        -webkit-app-region: no-drag;
       }
       .close-x:hover { color: #fff; background: rgba(255,255,255,.12); }
     </style>
@@ -51,7 +52,7 @@
     <button class="close-x" id="close-x" title="关闭 (Esc)">×</button>
     <h1>AKSO 账号轮盘</h1>
     <div id="wheel-root" class="sector-svg"><span class="empty">加载中…</span></div>
-    <span class="tip">点击扇区启动并切换 · 滚轮/Hub 切盒 · 数字键快选 · Esc 关闭</span>
+    <span class="tip">点击扇区启动并切换 · 滚轮/Hub 切盒 · 数字键快选 · Esc 关闭 · 拖动空白移动窗口</span>
     <script type="module">
       const COLORS = ['#1E6FFF', '#0FA3B1', '#7C5CFF', '#FF7A1A', '#22C55E'];
       const SIZE = 520, C = SIZE / 2, R_OUT = 240, R_IN = 118, R_ARC = 254, GAP_DEG = 2;
@@ -61,6 +62,26 @@
       let accountIds = [];
       let pages = [];
       let wheelPage = 0;
+
+      /* 关闭：走 js_api（window.close 在 pywebview 子页不可靠） */
+      function closeWheel() {
+        if (window.pywebview?.api?.close) { window.pywebview.api.close(); return; }
+        window.close();
+      }
+      /* 拖动：空白区按住移动窗口（js_api move） */
+      let dragState = null;
+      document.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.sector-hit, .hub-bg, .box-node, button, li')) return;
+        dragState = { x: e.screenX, y: e.screenY };
+      });
+      document.addEventListener('mousemove', (e) => {
+        if (!dragState) return;
+        const dx = e.screenX - dragState.x, dy = e.screenY - dragState.y;
+        if (!dx && !dy) return;
+        dragState = { x: e.screenX, y: e.screenY };
+        window.pywebview?.api?.move?.(dx, dy);
+      });
+      document.addEventListener('mouseup', () => { dragState = null; });
 
       const polar = (r, deg) => {
         const a = ((deg - 90) * Math.PI) / 180;
@@ -113,7 +134,7 @@
       async function pick(accountId) {
         await launchChrome();                 // Chrome 未运行则拉起（扩展随之接管）
         await postCommand('par.open', { accountId });
-        window.close();
+        closeWheel();
       }
 
       function buildWheel() {
@@ -183,17 +204,25 @@
       }
 
       async function render() {
-        const data = await fetch('/api/accounts').then((r) => r.json()).catch(() => ({ accounts: [] }));
-        accounts = data.accounts || [];
+        try {
+          const data = await fetch('/api/accounts').then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+          });
+          accounts = data.accounts || [];
+        } catch (e) {
+          list.innerHTML = `<li class="empty">加载失败：${e.message}</li>`;
+          return;
+        }
         accountIds = accounts.map((a) => a.id);
         pages = groupPagesByBox(accounts);
         if (wheelPage >= pages.length) wheelPage = 0;
         buildWheel();
       }
 
-      document.getElementById('close-x').onclick = () => window.close();
+      document.getElementById('close-x').onclick = closeWheel;
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') window.close();
+        if (e.key === 'Escape') { closeWheel(); return; }
         const num = Number(e.key);
         if (num >= 1 && num <= WHEEL_MAX) {
           const page = pages[wheelPage];
