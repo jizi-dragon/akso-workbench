@@ -1,36 +1,28 @@
-# Akso Workbench 一键构建（版本规则 A + PyInstaller + Inno Setup）
+# Akso Workbench 一键构建 v3（Electron 壳）
 # 用法：powershell -ExecutionPolicy Bypass -File tools\build.ps1
-# 产物：dist\installer\AksoWorkbench-<ver>-setup.exe
+# 产物：desktop\dist\AksoWorkbench-<ver>-setup.exe（NSIS；内含 AksoServer sidecar + chromium）
 #
-# 步骤：
+# 链路：
 #   1. 版本演进（build：MINOR+1，PATCH 重置 1）
 #   2. 提交并推送版本号（release commit）
-#   3. uv sync --extra build（确保 PyInstaller）
-#   4. PyInstaller 打包（onedir）
-#   5. Inno Setup 生成安装包
+#   3. uv sync（确保 PyInstaller）
+#   4. PyInstaller 打包服务端 sidecar（workbench/server.spec → dist/AksoServer）
+#   5. electron-builder（NSIS 安装包；extraResources 带 sidecar；updater 产物 latest.yml）
 #
-# 可选参数：-SkipPush   （只构建，不提交/推送版本号）
+# 更新发布（可选）：设 GH_TOKEN 后改用 --publish always，或手动上传 desktop\dist\*.exe
+# 与 latest.yml 到 GitHub Releases（electron-updater 按 latest.yml 检查更新）。
 
 param(
     [switch]$SkipPush
 )
 
-# 注意：不要用 $ErrorActionPreference="Stop"——PS5.1 会把 git/uv 写到 stderr 的
+# 注意：不要用 $ErrorActionPreference="Stop"——PS5.1 会把 git/npm 写到 stderr 的
 # 正常进度当作终止错误。关键步骤一律显式检查 $LASTEXITCODE。
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $env:Path = (Join-Path $root ".venv\Scripts") + ";" + $env:Path
-
-# 0) Inno Setup 检查
-$iscc = @("C:\Program Files (x86)\Inno Setup 6\ISCC.exe", "C:\Program Files\Inno Setup 6\ISCC.exe") |
-    Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $iscc) {
-    Write-Host "✗ 未找到 Inno Setup 6（ISCC.exe）。" -ForegroundColor Red
-    Write-Host "  安装：https://jrsoftware.org/isdl.php 或 winget install JRSoftware.InnoSetup"
-    exit 1
-}
-Write-Host "[0/5] Inno Setup: $iscc"
+$env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
 
 # 1) 版本演进（build 规则：MINOR+1，PATCH=1）
 $version = (& python tools\bump.py build).Trim()
@@ -38,7 +30,7 @@ Write-Host "[1/5] 版本演进 → v$version"
 
 # 2) 版本号入库并推送（release commit）
 if (-not $SkipPush) {
-    git add pyproject.toml workbench\__init__.py
+    git add pyproject.toml workbench\__init__.py desktop\package.json
     git commit -m "chore(release): v$version" 2>$null | Out-Null
     $pushed = $false
     foreach ($i in 1..3) {
@@ -51,26 +43,33 @@ if (-not $SkipPush) {
     Write-Host "[2/5] 跳过推送（-SkipPush）"
 }
 
-# 3) 依赖（PyInstaller 在 build extra）
-uv sync --extra dev --extra desktop --extra build 2>&1 | Out-Null
+# 3) 依赖
+& python -m uv sync --extra dev --extra build 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Host "✗ uv sync 失败" -ForegroundColor Red; exit 1 }
-Write-Host "[3/5] 依赖就绪（PyInstaller）"
+Write-Host "[3/5] 依赖就绪"
 
-# 4) PyInstaller 打包
-Write-Host "[4/5] PyInstaller 打包中（数分钟）…"
-& python -m PyInstaller shell\shell.spec --noconfirm --distpath dist --workpath build
-if ($LASTEXITCODE -ne 0) { Write-Host "✗ PyInstaller 失败" -ForegroundColor Red; exit 1 }
+# 4) 服务端 sidecar（PyInstaller onedir，含 chromium）
+Write-Host "[4/5] AksoServer sidecar 打包中（数分钟）…"
+& python -m PyInstaller workbench\server.spec --noconfirm --distpath dist --workpath build 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Host "✗ AksoServer 打包失败" -ForegroundColor Red; exit 1 }
 
-# 5) Inno Setup 安装包
-Write-Host "[5/5] Inno Setup 生成安装包…"
-& $iscc "/DAppVersion=$version" (Join-Path $root "tools\installer.iss") | Out-Null
-if ($LASTEXITCODE -ne 0) { Write-Host "✗ Inno Setup 失败" -ForegroundColor Red; exit 1 }
+# 5) Electron 壳（NSIS 安装包）
+Write-Host "[5/5] electron-builder 打包中…"
+Push-Location desktop
+try {
+    & npx electron-builder --win nsis --publish never 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Host "✗ electron-builder 失败" -ForegroundColor Red; exit 1 }
+} finally {
+    Pop-Location
+}
 
-$installer = Join-Path $root "dist\installer\AksoWorkbench-$version-setup.exe"
+$installer = Join-Path $root "desktop\dist\AksoWorkbench-$version-setup.exe"
 if (Test-Path $installer) {
     $size = [math]::Round((Get-Item $installer).Length / 1MB, 1)
     Write-Host ""
     Write-Host "✔ 构建完成：$installer（$size MB）" -ForegroundColor Green
+    $latest = Join-Path $root "desktop\dist\latest.yml"
+    if (Test-Path $latest) { Write-Host "  更新清单：$latest（发布 release 时一并上传）" }
 } else {
     Write-Host "✗ 未找到安装包产物" -ForegroundColor Red
     exit 1

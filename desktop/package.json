@@ -1,0 +1,62 @@
+{
+  "name": "akso-workbench-desktop",
+  "productName": "AksoWorkbench",
+  "version": "0.2.1",
+  "private": true,
+  "description": "Akso Workbench 桌面壳（Electron）：窗口/热键/托盘/更新器 + Python 服务 sidecar",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --publish never",
+    "dist:publish": "electron-builder --win nsis --publish always"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "build": {
+    "appId": "com.akso.workbench",
+    "productName": "AksoWorkbench",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist/AksoServer",
+        "to": "server"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "AksoWorkbench-${version}-setup.${ext}",
+      "shortcutName": "Akso Workbench"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "jizi-dragon",
+      "repo": "akso-mogul"
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}

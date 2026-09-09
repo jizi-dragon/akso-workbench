@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Akso</title>
+    <style>
+      body { font-family: "HarmonyOS Sans SC", "Microsoft YaHei UI", sans-serif;
+             background: #eef4fc; color: #17233b;
+             display: flex; align-items: center; justify-content: center;
+             height: 100vh; margin: 0; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div id="msg">…</div>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const msg = document.getElementById('msg');
+      if (params.get('error') === 'timeout') {
+        msg.textContent = '服务启动超时——请重启 AksoWorkbench（AksoServer 未就绪）';
+      } else {
+        msg.textContent = '就绪';
+      }
+    </script>
+  </body>
+</html>

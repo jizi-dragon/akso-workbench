@@ -21,6 +21,7 @@ import os
 import queue
 import sys
 import threading
+import time
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,32 @@ from typing import Any, Callable
 
 from . import accounts, autologin
 from .storage import now_ms
+
+# —— Electron 壳复用模式（WORKBENCH_SESSION_MODE=cdp）——
+# 会话窗由 Electron 壳创建（每账号 persist 分区：cookie/存储隔离 + 内建持久化），
+# Playwright 经 CDP(18766) 反向接管页面；开户窗/聚焦/关窗走壳的控制服务(18767)。
+# local 模式 = 原生 playwright chromium（开发/无壳环境）。
+SESSION_MODE = os.environ.get("WORKBENCH_SESSION_MODE", "local")
+_CONTROL_PORT = int(os.environ.get("WORKBENCH_CONTROL_PORT", "18767"))
+_CDP_PORT = int(os.environ.get("WORKBENCH_CDP_PORT", "18766"))
+
+
+def _control_post(path: str, payload: dict[str, Any], timeout: float = 10.0) -> dict[str, Any] | None:
+    """调用 Electron 壳的会话控制服务。壳未运行时返回 None（调用方转为 BrowserError）。"""
+    import json as _json
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{_CONTROL_PORT}{path}",
+        data=_json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return _json.loads(resp.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 @dataclass
@@ -144,6 +171,23 @@ class BrowserPool:
 
     @staticmethod
     def _ensure_browser(pw: Any, browsers: dict[bool, Any], headful: bool) -> Any:
+        if SESSION_MODE == "cdp":
+            # 复用 Electron 壳的 Chromium：CDP 反向接管（headful/headless 共用壳实例）
+            if browsers.get(True) is not None:
+                return browsers[True]
+            if pw is None:
+                try:
+                    from playwright.sync_api import sync_playwright
+                except ImportError as exc:
+                    raise BrowserError("playwright 未安装：pip install playwright") from exc
+                pw = sync_playwright().start()
+            try:
+                browsers[True] = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
+            except Exception as exc:  # noqa: BLE001
+                raise BrowserError(
+                    f"CDP 连接失败（Electron 壳未运行或调试端口 {_CDP_PORT} 未开）：{exc}"
+                ) from exc
+            return browsers[True]
         if browsers.get(headful) is not None:
             return browsers[headful]
         if pw is None:
@@ -163,6 +207,10 @@ class BrowserPool:
     @staticmethod
     def _focus(entry: SessionEntry) -> None:
         try:
+            if SESSION_MODE == "cdp":
+                # CDP bring_to_front 抬不 OS 窗口 → 走壳控制服务
+                _control_post("/windows/focus", {"windowId": f"acc-{entry.account_id}"})
+                return
             if entry.page is not None:
                 entry.page.bring_to_front()
         except Exception:  # noqa: BLE001
@@ -172,11 +220,15 @@ class BrowserPool:
     def _close_entry(entry: SessionEntry) -> None:
         if entry.status == "online":
             BrowserPool._save_state(entry)
-        try:
-            if entry.context is not None:
-                entry.context.close()
-        except Exception:  # noqa: BLE001
-            pass
+        if SESSION_MODE == "cdp":
+            # 关壳的会话窗（分区持久化由 Electron 自管）
+            _control_post("/windows/close", {"windowId": f"acc-{entry.account_id}"})
+        else:
+            try:
+                if entry.context is not None:
+                    entry.context.close()
+            except Exception:  # noqa: BLE001
+                pass
         entry.context = None
         entry.page = None
         entry.status = "stopped"
@@ -200,6 +252,9 @@ class BrowserPool:
         username = account["username"]
         password = accounts.reveal_password(account_id)
         browser = self._ensure_browser(pw, browsers, headful)
+
+        if SESSION_MODE == "cdp":
+            return self._do_open_cdp(browser, sessions, account, account_id)
 
         state_path = self._state_path(account_id)
         has_saved = state_path.exists()
@@ -230,6 +285,59 @@ class BrowserPool:
                     entry.status = "error"
                     entry.detail = "自动登录引擎启动失败（页面无登录表单？）"
             elif not has_saved:
+                if not autologin.start(page, username, password):
+                    entry.status = "error"
+                    entry.detail = "自动登录引擎启动失败（页面无登录表单？）"
+            else:
+                self._focus(entry)
+        except Exception as exc:  # noqa: BLE001
+            entry.status = "error"
+            entry.detail = f"页面加载失败：{exc}"
+        return entry.snapshot()
+
+    def _do_open_cdp(self, browser: Any, sessions: dict[str, SessionEntry],
+                     account: dict[str, Any], account_id: str) -> dict[str, Any]:
+        """cdp 模式开户：壳建分区窗（persist:acc-<id>）→ CDP 定位 blank 标记页 → 导航平台。"""
+        base_url = (account.get("env_base_url") or "").strip()
+        window_id = f"acc-{account_id}"
+        resp = _control_post("/windows", {"windowId": window_id})
+        if not resp or not resp.get("ok"):
+            raise BrowserError("会话窗口创建失败（Electron 壳控制服务 18767 不可达）")
+
+        marker = f"/static/blank.html?w={window_id}"
+        page: Any = None
+        deadline = time.time() + 10
+        while page is None and time.time() < deadline:
+            for ctx in browser.contexts:
+                for pg in ctx.pages:
+                    if marker in str(pg.url):
+                        page = pg
+                        break
+                if page is not None:
+                    break
+            if page is None:
+                time.sleep(0.2)
+        if page is None:
+            raise BrowserError("CDP 中未定位到会话窗口（blank 标记页未出现）")
+
+        username = account["username"]
+        password = accounts.reveal_password(account_id)
+        entry = SessionEntry(account_id=account_id, context=page.context, page=page,
+                             started_at=now_ms(), restored=True, headful=True)
+        entry.token_capture = autologin.TokenCapture(account_id)
+        entry.token_capture.attach(page.context)
+        sessions[account_id] = entry
+        autologin.install(page)
+
+        # 分区内建持久化：有历史分区即视为"恢复"（无需 storage_state 往返）
+        entry.status = "online"
+        entry.detail = "恢复持久会话，免密直达首页"
+        try:
+            page.goto(base_url, wait_until="domcontentloaded", timeout=30000)
+            if self._looks_like_login(page):
+                entry.status = "logging_in"
+                entry.restored = False
+                entry.detail = "分区无有效登录态，自动登录中"
                 if not autologin.start(page, username, password):
                     entry.status = "error"
                     entry.detail = "自动登录引擎启动失败（页面无登录表单？）"

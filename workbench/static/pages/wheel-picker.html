@@ -53,6 +53,13 @@
     <h1>AKSO 账号轮盘</h1>
     <div id="wheel-root" class="sector-svg"><span class="empty">加载中…</span></div>
     <span class="tip">点击扇区启动并切换 · 滚轮/Hub 切盒 · 数字键快选 · Esc 关闭 · 拖动空白移动窗口</span>
+    <script>
+      /* Electron 透明窗模式：URL 带 transparent=1 时背景透明（露出桌面） */
+      if (new URLSearchParams(location.search).get('transparent') === '1') {
+        document.documentElement.style.background = 'transparent';
+        document.body.style.background = 'transparent';
+      }
+    </script>
     <script type="module">
       const COLORS = ['#1E6FFF', '#0FA3B1', '#7C5CFF', '#FF7A1A', '#22C55E'];
       const SIZE = 520, C = SIZE / 2, R_OUT = 240, R_IN = 118, R_ARC = 254, GAP_DEG = 2;
