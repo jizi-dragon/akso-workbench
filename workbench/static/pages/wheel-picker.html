@@ -4,40 +4,102 @@
     <meta charset="UTF-8" />
     <title>Akso 轮盘</title>
     <style>
-      html, body { height: 100%; margin: 0; }
+      html, body { height: 100%; margin: 0; overflow: hidden; }
       body {
         font-family: "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", sans-serif;
-        background: rgba(18, 28, 46, 0.92); color: #eef4fc;
+        background: radial-gradient(circle at 50% 42%, #1d2c4a 0%, #121c2e 62%, #0c1422 100%);
+        color: #eef4fc; user-select: none; cursor: default;
+        -webkit-app-region: drag;   /* 无边框窗口：整页可拖动 */
         display: flex; flex-direction: column; align-items: center;
-        justify-content: center; gap: 14px; height: 100%;
-        user-select: none; overflow: hidden;
+        justify-content: center; gap: 6px; height: 100%;
       }
-      h1 { font-size: 15px; font-weight: 600; color: rgba(255,255,255,.85); margin: 0; letter-spacing: 2px; }
-      ul { list-style: none; margin: 0; padding: 0; width: min(360px, 86%); max-height: 70%;
-           overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-      li {
-        display: flex; align-items: center; gap: 10px;
-        background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
-        border-radius: 12px; padding: 11px 14px; cursor: pointer;
-        transition: all .13s cubic-bezier(.22,1,.36,1);
+      button, li { -webkit-app-region: no-drag; }
+      h1 {
+        font-size: 13px; font-weight: 600; color: rgba(255,255,255,.72);
+        margin: 0 0 2px; letter-spacing: 3px;
       }
-      li:hover { background: rgba(62,118,210,.35); border-color: rgba(255,255,255,.45); transform: translateX(4px); }
-      .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
-      .name { font-size: 14px; font-weight: 600; flex: 1; }
-      .env { font-size: 11px; color: rgba(255,255,255,.55); }
-      .num { font-size: 11px; color: rgba(255,255,255,.5); font-family: Consolas, monospace; }
-      .tip { font-size: 11px; color: rgba(255,255,255,.45); }
+      .sector-svg { width: min(66vmin, 480px); height: min(66vmin, 480px); display: block; }
+      .sector .sector-hit {
+        fill: var(--acc, #3E76D2); fill-opacity: 0.3;
+        stroke: rgba(255,255,255,.4); stroke-width: 1.4;
+        cursor: pointer; transition: fill-opacity .14s cubic-bezier(.22,1,.36,1);
+      }
+      .sector:hover .sector-hit { fill-opacity: 0.68; }
+      .sector .sector-label {
+        fill: #fff; font-size: 21px; font-weight: 600;
+        paint-order: stroke; stroke: rgba(18,28,46,.6); stroke-width: 3px;
+        pointer-events: none;
+      }
+      .sector-num circle { fill: rgba(255,255,255,.92); }
+      .sector-num text { fill: #17233b; font-size: 20px; font-weight: 700; }
+      .hub-bg { fill: #182338; stroke: rgba(255,255,255,.35); stroke-width: 1.5; cursor: pointer; }
+      text.hub-page { fill: #eef4fc; font-size: 26px; font-weight: 700; text-anchor: middle; }
+      text.hub-sub { fill: rgba(255,255,255,.5); font-size: 14px; text-anchor: middle; }
+      .box-node { fill: rgba(255,255,255,.32); cursor: pointer; }
+      .box-node-on { fill: #fff; }
+      .tip { font-size: 11px; color: rgba(255,255,255,.45); letter-spacing: 1px; }
       .empty { color: rgba(255,255,255,.6); font-size: 13px; }
+      .close-x {
+        position: fixed; top: 10px; right: 12px;
+        background: none; border: none; color: rgba(255,255,255,.55);
+        font-size: 18px; cursor: pointer; padding: 4px 8px; border-radius: 8px;
+      }
+      .close-x:hover { color: #fff; background: rgba(255,255,255,.12); }
     </style>
   </head>
   <body>
-    <h1>账号轮盘 · Alt+Q</h1>
-    <ul id="list"><li class="empty">加载中…</li></ul>
-    <span class="tip">点击账号 → Chrome 切换到对应页签（quick-login 扩展执行） · Esc 关闭</span>
+    <button class="close-x" id="close-x" title="关闭 (Esc)">×</button>
+    <h1>AKSO 账号轮盘</h1>
+    <div id="wheel-root" class="sector-svg"><span class="empty">加载中…</span></div>
+    <span class="tip">点击扇区启动并切换 · 滚轮/Hub 切盒 · 数字键快选 · Esc 关闭</span>
     <script type="module">
       const COLORS = ['#1E6FFF', '#0FA3B1', '#7C5CFF', '#FF7A1A', '#22C55E'];
-      const list = document.getElementById('list');
+      const SIZE = 520, C = SIZE / 2, R_OUT = 240, R_IN = 118, R_ARC = 254, GAP_DEG = 2;
+      const WHEEL_MAX = 10;
+      const NS = 'http://www.w3.org/2000/svg';
+      let accounts = [];
       let accountIds = [];
+      let pages = [];
+      let wheelPage = 0;
+
+      const polar = (r, deg) => {
+        const a = ((deg - 90) * Math.PI) / 180;
+        return { x: C + r * Math.cos(a), y: C + r * Math.sin(a) };
+      };
+      const sectorPath = (a0, a1) => {
+        const s = a0 + GAP_DEG / 2, e = a1 - GAP_DEG / 2;
+        const large = e - s > 180 ? 1 : 0;
+        const p1 = polar(R_OUT, s), p2 = polar(R_OUT, e), p3 = polar(R_IN, e), p4 = polar(R_IN, s);
+        return `M ${p1.x} ${p1.y} A ${R_OUT} ${R_OUT} 0 ${large} 1 ${p2.x} ${p2.y}` +
+               ` L ${p3.x} ${p3.y} A ${R_IN} ${R_IN} 0 ${large} 0 ${p4.x} ${p4.y} Z`;
+      };
+      const svgEl = (name, attrs = {}) => {
+        const n = document.createElementNS(NS, name);
+        for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
+        return n;
+      };
+      const radialText = (cls, mid, r, content) => {
+        const p = polar(r, mid);
+        const flip = mid > 90 && mid < 270;
+        const t = svgEl('text', {
+          class: cls, x: p.x, y: p.y, 'text-anchor': 'middle',
+          'dominant-baseline': 'central',
+          transform: `rotate(${flip ? mid + 180 : mid} ${p.x} ${p.y})`,
+        });
+        t.textContent = content;
+        return t;
+      };
+
+      function groupPagesByBox(accounts) {
+        const pages = [];
+        const byName = new Map();
+        for (const a of accounts) {
+          const name = (a.box || '').trim() || '默认盒子';
+          if (!byName.has(name)) { byName.set(name, []); pages.push({ label: name, list: [] }); }
+          byName.get(name).push(a);
+        }
+        return pages;
+      }
 
       async function postCommand(type, payload) {
         await fetch('/extension/commands', {
@@ -45,40 +107,106 @@
           body: JSON.stringify({ type, payload }),
         });
       }
-
-      async function render() {
-        const data = await fetch('/api/accounts').then((r) => r.json());
-        accountIds = data.accounts.map((a) => a.id);
-        list.innerHTML = '';
-        if (!data.accounts.length) {
-          list.innerHTML = '<li class="empty">暂无账号——请在账号中心添加</li>';
-          return;
-        }
-        data.accounts.forEach((a, i) => {
-          const li = document.createElement('li');
-          li.innerHTML = `
-            <span class="dot" style="background:${COLORS[i % COLORS.length]}"></span>
-            <span class="name">${a.username}</span>
-            <span class="env">${a.env_name || ''}</span>
-            <span class="num">${i + 1 < 10 ? i + 1 : ''}</span>`;
-          li.onclick = async () => {
-            await postCommand('par.open', { accountId: a.id });
-            window.close();
-          };
-          list.appendChild(li);
-        });
+      async function launchChrome() {
+        await fetch('/extension/launch-chrome', { method: 'POST' }).catch(() => undefined);
+      }
+      async function pick(accountId) {
+        await launchChrome();                 // Chrome 未运行则拉起（扩展随之接管）
+        await postCommand('par.open', { accountId });
+        window.close();
       }
 
+      function buildWheel() {
+        const root = document.getElementById('wheel-root');
+        root.innerHTML = '';
+        if (!accounts.length) {
+          root.innerHTML = '<span class="empty">暂无账号——请在账号中心添加</span>';
+          return;
+        }
+        const svg = svgEl('svg', { class: 'sector-svg', viewBox: `0 0 ${SIZE} ${SIZE}` });
+        root.appendChild(svg);
+
+        const trackA = -20, trackB = 100;
+        svg.appendChild(svgEl('path', {
+          class: 'box-track',
+          d: `M ${polar(R_ARC, trackA).x} ${polar(R_ARC, trackA).y}` +
+             ` A ${R_ARC} ${R_ARC} 0 0 1 ${polar(R_ARC, trackB).x} ${polar(R_ARC, trackB).y}`,
+        }));
+        pages.forEach((p, idx) => {
+          const deg = trackA + ((trackB - trackA) * (idx + 0.5)) / pages.length;
+          const p = polar(R_ARC, deg);
+          const node = svgEl('circle', {
+            class: `box-node${idx === wheelPage ? ' box-node-on' : ''}`, cx: p.x, cy: p.y, r: 7,
+          });
+          node.addEventListener('click', () => { wheelPage = idx; buildWheel(); });
+          svg.appendChild(node);
+        });
+
+        const page = pages[wheelPage] || { list: [] };
+        const list = page.list.slice(0, WHEEL_MAX);
+        const sweep = 360 / Math.max(list.length, 1);
+        list.forEach((a, idx) => {
+          const a0 = idx * sweep, a1 = (idx + 1) * sweep, mid = (a0 + a1) / 2;
+          const globalIdx = accountIds.indexOf(a.id);
+          const g = svgEl('g', { class: 'sector' });
+          g.style.setProperty('--acc', COLORS[globalIdx % COLORS.length]);
+          const hit = svgEl('path', { class: 'sector-hit', d: sectorPath(a0, a1) });
+          hit.addEventListener('click', () => pick(a.id));
+          g.appendChild(hit);
+          g.appendChild(radialText('sector-label', mid, (R_IN + R_OUT) / 2,
+            a.username.length > 8 ? a.username.slice(0, 7) + '…' : a.username));
+          const np = polar(R_IN + 26, mid);
+          const num = svgEl('g', { class: 'sector-num' });
+          num.appendChild(svgEl('circle', { cx: np.x, cy: np.y, r: 13 }));
+          const nt = svgEl('text', { x: np.x, y: np.y, 'text-anchor': 'middle', 'dominant-baseline': 'central' });
+          nt.textContent = String(idx + 1);
+          num.appendChild(nt);
+          g.appendChild(num);
+          const dp = polar(R_OUT - 12, mid);
+          g.appendChild(svgEl('circle', { class: 'sector-dot', cx: dp.x, cy: dp.y, r: 6 }));
+          svg.appendChild(g);
+        });
+
+        const hub = svgEl('g', { class: 'hub' });
+        hub.appendChild(svgEl('circle', { class: 'hub-bg', cx: C, cy: C, r: 100 }));
+        const boxLabel = svgEl('text', { class: 'hub-page', x: C, y: C - 26, 'dominant-baseline': 'central' });
+        boxLabel.textContent = `${wheelPage + 1}/${pages.length}`;
+        hub.appendChild(boxLabel);
+        const boxName = svgEl('text', { class: 'hub-sub', x: C, y: C + 14, 'dominant-baseline': 'central' });
+        boxName.textContent = (pages[wheelPage]?.label || '默认盒子').slice(0, 12);
+        hub.appendChild(boxName);
+        const hint = svgEl('text', { class: 'hub-sub', x: C, y: C + 42, 'dominant-baseline': 'central' });
+        hint.textContent = '点击切盒';
+        hub.appendChild(hint);
+        hub.addEventListener('click', () => { wheelPage = (wheelPage + 1) % pages.length; buildWheel(); });
+        svg.appendChild(hub);
+      }
+
+      async function render() {
+        const data = await fetch('/api/accounts').then((r) => r.json()).catch(() => ({ accounts: [] }));
+        accounts = data.accounts || [];
+        accountIds = accounts.map((a) => a.id);
+        pages = groupPagesByBox(accounts);
+        if (wheelPage >= pages.length) wheelPage = 0;
+        buildWheel();
+      }
+
+      document.getElementById('close-x').onclick = () => window.close();
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') window.close();
         const num = Number(e.key);
-        if (num >= 1 && num <= 9 && accountIds[num - 1]) {
-          postCommand('par.open', { accountId: accountIds[num - 1] }).then(() => window.close());
+        if (num >= 1 && num <= WHEEL_MAX) {
+          const page = pages[wheelPage];
+          const a = page?.list?.[num - 1];
+          if (a) pick(a.id);
         }
       });
+      document.addEventListener('wheel', (e) => {
+        if (pages.length) { wheelPage = (wheelPage + (e.deltaY > 0 ? 1 : pages.length - 1)) % pages.length; buildWheel(); }
+      }, { passive: true });
 
       render();
-      setInterval(render, 2000);
+      setInterval(render, 3000);
     </script>
   </body>
 </html>

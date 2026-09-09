@@ -1,19 +1,24 @@
 /**
- * 桌面同步桥（Akso Workbench）——数据面外移的扩展侧接线。
+ * 桌面同步桥（Akso Workbench）——数据面外移的扩展侧接线。v2：直连 parallelStore。
  *
- * - 每 2s 轮询桌面快照（账号/盒子/站点，凭据为 Fernet 密文 + 密钥），
- *   解密后经消息总线并入 parallelStore（扩展本地仍 AES-GCM 加密落盘）；
- * - 拉取桌面指令（wheel.toggle / par.open）→ 自发消息走现有总线执行；
+ * - 每 2s 轮询桌面快照（账号/盒子/站点，凭据为 Fernet 密文 + 密钥）→ 内存解密 →
+ *   直连 parallelStore 增删改（本地仍 AES-GCM 加密落盘）；
+ * - 幂等：snapshotId（内容哈希）未变则跳过；
+ * - 指令：拉取桌面指令（wheel.toggle / par.open）→ parallelSession.open 切换；
  * - 桌面不可达时静默跳过：本地数据保持可用（离线回退）。
  *
  * 安全语义（用户定稿）：凭据以「密文 + 密钥」经 127.0.0.1 回环下发，
  * 扩展端仅在内存解密为明文交给既有加密存储，不做任何落盘明文。
  */
 
+import { credentials } from './core/credentials';
+import { parallelSession } from './core/parallel-session';
+import { parallelStore } from './core/parallel-store';
+
 const DESKTOP = 'http://127.0.0.1:18765';
 const SYNC_INTERVAL_MS = 2000;
 const ACCT_MAP_KEY = 'akso:acctMap'; // desktopId → extension accountId
-const CURSOR_KEY = 'akso:cmdCursor';
+const SNAPSHOT_ID_KEY = 'akso:snapshotId';
 
 let syncing = false;
 
@@ -24,23 +29,35 @@ async function fernetDecrypt(tokenB64: string, keyB64: string): Promise<string> 
   const raw = Uint8Array.from(atob(pad), (c) => c.charCodeAt(0));
   if (raw.length < 57 || raw[0] !== 0x80) throw new Error('fernet: bad token');
 
-  const keyRaw = Uint8Array.from(atob(keyB64.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+  const keyRaw = Uint8Array.from(
+    atob(keyB64.replace(/-/g, '+').replace(/_/g, '/')),
+    (c) => c.charCodeAt(0)
+  );
   if (keyRaw.length !== 32) throw new Error('fernet: bad key length');
 
   const payload = raw.subarray(0, raw.length - 32);
   const mac = raw.subarray(raw.length - 32);
 
   const hmacKey = await crypto.subtle.importKey(
-    'raw', keyRaw.subarray(16), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']
+    'raw',
+    keyRaw.subarray(16),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify']
   );
   const macOk = await crypto.subtle.verify('HMAC', hmacKey, mac, payload);
   if (!macOk) throw new Error('fernet: HMAC mismatch');
 
-  const aesKey = await crypto.subtle.importKey('raw', keyRaw.subarray(0, 16), { name: 'AES-CBC' }, false, ['decrypt']);
+  const aesKey = await crypto.subtle.importKey(
+    'raw',
+    keyRaw.subarray(0, 16),
+    { name: 'AES-CBC' },
+    false,
+    ['decrypt']
+  );
   const iv = payload.subarray(9, 25);
   const ct = payload.subarray(25);
   const plain = await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, aesKey, ct);
-  // PKCS7 去填充
   const view = new Uint8Array(plain);
   const padLen = view[view.length - 1];
   return new TextDecoder().decode(view.subarray(0, view.length - padLen));
@@ -56,68 +73,80 @@ async function getJson(path: string): Promise<any | null> {
   }
 }
 
-async function sendRuntime(req: any): Promise<any | null> {
-  try {
-    return await chrome.runtime.sendMessage(req);
-  } catch {
-    return null;
-  }
-}
-
 async function getMap(): Promise<Record<string, string>> {
   const stored = await chrome.storage.local.get(ACCT_MAP_KEY);
   return (stored[ACCT_MAP_KEY] as Record<string, string>) ?? {};
 }
 
+async function saveMap(map: Record<string, string>): Promise<void> {
+  await chrome.storage.local.set({ [ACCT_MAP_KEY]: map });
+}
+
+/** 应用快照（幂等）：创建/更新/删除账号 + 盒子清单与默认盒名 */
 async function applySnapshot(snap: any): Promise<void> {
   if (!snap || snap.format !== 'akso-workbench-snapshot' || !snap.fernetKey) return;
-  const map = await getMap();
-  const applied = await chrome.storage.local.get('akso:appliedSnapshot');
-  if (applied['akso:appliedSnapshot'] === snap.generatedAt) return; // 同一快照不重复应用
-  await chrome.storage.local.set({ 'akso:appliedSnapshot': snap.generatedAt });
+  const stored = await chrome.storage.local.get(SNAPSHOT_ID_KEY);
+  if (stored[SNAPSHOT_ID_KEY] === snap.snapshotId) return; // 内容未变，跳过
 
-  const existing = await sendRuntime({ kind: 'par.list' });
-  const rows: any[] = existing?.kind === 'par.list' && existing.result?.ok ? existing.result.data ?? [] : [];
+  const map = await getMap();
+  const snapshotIds = new Set<string>();
 
   for (const item of snap.accounts ?? []) {
-    if (!item.host || !item.username || !item.passwordEnc) continue;
+    if (!item.host || !item.username || !item.passwordEnc || !item.desktopId) continue;
+    snapshotIds.add(item.desktopId);
     let password: string;
     try {
       password = await fernetDecrypt(item.passwordEnc, snap.fernetKey);
     } catch {
       continue; // 凭据解不开（密钥轮换/篡改）→ 跳过该账号
     }
-    const knownId = map[item.desktopId];
-    const known = knownId ? rows.find((r) => r.id === knownId) : undefined;
 
-    if (known) {
-      await sendRuntime({
-        kind: 'par.update',
-        id: known.id,
-        tabName: item.tabName,
-        username: item.username,
-        password,
-        box: item.box || '',
-      });
-    } else {
-      const res = await sendRuntime({
-        kind: 'par.create',
-        siteHost: item.host,
-        tabName: item.tabName,
-        username: item.username,
-        password,
-        box: item.box || '',
-        open: false,
-      });
-      if (res?.kind === 'par.create' && res.result?.ok) {
-        const fresh = await sendRuntime({ kind: 'par.list' });
-        const rows2: any[] = fresh?.kind === 'par.list' && fresh.result?.ok ? fresh.result.data ?? [] : [];
-        const hit = rows2.find((r) => r.siteHost === item.host && r.username === item.username);
-        if (hit) map[item.desktopId] = hit.id;
+    const knownId = map[item.desktopId];
+    const cur = knownId ? await parallelStore.get(knownId).catch(() => undefined) : undefined;
+
+    if (cur) {
+      // 原位更新：盒名/页签名可原位；用户名或密码变更走删除重建（store 无用户名更新接口）
+      if (cur.box !== (item.box || '')) {
+        await parallelStore.updateBox(cur.id, item.box || '');
       }
+      if (cur.tabName !== item.tabName) {
+        await parallelStore.updateTabName(cur.id, item.tabName);
+      }
+      if (cur.username !== item.username) {
+        await parallelStore.delete(cur.id);
+        const account = await parallelStore.create({
+          siteHost: item.host, tabName: item.tabName, username: item.username,
+          password, box: item.box || '', scheme: 'https',
+        });
+        map[item.desktopId] = account.id;
+        await saveMap(map);
+      } else {
+        const current = await credentials.decryptCredentials(cur.credentials!).catch(() => undefined);
+        if (!current || current.password !== password) {
+          await parallelStore.updateCredentials(
+            cur.id,
+            await credentials.encryptCredentials(item.username, password)
+          );
+        }
+      }
+    } else {
+      const account = await parallelStore.create({
+        siteHost: item.host, tabName: item.tabName, username: item.username,
+        password, box: item.box || '', scheme: 'https',
+      });
+      map[item.desktopId] = account.id;
+      await saveMap(map);
     }
   }
-  await chrome.storage.local.set({ [ACCT_MAP_KEY]: map });
+
+  // 删除同步：桌面已移除的账号（映射存在但快照不再包含）
+  for (const [desktopId, extId] of Object.entries(map)) {
+    if (!snapshotIds.has(desktopId)) {
+      await parallelStore.delete(extId).catch(() => undefined);
+      delete map[desktopId];
+    }
+  }
+  await saveMap(map);
 
   // 盒子清单 / 默认盒名（以桌面为准）
   const boxes = snap.boxes ?? {};
@@ -125,30 +154,41 @@ async function applySnapshot(snap: any): Promise<void> {
   if (Array.isArray(boxes.remembered)) patch['ql:boxes'] = boxes.remembered;
   if (boxes.defaultName != null) patch['ql:defaultBox'] = boxes.defaultName;
   if (Object.keys(patch).length) await chrome.storage.local.set(patch);
+
+  await chrome.storage.local.set({ [SNAPSHOT_ID_KEY]: snap.snapshotId });
 }
 
 async function pollCommands(): Promise<void> {
-  const stored = await chrome.storage.local.get(CURSOR_KEY);
-  const after = Number(stored[CURSOR_KEY] ?? 0);
+  const stored = await chrome.storage.local.get('akso:cmdCursor');
+  const after = Number(stored['akso:cmdCursor'] ?? 0);
   const data = await getJson(`/extension/commands?after=${after}`);
   if (!data || !Array.isArray(data.commands)) return;
   let cursor = after;
+  const map = await getMap();
+
   for (const cmd of data.commands) {
     cursor = Math.max(cursor, Number(cmd.seq) || 0);
     if (cmd.type === 'wheel.toggle') {
       await sendRuntime({ kind: 'wheel.toggle' });
     } else if (cmd.type === 'par.open') {
-      const map = await getMap();
       const extId = map[String(cmd.payload?.accountId)];
-      if (extId) await sendRuntime({ kind: 'par.open', accountId: extId });
+      if (extId) await parallelSession.open(extId, false);
     }
   }
   if (cursor !== after) {
-    await chrome.storage.local.set({ [CURSOR_KEY]: cursor });
+    await chrome.storage.local.set({ 'akso:cmdCursor': cursor });
     await fetch(`${DESKTOP}/extension/ack`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ seqs: [cursor] }),
     }).catch(() => undefined);
+  }
+}
+
+async function sendRuntime(req: any): Promise<any | null> {
+  try {
+    return await chrome.runtime.sendMessage(req);
+  } catch {
+    return null;
   }
 }
 

@@ -10,7 +10,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
@@ -59,10 +62,16 @@ def snapshot() -> dict[str, Any]:
         for a in backup["accounts"]
     ]
     sites = sorted({a["host"] for a in accounts})
+    # 内容哈希：扩展端据此幂等跳过未变化的快照
+    snapshot_id = hashlib.sha256(
+        json.dumps({"accounts": accounts, "boxes": backup["boxes"]},
+                   ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
     return {
         "format": "akso-workbench-snapshot",
         "version": 1,
         "generatedAt": now_ms(),
+        "snapshotId": snapshot_id,
         "fernetKey": backup["fernetKey"],
         "sites": sites,
         "accounts": accounts,
@@ -89,6 +98,50 @@ def push_command(body: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(400, f"未知指令类型：{cmd_type}")
     cmd = dispatch_command(cmd_type, body.get("payload") or {})
     return {"seq": cmd["seq"], "accepted": True}
+
+
+@router.post("/launch-chrome")
+def launch_chrome() -> dict[str, Any]:
+    """确保 Chrome 正在运行（扩展在用户默认 profile 里；未运行则拉起）。
+
+    关键约束：Chrome 未运行时，扩展 SW 不会轮询指令——此时点击轮盘选人，
+    指令会滞留队列。故桌面在派发前先探测/拉起 Chrome。
+    """
+    import subprocess
+
+    def chrome_running() -> bool:
+        try:
+            out = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq chrome.exe"],
+                capture_output=True, text=True, timeout=10,
+            )
+            return "chrome.exe" in (out.stdout or "")
+        except Exception:  # noqa: BLE001
+            return False
+
+    if chrome_running():
+        return {"launched": False, "running": True}
+
+    candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    ]
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+        ) as key:
+            candidates.insert(0, winreg.QueryValueEx(key, "")[0])
+    except OSError:
+        pass
+
+    for path in candidates:
+        if Path(path).exists():
+            subprocess.Popen([path])
+            return {"launched": True, "running": True, "path": path}
+    return {"launched": False, "running": False, "detail": "未找到 chrome.exe"}
 
 
 @router.post("/ack")

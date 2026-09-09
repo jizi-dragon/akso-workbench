@@ -103,8 +103,9 @@ def _global_hotkey_loop() -> None:
                 import webview  # noqa: PLC0415 —— 热键线程内延迟导入
 
                 webview.create_window(
-                    "Akso 轮盘", picker, width=430, height=580,
-                    on_top=True, focus=True, frameless=False,
+                    "Akso 轮盘", picker, width=560, height=620,
+                    on_top=True, focus=True, frameless=True,
+                    background_color="#121C2E",
                 )
             except Exception:
                 try:
