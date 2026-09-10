@@ -17,7 +17,8 @@ let cacheBoxes = [];
 let cacheDisabled = [];
 const extState = new Map(); // desktopId → {tabs, hasToken}
 
-let currentBox = ''; // '' = 全部盒子
+let currentBox = ''; // '' = 全部盒子；DEFAULT_FILTER = 默认盒子独立页；否则命名盒
+const DEFAULT_FILTER = '\u0000default'; // 哨兵值：真实盒名不会包含 \u0000
 let batchOn = false;
 const selection = new Set();
 let lastFp = '';
@@ -104,10 +105,10 @@ function buildSectorWheel(root, { pages, pageIndex, onPick }) {
   }
   const svg = svgEl('svg', { class: 'sector-svg', viewBox: `0 0 ${SIZE} ${SIZE}` });
   root.appendChild(svg);
-  // 背景盘 + 轨道渐变（对齐 Electron 轮盘窗，0.2.14 美化）
+  // 背景盘：浅色主题下的层次环（柔和白）
   svg.appendChild(svgEl('circle', {
-    cx: C, cy: C, r: 262, fill: 'rgba(10,16,30,.82)',
-    stroke: 'rgba(122,150,220,.28)', 'stroke-width': 1.5,
+    cx: C, cy: C, r: 262, fill: 'rgba(255, 255, 255, .55)',
+    stroke: 'rgba(180, 200, 240, .6)', 'stroke-width': 1.5,
   }));
   const defs = svgEl('defs');
   const grad = svgEl('linearGradient', { id: 'track-grad', x1: '0%', y1: '0%', x2: '100%', y2: '100%' });
@@ -117,8 +118,7 @@ function buildSectorWheel(root, { pages, pageIndex, onPick }) {
   defs.appendChild(grad);
   svg.appendChild(defs);
 
-  const trackA = -20;
-  const trackB = 100;
+  const trackA = -75, trackB = 75; // 轨道贴右侧 150° 弧（用户定稿）
   const track = svgEl('path', {
     class: 'box-track',
     d: `M ${polar(R_ARC, trackA).x} ${polar(R_ARC, trackA).y} A ${R_ARC} ${R_ARC} 0 0 1 ${polar(R_ARC, trackB).x} ${polar(R_ARC, trackB).y}`,
@@ -310,7 +310,9 @@ async function refresh() {
   renderPools();
   const visible = currentBox === ''
     ? cacheAccounts
-    : cacheAccounts.filter((a) => (a.box || '').trim() === currentBox);
+    : currentBox === DEFAULT_FILTER
+      ? cacheAccounts.filter((a) => !(a.box || '').trim())
+      : cacheAccounts.filter((a) => (a.box || '').trim() === currentBox);
   renderCards(visible);
   if (wheelOpen) renderWheelOverlay();
 }
@@ -357,7 +359,8 @@ function renderBoxChips() {
   const named = cacheBoxes.filter((b) => b.box !== '');
   const parts = [`<span class="chip ${currentBox === '' ? 'active' : ''}" data-box="">全部 <span class="chip-n">${total}</span></span>`];
   if (defaultBox) {
-    parts.push(`<span class="chip" data-box="" data-default="1">默认盒子 <span class="chip-n">${defaultBox.count}</span><span class="chip-act" data-op="defname">✎</span></span>`);
+    // 默认盒子 = 独立过滤页（哨兵值），不再与"全部"混同（用户实测 0.2.15）
+    parts.push(`<span class="chip ${currentBox === DEFAULT_FILTER ? 'active' : ''}" data-box="${DEFAULT_FILTER}" data-default="1">默认盒子 <span class="chip-n">${defaultBox.count}</span><span class="chip-act" data-op="defname">✎</span></span>`);
   }
   for (const b of named) {
     const off = cacheDisabled.includes(b.box);

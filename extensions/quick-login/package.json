@@ -1,6 +1,6 @@
 ﻿{
   "name": "quick-login",
-  "version": "0.2.14",
+  "version": "0.2.15",
   "private": true,
   "description": "QuickLogin：纯浏览器多账号并行（六平面隔离 + 账号轮盘）",
   "type": "module",

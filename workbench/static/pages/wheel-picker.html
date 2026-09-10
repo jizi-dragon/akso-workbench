@@ -5,10 +5,14 @@
     <title>Akso 轮盘</title>
     <style>
       html, body { height: 100%; margin: 0; overflow: hidden; }
+      html { background: transparent; }
       body {
         font-family: "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", sans-serif;
-        background: radial-gradient(circle at 50% 42%, #1d2c4a 0%, #121c2e 62%, #0c1422 100%);
-        color: #eef4fc; user-select: none; cursor: default;
+        background: rgba(244, 247, 253, .88);
+        backdrop-filter: blur(18px) saturate(1.25);
+        border-radius: 20px;
+        box-shadow: 0 24px 70px rgba(23, 42, 84, .4);
+        color: #17233b; user-select: none; cursor: default;
         -webkit-app-region: no-drag;  /* 扇区必须可点击——曾因 body 整体 drag 吞掉全部点击 */
         display: flex; flex-direction: column; align-items: center;
         justify-content: center; gap: 6px; height: 100%;
@@ -17,13 +21,16 @@
       h1, .tip { -webkit-app-region: drag; }
       button, li { -webkit-app-region: no-drag; }
       h1 {
-        font-size: 13px; font-weight: 600; color: rgba(255,255,255,.72);
+        font-size: 13px; font-weight: 700; color: rgba(23, 42, 84, .65);
         margin: 0 0 2px; letter-spacing: 3px;
       }
-      .sector-svg { width: min(66vmin, 480px); height: min(66vmin, 480px); display: block; }
+      .sector-svg {
+        width: min(66vmin, 480px); height: min(66vmin, 480px); display: block;
+        filter: drop-shadow(0 12px 32px rgba(23, 42, 84, .28));
+      }
       .sector .sector-hit {
-        fill: var(--acc, #3E76D2); fill-opacity: 0.45;
-        stroke: rgba(255,255,255,.5); stroke-width: 1.5;
+        fill: var(--acc, #3E76D2); fill-opacity: 0.38;
+        stroke: rgba(23, 42, 84, .3); stroke-width: 1.5;
         cursor: pointer; transition: fill-opacity .14s cubic-bezier(.22,1,.36,1);
       }
       @keyframes sector-in {
@@ -36,35 +43,34 @@
         animation: sector-in .3s cubic-bezier(.3, .9, .35, 1) backwards;
       }
       .sector:hover { transform: scale(1.016); }
-      .sector:hover .sector-hit { fill-opacity: 0.78; }
-      /* 轨道：曾无样式 → SVG 默认黑填充（用户看到的"黑色物体"） */
+      .sector:hover .sector-hit { fill-opacity: 0.66; }
+      /* 轨道：曾无样式 → SVG 默认黑填充（用户看到的"黑色物体"）；浅色渐变贴右侧 150° 弧 */
       .box-track {
         fill: none; stroke: url(#track-grad); stroke-width: 9;
         stroke-linecap: round; opacity: .95;
       }
-      .sector-dot { fill: rgba(255,255,255,.9); }
-      .hub-bg { fill: rgba(16,26,48,.92); stroke: rgba(140,168,235,.4); cursor: pointer; }
+      .sector-dot { fill: rgba(23, 42, 84, .35); }
       .sector .sector-label {
-        fill: #fff; font-size: 21px; font-weight: 600;
-        paint-order: stroke; stroke: rgba(18,28,46,.6); stroke-width: 3px;
+        fill: #17233b; font-size: 21px; font-weight: 600;
+        paint-order: stroke; stroke: rgba(255, 255, 255, .75); stroke-width: 3px;
         pointer-events: none;
       }
-      .sector-num circle { fill: rgba(255,255,255,.92); }
+      .sector-num circle { fill: rgba(255, 255, 255, .95); }
       .sector-num text { fill: #17233b; font-size: 20px; font-weight: 700; }
-      .hub-bg { fill: #182338; stroke: rgba(255,255,255,.35); stroke-width: 1.5; cursor: pointer; }
-      text.hub-page { fill: #eef4fc; font-size: 26px; font-weight: 700; text-anchor: middle; }
-      text.hub-sub { fill: rgba(255,255,255,.5); font-size: 14px; text-anchor: middle; }
-      .box-node { fill: rgba(255,255,255,.32); cursor: pointer; }
-      .box-node-on { fill: #fff; }
-      .tip { font-size: 11px; color: rgba(255,255,255,.45); letter-spacing: 1px; }
-      .empty { color: rgba(255,255,255,.6); font-size: 13px; }
+      .hub-bg { fill: rgba(255, 255, 255, .88); stroke: rgba(30, 111, 255, .35); stroke-width: 1.5; cursor: pointer; }
+      text.hub-page { fill: #17233b; font-size: 26px; font-weight: 700; text-anchor: middle; }
+      text.hub-sub { fill: rgba(23, 42, 84, .55); font-size: 14px; text-anchor: middle; }
+      .box-node { fill: rgba(23, 42, 84, .35); cursor: pointer; }
+      .box-node-on { fill: #1E6FFF; }
+      .tip { font-size: 11px; color: rgba(23, 42, 84, .55); letter-spacing: 1px; }
+      .empty { color: rgba(23, 42, 84, .6); font-size: 13px; }
       .close-x {
         position: fixed; top: 10px; right: 12px;
-        background: none; border: none; color: rgba(255,255,255,.55);
+        background: none; border: none; color: rgba(23, 42, 84, .6);
         font-size: 18px; cursor: pointer; padding: 4px 8px; border-radius: 8px;
         -webkit-app-region: no-drag;
       }
-      .close-x:hover { color: #fff; background: rgba(255,255,255,.12); }
+      .close-x:hover { color: #17233b; background: rgba(23, 42, 84, .1); }
     </style>
   </head>
   <body>
@@ -73,10 +79,9 @@
     <div id="wheel-root" class="sector-svg"><span class="empty">加载中…</span></div>
     <span class="tip">点击扇区启动并切换 · 滚轮/Hub 切盒 · 数字键快选 · Esc 关闭 · 拖动空白移动窗口</span>
     <script>
-      /* Electron 透明窗模式：URL 带 transparent=1 时背景透明（露出桌面） */
+      /* Electron 透明窗模式：仅 html 层透明——body 保持浅色磨砂卡片（0.2.15 浅色主题） */
       if (new URLSearchParams(location.search).get('transparent') === '1') {
         document.documentElement.style.background = 'transparent';
-        document.body.style.background = 'transparent';
       }
     </script>
     <script type="module">
@@ -164,10 +169,10 @@
         }
         const svg = svgEl('svg', { class: 'sector-svg', viewBox: `0 0 ${SIZE} ${SIZE}` });
         root.appendChild(svg);
-        // 背景盘：给轮盘一个明确的表面（透明窗下不再"透明发黑"）
+        // 背景盘：浅色主题下的层次环（柔和白）
         svg.appendChild(svgEl('circle', {
-          cx: C, cy: C, r: 262, fill: 'rgba(10,16,30,.82)',
-          stroke: 'rgba(122,150,220,.28)', 'stroke-width': 1.5,
+          cx: C, cy: C, r: 262, fill: 'rgba(255, 255, 255, .55)',
+          stroke: 'rgba(180, 200, 240, .6)', 'stroke-width': 1.5,
         }));
         // 轨道渐变（蓝→紫→绿，对齐上游 v3.9.5 轨道配色）
         const defs = svgEl('defs');
@@ -178,7 +183,7 @@
         defs.appendChild(grad);
         svg.appendChild(defs);
 
-        const trackA = -20, trackB = 100;
+        const trackA = -75, trackB = 75; // 轨道贴右侧 150° 弧（用户定稿）
         svg.appendChild(svgEl('path', {
           class: 'box-track',
           d: `M ${polar(R_ARC, trackA).x} ${polar(R_ARC, trackA).y}` +

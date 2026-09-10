@@ -56,6 +56,15 @@ with sync_playwright() as pw:
     checks.append((f"W4c 网络响应: {resp_dump}", True))
     checks.append(("W5 指纹防重绘（3s 轮询未重建 DOM）", bool(marked and same)))
 
+    # W7 浅色主题：轨道渐变 + 背景盘浅色 + 标签深色 + body 浅色磨砂
+    track_stroke = pg.evaluate("() => getComputedStyle(document.querySelector('.box-track')).stroke")
+    backdrop = pg.evaluate("() => document.querySelector('#wheel-root svg circle')?.getAttribute('fill') || ''")
+    label_fill = pg.evaluate("() => getComputedStyle(document.querySelector('text.sector-label')).fill")
+    body_bg = pg.evaluate("() => getComputedStyle(document.body).backgroundColor")
+    checks.append((f"W7 浅色主题（轨道={track_stroke[:28]} 盘={backdrop} 标签={label_fill} body={body_bg}）",
+                   "track-grad" in track_stroke and "255, 255, 255" in backdrop
+                   and "23, 35, 59" in label_fill and "244, 247, 253" in body_bg))
+
     checks.append(("W6 零 JS 错误", not errs))
     if errs:
         print("JS 错误:", errs[:3])

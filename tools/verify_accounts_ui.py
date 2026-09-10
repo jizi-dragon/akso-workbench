@@ -120,11 +120,11 @@ with sync_playwright() as pw:
 
     # C19 盒子 ✎ 点击 → ask 模态出现（Electron 无 prompt 的替代路径）
     pg.click("#batch-toggle")  # 确保退出批量态再操作
-    pg.evaluate("() => { const c = [...document.querySelectorAll('#box-chips .chip')].find(x => x.dataset.box); if (c) c.querySelector('[data-op=rename]')?.click(); }")
+    pg.evaluate("() => { const c = [...document.querySelectorAll('#box-chips .chip')].find(x => x.querySelector('[data-op=\"rename\"]')); c?.querySelector('[data-op=\"rename\"]')?.click(); }")
     pg.wait_for_timeout(300)
     ask_visible = pg.evaluate("() => !document.getElementById('ask-modal').classList.contains('hidden')")
     checks.append(("C19 盒子重命名弹出输入模态", ask_visible))
-    pg.click("#ask-cancel")
+    pg.evaluate("() => document.getElementById('ask-cancel')?.click()")
     pg.wait_for_timeout(200)
 
     checks.append(("C11 零 JS 页面错误", not errors))

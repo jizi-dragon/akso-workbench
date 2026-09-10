@@ -78,3 +78,4 @@
 - 启动：服务 `uv run python -m workbench.main`；桌面 `cd desktop && npm install && npm start`
 - 构建：`powershell -File tools\build.ps1`；测试：`.venv\Scripts\python -m pytest`（或 uv run pytest）；lint：`uvx ruff check .`
 - 账号中心真机账号：dev-admin / dev-user（标准验证 + example-config 环境）
+20. **孤儿 uvicorn 占 18765**：测试脚本异常退出会遗留服务进程——新起的服务绑定失败、HTTP 验证全部打到旧代码上，表现为"修复无效"。先 `Get-NetTCPConnection -LocalPort 18765` 查占再起服务；盒子操作行为级回归 = `tools/verify_box_ops.py`

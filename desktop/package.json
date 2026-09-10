@@ -1,7 +1,7 @@
 {
   "name": "akso-workbench-desktop",
   "productName": "AksoWorkbench",
-  "version": "0.2.14",
+  "version": "0.2.15",
   "private": true,
   "description": "Akso Workbench 桌面壳（Electron）：窗口/热键/托盘/更新器 + Python 服务 sidecar",
   "main": "main.js",
