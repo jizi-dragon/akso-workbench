@@ -1,4 +1,4 @@
-/** 账号中心 v2（quick-login 管理页复刻）：
+﻿/** 账号中心 v2（quick-login 管理页复刻）：
  *  上游 parallel 页的视觉与功能基线（盒子 chips 全操作 / 批量管理 / 四态徽标 /
  *  移盒弹窗 / 删盒两步处置 / 顶栏统计 / 指纹防闪烁），数据面接桌面 API，
  *  四态徽标数据来自扩展执行面状态回传（/extension/state）。
@@ -190,9 +190,15 @@ function closeWheel() {
   setTimeout(() => { overlay.hidden = true; }, 200);
 }
 
+let lastWheelFp = '';
+
 function renderWheelOverlay() {
   wheelPages = groupPagesByBox(cacheAccounts, cacheDisabled);
   if (wheelPage >= wheelPages.length) wheelPage = 0;
+  // 指纹防重绘：3s 轮询数据未变不重建（否则入场动画每 3s 重播 = 轮盘眨眼）
+  const fp = JSON.stringify([wheelPages.map((p) => [p.label, p.accounts.map((a) => a.id)]), wheelPage]);
+  if (fp === lastWheelFp) return;
+  lastWheelFp = fp;
   buildSectorWheel(el('wheel-svg'), {
     pages: wheelPages,
     pageIndex: wheelPage,
@@ -209,8 +215,10 @@ async function postExtCommand(type, payload) {
 }
 
 document.addEventListener('keydown', (e) => {
-  /* Ctrl+Shift+Q：与扩展 quick-wheel 默认键一致；Alt+Q 让位给 Electron 壳全局热键 */
-  if (e.key.toLowerCase() === 'q' && e.ctrlKey && e.shiftKey) {
+  /* Alt+Q 为主（桌面壳运行时被全局热键接管，纯浏览器模式由页面响应）；
+     Ctrl+Shift+Q 保留为页内备用 */
+  const q = e.key.toLowerCase() === 'q';
+  if (q && (e.altKey || (e.ctrlKey && e.shiftKey))) {
     e.preventDefault();
     if (wheelOpen) closeWheel(); else openWheel();
     return;
@@ -686,7 +694,7 @@ async function saveEdit() {
 
 async function bulkAdd() {
   const envId = el('acc-env').value;
-  if (!envId) return alert('请先在「环境管理」新增平台环境');
+  if (!envId) return alert('请先在「站点管理」添加站点');
   const lines = el('acc-bulk').value.split('\n').map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return alert('请粘贴账号行（用户名,密码[,盒子]）');
   const slot = el('bulk-result');
@@ -713,7 +721,46 @@ async function bulkAdd() {
   refresh();
 }
 
-/* ———————————————— 环境（对话框内 CRUD） ———————————————— */
+/* ———————————————— 站点管理（链接清洗 + 站点清单，上游 parseSiteInput 语义） ———————————————— */
+
+/** 清洗输入：完整链接 → 站点 origin（scheme://host[:port]，保留端口）；裸域名 → 默认 https */
+function cleanSiteInput(raw) {
+  const t = (raw || '').trim();
+  if (!t) return null;
+  try {
+    if (/^https?:\/\//i.test(t)) {
+      const u = new URL(t);
+      if (!u.hostname) return null;
+      return { base: u.origin, host: u.hostname };
+    }
+    if (t.includes('://')) return null; // 非 http(s) 协议不支持
+    const host = t.split(/[/?#]/)[0];
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host) && !/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return null;
+    return { base: `https://${host}`, host };
+  } catch {
+    return null;
+  }
+}
+
+async function addSite(ev) {
+  ev.preventDefault();
+  const raw = el('s-host').value;
+  const cleaned = cleanSiteInput(raw);
+  if (!cleaned) return alert('无法识别站点——请粘贴 http(s) 链接或域名。');
+  const envs = (await api('/api/accounts/envs')).envs;
+  if (envs.some((e) => (e.base_url || '').replace(/\/$/, '') === cleaned.base.replace(/\/$/, ''))) {
+    alert(`站点已存在：${cleaned.base}`);
+    el('s-host').value = '';
+    return;
+  }
+  await api('/api/accounts/envs', {
+    method: 'POST',
+    body: { name: cleaned.host, base_url: cleaned.base },
+  });
+  el('s-host').value = '';
+  await loadEnvs();
+  refresh();
+}
 
 async function loadEnvs() {
   const data = await api('/api/accounts/envs');
@@ -725,44 +772,35 @@ async function loadEnvs() {
     opt.textContent = `${env.name}${env.base_url ? ` · ${env.base_url}` : ''}（${env.account_count} 账号）`;
     sel.appendChild(opt);
   }
-  const box = el('env-list');
-  if (!data.envs.length) { box.innerHTML = '<div class="empty">暂无平台环境</div>'; return; }
-  box.innerHTML = '<table class="mtable"><thead><tr><th>环境</th><th>baseUrl</th><th>账号数</th><th></th></tr></thead><tbody></tbody></table>';
-  const tbody = box.querySelector('tbody');
-  for (const env of data.envs) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${env.name}</td><td class="mono">${env.base_url || '—'}</td><td>${env.account_count}</td><td></td>`;
-    const del = document.createElement('button');
-    del.className = 'mbtn danger';
-    del.style.padding = '4px 10px';
-    del.textContent = '删除';
-    del.onclick = async () => {
-      if (!env.account_count || confirm(`删除环境「${env.name}」？（其下 ${env.account_count} 个账号将一并删除）`)) {
-        await api(`/api/accounts/envs/${env.id}`, { method: 'DELETE' });
-        loadEnvs();
+  const box = el('site-list');
+  if (!data.envs.length) {
+    box.innerHTML = '<li class="empty">暂无站点——粘贴链接或域名添加</li>';
+    return;
+  }
+  box.innerHTML = data.envs.map((env) => `
+    <li class="site-row" data-env="${env.id}">
+      <span class="ac-avatar" style="--ring:#1E6FFF; width:26px; height:26px; font-size:11px">${(env.name || '?').slice(0, 1).toUpperCase()}</span>
+      <div class="meta"><div class="alias">${env.name}</div><div class="sub">${env.base_url || '—'}</div></div>
+      <span class="badge ${env.account_count ? 'online' : 'offline'}">${env.account_count} 账号</span>
+      <button class="btn-danger btn-sm" data-del-env="${env.id}" data-name="${env.name}" data-count="${env.account_count}">删除</button>
+    </li>`).join('');
+  box.querySelectorAll('[data-del-env]').forEach((btn) => {
+    btn.onclick = async () => {
+      const count = Number(btn.dataset.count || 0);
+      if (!count || confirm(`删除站点「${btn.dataset.name}」？（其下 ${count} 个账号将一并删除）`)) {
+        await api(`/api/accounts/envs/${btn.dataset.delEnv}`, { method: 'DELETE' });
+        await loadEnvs();
         refresh();
       }
     };
-    tr.children[3].appendChild(del);
-    tbody.appendChild(tr);
-  }
-}
-
-async function addEnv() {
-  const name = el('env-name').value.trim();
-  if (!name) return alert('请填写环境名称');
-  await api('/api/accounts/envs', { method: 'POST', body: { name, base_url: el('env-url').value.trim() } });
-  el('env-name').value = '';
-  el('env-url').value = '';
-  loadEnvs();
-  refresh();
+  });
 }
 
 async function addAccount() {
   const env_id = el('acc-env').value;
   const username = el('acc-username').value.trim();
   const password = el('acc-password').value;
-  if (!env_id) return alert('请先在「环境管理」新增平台环境');
+  if (!env_id) return alert('请先在「站点管理」添加站点');
   if (!username || !password) return alert('用户名与密码必填');
   const tags = el('acc-tags').value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
   const box = el('acc-box').value.trim();
@@ -863,9 +901,7 @@ el('btn-import-close').onclick = () => closeDialog(el('import-dialog'));
 el('btn-import-run').onclick = runImport;
 el('btn-edit-cancel').onclick = () => { closeDialog(el('edit-dialog')); editTargetId = null; };
 el('btn-edit-save').onclick = () => saveEdit().catch((e) => alert(`保存失败：${e.message}`));
-el('btn-manage-env').onclick = () => { loadEnvs(); el('env-dialog').showModal(); };
-el('btn-env-add').onclick = addEnv;
-el('btn-env-close').onclick = () => closeDialog(el('env-dialog'));
+el('site-form').addEventListener('submit', addSite);
 document.querySelectorAll('[data-close-dialog]').forEach((btn) => {
   btn.onclick = () => closeDialog(btn.closest('dialog'));
 });

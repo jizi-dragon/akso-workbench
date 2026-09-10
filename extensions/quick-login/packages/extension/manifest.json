@@ -9,9 +9,9 @@
   "commands": {
     "quick-wheel": {
       "suggested_key": {
-        "default": "Ctrl+Shift+Q"
+        "default": "Alt+Q"
       },
-      "description": "打开账号选择轮盘（可在 chrome://extensions/shortcuts 自定义；默认让位给桌面壳全局 Alt+Q）"
+      "description": "打开账号选择轮盘（可在 chrome://extensions/shortcuts 自定义；桌面壳运行时 Alt+Q 优先呼出桌面轮盘）"
     },
     "quick-pages": {
       "suggested_key": {

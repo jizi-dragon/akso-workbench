@@ -78,6 +78,7 @@
       let pages = [];
       let wheelPage = 0;
       let disabledBoxes = [];
+      let lastWheelFp = '';
 
       /* 关闭：Electron 子窗 window.close 可靠（pywebview 时代的 js_api 已随壳退役） */
       function closeWheel() {
@@ -118,7 +119,11 @@
         for (const a of list) {
           const name = (a.box || '').trim();
           if (disabledBoxes.includes(name)) continue; // 禁用盒：轮盘跳过（上游 3.10 语义）
-          if (!byName.has(name)) { byName.set(name, []); pages.push({ label: name || '默认盒子', list: [] }); }
+          if (!byName.has(name)) {
+            const arr = []; // 同一引用——曾写成两个数组导致扇区永远为空（0.2.12 实锤断点）
+            byName.set(name, arr);
+            pages.push({ label: name || '默认盒子', list: arr });
+          }
           byName.get(name).push(a);
         }
         return pages;
@@ -155,11 +160,11 @@
           d: `M ${polar(R_ARC, trackA).x} ${polar(R_ARC, trackA).y}` +
              ` A ${R_ARC} ${R_ARC} 0 0 1 ${polar(R_ARC, trackB).x} ${polar(R_ARC, trackB).y}`,
         }));
-        pages.forEach((p, idx) => {
+        pages.forEach((pg, idx) => {
           const deg = trackA + ((trackB - trackA) * (idx + 0.5)) / pages.length;
-          const p = polar(R_ARC, deg);
+          const pos = polar(R_ARC, deg);
           const node = svgEl('circle', {
-            class: `box-node${idx === wheelPage ? ' box-node-on' : ''}`, cx: p.x, cy: p.y, r: 7,
+            class: `box-node${idx === wheelPage ? ' box-node-on' : ''}`, cx: pos.x, cy: pos.y, r: 7,
           });
           node.addEventListener('click', () => { wheelPage = idx; buildWheel(); });
           svg.appendChild(node);
@@ -174,7 +179,6 @@
           const g = svgEl('g', { class: 'sector' });
           g.style.setProperty('--acc', COLORS[globalIdx % COLORS.length]);
           g.style.animationDelay = `${0.06 + idx * 0.05}s`; // 扇区逐个入场（上游 v3.9 语义）
-          g.style.setProperty('--acc', COLORS[globalIdx % COLORS.length]);
           const hit = svgEl('path', { class: 'sector-hit', d: sectorPath(a0, a1) });
           hit.addEventListener('click', () => pick(a.id));
           g.appendChild(hit);
@@ -223,6 +227,10 @@
         accountIds = accounts.map((a) => a.id);
         pages = groupPagesByBox(accounts);
         if (wheelPage >= pages.length) wheelPage = 0;
+        // 指纹防重绘：数据未变不重建（入场动画不重播、悬停态不丢）
+        const fp = JSON.stringify([pages.map((p) => [p.label, p.list.map((a) => a.id)]), wheelPage]);
+        if (fp === lastWheelFp) return;
+        lastWheelFp = fp;
         buildWheel();
       }
 

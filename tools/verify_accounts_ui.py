@@ -77,10 +77,33 @@ with sync_playwright() as pw:
     checks.append(("C9 批量管理条出现", bar_visible))
     pg.click("#batch-toggle")
 
-    # C7 底部双卡 + 批量面板折叠
+    # C7 底部卡片：批量面板折叠 + 分配池 + 站点管理在位
     bulk_hidden = pg.evaluate("() => document.getElementById('bulk-panel').classList.contains('hidden')")
     pool = pg.evaluate("() => !!document.getElementById('pool-config')")
-    checks.append(("C10 批量面板默认折叠 + 分配池在位", bulk_hidden and pool))
+    site_form = pg.evaluate("() => !!document.getElementById('site-form') && !!document.getElementById('site-list')")
+    wheel_label = pg.evaluate("() => document.getElementById('btn-wheel').textContent")
+    checks.append(("C10 批量面板折叠 + 分配池在位", bulk_hidden and pool))
+    checks.append((f"C12 站点管理板块 + 轮盘标签（{wheel_label}）", site_form and "Alt+Q" in wheel_label))
+    site_rows = pg.evaluate("() => document.querySelectorAll('#site-list .site-row').length")
+    checks.append((f"C13 站点清单行 ×{site_rows}", site_rows >= 1))
+
+    # 清洗函数单测（页面上下文内）
+    clean = pg.evaluate(
+        """() => {
+          const cases = [
+            'https://example-config.example.com/admin/config/lifecycle/3a19fd65-6221-c5c7-6ef8-44a96ca76b22/status/d5db4111-2edf-37f9-5841-3a1a0821ab4f/entry-reaction/42e1286e-19d4-b837-df89-3a239c402b98?__edit=2',
+            'http://192.0.2.10:8080/admin/x',
+            'example.com',
+          ];
+          return cases.map((t) => {
+            try {
+              if (/^https?:\\/\\//i.test(t)) { const u = new URL(t); return u.origin; }
+              return null;
+            } catch { return null; }
+          });
+        }"""
+    )
+    checks.append((f"C14 链接清洗 {clean}", clean[0] == 'https://example-config.example.com' and clean[1] == 'http://192.0.2.10:8080'))
 
     checks.append(("C11 零 JS 页面错误", not errors))
     if errors:

@@ -23,8 +23,7 @@
         </div>
         <div class="head-right">
           <div class="head-actions">
-            <button id="btn-wheel" class="btn-ghost btn-sm" type="button">轮盘 Ctrl+Shift+Q</button>
-            <button id="btn-manage-env" class="btn-ghost btn-sm" type="button">环境管理</button>
+            <button id="btn-wheel" class="btn-ghost btn-sm" type="button" title="Alt+Q 全局呼出（桌面壳运行时）；浏览器直开本页时页面内同样响应 Alt+Q">轮盘 Alt+Q</button>
             <button id="btn-export" class="btn-ghost btn-sm" type="button">导出备份</button>
             <button id="btn-import-backup" class="btn-ghost btn-sm" type="button">导入备份</button>
             <input type="file" id="backup-file" accept=".json" class="hidden" />
@@ -65,7 +64,7 @@
         </ul>
       </section>
 
-      <!-- ============ 底部双卡（添加账号 / 分配池） ============ -->
+      <!-- ============ 底部三卡（添加账号 / 站点管理 / 分配池） ============ -->
       <div class="bottom-grid">
         <section class="card block">
           <div class="block-head">
@@ -105,6 +104,18 @@
 
         <section class="card block">
           <div class="block-head">
+            <h2>站点管理</h2>
+            <p class="desc">粘贴完整链接自动清洗为站点（保留端口）；站点下有账号时需先移出再删。</p>
+          </div>
+          <form id="site-form" class="site-grid">
+            <input id="s-host" placeholder="粘贴链接或域名，如 https://example-config.example.com/admin/config/..." autocomplete="off" spellcheck="false" />
+            <button class="btn-ghost" type="submit">添加站点</button>
+          </form>
+          <ul id="site-list" class="plain site-list"></ul>
+        </section>
+
+        <section class="card block">
+          <div class="block-head">
             <h2>分配池</h2>
             <p class="desc">洞察 / 工厂 / Monitor 的账号下拉只列出池内成员；点击成员打开内置会话。</p>
           </div>
@@ -136,24 +147,6 @@
     </div>
 
     <!-- ============ 环境管理对话框 ============ -->
-    <dialog id="env-dialog" class="mdialog">
-      <div class="mdialog-head">
-        <h3>平台环境</h3>
-        <button class="mdialog-close" data-close-dialog title="关闭">×</button>
-      </div>
-      <div class="mdialog-body">
-        <div class="mgrid cols-3">
-          <label class="mfield">名称<input id="env-name" placeholder="标准验证环境" /></label>
-          <label class="mfield">baseUrl<input id="env-url" placeholder="https://demo-val.example.com" spellcheck="false" /></label>
-          <label class="mfield" style="justify-content:flex-end"><button class="mbtn" id="btn-env-add">新增环境</button></label>
-        </div>
-        <div id="env-list" style="margin-top:12px"></div>
-      </div>
-      <div class="mdialog-foot">
-        <button class="mbtn ghost" id="btn-env-close">关闭</button>
-      </div>
-    </dialog>
-
     <dialog id="edit-dialog" class="mdialog">
       <div class="mdialog-head">
         <h3>编辑账号</h3>
