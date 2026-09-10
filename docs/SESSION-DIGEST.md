@@ -79,3 +79,11 @@
 - 构建：`powershell -File tools\build.ps1`；测试：`.venv\Scripts\python -m pytest`（或 uv run pytest）；lint：`uvx ruff check .`
 - 账号中心真机账号：dev-admin / dev-user（标准验证 + example-config 环境）
 20. **孤儿 uvicorn 占 18765**：测试脚本异常退出会遗留服务进程——新起的服务绑定失败、HTTP 验证全部打到旧代码上，表现为"修复无效"。先 `Get-NetTCPConnection -LocalPort 18765` 查占再起服务；盒子操作行为级回归 = `tools/verify_box_ops.py`
+
+## 0.2.20 复验顺序（下载修复 + 轮盘视觉 · 缺一不可）
+1. `chrome://extensions` 重载 QuickLogin（新增 downloads 权限；版本应显示 v0.2.20）
+2. 任务管理器确认无 AksoServer.exe / python.exe 残留进程，然后完全重启桌面壳（`cd desktop && npm start`）——sidecar 不重启就是旧代码（孤儿进程教训见环境坑 #20）
+3. 扩展弹窗 → 站点授权 → 各站点点「授权」至显示已授权（并行管理页退役后这是唯一授权入口）
+4. 快捷登录 → 登录成功后下载文件（若首次失败，扩展会自动带 Bearer 重发并落地；重试日志在 ql:diag）
+5. 盒子新建/编辑输入框复测（原生 dialog，Electron 焦点最稳）
+6. 若下载仍失败：扩展弹窗「**导出诊断**」→ 把 JSON 发开发者（ql:diag 里有每次下载失败的错误码与归属判定日志）
