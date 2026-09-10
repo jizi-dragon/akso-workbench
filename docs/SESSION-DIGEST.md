@@ -65,11 +65,11 @@
 - 账号中心 UI 复刻基线（上游 parallel 管理页 14 项差距）见目标档案：四态徽标/批量管理/diff 防闪烁/移盒弹窗/盒子禁用/删盒两步处置/诊断导出/站点授权健康/顶栏统计/数字键0=第10/轮盘动效等
 
 ## 待办/可选（未做）
-- **真机 Chrome 全链路验收**：装载 dist → Alt+Q 轮盘 → 选账号 → Chrome 自动登录 → 可用
-- **账号中心 UI 复刻**（按 14 项基线，优先级纪律：quick-login 本体优先，akso-auto/akso-cc/Monitor 结合后置）
+- **账号中心 UI 复刻二期**（基线剩余 polish 项）：轮盘扇区入场/节点滑移动效、账号别名（tabName，需 account 表加列）、扩展端授权清单展示（state 已回传 enforcementOff，细化到 host）
+- **人工复验**：真实 Chrome 装载 dist → 桌面 Alt+Q 轮盘选人 → 真实 profile 自动登录（自动化侧已 E2E_PASS）
 - egmp writers 真机首跑验证（create 写配置需测试环境授权；monitor 侧已真机验收）
 - NSIS 安装器静默装 UAC 未落盘验证；若需"关主窗后会话常驻"：服务与壳解耦为独立进程
-- 安全加固（扩展侧产品级隐患，暂挂）：明文凭据 60s 投递窗口（getPendingAutoLogin 读后不删——3.13.2 是否已改需复核）、同步通道无认证
+- 安全加固（扩展侧产品级隐患，暂挂）：明文凭据 60s 投递窗口（getPendingAutoLogin 读后不删——3.13.2 复核仍未修）、同步通道无认证
 
 ## 运维速记
 - 启动：服务 `uv run python -m workbench.main`；桌面 `cd desktop && npm install && npm start`

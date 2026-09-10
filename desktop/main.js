@@ -118,6 +118,19 @@ function toggleWheel() {
   });
   wheelWindow.setAlwaysOnTop(true, 'screen-saver');
   wheelWindow.loadURL(serverUrl('/static/pages/wheel-picker.html?transparent=1'));
+  // 失焦自动关闭（上游独立小窗语义）：400ms 启动宽限防误关
+  wheelWindow.once('ready-to-show', () => {
+    setTimeout(() => {
+      if (wheelWindow && !wheelWindow.isDestroyed()) {
+        wheelWindow.on('blur', () => {
+          if (wheelWindow && !wheelWindow.isDestroyed()) {
+            wheelWindow.close();
+            wheelWindow = null;
+          }
+        });
+      }
+    }, 400);
+  });
   wheelWindow.on('closed', () => { wheelWindow = null; });
 }
 
