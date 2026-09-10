@@ -669,3 +669,12 @@
   .head { flex-direction: column; align-items: flex-start; }
   .head-right { flex-wrap: wrap; }
 }
+
+/* —— 原生 dialog 模态（0.2.17：Electron 焦点管理最稳） —— */
+dialog#ask-modal, dialog#box-modal {
+  border: none; padding: 0; background: transparent;
+}
+dialog#ask-modal::backdrop, dialog#box-modal::backdrop {
+  background: rgba(23, 42, 84, .32);
+  backdrop-filter: blur(4px);
+}

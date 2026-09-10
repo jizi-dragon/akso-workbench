@@ -110,6 +110,14 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
     case 'par.grantChanged': {
       // 授权增撤后由 UI 通知：刷新授权健康缓存（下轮 par.list 生效）
       invalidateEnforcementCache();
+      // 0.2.17：新授权立即重装全部绑定规则——下载等导航请求马上拿到 Bearer
+      void (async () => {
+        try {
+          await parallelSession.reapplyAllRules();
+        } catch {
+          // 忽略：下轮事件会再同步
+        }
+      })();
       return { kind: 'par.grantChanged', result: ok(true) };
     }
     case 'ql.diag': {

@@ -324,29 +324,30 @@ function renderStats() {
   el('stat-boxes').textContent = String(new Set(cacheAccounts.map((a) => (a.box || '').trim())).size);
 }
 
-/* ———————————————— 通用文本输入模态（Electron 不支持 window.prompt） ———————————————— */
+/* ———————————————— 通用文本输入模态（原生 dialog：Electron 焦点管理最稳） ———————————————— */
 
 function askText(title, defaultValue = '') {
   return new Promise((resolve) => {
-    el('ask-title').textContent = title;
-    el('ask-input').value = defaultValue;
-    el('ask-modal').classList.remove('hidden');
+    const dlg = el('ask-modal');
     const input = el('ask-input');
-    input.focus();
-    input.select();
+    let settled = false;
     const done = (value) => {
-      el('ask-modal').classList.add('hidden');
-      el('ask-ok').onclick = null;
-      el('ask-cancel').onclick = null;
-      input.onkeydown = null;
+      if (settled) return;
+      settled = true;
+      if (dlg.open) dlg.close();
       resolve(value);
     };
+    el('ask-title').textContent = title;
+    input.value = defaultValue;
     el('ask-ok').onclick = () => done(input.value.trim());
     el('ask-cancel').onclick = () => done(null);
     input.onkeydown = (e) => {
       if (e.key === 'Enter') { e.preventDefault(); done(input.value.trim()); }
-      if (e.key === 'Escape') { e.preventDefault(); done(null); }
     };
+    dlg.onclose = () => done(null); // Esc 原生 cancel/close 兜底
+    dlg.showModal();
+    input.focus();
+    input.select();
   });
 }
 
@@ -452,7 +453,7 @@ function openBoxModal(ids) {
   el('box-modal-title').textContent = ids.length > 1 ? `移入盒子（已选 ${ids.length} 个账号）` : '移入盒子';
   el('box-new-name').value = '';
   renderBoxOptions();
-  el('box-modal').classList.remove('hidden');
+  el('box-modal').showModal();
 }
 
 function renderBoxOptions() {
@@ -479,14 +480,14 @@ async function confirmBoxMove() {
   for (const id of boxModalTargets) {
     await api(`/api/accounts/${id}`, { method: 'PATCH', body: { box: target } });
   }
-  el('box-modal').classList.add('hidden');
+  el('box-modal').close();
   selection.clear();
   updateBatchBar();
   refresh();
 }
 
 el('box-modal-ok').onclick = () => confirmBoxMove().catch((e) => alert(`移动失败：${e.message}`));
-el('box-modal-cancel').onclick = () => el('box-modal').classList.add('hidden');
+el('box-modal-cancel').onclick = () => el('box-modal').close();
 el('box-new-name').addEventListener('input', () => {
   const v = el('box-new-name').value.trim();
   boxModalChoice = v || null;

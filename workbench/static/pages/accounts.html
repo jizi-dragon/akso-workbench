@@ -124,8 +124,8 @@
       </section>
     </div>
 
-    <!-- ============ 通用输入模态（Electron 不支持 window.prompt，一律走此模态） ============ -->
-    <div id="ask-modal" class="modal hidden">
+    <!-- ============ 通用输入模态（Electron 不支持 window.prompt；原生 dialog 焦点最稳） ============ -->
+    <dialog id="ask-modal">
       <div class="modal-card">
         <h3 id="ask-title">输入</h3>
         <input id="ask-input" autocomplete="off" />
@@ -134,10 +134,10 @@
           <button id="ask-ok" class="btn-primary" type="button">确定</button>
         </div>
       </div>
-    </div>
+    </dialog>
 
-    <!-- ============ 移入盒子弹窗（上游 box-modal 语义） ============ -->
-    <div id="box-modal" class="modal hidden">
+    <!-- ============ 移入盒子弹窗（上游 box-modal 语义；原生 dialog） ============ -->
+    <dialog id="box-modal">
       <div class="modal-card">
         <h3 id="box-modal-title">移入盒子</h3>
         <div class="box-options" id="box-options"></div>
@@ -147,7 +147,7 @@
           <button id="box-modal-ok" class="btn-primary" type="button">确定</button>
         </div>
       </div>
-    </div>
+    </dialog>
 
     <!-- ============ 环境管理对话框 ============ -->
     <dialog id="edit-dialog" class="mdialog">

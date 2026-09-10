@@ -175,3 +175,61 @@ body {
   border-radius: 50%;
   background: var(--sb-border-strong);
 }
+
+/* ---- 站点授权（0.2.17 恢复：并行管理页退役后唯一的授权入口） ---- */
+.grant {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 11px;
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  background: var(--sb-surface-2);
+}
+.grant-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--sb-text);
+}
+.grant-hint {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--sb-text-secondary);
+}
+.grant-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.grant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.grant-host {
+  font-weight: 600;
+  color: var(--sb-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grant-host.ok { color: var(--sb-text-secondary); }
+.grant-state.ok { color: var(--sb-success); font-weight: 700; }
+.grant-btn {
+  background: var(--sb-brand);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+.grant-btn:hover { background: var(--sb-brand-hover); }
+.grant-empty { color: var(--sb-text-secondary); }

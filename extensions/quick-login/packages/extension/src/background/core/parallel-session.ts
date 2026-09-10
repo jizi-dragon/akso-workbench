@@ -1083,6 +1083,14 @@ export const parallelSession = {
     return { tabIds: tabs, hasToken: Boolean(tokens.get(account.id)?.token), enforcementOff };
   },
 
+  /** 授权变更后重装全部绑定规则（0.2.16 弹窗授权入口——新授权立即生效，不等下一次事件） */
+  async reapplyAllRules(): Promise<void> {
+    const list = await parallelStore.list();
+    for (const account of list) {
+      await syncAccountRules(account.id, account.siteHost);
+    }
+  },
+
   /** 账号改名后刷新所有绑定标签页标题 */
   async refreshTitle(accountId: string): Promise<void> {
     const account = await parallelStore.get(accountId);
