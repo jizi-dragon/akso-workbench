@@ -62,10 +62,12 @@ with sync_playwright() as pw:
     def chip_names():
         return pg.evaluate("() => [...document.querySelectorAll('#box-chips .chip')].map(c => c.dataset.box)")
 
-    # 1) 新建盒：＋新建盒 → 模态 → 输入 → 确定
+    # 1) 新建盒：＋新建盒 → 模态 → **真实键盘逐键输入** → 确定
     pg.click('.chip[data-add="1"]')
     pg.wait_for_timeout(200)
-    pg.fill("#ask-input", "验收盒A")
+    pg.type("#ask-input", "验收盒A", delay=25)
+    typed = pg.evaluate("() => document.getElementById('ask-input').value")
+    check("B0 模态输入框可键入（真实键盘事件）", typed == "验收盒A")
     pg.click("#ask-ok")
     pg.wait_for_timeout(700)
     check("B1 新建盒出现", "验收盒A" in chip_names())

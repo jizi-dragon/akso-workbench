@@ -184,6 +184,15 @@ def main() -> int:
                         passed.append("A3 执行面通：捕获到身份 token 痕迹")
                     else:
                         failed.append(f"A3 50s 内未观察到登录成功证据（URL 仍 {opened.url[:60]}）")
+                        # 取证：v3.12.2 黑匣子（逐事件填表记录）——失败现场可分析
+                        try:
+                            dump = sw.evaluate(
+                                "() => { const o = chrome.storage.local.get('ql:diag'); return (o['ql:diag'] || []).slice(-40); }"
+                            )
+                            for line in (dump or [])[-15:]:
+                                print(f"    [diag] {str(line)[:150]}")
+                        except Exception as de:
+                            print(f"    [diag] 黑匣子读取失败: {de}")
         finally:
             ctx.close()
 

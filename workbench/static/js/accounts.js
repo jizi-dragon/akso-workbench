@@ -359,8 +359,8 @@ function renderBoxChips() {
   const named = cacheBoxes.filter((b) => b.box !== '');
   const parts = [`<span class="chip ${currentBox === '' ? 'active' : ''}" data-box="">全部 <span class="chip-n">${total}</span></span>`];
   if (defaultBox) {
-    // 默认盒子 = 独立过滤页（哨兵值），不再与"全部"混同（用户实测 0.2.15）
-    parts.push(`<span class="chip ${currentBox === DEFAULT_FILTER ? 'active' : ''}" data-box="${DEFAULT_FILTER}" data-default="1">默认盒子 <span class="chip-n">${defaultBox.count}</span><span class="chip-act" data-op="defname">✎</span></span>`);
+    // 默认盒子 = 独立过滤页；判别走 data-default（哨兵 \u0000 不能进 DOM——会被解析器吞掉）
+    parts.push(`<span class="chip ${currentBox === DEFAULT_FILTER ? 'active' : ''}" data-default="1">默认盒子 <span class="chip-n">${defaultBox.count}</span><span class="chip-act" data-op="defname">✎</span></span>`);
   }
   for (const b of named) {
     const off = cacheDisabled.includes(b.box);
@@ -384,7 +384,7 @@ function renderBoxChips() {
         refresh();
         return;
       }
-      currentBox = chip.dataset.box || '';
+      currentBox = chip.dataset.default === '1' ? DEFAULT_FILTER : (chip.dataset.box || '');
       refresh();
     };
   });
@@ -412,7 +412,7 @@ async function boxOp(op, chip) {
     const to = await askText(`重命名盒子「${displayName}」为：`, box);
     if (!to || to === box) return;
     const result = await api('/api/accounts/boxes/rename', { method: 'POST', body: { from: box, to } });
-    alert(`已移动 ${result.moved} 个账号`);
+    if (result.moved > 0) alert(`已移动 ${result.moved} 个账号`); // 空盒重命名静默（用户定稿 0.2.16）
     currentBox = to;
     refresh();
     return;
@@ -433,7 +433,9 @@ async function boxOp(op, chip) {
       for (const a of inBox) await api(`/api/accounts/${a.id}`, { method: 'DELETE' });
     }
     const result = await api('/api/accounts/boxes/delete', { method: 'POST', body: { from: box } });
-    alert(withAccounts ? '盒子与账号已删除' : `已并入 ${result.moved} 个账号`);
+    if (withAccounts) alert('盒子与账号已删除');
+    else if (result.moved > 0) alert(`已将 ${result.moved} 个账号移入默认盒子`);
+    // 空盒删除静默（用户定稿 0.2.16：不再弹"已并入 0 个账号"）
     currentBox = '';
     refresh();
   }

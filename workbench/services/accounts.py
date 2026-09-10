@@ -382,7 +382,10 @@ def _forget_box(name: str) -> None:
 
 
 def rename_box(from_name: str, to_name: str) -> int:
-    """盒子重命名 / 移动账号（to 为空 = 并入默认盒子）。返回随迁账号数。"""
+    """盒子重命名 / 移动账号（to 为空 = 并入默认盒子）。返回随迁账号数。
+
+    记忆清单**原位替换**（用户实测 0.2.16：追加+删除会让重命名后的盒子排到末尾）。
+    """
     from_name = from_name.strip()
     to_name = to_name.strip()
     if not from_name:
@@ -393,9 +396,20 @@ def rename_box(from_name: str, to_name: str) -> int:
         "UPDATE account SET box = ?, updated_at = ? WHERE box = ?",
         (to_name, now_ms(), from_name),
     )
-    if to_name:
+    raw = get_setting(_REMEMBERED_KEY)
+    remembered: list[str] = []
+    if raw:
+        try:
+            remembered = [str(x) for x in json.loads(raw)]
+        except ValueError:
+            remembered = []
+    if from_name in remembered:
+        # 原位替换 / 移除（to 为空 = 并入默认盒，位置移除）
+        remembered = [to_name if x == from_name else x for x in remembered] if to_name \
+            else [x for x in remembered if x != from_name]
+        set_setting(_REMEMBERED_KEY, json.dumps(remembered, ensure_ascii=False))
+    elif to_name:
         _remember_box(to_name)
-    _forget_box(from_name)  # 旧名不再保留（空盒残留会让删除/重命名"看似无效"）
     return count
 
 
