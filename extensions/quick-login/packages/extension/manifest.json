@@ -9,9 +9,9 @@
   "commands": {
     "quick-wheel": {
       "suggested_key": {
-        "default": "Alt+Q"
+        "default": "Ctrl+Shift+Q"
       },
-      "description": "打开账号选择轮盘（可在 chrome://extensions/shortcuts 自定义）"
+      "description": "打开账号选择轮盘（可在 chrome://extensions/shortcuts 自定义；默认让位给桌面壳全局 Alt+Q）"
     },
     "quick-pages": {
       "suggested_key": {
@@ -37,7 +37,7 @@
       "128": "assets/Icon128.png"
     }
   },
-  "permissions": ["tabs", "scripting", "cookies", "storage", "webRequest", "declarativeNetRequestWithHostAccess", "webNavigation"],
+  "permissions": ["tabs", "scripting", "cookies", "storage", "alarms", "webRequest", "declarativeNetRequestWithHostAccess", "webNavigation"],
   "host_permissions": ["http://127.0.0.1:18765/*", "http://localhost:18765/*"],
   "optional_host_permissions": ["*://*/*"],
   "content_scripts": [

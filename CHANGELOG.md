@@ -7,6 +7,7 @@
 
 ### Added
 
+- **扩展连通性专项（0.2.5）**：桌面↔quick-login 扩展链路断点修复——快照 host 字段错位（envBaseUrl）、指令 seq 跨重启持久化（settings 表单调递增）、host 保留端口 + scheme 随快照下发、扩展 chrome.alarms 30s 保活复活、wheel.toggle 改直调（SW 自消息死链）、毒指令逐条隔离（不再卡死队列）、快照空载删除护栏、tabName 缺失护栏、凭据解密失败留痕、wheel-overlay 双 interval 泄漏修复；扩展 quick-wheel 热键让位（Alt+Q→Ctrl+Shift+Q，避免与 Electron 全局热键抢占）；账号中心页内轮盘选人补 launch-chrome；新增 `tools/verify_extension_sync.mjs` 离线模拟扩展验收脚本。
 - **浏览器分配政策落地 + Monitor 监听接入托管会话（0.2.2）**：政策定稿——快捷登录/打开 = 用户 Chrome（扩展指令 par.open + launch-chrome）；监听/自动化 = 应用内置 Chromium（browser_pool，cdp = Electron 壳）。`routes_monitor`（/api/monitor/start|stop|status）；browser_pool 新增 monitor_start/stop（自动开户 → MonitorSession 挂 page → 产物落 runtime/monitor/）；卡片 UI（快捷登录主按钮 + 监听会话/开始/停止监听 + 监听中 chip）；routes_browser 补 `/navigate/{account_id}`。真机验收：248 请求捕获（dropped 238 / trimmed 2 / full 8），三级降噪正确，monitor-log 落盘。
 - **桌面壳迁移 Electron（pywebview 退役）+ browser_pool CDP 复用模式**：`desktop/main.js`——Python sidecar 生命周期（打包态 AksoServer.exe --server / 开发态 venv uvicorn）、主窗、托盘、全局热键 Alt+Q、electron-updater 自动更新（latest.yml）；会话控制服务 :18767（按 windowId 开户，每账号 `persist:` 独立持久分区 / 聚焦 / 关闭）；browser_pool 经 `connect_over_cdp(:18766)` 复用内置 Chromium（`_CdpState` 单实例持有者）。
 - **quick-login 混合架构（v0.1.2）**：扩展执行面 + 桌面数据面/触发面。`routes_extension` 同步蓝图（快照：账号/盒子/站点，凭据以「Fernet 密文 + 密钥」经 127.0.0.1 回环下发；指令队列 wheel.toggle/par.open，内存态 + ack）+ 扩展 `sync.ts`（2s 轮询、snapshotId 内容哈希幂等、WebCrypto Fernet 解密直连 parallelStore、桌面不可达离线回退）。扩展源码入库 `extensions/quick-login/`。

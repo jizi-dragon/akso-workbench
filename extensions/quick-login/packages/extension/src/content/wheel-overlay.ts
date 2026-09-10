@@ -179,7 +179,6 @@ async function mount(): Promise<void> {
   shadow.append(wheelRoot, hint);
 
   let closed = false;
-  const refreshTimer = window.setInterval(() => void refresh(), 3000);
   function close(): void {
     if (closed) {
       return;
@@ -251,7 +250,7 @@ async function mount(): Promise<void> {
     requestAnimationFrame(() => requestAnimationFrame(() => wheelRoot.classList.add('in')));
   }
 
-  /* ---------- 盒子/账号/禁用名单变化联动：3s 轮询（指纹未变不重绘） ---------- */
+  /* ---------- 盒子/账号/禁用名单变化联动：3s 轮询（指纹未变不重绘；唯一注册，close 时清理） ---------- */
   let lastFingerprint = JSON.stringify(pages.map((p) => [p.label, p.accounts.map((a) => a.id)]));
   const refresh = async (): Promise<void> => {
     try {
@@ -270,7 +269,7 @@ async function mount(): Promise<void> {
       // 轮询失败静默，下个周期重试
     }
   };
-  window.setInterval(() => void refresh(), 3000);
+  const refreshTimer = window.setInterval(() => void refresh(), 3000);
 
   /* ---------- 挂载 & 入场 ---------- */
   document.addEventListener('keydown', onKeyDown, true);

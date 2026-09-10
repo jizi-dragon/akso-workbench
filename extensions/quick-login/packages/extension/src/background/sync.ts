@@ -14,6 +14,7 @@
 import { credentials } from './core/credentials';
 import { parallelSession } from './core/parallel-session';
 import { parallelStore } from './core/parallel-store';
+import { toggleAccountWheel } from './account-wheel';
 
 const DESKTOP = 'http://127.0.0.1:18765';
 const SYNC_INTERVAL_MS = 2000;
@@ -97,9 +98,12 @@ async function applySnapshot(snap: any): Promise<void> {
     let password: string;
     try {
       password = await fernetDecrypt(item.passwordEnc, snap.fernetKey);
-    } catch {
-      continue; // 凭据解不开（密钥轮换/篡改）→ 跳过该账号
+    } catch (e) {
+      // 凭据解不开（密钥轮换/篡改）→ 跳过该账号；务必留痕，否则密钥轮换后全员停更无迹象
+      console.warn('[akso-sync] 凭据解密失败，跳过账号:', item.username, e);
+      continue;
     }
+    const tabName = item.tabName || item.username; // tabName 缺失护栏：undefined 会写坏档案
 
     const knownId = map[item.desktopId];
     const cur = knownId ? await parallelStore.get(knownId).catch(() => undefined) : undefined;
@@ -109,14 +113,14 @@ async function applySnapshot(snap: any): Promise<void> {
       if (cur.box !== (item.box || '')) {
         await parallelStore.updateBox(cur.id, item.box || '');
       }
-      if (cur.tabName !== item.tabName) {
-        await parallelStore.updateTabName(cur.id, item.tabName);
+      if (cur.tabName !== tabName) {
+        await parallelStore.updateTabName(cur.id, tabName);
       }
       if (cur.username !== item.username) {
         await parallelStore.delete(cur.id);
         const account = await parallelStore.create({
-          siteHost: item.host, tabName: item.tabName, username: item.username,
-          password, box: item.box || '', scheme: 'https',
+          siteHost: item.host, tabName, username: item.username,
+          password, box: item.box || '', scheme: item.scheme === 'http' ? 'http' : 'https',
         });
         map[item.desktopId] = account.id;
         await saveMap(map);
@@ -131,19 +135,23 @@ async function applySnapshot(snap: any): Promise<void> {
       }
     } else {
       const account = await parallelStore.create({
-        siteHost: item.host, tabName: item.tabName, username: item.username,
-        password, box: item.box || '', scheme: 'https',
+        siteHost: item.host, tabName, username: item.username,
+        password, box: item.box || '', scheme: item.scheme === 'http' ? 'http' : 'https',
       });
       map[item.desktopId] = account.id;
       await saveMap(map);
     }
   }
 
-  // 删除同步：桌面已移除的账号（映射存在但快照不再包含）
-  for (const [desktopId, extId] of Object.entries(map)) {
-    if (!snapshotIds.has(desktopId)) {
-      await parallelStore.delete(extId).catch(() => undefined);
-      delete map[desktopId];
+  // 删除同步：桌面已移除的账号（映射存在但快照不再包含）。
+  // 方向性护栏：快照为空且本地仍有映射时按"瞬时异常"处理，不清删
+  //（曾会因桌面瞬时空/半量快照把本地账号全量删光）
+  if ((snap.accounts ?? []).length > 0) {
+    for (const [desktopId, extId] of Object.entries(map)) {
+      if (!snapshotIds.has(desktopId)) {
+        await parallelStore.delete(extId).catch(() => undefined);
+        delete map[desktopId];
+      }
     }
   }
   await saveMap(map);
@@ -168,11 +176,22 @@ async function pollCommands(): Promise<void> {
 
   for (const cmd of data.commands) {
     cursor = Math.max(cursor, Number(cmd.seq) || 0);
-    if (cmd.type === 'wheel.toggle') {
-      await sendRuntime({ kind: 'wheel.toggle' });
-    } else if (cmd.type === 'par.open') {
-      const extId = map[String(cmd.payload?.accountId)];
-      if (extId) await parallelSession.open(extId, false);
+    // 逐条隔离：单条失败不得阻塞后继指令，更不能阻止 cursor 持久化 + ack
+    //（曾因 open 抛错穿出循环 → 每 2s 无限重试、队列整体卡死）
+    try {
+      if (cmd.type === 'wheel.toggle') {
+        // SW 内 chrome.runtime.sendMessage 不投递给自身上下文（死链）→ 直调
+        await toggleAccountWheel();
+      } else if (cmd.type === 'par.open') {
+        const extId = map[String(cmd.payload?.accountId)];
+        if (extId) {
+          await parallelSession.open(extId, false);
+        } else {
+          console.warn('[akso-sync] par.open 映射缺失，指令作废:', cmd.payload?.accountId);
+        }
+      }
+    } catch (e) {
+      console.warn('[akso-sync] 指令执行失败（已跳过）:', cmd.type, e);
     }
   }
   if (cursor !== after) {
@@ -184,28 +203,27 @@ async function pollCommands(): Promise<void> {
   }
 }
 
-async function sendRuntime(req: any): Promise<any | null> {
+async function tick(): Promise<void> {
+  if (syncing) return;
+  syncing = true;
   try {
-    return await chrome.runtime.sendMessage(req);
+    const snap = await getJson('/extension/snapshot');
+    if (snap) await applySnapshot(snap);
+    await pollCommands();
   } catch {
-    return null;
+    // 静默：桌面不可达是常态（离线回退本地数据）
+  } finally {
+    syncing = false;
   }
 }
 
 export function startDesktopSync(): void {
-  const tick = async () => {
-    if (syncing) return;
-    syncing = true;
-    try {
-      const snap = await getJson('/extension/snapshot');
-      if (snap) await applySnapshot(snap);
-      await pollCommands();
-    } catch {
-      // 静默：桌面不可达是常态（离线回退本地数据）
-    } finally {
-      syncing = false;
-    }
-  };
+  // MV3 SW 空闲 ~30s 会被杀，setInterval 随之消失 → 指令滞留队列。
+  // chrome.alarms 是唯一的复活通道：alarm 触发时 SW 被拉起并跑一次同步。
+  void chrome.alarms.create('akso:sync', { periodInMinutes: 0.5, delayInMinutes: 0.5 });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'akso:sync') void tick();
+  });
   void tick();
   setInterval(tick, SYNC_INTERVAL_MS);
 }

@@ -1,5 +1,13 @@
 # QuickLogin 项目现状快照（2026-08-29 · v3.9.2）
 
+> ⚠️ **基线校正（2026-09-10，akso-mogul 摸底）**：本文写于上游 v3.9.2 时点，已过时。
+> 库内副本实际 = **上游 v3.11.0（2026-09-08，commit edfb201c）+ akso-mogul 私有改造**
+> （manifest host_permissions:18765、新增 `src/background/sync.ts` 桌面同步桥、
+> service-worker 启动挂载、parallel.html 隐藏账号增删改区块；另 0.2.5 追加
+> account-wheel.ts 抽取 / sync.ts 护栏 / manifest alarms+热键 Ctrl+Shift+Q）。
+> 上游已演进至 **v3.13.2**，v3.11.1→v3.13.2（登录态生命周期/袋权威同步/取证黑匣子/
+> AUTH 全资源类型等）尚未同步入库。扩展源码应以 git 历史与上游仓库为准。
+
 > 配套阅读：版本明细见根目录 `CHANGELOG.md`；代码库导读见 `docs/CODEBASE_OVERVIEW.md`；
 > 功能与使用说明见 `docs/USER-MANUAL.md`（用户手册）。
 

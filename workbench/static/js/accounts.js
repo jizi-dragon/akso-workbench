@@ -183,8 +183,8 @@ function renderWheelOverlay() {
   buildSectorWheel(el('wheel-svg'), {
     pages: wheelPages,
     pageIndex: wheelPage,
-    // 轮盘选人 → 指令队列 → quick-login 扩展在用户 Chrome 里切换对应页签
-    onPick: (accountId) => { closeWheel(); postExtCommand('par.open', { accountId }); },
+    // 轮盘选人 → quickLogin（先确保 Chrome 在跑再发指令；指令队列 → 扩展切页签）
+    onPick: (accountId) => { closeWheel(); quickLogin(accountId); },
   });
 }
 
@@ -197,7 +197,9 @@ async function postExtCommand(type, payload) {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.key.toLowerCase() === 'q' && (e.altKey)) {
+  /* Ctrl+Shift+Q：与扩展 quick-wheel 默认键一致；Alt+Q 让位给 Electron 壳全局热键
+    （壳运行时 OS 级抢占，页面内根本收不到 Alt+Q） */
+  if (e.key.toLowerCase() === 'q' && e.ctrlKey && e.shiftKey) {
     e.preventDefault();
     if (wheelOpen) closeWheel(); else openWheel();
     return;
@@ -208,7 +210,7 @@ document.addEventListener('keydown', (e) => {
   if (num >= 1 && num <= WHEEL_MAX) {
     const page = wheelPages[wheelPage];
     const account = page?.accounts?.[num - 1];
-    if (account) { closeWheel(); postExtCommand('par.open', { accountId: account.id }); }
+    if (account) { closeWheel(); quickLogin(account.id); }
   }
 });
 

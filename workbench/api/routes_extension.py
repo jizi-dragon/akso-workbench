@@ -19,31 +19,59 @@ from typing import Any
 from fastapi import APIRouter
 
 from ..services import accounts as accounts_svc
-from ..services.storage import now_ms
+from ..services.storage import get_setting, now_ms, set_setting
 
 router = APIRouter(prefix="/extension", tags=["extension"])
 
 _lock = threading.Lock()
-_seq = 0
+_seq: int | None = None  # 惰性从 settings 表恢复（跨进程重启单调递增）
+_seq_SEQ_KEY = "ext_cmd_seq"
 _commands: list[dict[str, Any]] = []
 _acked: set[int] = set()
 
 
-def dispatch_command(command_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """桌面侧入口：写入一条扩展指令（轮盘呼出 / 切换账号）。"""
+def _next_seq() -> int:
+    """指令序号跨重启单调递增。
+
+    扩展游标持久存于 chrome.storage.local；若服务端重启后 seq 从 1 重来，
+    所有新指令 seq ≤ 历史游标，会被 `seq > after` 过滤器永久吞掉（0.2.4 实锤）。
+    故序号落 settings 表，重启后接续。
+    """
     global _seq
     with _lock:
+        if _seq is None:
+            try:
+                _seq = int(get_setting(_seq_SEQ_KEY) or 0)
+            except (TypeError, ValueError):
+                _seq = 0
         _seq += 1
-        cmd = {"seq": _seq, "type": command_type, "payload": payload or {}, "at": now_ms()}
+        try:
+            set_setting(_seq_SEQ_KEY, str(_seq))
+        except Exception:  # noqa: BLE001 —— settings 表异常不阻塞指令下发
+            pass
+        return _seq
+
+
+def dispatch_command(command_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """桌面侧入口：写入一条扩展指令（轮盘呼出 / 切换账号）。"""
+    cmd = {"seq": _next_seq(), "type": command_type, "payload": payload or {}, "at": now_ms()}
+    with _lock:
         _commands.append(cmd)
-        return cmd
+    return cmd
 
 
 def _host_of(base_url: str) -> str:
+    """站点 host：保留端口（非标端口内网站点常见，hostname 会丢端口且 scheme 自学习无法挽回）。"""
     from urllib.parse import urlparse
 
-    host = urlparse(base_url).hostname or base_url
-    return host
+    parsed = urlparse(base_url if "//" in base_url else f"//{base_url}", scheme="https")
+    return parsed.netloc or base_url
+
+
+def _scheme_of(base_url: str) -> str:
+    from urllib.parse import urlparse
+
+    return (urlparse(base_url if "//" in base_url else f"https://{base_url}").scheme or "https").lower()
 
 
 @router.get("/snapshot")
@@ -56,6 +84,7 @@ def snapshot() -> dict[str, Any]:
             # export_backup 输出驼峰键 envBaseUrl（备份文件语义），勿用下划线——
             # 错位会导致 host 恒空 → 扩展 sync 静默丢弃全部账号（0.2.3 实锤断点）
             "host": _host_of(a.get("envBaseUrl") or ""),
+            "scheme": _scheme_of(a.get("envBaseUrl") or ""),
             "tabName": a["username"],
             "username": a["username"],
             "passwordEnc": a["passwordEnc"],

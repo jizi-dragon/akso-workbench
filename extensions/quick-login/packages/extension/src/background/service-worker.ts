@@ -230,7 +230,9 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
     case 'wheel.toggle': {
       const r = await tryRun(async () => {
         await toggleAccountWheel();
-        return { opened: wheelWinId !== null };
+        // toggle 幂等完成后必有可见轮盘面（浮层/小窗/标签页三选一）；
+        // 旧实现回传小窗 wheelWinId 状态，与实际主机制（浮层）无关，属失真契约
+        return { opened: true };
       });
       return { kind: 'wheel.toggle', result: r };
     }
@@ -383,90 +385,11 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
   return true;
 });
 
-/* ---------------- 快捷键：账号选择轮盘（v3.8：扇形环；页面内无框浮层优先） ---------------- */
+/* ---------------- 快捷键：账号选择轮盘（v3.8：扇形环；页面内无框浮层优先） ----------------
+ * toggleAccountWheel 实现抽至 background/account-wheel.ts——桌面指令通道（sync.ts）
+ * 需要直调同一函数（SW 自消息不投递给自身上下文，wheel.toggle 曾因此静默丢失）。 */
 
-const WHEEL_PAGE = 'ui/wheel/wheel.html';
-const WHEEL_W = 720;
-const WHEEL_H = 760;
-/** 兜底浮层脚本（ISOLATED world，幂等开关）：普通网页上直接铺开无框轮盘 */
-const WHEEL_OVERLAY_FILE = 'content/wheel-overlay.js';
-
-/** 会话内记忆轮盘窗口 id；再次触发快捷键 = 关闭（幂等开关，仅对独立小窗模式有效） */
-let wheelWinId: number | null = null;
-/** 触发去抖：命令重放/系统连击不会开后又立刻关 */
-let lastToggleAt = 0;
-
-chrome.windows.onRemoved.addListener((winId) => {
-  if (winId === wheelWinId) {
-    wheelWinId = null;
-  }
-});
-
-async function toggleAccountWheel(): Promise<void> {
-  const now = Date.now();
-  if (now - lastToggleAt < 300) {
-    return;
-  }
-  lastToggleAt = now;
-
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-
-  // 机制一（主）：普通网页 → 页面内无框浮层（再次触发 = 脚本自关闭）
-  try {
-    if (tab?.id && tab.url && /^https?:/i.test(tab.url)) {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: [WHEEL_OVERLAY_FILE],
-        world: 'ISOLATED',
-      });
-      return;
-    }
-  } catch {
-    // 注入失败（受限页/权限收回等）→ 继续降级
-  }
-
-  // 机制二：独立弹窗小窗（Chrome 对 chrome:// 等页注入不了时仍可用）
-  if (wheelWinId !== null) {
-    try {
-      await chrome.windows.get(wheelWinId);
-    } catch {
-      wheelWinId = null;
-    }
-    if (wheelWinId !== null) {
-      await chrome.windows.remove(wheelWinId).catch(() => undefined);
-      wheelWinId = null;
-      return;
-    }
-  }
-
-  const current = tab ? await chrome.windows.get(tab.windowId).catch(() => undefined) : undefined;
-  const left =
-    current && typeof current.left === 'number'
-      ? Math.max(0, current.left + Math.max(0, ((current.width ?? 900) - WHEEL_W) >> 1))
-      : undefined;
-  const top =
-    current && typeof current.top === 'number'
-      ? Math.max(0, current.top + Math.max(0, ((current.height ?? 700) - WHEEL_H) >> 1))
-      : undefined;
-
-  try {
-    const win = await chrome.windows.create({
-      url: chrome.runtime.getURL(WHEEL_PAGE),
-      type: 'popup',
-      width: WHEEL_W,
-      height: WHEEL_H,
-      left,
-      top,
-    });
-    wheelWinId = win.id ?? null;
-    return;
-  } catch {
-    // 继续走最终兜底
-  }
-
-  // 机制三（最终）：普通标签页打开轮盘
-  await chrome.tabs.create({ url: chrome.runtime.getURL(WHEEL_PAGE) });
-}
+import { toggleAccountWheel } from './account-wheel';
 
 chrome.commands.onCommand.addListener((command) => {
   if (command === 'quick-wheel') {
