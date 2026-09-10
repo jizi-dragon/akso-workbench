@@ -236,11 +236,11 @@ async function reportState(): Promise<void> {
     const desktopId = rev.get(account.id);
     if (!desktopId) continue;
     const st = parallelSession.statusOf(account);
+    // 不上报 enforcementOff：桌面无授权管理入口，该徽标徒增困惑（用户定稿移除）
     items.push({
       desktopId,
       tabs: st.tabIds.length,
       hasToken: st.hasToken,
-      enforcementOff: st.enforcementOff,
     });
   }
   if (!items.length) return;

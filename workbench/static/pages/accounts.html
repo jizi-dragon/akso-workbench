@@ -85,10 +85,7 @@
               <label class="field"><span>用户名</span><input id="acc-username" autocomplete="off" /></label>
               <label class="field"><span>密码</span><input id="acc-password" type="password" autocomplete="new-password" /></label>
             </div>
-            <div class="field-pair">
-              <label class="field"><span>角色（可选）</span><input id="acc-role" placeholder="系统管理员 / 实施顾问…" /></label>
-              <label class="field"><span>标签（逗号分隔）</span><input id="acc-tags" placeholder="验证环境,客户A" /></label>
-            </div>
+            <label class="field"><span>标签（逗号分隔，可选）</span><input id="acc-tags" placeholder="验证环境,客户A" /></label>
             <div class="btn-group">
               <button id="btn-acc-add" class="btn-primary" type="button">新增账号</button>
               <button id="btn-acc-bulk-toggle" class="btn-ghost" type="button">批量添加 ▾</button>
@@ -107,8 +104,9 @@
             <h2>站点管理</h2>
             <p class="desc">粘贴完整链接自动清洗为站点（保留端口）；站点下有账号时需先移出再删。</p>
           </div>
-          <form id="site-form" class="site-grid">
-            <input id="s-host" placeholder="粘贴链接或域名，如 https://example-config.example.com/admin/config/..." autocomplete="off" spellcheck="false" />
+          <form id="site-form" class="site-grid" style="grid-template-columns: 1fr 1.5fr auto">
+            <input id="s-name" placeholder="站点名称（留空取域名首段）" autocomplete="off" />
+            <input id="s-host" placeholder="粘贴完整链接或域名，如 https://example-config.example.com/admin/..." autocomplete="off" spellcheck="false" />
             <button class="btn-ghost" type="submit">添加站点</button>
           </form>
           <ul id="site-list" class="plain site-list"></ul>
@@ -158,7 +156,6 @@
           <label class="mfield">用户名<input id="edit-username" autocomplete="off" /></label>
           <label class="mfield">密码（留空 = 不修改）<input id="edit-password" type="password" autocomplete="new-password" /></label>
           <label class="mfield">页签名（别名，可选）<input id="edit-tabname" placeholder="默认与用户名一致" /></label>
-          <label class="mfield">角色<input id="edit-role" /></label>
           <label class="mfield">盒子<input id="edit-box" list="box-list" placeholder="默认盒子（可留空）" /></label>
           <label class="mfield">标签（逗号分隔）<input id="edit-tags" /></label>
         </div>

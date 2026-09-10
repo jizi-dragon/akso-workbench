@@ -364,6 +364,23 @@ def _remember_box(name: str) -> None:
         set_setting(_REMEMBERED_KEY, json.dumps(remembered, ensure_ascii=False))
 
 
+def _forget_box(name: str) -> None:
+    """从记忆清单移除盒子（删除/重命名后旧名不再保留——曾遗留空盒 chip，0.2.13 修复）。"""
+    name = name.strip()
+    if not name:
+        return
+    raw = get_setting(_REMEMBERED_KEY)
+    if not raw:
+        return
+    try:
+        remembered = [str(x) for x in json.loads(raw)]
+    except ValueError:
+        return
+    if name in remembered:
+        remembered = [x for x in remembered if x != name]
+        set_setting(_REMEMBERED_KEY, json.dumps(remembered, ensure_ascii=False))
+
+
 def rename_box(from_name: str, to_name: str) -> int:
     """盒子重命名 / 移动账号（to 为空 = 并入默认盒子）。返回随迁账号数。"""
     from_name = from_name.strip()
@@ -378,7 +395,7 @@ def rename_box(from_name: str, to_name: str) -> int:
     )
     if to_name:
         _remember_box(to_name)
-    # 记忆清单更新：from 若不再有账号则保留清单语义由 list_boxes 展示（空盒保留）
+    _forget_box(from_name)  # 旧名不再保留（空盒残留会让删除/重命名"看似无效"）
     return count
 
 
@@ -388,7 +405,7 @@ def create_box(name: str) -> None:
 
 
 def delete_box(name: str) -> int:
-    """删除盒子 = 并入默认盒子（原 clearBox 语义）。"""
+    """删除盒子 = 账号并入默认盒子 + 移除记忆盒名。"""
     return rename_box(name, DEFAULT_BOX)
 
 

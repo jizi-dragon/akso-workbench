@@ -1,4 +1,4 @@
-﻿/** 账号中心 v2（quick-login 管理页复刻）：
+/** 账号中心 v2（quick-login 管理页复刻）：
  *  上游 parallel 页的视觉与功能基线（盒子 chips 全操作 / 批量管理 / 四态徽标 /
  *  移盒弹窗 / 删盒两步处置 / 顶栏统计 / 指纹防闪烁），数据面接桌面 API，
  *  四态徽标数据来自扩展执行面状态回传（/extension/state）。
@@ -15,8 +15,7 @@ let cacheAccounts = [];
 let cacheSessions = new Map();
 let cacheBoxes = [];
 let cacheDisabled = [];
-let savedCache = new Map();
-const extState = new Map(); // desktopId → {tabs, hasToken, enforcementOff}
+const extState = new Map(); // desktopId → {tabs, hasToken}
 
 let currentBox = ''; // '' = 全部盒子
 let batchOn = false;
@@ -254,12 +253,11 @@ async function quickLogin(accountId) {
   await postExtCommand('par.open', { accountId });
 }
 
-/* ———————————————— 四态徽标（扩展执行面状态 + 内置会话回落） ———————————————— */
+/* ———————————————— 三态徽标（扩展执行面状态 + 内置会话回落） ———————————————— */
 
 function extBadgeOf(a) {
   const st = extState.get(a.id);
   if (st) {
-    if (st.enforcementOff) return { cls: 'login_failed', label: '未授权 · 已暂停' };
     if (st.tabs > 0 && st.hasToken) return { cls: 'online', label: `在线 ×${st.tabs}` };
     if (st.tabs > 0) return { cls: 'starting', label: '待登录' };
     return { cls: 'offline', label: '离线' };
@@ -271,14 +269,6 @@ function extBadgeOf(a) {
 }
 
 /* ———————————————— 数据加载 + 指纹防闪烁渲染 ———————————————— */
-
-async function loadSavedFlags(accounts) {
-  const entries = await Promise.all(accounts.map(async (a) => {
-    const saved = await api(`/api/browser/saved/${a.id}`).catch(() => ({ saved: false }));
-    return [a.id, saved.saved];
-  }));
-  savedCache = new Map(entries);
-}
 
 async function refresh() {
   const [accData, sessData, boxData, stateData] = await Promise.all([
@@ -293,13 +283,12 @@ async function refresh() {
   cacheDisabled = boxData.disabled || accData.disabled_boxes || [];
   extState.clear();
   for (const it of stateData.items || []) extState.set(it.desktopId, it);
-  await loadSavedFlags(cacheAccounts);
 
   renderStats();
   const fp = JSON.stringify([
-    cacheAccounts.map((a) => [a.id, a.box, a.pool, a.tags, a.has_password, a.env_name, a.env_base_url, a.username, a.tab_name, a.role]),
+    cacheAccounts.map((a) => [a.id, a.box, a.pool, a.tags, a.has_password, a.env_name, a.env_base_url, a.username, a.tab_name]),
     [...cacheSessions].map(([k, s]) => [k, s.status, s.has_token, s.monitoring, s.title]),
-    cacheBoxes, cacheDisabled, [...extState], [...savedCache],
+    cacheBoxes, cacheDisabled, [...extState],
     currentBox, batchOn, [...selection].sort(),
   ]);
   if (fp === lastFp) return; // 指纹未变不重建 DOM（防闪烁、保留悬停态）
@@ -511,7 +500,6 @@ function renderCards(accounts) {
 
     const chips = [];
     for (const role of poolList(a.pool)) chips.push(`<span class="chip active">${role === 'config' ? '池·配置' : '池·监听'}</span>`);
-    if (savedCache.get(a.id)) chips.push('<span class="chip">已保存登录态</span>');
     if (s && s.has_token) chips.push('<span class="chip">已捕获 token</span>');
     if (s && s.monitoring) chips.push('<span class="chip active">监听中</span>');
     for (const t of (a.tags || []).slice(0, 3)) chips.push(`<span class="chip">${t}</span>`);
@@ -530,7 +518,6 @@ function renderCards(accounts) {
         </div>
         <span class="badge ${badge.cls}">${badge.label}</span>
       </div>
-      ${a.role ? `<div class="sub">${a.role}</div>` : ''}
       ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
       ${s && (s.title || s.detail) ? `<div class="sub">${s.title || ''}${s.detail ? ` · ${s.detail}` : ''}</div>` : ''}
       <div class="ac-actions">
@@ -547,7 +534,6 @@ function renderCards(accounts) {
         <button class="btn-ghost btn-sm" data-act="pool" data-role="monitor">监听池${poolList(a.pool).includes('monitor') ? ' ✓' : ''}</button>
         ${s && s.monitoring ? '<button class="btn-ghost btn-sm" data-act="monitor" data-on="1">停止监听</button>'
           : (s && s.status !== 'stopped' ? '<button class="btn-ghost btn-sm" data-act="monitor" data-on="0">开始监听</button>' : '')}
-        ${savedCache.get(a.id) ? '<button class="btn-ghost btn-sm" data-act="forget">忘记会话</button>' : ''}
         <button class="btn-danger btn-sm" data-act="del">删除</button>
       </div>`;
 
@@ -575,9 +561,6 @@ function renderCards(accounts) {
             await editAccount(a.id);
           } else if (act === 'box') {
             openBoxModal([a.id]);
-          } else if (act === 'forget') {
-            if (!confirm(`清除 ${a.username} 的持久登录态？下次打开将重新走自动登录。`)) return;
-            await api(`/api/browser/forget/${a.id}`, { method: 'POST' });
           } else if (act === 'pool') {
             const role = btn.dataset.role;
             const current = poolList(a.pool);
@@ -650,23 +633,28 @@ async function monitorToggle(accountId, active) {
 
 let editTargetId = null;
 
+/** 站点选项文案：以站点名称为主（用户定稿）；重名时附加域名区分 */
+function siteOptionLabel(env, dupNames) {
+  return dupNames.has(env.name) ? `${env.name} · ${env.base_url}` : env.name;
+}
+
 async function editAccount(accountId) {
   const account = await api(`/api/accounts/${accountId}`);
   editTargetId = accountId;
   const envs = (await api('/api/accounts/envs')).envs;
+  const dupNames = new Set(envs.map((e) => e.name).filter((n, i, arr) => arr.indexOf(n) !== i));
   const sel = el('edit-env');
   sel.innerHTML = '';
   for (const env of envs) {
     const opt = document.createElement('option');
     opt.value = env.id;
-    opt.textContent = `${env.name}${env.base_url ? ` · ${env.base_url}` : ''}`;
+    opt.textContent = siteOptionLabel(env, dupNames);
     if (env.id === account.env_id) opt.selected = true;
     sel.appendChild(opt);
   }
   el('edit-username').value = account.username;
   el('edit-password').value = '';
   el('edit-tabname').value = account.tab_name || '';
-  el('edit-role').value = account.role || '';
   el('edit-box').value = (account.box || '').trim();
   el('edit-tags').value = (account.tags || []).join(',');
   el('edit-dialog').showModal();
@@ -678,7 +666,6 @@ async function saveEdit() {
     env_id: el('edit-env').value,
     username: el('edit-username').value.trim(),
     tab_name: el('edit-tabname').value.trim(),
-    role: el('edit-role').value.trim(),
     box: el('edit-box').value.trim(),
     tags: el('edit-tags').value.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
   };
@@ -751,25 +738,40 @@ async function addSite(ev) {
   if (envs.some((e) => (e.base_url || '').replace(/\/$/, '') === cleaned.base.replace(/\/$/, ''))) {
     alert(`站点已存在：${cleaned.base}`);
     el('s-host').value = '';
+    el('s-name').value = '';
     return;
   }
+  // 站点名称：留空取域名首段（example-config.example.com → example-config）
+  const name = el('s-name').value.trim() || cleaned.host.split('.')[0];
   await api('/api/accounts/envs', {
     method: 'POST',
-    body: { name: cleaned.host, base_url: cleaned.base },
+    body: { name, base_url: cleaned.base },
   });
   el('s-host').value = '';
+  el('s-name').value = '';
+  await loadEnvs();
+  refresh();
+}
+
+async function renameSite(envId, currentName) {
+  const to = prompt(`重命名站点「${currentName}」为：`, currentName) ?? '';
+  const name = to.trim();
+  if (!name || name === currentName) return;
+  await api(`/api/accounts/envs/${envId}`, { method: 'PATCH', body: { name } });
   await loadEnvs();
   refresh();
 }
 
 async function loadEnvs() {
   const data = await api('/api/accounts/envs');
+  const dupNames = new Set(data.envs.map((e) => e.name).filter((n, i, arr) => arr.indexOf(n) !== i));
   const sel = el('acc-env');
   sel.innerHTML = '';
   for (const env of data.envs) {
     const opt = document.createElement('option');
     opt.value = env.id;
-    opt.textContent = `${env.name}${env.base_url ? ` · ${env.base_url}` : ''}（${env.account_count} 账号）`;
+    const label = siteOptionLabel(env, dupNames);
+    opt.textContent = `${label}（${env.account_count} 账号）`;
     sel.appendChild(opt);
   }
   const box = el('site-list');
@@ -782,6 +784,7 @@ async function loadEnvs() {
       <span class="ac-avatar" style="--ring:#1E6FFF; width:26px; height:26px; font-size:11px">${(env.name || '?').slice(0, 1).toUpperCase()}</span>
       <div class="meta"><div class="alias">${env.name}</div><div class="sub">${env.base_url || '—'}</div></div>
       <span class="badge ${env.account_count ? 'online' : 'offline'}">${env.account_count} 账号</span>
+      <button class="btn-ghost btn-sm" data-rename-env="${env.id}" data-name="${env.name}" title="仅修改站点名称，站点地址不可改">✎</button>
       <button class="btn-danger btn-sm" data-del-env="${env.id}" data-name="${env.name}" data-count="${env.account_count}">删除</button>
     </li>`).join('');
   box.querySelectorAll('[data-del-env]').forEach((btn) => {
@@ -793,6 +796,9 @@ async function loadEnvs() {
         refresh();
       }
     };
+  });
+  box.querySelectorAll('[data-rename-env]').forEach((btn) => {
+    btn.onclick = () => renameSite(btn.dataset.renameEnv, btn.dataset.name).catch((e) => alert(`重命名失败：${e.message}`));
   });
 }
 
@@ -808,7 +814,7 @@ async function addAccount() {
     method: 'POST',
     body: {
       env_id, username, password,
-      role: el('acc-role').value.trim(), tags,
+      tags,
       ...(box ? { box } : {}),
     },
   });
