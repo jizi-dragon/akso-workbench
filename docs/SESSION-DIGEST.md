@@ -49,6 +49,14 @@
 14. **字段名双语义**：DB 行 snake_case（env_base_url），export_backup 输出 camelCase（envBaseUrl）——routes_extension 曾读错键 → 快照 host 恒空 → 扩展静默丢弃全部账号（0.2.4 实锤的主断点）
 15. **扩展游标持久 vs 服务端内存 seq**：指令序号必须跨重启单调递增（已落 settings 表 ext_cmd_seq），否则重启一次指令通道整体哑火且无报错
 16. **SW 自消息死链**：SW 内 chrome.runtime.sendMessage 不投递给自身 onMessage——跨模块复用行为请直调函数（toggleAccountWheel 已抽至 account-wheel.ts）
+17. **Fernet 键位规范**：sign-key = key[:16]（HMAC），enc-key = key[16:32]（AES-CBC）——曾写反导致扩展端全员解密失败（0.2.6 实锤断点之一）
+18. **WebCrypto AES-CBC 自动去 PKCS7 填充**：decrypt 结果不可再按尾字节手工剥离，否则把口令尾字符当填充长度剥掉（0.2.6 实锤断点之二）
+19. **Playwright 1.62 测 MV3 扩展**：`ctx.service_workers` 需先开一个页面才暴露目标；chrome://extensions 页可见扩展卡片与错误
+
+## 验收基线（扩展连通性专项 · 0.2.7）
+- **E2E_PASS**（`tools/acceptance_extension_e2e.py`，隔离 Chrome 装载 dist）：A1 数据面 acctMap 2/2 同步 ✔ / A2 par.open 指令面 1s 内开登录页 ✔ / A3 自动登录成功 URL 离开 /login 进 /web ✔
+- 桌面侧模拟：`tools/verify_extension_sync.mjs` SIMULATION_OK；seq 跨重启 SEQ_PERSIST_OK；50 pytest 全绿
+- 待人工复验：用户真实 Chrome 装载 dist + 桌面 Alt+Q 轮盘选人 + 真实 profile 登录
 
 ## 扩展基线校正（0.2.5 摸底 · 0.2.6 已同步）
 - `extensions/quick-login/` = **上游 v3.13.2（2026-09-10 同步，36 文件前移）+ akso-mogul 私有改造**。私有改造清单：① manifest host_permissions:18765 + alarms 权限 + quick-wheel 热键 Ctrl+Shift+Q；② `src/background/sync.ts` 桌面同步桥（含 seq/快照/毒指令全套护栏）；③ `src/background/account-wheel.ts`（toggleAccountWheel 抽取，sync 直调）；④ service-worker 挂载 sync + import 轮盘；⑤ parallel.html 隐藏账号增删改区块 + 会话视图文案；⑥ wheel-overlay 双 interval 修复

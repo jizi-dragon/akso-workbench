@@ -23,7 +23,9 @@ const SNAPSHOT_ID_KEY = 'akso:snapshotId';
 
 let syncing = false;
 
-/** Fernet 解密（WebCrypto）：token = b64(0x80 | ts8 | iv16 | ct | hmac32)，key[0:16]=AES-128-CBC，key[16:]=HMAC-SHA256 */
+/** Fernet 解密（WebCrypto）：token = b64(0x80 | ts8 | iv16 | ct | hmac32)。
+ *  Fernet 规范：sign-key = key[0:16]（HMAC-SHA256），enc-key = key[16:32]（AES-128-CBC）——
+ *  曾写反两半导致扩展端全部账号解密失败被静默跳过（0.2.6 实锤断点）。 */
 async function fernetDecrypt(tokenB64: string, keyB64: string): Promise<string> {
   const b64u = tokenB64.replace(/-/g, '+').replace(/_/g, '/');
   const pad = b64u.length % 4 ? b64u + '='.repeat(4 - (b64u.length % 4)) : b64u;
@@ -41,7 +43,7 @@ async function fernetDecrypt(tokenB64: string, keyB64: string): Promise<string> 
 
   const hmacKey = await crypto.subtle.importKey(
     'raw',
-    keyRaw.subarray(16),
+    keyRaw.subarray(0, 16),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['verify']
@@ -51,7 +53,7 @@ async function fernetDecrypt(tokenB64: string, keyB64: string): Promise<string> 
 
   const aesKey = await crypto.subtle.importKey(
     'raw',
-    keyRaw.subarray(0, 16),
+    keyRaw.subarray(16, 32),
     { name: 'AES-CBC' },
     false,
     ['decrypt']
@@ -59,9 +61,9 @@ async function fernetDecrypt(tokenB64: string, keyB64: string): Promise<string> 
   const iv = payload.subarray(9, 25);
   const ct = payload.subarray(25);
   const plain = await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, aesKey, ct);
-  const view = new Uint8Array(plain);
-  const padLen = view[view.length - 1];
-  return new TextDecoder().decode(view.subarray(0, view.length - padLen));
+  // WebCrypto AES-CBC 已自动去除 PKCS7 填充——再按尾字节手工剥离会把口令尾字符当
+  // 填充长度剥掉（曾把 "88888888" 剥成空串，0.2.6 实锤断点之二）
+  return new TextDecoder().decode(plain);
 }
 
 async function getJson(path: string): Promise<any | null> {
