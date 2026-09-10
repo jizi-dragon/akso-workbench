@@ -19,6 +19,17 @@ import { parallelStore } from './core/parallel-store';
 import { sessionManager } from './core/session-manager';
 import { tabRules } from './core/tab-rules';
 
+async function diag(msg: string): Promise<void> {
+  try {
+    const key = 'ql:diag';
+    const cur = (await chrome.storage.local.get(key))[key] as string[] | undefined;
+    const next = [...(cur ?? []).slice(-59), `${new Date().toISOString().slice(11, 23)} ${msg}`];
+    await chrome.storage.local.set({ [key]: next });
+  } catch {
+    // 埋点失败不影响业务
+  }
+}
+
 function ok<T>(data: T): Result<T> {
   return { ok: true, data };
 }
@@ -482,3 +493,50 @@ void flashBadge(`v${EXT_VERSION.split('.').slice(0, 2).join('.')}`).finally(() =
    本扩展作为执行面每 2s 轮询快照与指令（wheel.toggle/par.open）；桌面不可达时离线回退本地数据 */
 import { startDesktopSync } from './sync';
 startDesktopSync();
+
+/* ---------------- 下载失败取证 + 单账号站点自动重试（0.2.18） ----------------
+ * "无法从网站上提取文件"：下载请求（尤其 tabId=-1 的下载管理器/部分 <a download> 归型）
+ * 脱离页签作用域，tab 锁定的 DNR 规则永远罩不住 → 缺 Bearer → 401。
+ * 策略：监听下载中断 → 单账号归属判定 → chrome.downloads.download 直接带 Bearer 重发。 */
+const downloadUrlById = new Map<number, string>();
+const retriedUrls = new Set<string>();
+
+chrome.downloads.onCreated.addListener((item) => {
+  downloadUrlById.set(item.id, item.url);
+  if (downloadUrlById.size > 200) {
+    // 防膨胀：丢弃最早一半
+    const keys = [...downloadUrlById.keys()].slice(0, 100);
+    for (const k of keys) downloadUrlById.delete(k);
+  }
+});
+
+chrome.downloads.onChanged.addListener((delta) => {
+  const url = downloadUrlById.get(delta.id);
+  if (!url) return;
+  if (delta.state?.current === 'complete') {
+    downloadUrlById.delete(delta.id);
+    return;
+  }
+  if (delta.error || delta.state?.current === 'interrupted') {
+    const errDesc = delta.error?.current || delta.state?.current || '?';
+    downloadUrlById.delete(delta.id);
+    void (async () => {
+      if (retriedUrls.has(url)) {
+        void diag(`下载重试后仍失败 id=${delta.id} url=${url.slice(0, 140)}`);
+        return;
+      }
+      const auth = await parallelSession.authHeaderForUrl(url);
+      if (!auth) {
+        void diag(`下载失败（无法单账号归属，不自动重试）id=${delta.id} err=${errDesc} url=${url.slice(0, 150)}`);
+        return;
+      }
+      retriedUrls.add(url);
+      try {
+        await chrome.downloads.download({ url, headers: [auth] });
+        void diag(`下载失败自动重试（已带 Bearer）err=${errDesc} url=${url.slice(0, 140)}`);
+      } catch (e) {
+        void diag(`下载重试失败 id=${delta.id}：${e instanceof Error ? e.message : String(e)}`);
+      }
+    })();
+  }
+});

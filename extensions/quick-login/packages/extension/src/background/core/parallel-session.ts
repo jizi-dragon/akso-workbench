@@ -1091,6 +1091,32 @@ export const parallelSession = {
     }
   },
 
+  /**
+   * 下载重试归属（0.2.18）：给定 URL，若恰好只有一个站点的账号能服务它，
+   * 返回该账号的 Bearer 头——供 downloads 失败重试注入（tabId=-1 的下载请求
+   * 脱离页签作用域，tab 锁定 DNR 规则永远罩不住）。
+   * 单账号归属原则对齐 v3.10.8：多账号同站点时无法判定，绝不盲目注入。
+   */
+  async authHeaderForUrl(url: string): Promise<{ name: string; value: string } | null> {
+    let host = '';
+    try {
+      host = new URL(url).hostname;
+    } catch {
+      return null;
+    }
+    const accounts = await parallelStore.list();
+    const matches = accounts.filter((a) => {
+      const h = hostNoPortOf(a.siteHost);
+      const parent = parentDomainOf(h);
+      return host === h || host.endsWith(`.${h}`) || host === parent || host.endsWith(`.${parent}`);
+    });
+    if (matches.length !== 1) {
+      return null;
+    }
+    const token = tokens.get(matches[0].id)?.token;
+    return token ? { name: 'Authorization', value: `Bearer ${token}` } : null;
+  },
+
   /** 账号改名后刷新所有绑定标签页标题 */
   async refreshTitle(accountId: string): Promise<void> {
     const account = await parallelStore.get(accountId);

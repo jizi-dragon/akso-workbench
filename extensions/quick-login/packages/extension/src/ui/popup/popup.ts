@@ -8,6 +8,20 @@ import { EXT_VERSION } from '../../shared/constants';
 
 document.getElementById('ext-version')!.textContent = `v${EXT_VERSION}`;
 
+/* 诊断包导出（v3.12.2 黑匣子语义）：授权/下载问题的一键取证 */
+document.getElementById('export-diag')!.addEventListener('click', () => {
+  void (async () => {
+    const dump = await chrome.storage.local.get(['ql:diag']);
+    const blob = new Blob(
+      [JSON.stringify({ extVersion: EXT_VERSION, exportedAt: Date.now(), diag: dump['ql:diag'] ?? [] }, null, 2)],
+      { type: 'application/json' },
+    );
+    const url = URL.createObjectURL(blob);
+    await chrome.downloads.download({ url, filename: `quicklogin-diag-${Date.now()}.json` });
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  })();
+});
+
 /* ---- 实时统计：账号 / 在线 / 盒子（与桌面账号中心同源） ---- */
 function setStat(id: string, value: string | number): void {
   const el = document.getElementById(id);
