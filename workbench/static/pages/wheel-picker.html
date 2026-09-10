@@ -70,25 +70,10 @@
       let pages = [];
       let wheelPage = 0;
 
-      /* 关闭：走 js_api（window.close 在 pywebview 子页不可靠） */
+      /* 关闭：Electron 子窗 window.close 可靠（pywebview 时代的 js_api 已随壳退役） */
       function closeWheel() {
-        if (window.pywebview?.api?.close) { window.pywebview.api.close(); return; }
         window.close();
       }
-      /* 拖动：空白区按住移动窗口（js_api move） */
-      let dragState = null;
-      document.addEventListener('mousedown', (e) => {
-        if (e.target.closest('.sector-hit, .hub-bg, .box-node, button, li')) return;
-        dragState = { x: e.screenX, y: e.screenY };
-      });
-      document.addEventListener('mousemove', (e) => {
-        if (!dragState) return;
-        const dx = e.screenX - dragState.x, dy = e.screenY - dragState.y;
-        if (!dx && !dy) return;
-        dragState = { x: e.screenX, y: e.screenY };
-        window.pywebview?.api?.move?.(dx, dy);
-      });
-      document.addEventListener('mouseup', () => { dragState = null; });
 
       const polar = (r, deg) => {
         const a = ((deg - 90) * Math.PI) / 180;
@@ -218,7 +203,8 @@
           });
           accounts = data.accounts || [];
         } catch (e) {
-          list.innerHTML = `<li class="empty">加载失败：${e.message}</li>`;
+          document.getElementById('wheel-root').innerHTML =
+            `<span class="empty">加载失败：${e.message}（服务未就绪？）</span>`;
           return;
         }
         accountIds = accounts.map((a) => a.id);

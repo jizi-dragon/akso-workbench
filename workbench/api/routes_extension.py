@@ -53,7 +53,9 @@ def snapshot() -> dict[str, Any]:
     accounts = [
         {
             "desktopId": a["id"],
-            "host": _host_of(a.get("env_base_url") or ""),
+            # export_backup 输出驼峰键 envBaseUrl（备份文件语义），勿用下划线——
+            # 错位会导致 host 恒空 → 扩展 sync 静默丢弃全部账号（0.2.3 实锤断点）
+            "host": _host_of(a.get("envBaseUrl") or ""),
             "tabName": a["username"],
             "username": a["username"],
             "passwordEnc": a["passwordEnc"],
