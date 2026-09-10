@@ -1,9 +1,9 @@
-﻿{
+{
   "manifest_version": 3,
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAgrqmWvIcwnFDVgV78RDqrx9FQHmgcRY+AwSpGpDsIffWE89bbqkWTc7v0JKSUz3hRXg1PS4inOR7FaUiJ4qZDCrcblyr+n2B3WWe5Ss6EoZcVppA64lWCz1NZ/X1VUYr4tyR4HV7vVgZhQURi5H41Qmxc7tVhT3rWfNMU42dmAV8Mg1Lwg3VbfUFvxRX7BbkA9zTSsktYDX6ok9ujwVGQ9qxfbbvoJ09cBMpxoLyqWpqSijFFBYKHOD4fBiK2hcV9ZQD6n9ie068xIm58CYmybwu+ySK9WgN0U4Tw9l3EqSwtYj1WboaR4Yt0jtOR8EFt860sloPQCdT646my19JVQIDAQAB",
   "name": "QuickLogin · 多账号并行",
   "short_name": "QuickLogin",
-  "version": "0.2.20",
+  "version": "0.2.21",
   "description": "纯浏览器多账号并行：每账号独立标签页与存储命名空间，页签名自定义，凭证加密保存。",
   "minimum_chrome_version": "110",
   "commands": {
@@ -38,8 +38,7 @@
     }
   },
   "permissions": ["tabs", "scripting", "cookies", "storage", "alarms", "downloads", "webRequest", "declarativeNetRequestWithHostAccess", "webNavigation"],
-  "host_permissions": ["http://127.0.0.1:18765/*", "http://localhost:18765/*"],
-  "optional_host_permissions": ["*://*/*"],
+  "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],

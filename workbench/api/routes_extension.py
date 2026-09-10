@@ -124,7 +124,7 @@ def commands(after: int = 0) -> dict[str, Any]:
 
 @router.post("/commands")
 def push_command(body: dict[str, Any]) -> dict[str, Any]:
-    """桌面轮盘/热键写指令：type = par.open | wheel.toggle。"""
+    """桌面账号中心/轮盘写指令：type = par.open | wheel.toggle。"""
     cmd_type = str(body.get("type") or "")
     if cmd_type not in {"par.open", "wheel.toggle"}:
         from fastapi import HTTPException

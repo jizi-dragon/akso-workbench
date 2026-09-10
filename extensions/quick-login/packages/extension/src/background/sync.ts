@@ -236,7 +236,8 @@ async function reportState(): Promise<void> {
     const desktopId = rev.get(account.id);
     if (!desktopId) continue;
     const st = parallelSession.statusOf(account);
-    // 不上报 enforcementOff：桌面无授权管理入口，该徽标徒增困惑（用户定稿移除）
+    // 不上报 enforcementOff：0.2.21 起 manifest 声明全站权限，授权不再是变量（该字段仅剩
+    // "用户手动停用名单"语义），桌面无需展示
     items.push({
       desktopId,
       tabs: st.tabIds.length,

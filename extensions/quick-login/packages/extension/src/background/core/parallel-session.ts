@@ -44,6 +44,23 @@ const PENDING_ADOPT_TTL = 30_000;
 const tokens = new Map<string, TokenSnapshot>();
 /** 授权健康缓存：host → 是否可执行（已授权且未被手动停用） */
 const enforcement = new Map<string, boolean>();
+/** 授权健康缓存写入时刻（0.2.21 TTL 用） */
+const enforcementAt = new Map<string, number>();
+/**
+ * 授权健康缓存 TTL（0.2.21，20s）。Chrome 站点授权可在扩展之外变更（chrome://extensions
+ * 的「站点访问权限」、浏览器重启后重新授予），而本缓存此前只在弹窗授权（par.grantChanged）
+ * 这一条 UI 路径上失效——一次误判的 false 会在 SW 长生命周期内永久冻结规则安装。
+ * 实测教训：webRequest 已能观测该站点的请求（＝host 访问其实已给），但规则因缓存 false
+ * 从未安装 → 下载请求缺 Bearer 直接 401。
+ */
+const ENFORCEMENT_TTL_MS = 20_000;
+/** 被观察到的绑定页签请求 → 归属账号（0.2.21）。Downloads 的 DownloadItem 没有 tabId，
+ *  URL 关联是"这次下载属于哪个账号"唯一可用的桥；供失效重试做精确归属。 */
+const urlAccountHint = new Map<string, { accountId: string; at: number }>();
+const URL_HINT_TTL_MS = 120_000;
+const URL_HINT_MAX = 400;
+/** 桌面同步端点：其响应属于桌面轮询，不归属任何绑定账号（否则每 2s 刷屏淹没真日志） */
+const DESKTOP_SYNC_HOSTS = new Set(['127.0.0.1:18765', 'localhost:18765']);
 /** MAIN 壳 Cookie 袋的命名空间键名（与 shield-main.ts 的 COOKIE_BAG_KEY 一致） */
 const COOKIE_BAG_KEY = '__ql_cookies__';
 
@@ -82,46 +99,102 @@ async function readBlockedHosts(): Promise<Set<string>> {
   return new Set((stored[LOCAL_KEYS.blockedHosts] as string[] | undefined) ?? []);
 }
 
-/** 检查某 host 的网络平面是否可执行（带缓存的授权 + 封锁名单判定） */
-async function isEnforceable(host: string): Promise<boolean> {
+/**
+ * 检查某 host 的网络平面是否可执行。
+ *
+ * 0.2.21 起 manifest 声明 `host_permissions: ["<all_urls>"]`（装载即获得，无需逐站点授权），
+ * 因此"浏览器授权"不再是变量——唯一可能关停某站点网络平面的只剩**用户手动停用名单**
+ * （`ql:blockedHosts`）。带 TTL 的缓存保留：名单变更无需重启扩展即可生效。
+ *
+ * 历史教训（为什么曾经错误）：旧实现用 `permissions.contains` 逐站点判定授权，并把结果
+ * 缓存到 SW 生命周期结束；Chrome 侧授权变更（chrome://extensions 站点访问权限）或一次
+ * 误判的 false 会让 DNR 规则**永久不安装**且 UI 无提示——用户实测的"下载 401 但诊断包
+ * 显示站点其实可达"即由此而来。
+ */
+async function isEnforceable(host: string, force = false): Promise<boolean> {
   const cached = enforcement.get(host);
-  if (cached !== undefined) {
+  const fresh = Date.now() - (enforcementAt.get(host) ?? 0) < ENFORCEMENT_TTL_MS;
+  if (!force && cached !== undefined && fresh) {
     void diag(`isEnforceable(${host}) → 缓存 ${cached}`);
     return cached;
   }
   const blocked = await readBlockedHosts();
-  if (blocked.has(host)) {
-    enforcement.set(host, false);
-    void diag(`isEnforceable(${host}) → false（本地停用名单）`);
-    return false;
-  }
-  let granted = false;
-  try {
-    granted = await chrome.permissions.contains({ origins: [`*://${host}/*`] });
-  } catch {
-    granted = false;
-  }
-  // 更宽泛的通配授权也算可用
-  if (!granted) {
-    try {
-      granted = await chrome.permissions.contains({ origins: ['*://*/*'] });
-    } catch {
-      granted = false;
-    }
-  }
+  const granted = !blocked.has(host);
   enforcement.set(host, granted);
-  void diag(`isEnforceable(${host}) → ${granted}（permissions.contains 实查）`);
+  enforcementAt.set(host, Date.now());
+  void diag(
+    `isEnforceable(${host}) → ${granted}${granted ? '（全站权限已在 manifest 声明）' : '（本地停用名单）'}${force ? '·强制刷新' : ''}`,
+  );
   return granted;
 }
 
-/** 强制刷新授权缓存（授权增撤后调用） */
+/** 强制刷新网络平面健康缓存（停用名单变更后调用） */
 export function invalidateEnforcementCache(): void {
   enforcement.clear();
+  enforcementAt.clear();
 }
 
-/** 预热授权健康缓存（par.list 调用，供 statusOf 同步读取；isEnforceable 有缓存，稳态开销近零） */
+/** 预热网络平面健康缓存（par.list 调用，供 statusOf 同步读取；有缓存后稳态开销近零） */
 export async function warmEnforcementCache(hosts: string[]): Promise<void> {
   await Promise.all([...new Set(hosts)].map((h) => isEnforceable(h).catch(() => undefined)));
+}
+
+/* ---------------- 归属判定辅助 ---------------- */
+
+/** URL 的 host 是否与绑定 host 同族（同域 / 子域 / 同父域）。
+ *  两端都带端口时必须端口一致——同主机的不同端口是不同的站点
+ *  （否则桌面自己的页面 127.0.0.1:18765 会被当成内网站点 127.0.0.1:18996 而串号）。 */
+function hostRelated(urlHost: string, bindHost: string): boolean {
+  const uh = hostNoPortOf(urlHost);
+  const bh = hostNoPortOf(bindHost);
+  if (!bh) {
+    return false;
+  }
+  const up = portOf(urlHost);
+  const bp = portOf(bindHost);
+  if (up && bp && up !== bp) {
+    return false;
+  }
+  if (uh === bh || uh.endsWith(`.${bh}`)) {
+    return true;
+  }
+  const parent = parentDomainOf(bh);
+  return parent !== bh && (uh === parent || uh.endsWith(`.${parent}`));
+}
+
+/** 取端口（无端口返回空串） */
+function portOf(host: string): string {
+  const idx = host.indexOf(':');
+  return idx >= 0 ? host.slice(idx + 1) : '';
+}
+
+/** 记录「某 URL 属于某账号」的观察（webRequest 侧调用，供下载重试归属） */
+function noteUrlAccount(url: string, accountId: string): void {
+  if (!url) {
+    return;
+  }
+  urlAccountHint.set(url, { accountId, at: Date.now() });
+  if (urlAccountHint.size > URL_HINT_MAX) {
+    const drop = [...urlAccountHint.entries()]
+      .sort((a, b) => a[1].at - b[1].at)
+      .slice(0, Math.floor(URL_HINT_MAX / 2))
+      .map(([k]) => k);
+    for (const k of drop) {
+      urlAccountHint.delete(k);
+    }
+  }
+}
+
+/** 是否为桌面同步端点的 URL（其响应不归属绑定账号） */
+function isDesktopSyncUrl(url: string | undefined): boolean {
+  if (!url) {
+    return false;
+  }
+  try {
+    return DESKTOP_SYNC_HOSTS.has(new URL(url).host);
+  } catch {
+    return false;
+  }
 }
 
 async function readState(): Promise<void> {
@@ -653,6 +726,36 @@ function parseSetCookie(raw: string): { name: string; value: string; remove: boo
   return { name, value, remove };
 }
 
+/** 401 自愈节流（tabId → 上次自愈时刻） */
+const lastHealAt = new Map<number, number>();
+const HEAL_MIN_INTERVAL_MS = 10_000;
+
+/**
+ * 401/403 自愈（0.2.21）：绑定页签被服务端拒绝，最常见的原因不是"没登录"，而是
+ * 「规则没装上/装的是旧 token」——授权判定被误判为不可执行时规则从未安装，页面就会
+ * 一路裸奔到 401（用户实测的下载 401 根因）。这里强制重查授权并重装该页签规则，
+ * 让"授权其实已给"的情形自愈，无需重启扩展。
+ */
+async function selfHealRules(tabId: number, binding: ParBinding): Promise<void> {
+  const now = Date.now();
+  if (now - (lastHealAt.get(tabId) ?? 0) < HEAL_MIN_INTERVAL_MS) {
+    return;
+  }
+  lastHealAt.set(tabId, now);
+  const enforceable = await isEnforceable(binding.host, true);
+  if (!enforceable) {
+    void diag(`401 自愈：${binding.host} 仍未获站点授权（需在该站点页面完成一次授权）`);
+    return;
+  }
+  const token = tokens.get(binding.accountId)?.token ?? null;
+  try {
+    await tabRules.applyBinding(binding.host, tabId, token, cookieHeaderOf(binding.accountId));
+    void diag(`401 自愈：${binding.host} 授权有效 → 重装 tab=${tabId} 规则（token=${token ? '有' : '无'}）`);
+  } catch (e) {
+    void diag(`401 自愈失败 tab=${tabId}：${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 /** v3.13.2 下载/请求失败取证：绑定页签的 401/403/5xx 响应全量留痕（URL/host/归型/覆盖域），
  *  让「下载失败类」问题在下一次诊断包里直接可读，不再依赖症状猜测。 */
 async function reportFailureStatus(details: {
@@ -684,11 +787,34 @@ async function reportFailureStatus(details: {
       `⚠ 页签请求失败 status=${status} type=${details.type ?? '?'} covered=${covered} host=${urlHostname} url=${details.url.slice(0, 180)}`,
     );
   }
+  // 归属留痕 + 被拒自愈：本页签的请求 URL 记住归属账号，并可被下载失败重试直接复用
+  noteUrlAccount(details.url, binding.accountId);
+  if ((status === 401 || status === 403) && covered) {
+    void selfHealRules(details.tabId, binding);
+  }
+}
+
+/** 归属观察（0.2.21）：把绑定页签的下载类请求登记为「该 URL 属于该账号」。
+ *  只登记下载相关的归型（main_frame / other），避免子资源刷表。 */
+function noteRequestAttribution(details: { tabId: number; url: string; type?: string }): void {
+  if (details.tabId <= 0) {
+    return;
+  }
+  if (details.type !== 'other' && details.type !== 'main_frame') {
+    return;
+  }
+  const binding = bindings.get(details.tabId);
+  if (binding) {
+    noteUrlAccount(details.url, binding.accountId);
+  }
 }
 
 /** 绑定页签收到的响应 Set-Cookie → 归属账号并入快照（观察型 webRequest，不改写） */async function captureResponseCookies(
   details: { tabId: number; url: string; responseHeaders?: { name: string; value?: string }[] },
 ): Promise<void> {
+  if (isDesktopSyncUrl(details.url)) {
+    return; // 桌面同步端点（0.2.21）：其响应属于桌面轮询，不归属任何绑定账号
+  }
   let accountId: string | undefined;
   let bindHost: string | undefined;
   if (details.tabId > 0) {
@@ -791,20 +917,30 @@ function cookieHeaderOf(accountId: string): string | null {
   return filtered.map((c) => `${c.name}=${c.value}`).join('; ');
 }
 
-/** 把某账号当前 token 同步到其全部绑定标签页的规则（受授权健康门控） */
+/**
+ * 把某账号当前 token 同步到其全部绑定标签页的规则。
+ *
+ * 0.2.21 起**不再以授权健康作为安装门控**：DNR 的 host access 本身就是规则生效门控
+ * （实测：未授权的源上规则能安装成功，但 modifyHeaders 静默不生效），因此无条件安装
+ * 是安全的，且能消灭「授权其实已给、却因授权判定误判而永久不装规则」这类静默失效
+ * （用户实测的下载 401 根因）。唯一保留的硬门控是用户手动停用名单。
+ */
 async function syncAccountRules(accountId: string, host: string): Promise<void> {
   const bound = boundTabsOf(accountId);
   void diag(`syncAccountRules(${accountId}) 绑定标签=${bound.join(',') || '无'}`);
-  if (!(await isEnforceable(host))) {
-    void diag(`syncAccountRules(${accountId}) 跳过：授权不可执行`);
-    return; // 授权缺失/停用：不装规则，UI 通过 enforcementOff 提示
+  const blocked = await readBlockedHosts();
+  if (blocked.has(host)) {
+    void diag(`syncAccountRules(${accountId}) 跳过：本地停用名单`);
+    return;
   }
   const token = tokens.get(accountId)?.token ?? null;
   const cookieHeader = cookieHeaderOf(accountId);
   try {
     await Promise.all(bound.map((tabId) => tabRules.applyBinding(host, tabId, token, cookieHeader)));
+    const enforceable = await isEnforceable(host);
     void diag(
-      `syncAccountRules(${accountId}) 完成：applyBinding ×${bound.length}（token=${token ? '有' : '无'} cookie=${cookieHeader ? `${cookieHeader.length}B` : '剥离'}）`,
+      `syncAccountRules(${accountId}) 完成：applyBinding ×${bound.length}（token=${token ? '有' : '无'} cookie=${cookieHeader ? `${cookieHeader.length}B` : '剥离'}）` +
+        (enforceable ? '' : `｜注意：${host} 未获站点授权，规则待授权后自动生效`),
     );
   } catch (e) {
     void diag(`syncAccountRules(${accountId}) 异常：${e instanceof Error ? e.message : String(e)}`);
@@ -1074,13 +1210,27 @@ export const parallelSession = {
    * 的同步缓存（par.list 已预先预热）——修复旧实现「无绑定账号永远显示离线、
    * 未授权状态不可见」的问题。
    */
-  statusOf(account: ParallelAccount): { tabIds: number[]; hasToken: boolean; enforcementOff: boolean } {
+  statusOf(account: ParallelAccount): {
+    tabIds: number[];
+    hasToken: boolean;
+    enforcementOff: boolean;
+  } {
     const tabs = boundTabsOf(account.id);
     const host = tabs.length ? bindings.get(tabs[0])?.host : account.siteHost;
-    // 仅「明确缓存为 false」才判未授权；未知（缓存空/SW 冷启未暖）不得误报——
-    // v3.10.1 修复：导入后即使权限已授，缓存未暖也会显示「未授权·已暂停」
+    // 仅「明确缓存为 false」才判停用；未知（缓存空/SW 冷启未暖）不得误报。
+    // 0.2.21 起该字段语义 = 用户手动停用名单（manifest 已声明全站权限，授权不再是变量）
     const enforcementOff = host ? enforcement.get(host) === false : true;
     return { tabIds: tabs, hasToken: Boolean(tokens.get(account.id)?.token), enforcementOff };
+  },
+
+  /** 页签是否已绑定账号（0.2.21 内容脚本授权横幅用：非绑定页签不打扰用户） */
+  isBoundTab(tabId: number | undefined): boolean {
+    return tabId !== undefined && bindings.has(tabId);
+  },
+
+  /** 页签绑定 host（0.2.21 授权消息用：以 SW 侧绑定为准，不信任页面自称的 host） */
+  hostOfTab(tabId: number | undefined): string | undefined {
+    return tabId === undefined ? undefined : bindings.get(tabId)?.host;
   },
 
   /** 授权变更后重装全部绑定规则（0.2.16 弹窗授权入口——新授权立即生效，不等下一次事件） */
@@ -1092,10 +1242,17 @@ export const parallelSession = {
   },
 
   /**
-   * 下载重试归属（0.2.18）：给定 URL，若恰好只有一个站点的账号能服务它，
-   * 返回该账号的 Bearer 头——供 downloads 失败重试注入（tabId=-1 的下载请求
-   * 脱离页签作用域，tab 锁定 DNR 规则永远罩不住）。
-   * 单账号归属原则对齐 v3.10.8：多账号同站点时无法判定，绝不盲目注入。
+   * 下载重试归属（0.2.18 引入，0.2.21 分层重写）：给定 URL 返回应注入的 Bearer 头，
+   * 供 downloads 失败重试使用（下载请求常脱离页签作用域 / tabId=-1，tab 锁定的 DNR
+   * 规则罩不住，必须显式带头发起重发）。
+   *
+   * 分层判定（上一层判不出来才降级；任一层命中但无 token 也继续降级）：
+   *  ① URL 提示：该 URL 曾被 webRequest 观察到属于某绑定页签（最精确——同一次下载）；
+   *  ② 该 host 上唯一有活跃绑定页签的账号 = 正在浏览该站点的账号
+   *     （多账号同站的场景下唯一可靠的语义；旧实现用"全库唯一账号"，示例租户这种
+   *      一站两账号的情形会永远判不出 → 下载永远不重试 → 用户看到的 401）；
+   *  ③ 全库唯一账号（无活跃页签时的兜底，对齐 v3.10.8 的安全原则）。
+   * 三者都不成立时不注入（绝不盲目把某账号的凭证发给不确定的请求），并留痕候选数量。
    */
   async authHeaderForUrl(url: string): Promise<{ name: string; value: string } | null> {
     let host = '';
@@ -1104,17 +1261,44 @@ export const parallelSession = {
     } catch {
       return null;
     }
-    const accounts = await parallelStore.list();
-    const matches = accounts.filter((a) => {
-      const h = hostNoPortOf(a.siteHost);
-      const parent = parentDomainOf(h);
-      return host === h || host.endsWith(`.${h}`) || host === parent || host.endsWith(`.${parent}`);
-    });
-    if (matches.length !== 1) {
-      return null;
+
+    // ① URL 提示（精确归属）
+    const hint = urlAccountHint.get(url);
+    if (hint && Date.now() - hint.at < URL_HINT_TTL_MS) {
+      const t = tokens.get(hint.accountId)?.token;
+      if (t) {
+        void diag(`下载归属：URL 提示命中账号 ${hint.accountId} → 带 Bearer 重发`);
+        return { name: 'Authorization', value: `Bearer ${t}` };
+      }
+      void diag(`下载归属：URL 提示命中 ${hint.accountId} 但该账号无 token，降级判定`);
     }
-    const token = tokens.get(matches[0].id)?.token;
-    return token ? { name: 'Authorization', value: `Bearer ${token}` } : null;
+
+    // ② 该 host 上唯一活跃绑定账号
+    const boundAccounts = [
+      ...new Set([...bindings.values()].filter((b) => hostRelated(host, b.host)).map((b) => b.accountId)),
+    ];
+    if (boundAccounts.length === 1) {
+      const t = tokens.get(boundAccounts[0])?.token;
+      if (t) {
+        void diag(`下载归属：${host} 上唯一活跃绑定账号 ${boundAccounts[0]} → 带 Bearer 重发`);
+        return { name: 'Authorization', value: `Bearer ${t}` };
+      }
+      void diag(`下载归属：${host} 唯一活跃绑定账号 ${boundAccounts[0]} 无 token，降级判定`);
+    } else if (boundAccounts.length > 1) {
+      void diag(`下载归属：${host} 有 ${boundAccounts.length} 个活跃绑定账号，无法判定（不注入）`);
+    }
+
+    // ③ 全库唯一账号（兜底）
+    const accounts = await parallelStore.list();
+    const matches = accounts.filter((a) => hostRelated(host, a.siteHost));
+    if (matches.length === 1) {
+      const t = tokens.get(matches[0].id)?.token;
+      if (t) {
+        void diag(`下载归属：${host} 全库唯一账号 ${matches[0].id} → 带 Bearer 重发`);
+        return { name: 'Authorization', value: `Bearer ${t}` };
+      }
+    }
+    return null;
   },
 
   /** 账号改名后刷新所有绑定标签页标题 */
@@ -1217,7 +1401,11 @@ export const parallelSession = {
     }
     if (/^https?:\/\//i.test(url)) {
       const host = new URL(url).hostname;
-      if (host !== binding.host && !(await isEnforceable(host))) {
+      // 0.2.21 修正：站点自己的 host 可能带端口（siteHost = "192.0.2.10:8080"），而
+      // URL.hostname 永远不含端口——旧实现直接字符串比较，导致这类站点一打开就被误判为
+      // 「漫游到非授权域」而解绑（规则不装、身份不注入）。比较前先去端口。
+      const bindingHostname = hostNoPortOf(binding.host);
+      if (host !== bindingHostname && !(await isEnforceable(host))) {
         void diag(`onNavigation 非授权域 ${host}：解除 tab=${tabId} 绑定`);
         await this.unbindTab(tabId);
         return;
@@ -1248,20 +1436,20 @@ export const parallelSession = {
     await applyTitle(tabId, account.tabName);
   },
 
-  /** SW 冷启动恢复：绑定表 + token/Cookie 快照 → 重建内存态与规则（授权健康门控） */
+  /** SW 冷启动恢复：绑定表 + token/Cookie 快照 → 重建内存态与规则。
+   *  0.2.21 起**不再以授权健康过滤**：未授权时 DNR 规则本就静默不生效，重建无害；
+   *  而按授权过滤会让"授权其实已给但判定误判"的情形在每次 SW 重启后持续失效。 */
   async restore(): Promise<void> {
     void diag('parallelSession.restore 开始');
     await readState();
     enforcement.clear();
     const persisted = new Map<number, { host: string; token: string | null; cookie: string | null }>();
     for (const [tabId, b] of bindings) {
-      if (await isEnforceable(b.host)) {
-        persisted.set(tabId, {
-          host: b.host,
-          token: tokens.get(b.accountId)?.token ?? null,
-          cookie: cookieHeaderOf(b.accountId),
-        });
-      }
+      persisted.set(tabId, {
+        host: b.host,
+        token: tokens.get(b.accountId)?.token ?? null,
+        cookie: cookieHeaderOf(b.accountId),
+      });
     }
     await tabRules.restore(persisted);
     void diag(`parallelSession.restore 完成 persisted=${persisted.size}`);
@@ -1373,6 +1561,7 @@ export function registerParallelHandlers(): void {
         responseHeaders?: { name: string; value?: string }[];
       }) => {
         trackCookieAttribution(details);
+        noteRequestAttribution(details);
         void captureResponseCookies(details);
         void reportFailureStatus(details);
       },
