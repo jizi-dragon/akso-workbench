@@ -4,9 +4,9 @@
 - build（构建安装包）   → MINOR +1 且 PATCH 重置 1   0.0.2 → 0.1.1 → 0.2.1
 
 版本唯一真源 = pyproject.toml [project].version；
-workbench/__init__.py 的 __version__ 与 desktop/package.json 的 version
-由本工具同步写入（三写机制——electron-builder 以 package.json 版本命名
-安装包与 latest.yml，不同步会导致 build.ps1 产物校验失败）。
+workbench/__init__.py 的 __version__、desktop/package.json 的 version、
+扩展 manifest.json 与 package.json 的 version 由本工具同步写入
+（五写机制——electron-builder 与扩展弹窗可见版本均随项目演进）。
 .version.json 为本地缓存。
 
 用法：
@@ -26,6 +26,8 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 INIT_PY = ROOT / "workbench" / "__init__.py"
 DESKTOP_PKG = ROOT / "desktop" / "package.json"
+EXT_MANIFEST = ROOT / "extensions" / "quick-login" / "packages" / "extension" / "manifest.json"
+EXT_PACKAGE = ROOT / "extensions" / "quick-login" / "package.json"
 VERSION_CACHE = ROOT / ".version.json"
 
 
@@ -55,6 +57,17 @@ def _write(major: int, minor: int, patch: int) -> None:
         if n != 1:
             raise SystemExit("desktop/package.json 中未找到唯一的 version 字段")
         DESKTOP_PKG.write_text(pkg_text, encoding="utf-8", newline="\n")
+
+    # 扩展版本与项目同步（用户定稿）：popup/管理页可见版本随项目演进
+    for ext_file in (EXT_MANIFEST, EXT_PACKAGE):
+        if ext_file.exists():
+            text = ext_file.read_text(encoding="utf-8")
+            text, n = re.subn(
+                r'("version"\s*:\s*")[^"]*(")', rf"\g<1>{version}\g<2>", text, count=1
+            )
+            if n != 1:
+                raise SystemExit(f"{ext_file.name} 中未找到 version 字段")
+            ext_file.write_text(text, encoding="utf-8", newline="\n")
 
     VERSION_CACHE.write_text(json.dumps({"version": version}), encoding="utf-8")
 

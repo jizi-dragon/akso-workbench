@@ -10,7 +10,7 @@ import { LOCAL_KEYS } from '../shared/constants';
 import { DEFAULT_BOX, buildSectorWheel, groupPagesByBox, type WheelAccount } from '../ui/wheel/wheel-core';
 
 const WIN = window as typeof window & { __QL_WHEEL_ACTIVE__?: boolean };
-const PARALLEL_PAGE = chrome.runtime.getURL('ui/parallel/parallel.html');
+// （原 PARALLEL_PAGE 常量随并行管理页退役移除）
 
 /* 再次注入 = 关闭 */
 if (WIN.__QL_WHEEL_ACTIVE__) {
@@ -240,11 +240,8 @@ async function mount(): Promise<void> {
       },
       onPick: (id) => void pick(id),
       emptyAction: {
-        label: '去并行管理页添加',
-        run: () => {
-          close();
-          void chrome.tabs.create({ url: PARALLEL_PAGE });
-        },
+        label: '账号由桌面端账号中心统一管理',
+        run: () => undefined, // 并行管理页已随桌面化退役（用户定稿）；空态仅提示
       },
     });
     requestAnimationFrame(() => requestAnimationFrame(() => wheelRoot.classList.add('in')));

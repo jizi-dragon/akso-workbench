@@ -104,6 +104,18 @@ function buildSectorWheel(root, { pages, pageIndex, onPick }) {
   }
   const svg = svgEl('svg', { class: 'sector-svg', viewBox: `0 0 ${SIZE} ${SIZE}` });
   root.appendChild(svg);
+  // 背景盘 + 轨道渐变（对齐 Electron 轮盘窗，0.2.14 美化）
+  svg.appendChild(svgEl('circle', {
+    cx: C, cy: C, r: 262, fill: 'rgba(10,16,30,.82)',
+    stroke: 'rgba(122,150,220,.28)', 'stroke-width': 1.5,
+  }));
+  const defs = svgEl('defs');
+  const grad = svgEl('linearGradient', { id: 'track-grad', x1: '0%', y1: '0%', x2: '100%', y2: '100%' });
+  for (const [off, col] of [['0%', '#1E6FFF'], ['50%', '#7C5CFF'], ['100%', '#22C55E']]) {
+    grad.appendChild(svgEl('stop', { offset: off, 'stop-color': col }));
+  }
+  defs.appendChild(grad);
+  svg.appendChild(defs);
 
   const trackA = -20;
   const trackB = 100;
@@ -310,6 +322,32 @@ function renderStats() {
   el('stat-boxes').textContent = String(new Set(cacheAccounts.map((a) => (a.box || '').trim())).size);
 }
 
+/* ———————————————— 通用文本输入模态（Electron 不支持 window.prompt） ———————————————— */
+
+function askText(title, defaultValue = '') {
+  return new Promise((resolve) => {
+    el('ask-title').textContent = title;
+    el('ask-input').value = defaultValue;
+    el('ask-modal').classList.remove('hidden');
+    const input = el('ask-input');
+    input.focus();
+    input.select();
+    const done = (value) => {
+      el('ask-modal').classList.add('hidden');
+      el('ask-ok').onclick = null;
+      el('ask-cancel').onclick = null;
+      input.onkeydown = null;
+      resolve(value);
+    };
+    el('ask-ok').onclick = () => done(input.value.trim());
+    el('ask-cancel').onclick = () => done(null);
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); done(input.value.trim()); }
+      if (e.key === 'Escape') { e.preventDefault(); done(null); }
+    };
+  });
+}
+
 /* ———————————————— 盒子 chips（悬停操作：✎ 重命名 ⏸/▶ 禁用 ✕ 删除） ———————————————— */
 
 function renderBoxChips() {
@@ -336,10 +374,10 @@ function renderBoxChips() {
       const op = ev.target?.dataset?.op;
       if (op) { ev.stopPropagation(); await boxOp(op, chip); return; }
       if (chip.dataset.add) {
-        const name = prompt('新盒子名称：');
-        if (!name || !name.trim()) return;
-        await api('/api/accounts/boxes/create', { method: 'POST', body: { name: name.trim() } });
-        currentBox = name.trim();
+        const name = await askText('新盒子名称：');
+        if (!name) return;
+        await api('/api/accounts/boxes/create', { method: 'POST', body: { name } });
+        currentBox = name;
         refresh();
         return;
       }
@@ -362,17 +400,17 @@ async function boxOp(op, chip) {
   const displayName = box || '默认盒子';
   const inBox = cacheAccounts.filter((a) => (a.box || '').trim() === box);
   if (op === 'defname') {
-    const name = prompt('默认盒子的显示名：', '') ?? '';
-    await api('/api/accounts/boxes/default-name', { method: 'POST', body: { to: name } });
+    const name = await askText('默认盒子的显示名：');
+    await api('/api/accounts/boxes/default-name', { method: 'POST', body: { to: name ?? '' } });
     refresh();
     return;
   }
   if (op === 'rename') {
-    const to = prompt(`重命名盒子「${displayName}」为：`, box) ?? '';
-    if (!to.trim() || to.trim() === box) return;
-    const result = await api('/api/accounts/boxes/rename', { method: 'POST', body: { from: box, to: to.trim() } });
+    const to = await askText(`重命名盒子「${displayName}」为：`, box);
+    if (!to || to === box) return;
+    const result = await api('/api/accounts/boxes/rename', { method: 'POST', body: { from: box, to } });
     alert(`已移动 ${result.moved} 个账号`);
-    currentBox = to.trim();
+    currentBox = to;
     refresh();
     return;
   }
@@ -499,7 +537,7 @@ function renderCards(accounts) {
     const selected = selection.has(a.id);
 
     const chips = [];
-    for (const role of poolList(a.pool)) chips.push(`<span class="chip active">${role === 'config' ? '池·配置' : '池·监听'}</span>`);
+    for (const role of poolList(a.pool)) if (role === 'config') chips.push('<span class="chip active">池·配置</span>');
     if (s && s.has_token) chips.push('<span class="chip">已捕获 token</span>');
     if (s && s.monitoring) chips.push('<span class="chip active">监听中</span>');
     for (const t of (a.tags || []).slice(0, 3)) chips.push(`<span class="chip">${t}</span>`);
@@ -531,7 +569,6 @@ function renderCards(accounts) {
         <button class="btn-ghost btn-sm" data-act="edit">编辑</button>
         <button class="btn-ghost btn-sm" data-act="box">移盒</button>
         <button class="btn-ghost btn-sm" data-act="pool" data-role="config">配置池${poolList(a.pool).includes('config') ? ' ✓' : ''}</button>
-        <button class="btn-ghost btn-sm" data-act="pool" data-role="monitor">监听池${poolList(a.pool).includes('monitor') ? ' ✓' : ''}</button>
         ${s && s.monitoring ? '<button class="btn-ghost btn-sm" data-act="monitor" data-on="1">停止监听</button>'
           : (s && s.status !== 'stopped' ? '<button class="btn-ghost btn-sm" data-act="monitor" data-on="0">开始监听</button>' : '')}
         <button class="btn-danger btn-sm" data-act="del">删除</button>
@@ -584,25 +621,24 @@ function renderCards(accounts) {
 /* ———————————————— 分配池 ———————————————— */
 
 function renderPools() {
-  for (const role of ['config', 'monitor']) {
-    const box = el(`pool-${role}`);
-    const members = cacheAccounts.filter((a) => poolList(a.pool).includes(role));
-    if (!members.length) {
-      box.innerHTML = '<li class="empty">（空）——在账号卡上点击「池」加入</li>';
-      continue;
-    }
-    box.innerHTML = members.map((a) => {
-      const badge = extBadgeOf(a);
-      return `<li class="site-row" data-id="${a.id}" title="打开内置会话">
-        <span class="ac-avatar" style="--ring:${colorOf(cacheAccounts.indexOf(a))}; width:26px; height:26px; font-size:11px">${a.username.slice(0, 1).toUpperCase()}</span>
-        <div class="meta"><div class="alias">${a.username}</div><div class="sub">${a.env_base_url || ''}</div></div>
-        <span class="badge ${badge.cls}">${badge.label}</span>
-      </li>`;
-    }).join('');
-    box.querySelectorAll('[data-id]').forEach((node) => {
-      node.onclick = () => openAccount(node.dataset.id);
-    });
+  // 监听池已随 Monitor 解耦退役（用户定稿 0.2.14）：仅保留配置池
+  const box = el('pool-config');
+  const members = cacheAccounts.filter((a) => poolList(a.pool).includes('config'));
+  if (!members.length) {
+    box.innerHTML = '<li class="empty">（空）——在账号卡上点击「配置池」加入</li>';
+    return;
   }
+  box.innerHTML = members.map((a) => {
+    const badge = extBadgeOf(a);
+    return `<li class="site-row" data-id="${a.id}" title="打开内置会话">
+      <span class="ac-avatar" style="--ring:${colorOf(cacheAccounts.indexOf(a))}; width:26px; height:26px; font-size:11px">${a.username.slice(0, 1).toUpperCase()}</span>
+      <div class="meta"><div class="alias">${a.username}</div><div class="sub">${a.env_base_url || ''}</div></div>
+      <span class="badge ${badge.cls}">${badge.label}</span>
+    </li>`;
+  }).join('');
+  box.querySelectorAll('[data-id]').forEach((node) => {
+    node.onclick = () => openAccount(node.dataset.id);
+  });
 }
 
 async function openAccount(accountId) {
@@ -754,8 +790,7 @@ async function addSite(ev) {
 }
 
 async function renameSite(envId, currentName) {
-  const to = prompt(`重命名站点「${currentName}」为：`, currentName) ?? '';
-  const name = to.trim();
+  const name = await askText(`重命名站点「${currentName}」为：`, currentName);
   if (!name || name === currentName) return;
   await api(`/api/accounts/envs/${envId}`, { method: 'PATCH', body: { name } });
   await loadEnvs();
@@ -770,8 +805,7 @@ async function loadEnvs() {
   for (const env of data.envs) {
     const opt = document.createElement('option');
     opt.value = env.id;
-    const label = siteOptionLabel(env, dupNames);
-    opt.textContent = `${label}（${env.account_count} 账号）`;
+    opt.textContent = siteOptionLabel(env, dupNames); // 仅站点名称（用户定稿：不带账号数）
     sel.appendChild(opt);
   }
   const box = el('site-list');
@@ -808,19 +842,18 @@ async function addAccount() {
   const password = el('acc-password').value;
   if (!env_id) return alert('请先在「站点管理」添加站点');
   if (!username || !password) return alert('用户名与密码必填');
-  const tags = el('acc-tags').value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
   const box = el('acc-box').value.trim();
   await api('/api/accounts', {
     method: 'POST',
     body: {
       env_id, username, password,
-      tags,
+      tab_name: el('acc-tabname').value.trim(),
       ...(box ? { box } : {}),
     },
   });
   el('acc-username').value = '';
   el('acc-password').value = '';
-  el('acc-tags').value = '';
+  el('acc-tabname').value = '';
   refresh();
 }
 

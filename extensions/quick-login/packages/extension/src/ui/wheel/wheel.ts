@@ -9,7 +9,7 @@ import { LOCAL_KEYS } from '../../shared/constants';
 import { DEFAULT_BOX, buildSectorWheel, groupPagesByBox, type WheelAccount } from './wheel-core';
 
 const wheelEl = document.getElementById('wheel') as HTMLDivElement;
-const PARALLEL_PAGE = chrome.runtime.getURL('ui/parallel/parallel.html');
+// （原 PARALLEL_PAGE 常量随并行管理页退役移除）
 
 /* 启动宽限后再武装失焦关闭（创建瞬间可能误触发 blur） */
 let blurArmed = false;
@@ -90,11 +90,8 @@ function render(): void {
     },
     onPick: (id) => void pick(id),
     emptyAction: {
-      label: '去并行管理页添加',
-      run: async () => {
-        await chrome.tabs.create({ url: PARALLEL_PAGE });
-        window.close();
-      },
+      label: '账号由桌面端账号中心统一管理',
+      run: () => undefined, // 并行管理页已随桌面化退役（用户定稿）；空态仅提示
     },
   });
   requestAnimationFrame(() => requestAnimationFrame(() => wheelEl.classList.add('in')));

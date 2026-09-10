@@ -22,8 +22,8 @@
       }
       .sector-svg { width: min(66vmin, 480px); height: min(66vmin, 480px); display: block; }
       .sector .sector-hit {
-        fill: var(--acc, #3E76D2); fill-opacity: 0.3;
-        stroke: rgba(255,255,255,.4); stroke-width: 1.4;
+        fill: var(--acc, #3E76D2); fill-opacity: 0.45;
+        stroke: rgba(255,255,255,.5); stroke-width: 1.5;
         cursor: pointer; transition: fill-opacity .14s cubic-bezier(.22,1,.36,1);
       }
       @keyframes sector-in {
@@ -32,9 +32,18 @@
       }
       .sector {
         transform-box: view-box; transform-origin: center;
+        transition: transform .16s ease;
         animation: sector-in .3s cubic-bezier(.3, .9, .35, 1) backwards;
       }
-      .sector:hover .sector-hit { fill-opacity: 0.68; }
+      .sector:hover { transform: scale(1.016); }
+      .sector:hover .sector-hit { fill-opacity: 0.78; }
+      /* 轨道：曾无样式 → SVG 默认黑填充（用户看到的"黑色物体"） */
+      .box-track {
+        fill: none; stroke: url(#track-grad); stroke-width: 9;
+        stroke-linecap: round; opacity: .95;
+      }
+      .sector-dot { fill: rgba(255,255,255,.9); }
+      .hub-bg { fill: rgba(16,26,48,.92); stroke: rgba(140,168,235,.4); cursor: pointer; }
       .sector .sector-label {
         fill: #fff; font-size: 21px; font-weight: 600;
         paint-order: stroke; stroke: rgba(18,28,46,.6); stroke-width: 3px;
@@ -155,6 +164,19 @@
         }
         const svg = svgEl('svg', { class: 'sector-svg', viewBox: `0 0 ${SIZE} ${SIZE}` });
         root.appendChild(svg);
+        // 背景盘：给轮盘一个明确的表面（透明窗下不再"透明发黑"）
+        svg.appendChild(svgEl('circle', {
+          cx: C, cy: C, r: 262, fill: 'rgba(10,16,30,.82)',
+          stroke: 'rgba(122,150,220,.28)', 'stroke-width': 1.5,
+        }));
+        // 轨道渐变（蓝→紫→绿，对齐上游 v3.9.5 轨道配色）
+        const defs = svgEl('defs');
+        const grad = svgEl('linearGradient', { id: 'track-grad', x1: '0%', y1: '0%', x2: '100%', y2: '100%' });
+        for (const [off, col] of [['0%', '#1E6FFF'], ['50%', '#7C5CFF'], ['100%', '#22C55E']]) {
+          grad.appendChild(svgEl('stop', { offset: off, 'stop-color': col }));
+        }
+        defs.appendChild(grad);
+        svg.appendChild(defs);
 
         const trackA = -20, trackB = 100;
         svg.appendChild(svgEl('path', {

@@ -66,9 +66,9 @@ with sync_playwright() as pw:
     )
     checks.append((f"C7 卡片结构 头像={card and card['avatar']} 徽标=‘{card and card['badge']}’ 主按钮={card and card['primary']}", bool(card and card["avatar"] and card["badge"] and card["primary"] and card["acts"] >= 5)))
 
-    # C5 四态徽标类别合法
-    ok_badge = card and card["badgeCls"] and any(k in card["badgeCls"] for k in ("online", "offline", "starting", "login_failed"))
-    checks.append((f"C8 四态徽标类别合法（{card and card['badgeCls']}）", bool(ok_badge)))
+    # C5 三态徽标类别合法（未授权·已暂停已随状态通道精简移除）
+    ok_badge = card and card["badgeCls"] and any(k in card["badgeCls"] for k in ("online", "offline", "starting"))
+    checks.append((f"C8 三态徽标类别合法（{card and card['badgeCls']}）", bool(ok_badge)))
 
     # C6 批量管理切换
     pg.click("#batch-toggle")
@@ -104,6 +104,28 @@ with sync_playwright() as pw:
         }"""
     )
     checks.append((f"C14 链接清洗 {clean}", clean[0] == 'https://example-config.example.com' and clean[1] == 'http://192.0.2.10:8080'))
+
+    # C15 单列布局 + 主页返回 + 无角色/标签输入
+    no_grid = pg.evaluate("() => document.querySelector('.bottom-grid') === null")
+    home = pg.evaluate("() => !!document.querySelector('.head-actions a[href=\"/\"]')")
+    no_role = pg.evaluate("() => !document.getElementById('acc-role') && !document.getElementById('edit-role')")
+    tabname = pg.evaluate("() => !!document.getElementById('acc-tabname')")
+    checks.append(("C15 单列布局", no_grid))
+    checks.append(("C16 主页返回按钮", home))
+    checks.append((f"C17 角色已移除 + 页签名在位（tabname={tabname}）", no_role and tabname))
+
+    # C18 环境下拉无账号数
+    opt_text = pg.evaluate("() => document.querySelector('#acc-env option')?.textContent || ''")
+    checks.append((f"C18 站点选项无账号数（‘{opt_text}’）", opt_text and "账号" not in opt_text))
+
+    # C19 盒子 ✎ 点击 → ask 模态出现（Electron 无 prompt 的替代路径）
+    pg.click("#batch-toggle")  # 确保退出批量态再操作
+    pg.evaluate("() => { const c = [...document.querySelectorAll('#box-chips .chip')].find(x => x.dataset.box); if (c) c.querySelector('[data-op=rename]')?.click(); }")
+    pg.wait_for_timeout(300)
+    ask_visible = pg.evaluate("() => !document.getElementById('ask-modal').classList.contains('hidden')")
+    checks.append(("C19 盒子重命名弹出输入模态", ask_visible))
+    pg.click("#ask-cancel")
+    pg.wait_for_timeout(200)
 
     checks.append(("C11 零 JS 页面错误", not errors))
     if errors:

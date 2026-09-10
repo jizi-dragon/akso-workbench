@@ -658,3 +658,14 @@
 .hidden {
   display: none !important;
 }
+
+/* —— 响应式：窄窗防溢出（0.2.14 单列布局配套） —— */
+.site-grid-3 { grid-template-columns: 1fr 1.5fr auto; }
+.site-grid input { width: 100%; min-width: 0; }
+@media (max-width: 780px) {
+  .site-grid-3 { grid-template-columns: 1fr; }
+  .field-pair { grid-template-columns: 1fr; }
+  .mgrid.cols-2 { grid-template-columns: 1fr; }
+  .head { flex-direction: column; align-items: flex-start; }
+  .head-right { flex-wrap: wrap; }
+}

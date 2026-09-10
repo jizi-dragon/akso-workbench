@@ -23,6 +23,7 @@
         </div>
         <div class="head-right">
           <div class="head-actions">
+            <a class="btn-ghost btn-sm" href="/" title="返回工作台主页">← 主页</a>
             <button id="btn-wheel" class="btn-ghost btn-sm" type="button" title="Alt+Q 全局呼出（桌面壳运行时）；浏览器直开本页时页面内同样响应 Alt+Q">轮盘 Alt+Q</button>
             <button id="btn-export" class="btn-ghost btn-sm" type="button">导出备份</button>
             <button id="btn-import-backup" class="btn-ghost btn-sm" type="button">导入备份</button>
@@ -64,70 +65,74 @@
         </ul>
       </section>
 
-      <!-- ============ 底部三卡（添加账号 / 站点管理 / 分配池） ============ -->
-      <div class="bottom-grid">
-        <section class="card block">
-          <div class="block-head">
-            <h2>添加账号</h2>
-            <p class="desc">密码 Fernet 加密入库，明文只在自动登录内存中出现。</p>
+      <!-- ============ 添加账号（单列 · 第二位） ============ -->
+      <section class="card block">
+        <div class="block-head">
+          <h2>添加账号</h2>
+          <p class="desc">密码 Fernet 加密入库，明文只在自动登录内存中出现。</p>
+        </div>
+        <div class="form">
+          <div class="field-pair">
+            <label class="field"><span>站点（站点管理中添加）</span>
+              <select id="acc-env"></select>
+            </label>
+            <label class="field"><span>盒子（可留空 = 默认盒）</span>
+              <input id="acc-box" list="box-list" autocomplete="off" />
+              <datalist id="box-list"></datalist>
+            </label>
           </div>
-          <div class="form">
-            <div class="field-pair">
-              <label class="field"><span>平台环境</span>
-                <select id="acc-env"></select>
-              </label>
-              <label class="field"><span>盒子（可留空 = 默认盒）</span>
-                <input id="acc-box" list="box-list" autocomplete="off" />
-                <datalist id="box-list"></datalist>
-              </label>
-            </div>
-            <div class="field-pair">
-              <label class="field"><span>用户名</span><input id="acc-username" autocomplete="off" /></label>
-              <label class="field"><span>密码</span><input id="acc-password" type="password" autocomplete="new-password" /></label>
-            </div>
-            <label class="field"><span>标签（逗号分隔，可选）</span><input id="acc-tags" placeholder="验证环境,客户A" /></label>
-            <div class="btn-group">
-              <button id="btn-acc-add" class="btn-primary" type="button">新增账号</button>
-              <button id="btn-acc-bulk-toggle" class="btn-ghost" type="button">批量添加 ▾</button>
-            </div>
-            <div id="bulk-panel" class="import-panel hidden">
-              <p class="desc">每行一条：<code>用户名,密码[,盒子]</code>——批量建号到所选环境。</p>
-              <textarea id="acc-bulk" rows="3" placeholder="user1,pw123,客户A盒&#10;user2,pw456"></textarea>
-              <div class="btn-group"><button id="btn-acc-bulk" class="btn-ghost" type="button">批量添加</button></div>
-              <div id="bulk-result" class="log-console" style="height:110px; display:none"></div>
-            </div>
+          <div class="field-pair">
+            <label class="field"><span>用户名</span><input id="acc-username" autocomplete="off" /></label>
+            <label class="field"><span>密码</span><input id="acc-password" type="password" autocomplete="new-password" /></label>
           </div>
-        </section>
+          <label class="field"><span>页签名（别名，可选）</span><input id="acc-tabname" placeholder="默认与用户名一致——便于在浏览器里快速定位页签" /></label>
+          <div class="btn-group">
+            <button id="btn-acc-add" class="btn-primary" type="button">新增账号</button>
+            <button id="btn-acc-bulk-toggle" class="btn-ghost" type="button">批量添加 ▾</button>
+          </div>
+          <div id="bulk-panel" class="import-panel hidden">
+            <p class="desc">每行一条：<code>用户名,密码[,盒子]</code>——批量建号到所选站点。</p>
+            <textarea id="acc-bulk" rows="3" placeholder="user1,pw123,客户A盒&#10;user2,pw456"></textarea>
+            <div class="btn-group"><button id="btn-acc-bulk" class="btn-ghost" type="button">批量添加</button></div>
+            <div id="bulk-result" class="log-console" style="height:110px; display:none"></div>
+          </div>
+        </div>
+      </section>
 
-        <section class="card block">
-          <div class="block-head">
-            <h2>站点管理</h2>
-            <p class="desc">粘贴完整链接自动清洗为站点（保留端口）；站点下有账号时需先移出再删。</p>
-          </div>
-          <form id="site-form" class="site-grid" style="grid-template-columns: 1fr 1.5fr auto">
-            <input id="s-name" placeholder="站点名称（留空取域名首段）" autocomplete="off" />
-            <input id="s-host" placeholder="粘贴完整链接或域名，如 https://example-config.example.com/admin/..." autocomplete="off" spellcheck="false" />
-            <button class="btn-ghost" type="submit">添加站点</button>
-          </form>
-          <ul id="site-list" class="plain site-list"></ul>
-        </section>
+      <!-- ============ 站点管理（单列 · 第三位） ============ -->
+      <section class="card block">
+        <div class="block-head">
+          <h2>站点管理</h2>
+          <p class="desc">粘贴完整链接自动清洗为站点（保留端口）；站点名称支持修改，站点地址不可改。</p>
+        </div>
+        <form id="site-form" class="site-grid site-grid-3">
+          <input id="s-name" placeholder="站点名称（留空取域名首段）" autocomplete="off" />
+          <input id="s-host" placeholder="粘贴完整链接或域名，如 https://example-config.example.com/admin/..." autocomplete="off" spellcheck="false" />
+          <button class="btn-ghost" type="submit">添加站点</button>
+        </form>
+        <ul id="site-list" class="plain site-list"></ul>
+      </section>
 
-        <section class="card block">
-          <div class="block-head">
-            <h2>分配池</h2>
-            <p class="desc">洞察 / 工厂 / Monitor 的账号下拉只列出池内成员；点击成员打开内置会话。</p>
-          </div>
-          <div class="mgrid cols-2">
-            <div>
-              <div class="chips" style="margin-bottom:8px"><span class="chip active">配置池</span></div>
-              <div id="pool-config" class="plain site-list"></div>
-            </div>
-            <div>
-              <div class="chips" style="margin-bottom:8px"><span class="chip active">监听池</span></div>
-              <div id="pool-monitor" class="plain site-list"></div>
-            </div>
-          </div>
-        </section>
+      <!-- ============ 分配池（单列 · 第四位） ============ -->
+      <section class="card block">
+        <div class="block-head">
+          <h2>分配池</h2>
+          <p class="desc">洞察 / 工厂的账号下拉只列出配置池内成员；点击成员打开内置会话。</p>
+        </div>
+        <div class="chips" style="margin-bottom:8px"><span class="chip active">配置池</span></div>
+        <div id="pool-config" class="plain site-list"></div>
+      </section>
+    </div>
+
+    <!-- ============ 通用输入模态（Electron 不支持 window.prompt，一律走此模态） ============ -->
+    <div id="ask-modal" class="modal hidden">
+      <div class="modal-card">
+        <h3 id="ask-title">输入</h3>
+        <input id="ask-input" autocomplete="off" />
+        <div class="modal-actions">
+          <button id="ask-cancel" class="btn-ghost" type="button">取消</button>
+          <button id="ask-ok" class="btn-primary" type="button">确定</button>
+        </div>
       </div>
     </div>
 

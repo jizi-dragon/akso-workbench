@@ -67,6 +67,7 @@ class AccountIn(BaseModel):
     tags: list[str] = []
     note: str = ""
     box: str = ""
+    tab_name: str = ""
 
 
 class AccountPatch(BaseModel):

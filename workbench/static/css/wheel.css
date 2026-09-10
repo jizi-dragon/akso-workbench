@@ -53,8 +53,11 @@
 .sector-dot { fill: rgba(255, 255, 255, 0.35); }
 .sector-dot.on { fill: #16a34a; }
 
-/* 盒子轨道与节点（右侧 120° 装饰轨道） */
-.box-track { fill: none; stroke: rgba(255, 255, 255, 0.28); stroke-width: 2; }
+/* 盒子轨道与节点（右侧 120° 装饰轨道；渐变 defs 由 buildSectorWheel 注入） */
+.box-track {
+  fill: none; stroke: url(#track-grad); stroke-width: 9;
+  stroke-linecap: round; opacity: .95;
+}
 .box-node { fill: rgba(255, 255, 255, 0.3); cursor: pointer; }
 .box-node-on { fill: #fff; }
 
@@ -80,3 +83,15 @@ text.hub-go-text { fill: #fff; font-size: 19px; font-weight: 600; text-anchor: m
   transform-origin: center;
   animation: sector-in .3s cubic-bezier(.3, .9, .35, 1) backwards;
 }
+
+/* —— 扇区入场 + 悬停（0.2.14 美化，对齐 Electron 轮盘窗） —— */
+@keyframes sector-in {
+  from { opacity: 0; transform: scale(.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+.sector {
+  transform-box: view-box; transform-origin: center;
+  transition: transform .16s ease;
+  animation: sector-in .3s cubic-bezier(.3, .9, .35, 1) backwards;
+}
+.sector:hover { transform: scale(1.016); }

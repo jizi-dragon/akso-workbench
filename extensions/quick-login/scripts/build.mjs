@@ -48,7 +48,7 @@ const extensionOptions = {
     'content/wheel-overlay': path.join(extDir, 'src', 'content', 'wheel-overlay.ts'),
     'content/pages-overlay': path.join(extDir, 'src', 'content', 'pages-overlay.ts'),
     'ui/popup/popup': path.join(extDir, 'src', 'ui', 'popup', 'popup.ts'),
-    'ui/parallel/parallel': path.join(extDir, 'src', 'ui', 'parallel', 'parallel.ts'),
+    // ui/parallel 并行管理页已随桌面化退役（0.2.13）：账号数据由桌面账号中心统一管理
     'ui/wheel/wheel': path.join(extDir, 'src', 'ui', 'wheel', 'wheel.ts'),
   },
 };

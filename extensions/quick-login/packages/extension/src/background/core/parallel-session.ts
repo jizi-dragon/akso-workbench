@@ -820,11 +820,13 @@ export const parallelSession = {
     void diag(`open(${accountId}) 入口`);
     const account = await parallelStore.get(accountId);
     let tabId: number | null = null;
+    let reusedFlag = false;
 
     if (!forceNewTab) {
       const existing = boundTabsOf(accountId)[0];
       if (existing !== undefined && (await tabStillAlive(existing))) {
         tabId = existing;
+        reusedFlag = true;
       }
     }
     void forensics('open', {
@@ -895,8 +897,15 @@ export const parallelSession = {
     void diag(`open(${accountId}) pushBind 完成`);
     await applyTitle(tabId, account.tabName);
     await syncAccountRules(account.id, account.siteHost);
+    // 强制拉起浏览器窗口（用户定稿）：最小化/后台时新页签静默打开不可见——聚焦目标窗口
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true });
+    } catch {
+      // 窗口可能已被关闭
+    }
     void diag(`open(${accountId}) 完成 tabId=${tabId}`);
-    return { tabId, reused: false };
+    return { tabId, reused: tabId !== null && reusedFlag };
   },
 
   /** 解绑单个标签页（不动账号数据）；最后一个绑定页签关闭 = 该账号登录态终结（v3.12.0） */

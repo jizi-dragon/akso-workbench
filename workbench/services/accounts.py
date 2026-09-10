@@ -210,7 +210,7 @@ def _sanitize(row: dict[str, Any]) -> dict[str, Any]:
 def create_account(*, env_id: str, username: str, password: str, role: str = "",
                    tags: list[str] | None = None, note: str = "",
                    pool: str | list[str] | tuple[str, ...] | None = None,
-                   box: str = "") -> dict[str, Any]:
+                   box: str = "", tab_name: str = "") -> dict[str, Any]:
     if not get_env(env_id):
         raise AccountError(f"平台环境不存在：{env_id}")
     if not username.strip():
@@ -223,9 +223,9 @@ def create_account(*, env_id: str, username: str, password: str, role: str = "",
     ts = now_ms()
     db.execute(
         "INSERT INTO account (id, env_id, username, password_enc, role, tags, note, status, "
-        "pool, box, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?)",
+        "pool, box, tab_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?, ?)",
         (account_id, env_id, username.strip(), encrypt_password(password), role.strip(),
-         tags_json, note, pool_value, box.strip(), ts, ts),
+         tags_json, note, pool_value, box.strip(), tab_name.strip(), ts, ts),
     )
     assert get_account(account_id)
     return get_account(account_id)  # type: ignore[return-value]
