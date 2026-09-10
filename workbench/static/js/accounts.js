@@ -129,6 +129,7 @@ function buildSectorWheel(root, { pages, pageIndex, onPick }) {
     const mid = (a0 + a1) / 2;
     const g = svgEl('g', { class: `sector${extBadgeOf(a).cls === 'online' ? ' is-online' : ''}` });
     g.style.setProperty('--acc', colorOf(cacheAccounts.indexOf(a)));
+    g.style.animationDelay = `${0.06 + idx * 0.05}s`; // 扇区逐个入场（上游 v3.9 语义）
     const hit = svgEl('path', { class: 'sector-hit', d: sectorPath(a0, a1) });
     hit.addEventListener('click', () => onPick(a.id));
     g.appendChild(hit);
@@ -284,7 +285,7 @@ async function refresh() {
 
   renderStats();
   const fp = JSON.stringify([
-    cacheAccounts.map((a) => [a.id, a.box, a.pool, a.tags, a.has_password, a.env_name, a.env_base_url, a.username, a.role]),
+    cacheAccounts.map((a) => [a.id, a.box, a.pool, a.tags, a.has_password, a.env_name, a.env_base_url, a.username, a.tab_name, a.role]),
     [...cacheSessions].map(([k, s]) => [k, s.status, s.has_token, s.monitoring, s.title]),
     cacheBoxes, cacheDisabled, [...extState], [...savedCache],
     currentBox, batchOn, [...selection].sort(),
@@ -493,6 +494,7 @@ function renderCards(accounts) {
     const badge = extBadgeOf(a);
     const s = cacheSessions.get(a.id);
     const boxName = (a.box || '').trim();
+    const alias = (a.tab_name || '').trim() || a.username;
     const selected = selection.has(a.id);
 
     const chips = [];
@@ -511,8 +513,8 @@ function renderCards(accounts) {
       <div class="ac-head">
         <div class="ac-avatar" style="--ring:${color}">${a.username.slice(0, 1).toUpperCase()}<span class="dot ${badge.cls === 'online' ? 'on' : ''}"></span></div>
         <div class="meta">
-          <div class="alias">${a.username}</div>
-          <div class="sub">${boxName ? `<span class="box-tag">${boxName}</span>` : ''}${a.env_name}${a.env_base_url ? ` · ${a.env_base_url}` : ''}</div>
+          <div class="alias">${alias}</div>
+          <div class="sub">${boxName ? `<span class="box-tag">${boxName}</span>` : ''}${alias !== a.username ? `${a.username} · ` : ''}${a.env_name}${a.env_base_url ? ` · ${a.env_base_url}` : ''}</div>
         </div>
         <span class="badge ${badge.cls}">${badge.label}</span>
       </div>
@@ -651,6 +653,7 @@ async function editAccount(accountId) {
   }
   el('edit-username').value = account.username;
   el('edit-password').value = '';
+  el('edit-tabname').value = account.tab_name || '';
   el('edit-role').value = account.role || '';
   el('edit-box').value = (account.box || '').trim();
   el('edit-tags').value = (account.tags || []).join(',');
@@ -662,6 +665,7 @@ async function saveEdit() {
   const body = {
     env_id: el('edit-env').value,
     username: el('edit-username').value.trim(),
+    tab_name: el('edit-tabname').value.trim(),
     role: el('edit-role').value.trim(),
     box: el('edit-box').value.trim(),
     tags: el('edit-tags').value.split(/[,，]/).map((s) => s.trim()).filter(Boolean),

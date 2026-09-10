@@ -24,6 +24,14 @@
         stroke: rgba(255,255,255,.4); stroke-width: 1.4;
         cursor: pointer; transition: fill-opacity .14s cubic-bezier(.22,1,.36,1);
       }
+      @keyframes sector-in {
+        from { opacity: 0; transform: scale(.96); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      .sector {
+        transform-box: view-box; transform-origin: center;
+        animation: sector-in .3s cubic-bezier(.3, .9, .35, 1) backwards;
+      }
       .sector:hover .sector-hit { fill-opacity: 0.68; }
       .sector .sector-label {
         fill: #fff; font-size: 21px; font-weight: 600;
@@ -164,6 +172,8 @@
           const a0 = idx * sweep, a1 = (idx + 1) * sweep, mid = (a0 + a1) / 2;
           const globalIdx = accountIds.indexOf(a.id);
           const g = svgEl('g', { class: 'sector' });
+          g.style.setProperty('--acc', COLORS[globalIdx % COLORS.length]);
+          g.style.animationDelay = `${0.06 + idx * 0.05}s`; // 扇区逐个入场（上游 v3.9 语义）
           g.style.setProperty('--acc', COLORS[globalIdx % COLORS.length]);
           const hit = svgEl('path', { class: 'sector-hit', d: sectorPath(a0, a1) });
           hit.addEventListener('click', () => pick(a.id));

@@ -216,7 +216,8 @@ def update_account(account_id: str, *, username: str | None = None, password: st
                    role: str | None = None, tags: list[str] | None = None,
                    note: str | None = None, status: str | None = None,
                    pool: str | list[str] | tuple[str, ...] | None = None,
-                   box: str | None = None, env_id: str | None = None) -> dict[str, Any] | None:
+                   box: str | None = None, tab_name: str | None = None,
+                   env_id: str | None = None) -> dict[str, Any] | None:
     row = db.query_one("SELECT * FROM account WHERE id = ?", (account_id,))
     if not row:
         return None
@@ -248,6 +249,9 @@ def update_account(account_id: str, *, username: str | None = None, password: st
     if box is not None:
         sets.append("box = ?")
         params.append(box.strip())
+    if tab_name is not None:
+        sets.append("tab_name = ?")
+        params.append(tab_name.strip())
     if env_id is not None:
         if not get_env(env_id):
             raise AccountError(f"目标平台环境不存在：{env_id}")
@@ -406,6 +410,7 @@ def export_backup() -> dict[str, Any]:
                 "box": a.get("box") or "",
                 "role": a.get("role") or "",
                 "tags": a.get("tags") or [],
+                "tabName": (a.get("tab_name") or "").strip(),
             }
             for a in list_accounts()
         ],

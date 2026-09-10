@@ -200,6 +200,9 @@ ALTER TABLE account ADD COLUMN pool TEXT NOT NULL DEFAULT '';
     (11, "add_account_box", """
 ALTER TABLE account ADD COLUMN box TEXT NOT NULL DEFAULT '';
 """),
+    (12, "add_account_tab_name", """
+ALTER TABLE account ADD COLUMN tab_name TEXT NOT NULL DEFAULT '';
+"""),
 ]
 
 

@@ -91,6 +91,7 @@ class AccountPatch(BaseModel):
     status: str | None = None
     pool: str | list[str] | None = None
     box: str | None = None
+    tab_name: str | None = None
 
 
 class PoolBody(BaseModel):

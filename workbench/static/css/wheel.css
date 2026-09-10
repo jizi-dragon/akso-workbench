@@ -69,3 +69,14 @@ text.hub-num {
 text.hub-sub { fill: var(--text-3); font-size: 15px; text-anchor: middle; }
 rect.hub-go { fill: var(--teal); rx: 8; cursor: pointer; }
 text.hub-go-text { fill: #fff; font-size: 19px; font-weight: 600; text-anchor: middle; }
+
+/* —— 扇区入场动画（上游 v3.9 语义：逐个延迟弹出，scale .96→1） —— */
+@keyframes sector-in {
+  from { opacity: 0; transform: scale(.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+.sector {
+  transform-box: view-box;
+  transform-origin: center;
+  animation: sector-in .3s cubic-bezier(.3, .9, .35, 1) backwards;
+}
