@@ -4,7 +4,10 @@
 - build（构建安装包）   → MINOR +1 且 PATCH 重置 1   0.0.2 → 0.1.1 → 0.2.1
 
 版本唯一真源 = pyproject.toml [project].version；
-workbench/__init__.py 的 __version__ 由本工具同步写入（双文件机制）。
+workbench/__init__.py 的 __version__ 与 desktop/package.json 的 version
+由本工具同步写入（三写机制——electron-builder 以 package.json 版本命名
+安装包与 latest.yml，不同步会导致 build.ps1 产物校验失败）。
+.version.json 为本地缓存。
 
 用法：
     python tools/bump.py push    # 推送前手动执行（或由 pre-push 钩子调用）
@@ -22,6 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 INIT_PY = ROOT / "workbench" / "__init__.py"
+DESKTOP_PKG = ROOT / "desktop" / "package.json"
 VERSION_CACHE = ROOT / ".version.json"
 
 
@@ -42,6 +46,15 @@ def _write(major: int, minor: int, patch: int) -> None:
     init_text = INIT_PY.read_text(encoding="utf-8")
     init_text = re.sub(r'^__version__\s*=\s*"[^"]*"', f'__version__ = "{version}"', init_text, flags=re.M)
     INIT_PY.write_text(init_text, encoding="utf-8", newline="\n")
+
+    if DESKTOP_PKG.exists():
+        pkg_text = DESKTOP_PKG.read_text(encoding="utf-8")
+        pkg_text, n = re.subn(
+            r'^(\s*"version"\s*:\s*")[^"]*(")', rf"\g<1>{version}\g<2>", pkg_text, count=1, flags=re.M
+        )
+        if n != 1:
+            raise SystemExit("desktop/package.json 中未找到唯一的 version 字段")
+        DESKTOP_PKG.write_text(pkg_text, encoding="utf-8", newline="\n")
 
     VERSION_CACHE.write_text(json.dumps({"version": version}), encoding="utf-8")
 

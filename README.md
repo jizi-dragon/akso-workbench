@@ -11,10 +11,11 @@
 | mogul_simulator | 知识工作台（对话/知识库/检索/钉钉同步）——fork 基线 | Python 直接重命名 fork → `workbench/` |
 | akso-auto | 配置工厂（蓝图校验/创建/编排/Monitor） | **阶段 3 已原生化**（egmp.writers + orchestrate + monitor，纯 Python） |
 | akso-cc | 平台洞察（登录/盘点/理解/蜘蛛爬取/报告） | **阶段 3 已原生化**（egmp.insight，含 networkx 图分析） |
-| quick-login | 统一账号库 + 自动登录节奏门控（知识迁移） | 阶段2 用 Python/Playwright 重写（扩展形态不迁） |
+| quick-login | 统一账号库 + 自动登录节奏门控 | **混合架构**：Python/Playwright 托管自动化 + Chrome 扩展执行面（`extensions/quick-login/`，用户浏览器内会话切换） |
 
 > **运行时零依赖原项目**：四项目能力已全部内化到 `workbench/services/egmp/`（Python 3.12+/httpx/pydantic/playwright/networkx）；
-> 原仓库仅需在排查口径差异时作只读参考（`adapters/*.json` 为对照存档）。Node 不再是运行时依赖。
+> 原仓库仅需在排查口径差异时作只读参考（`adapters/*.json` 为对照存档）。终端用户运行无需 Node
+> （桌面壳为 Electron 自带运行时；开发态桌面壳与扩展构建需要 npm）。
 
 ## 快速开始（双人协作 · uv 为准）
 
@@ -27,14 +28,16 @@ uv sync --extra dev
 # 2) 托管浏览器内核（账号库/自动登录功能需要）
 uv run playwright install chromium
 
-# 3) 环境自检（Node / 原仓库只读引用 / 依赖体检；兼容 PowerShell 5.1/7）
+# 3) 环境自检（原仓库只读引用 / 依赖体检；兼容 PowerShell 5.1/7）
 powershell -ExecutionPolicy Bypass -File tools\setup.ps1
 
-# 4) 启动（自动开浏览器）
+# 4) 启动服务（自动开浏览器）
 uv run python -m workbench.main
 
-# 5) pywebview 桌面壳（可选）
-uv run python shell/shell.py
+# 5) Electron 桌面壳（推荐；含主窗/轮盘 Alt+Q/托盘/会话窗控制）
+cd desktop
+npm install
+npm start
 
 # 日常：测试 / lint
 uv run pytest
@@ -53,16 +56,19 @@ uvx ruff check .
 | `AKSO_AUTO_REPO` / `AKSO_CC_REPO` | 见 `adapters/*.json` | 原项目仓库路径覆盖 |
 | `NODE_COMMAND` | `node` | Node 可执行文件 |
 
+> 桌面壳内部端口（一般无需配置）：18766 = 内置 Chromium CDP（自动化挂接）；18767 = 会话窗控制服务。
+
 ## 目录蓝图
 
-- `docs/架构分析.md` —— **先读这个**：总体架构、模块地图（每个模块干什么）、测试与维护手册
-- `docs/模块契约.md` —— 接口契约（router/proc schema/adapters/账号库/浏览器/Agent）
-- `docs/迁移台账.md` —— 逐文件迁移状态 + 不迁清单
+- `docs/架构分析.md` —— **先读这个**：总体架构（Electron 壳 + FastAPI 服务 + 扩展执行面）、模块地图、关键数据流、环境坑与维护红线
+- `docs/SESSION-DIGEST.md` —— 会话速查（版本规则、运维速记、验收基线）
+- `extensions/quick-login/docs/PROJECT-STATUS.md` —— 扩展执行面六平面隔离详解
 - `CONTRIBUTING.md` —— 开发协作规范（环境、依赖变更、代码规约、分工边界）
-- 执行计划原文：`D:\ai_assistant\akso-workbench-PLAN.md`
+- 执行计划原文（历史存档）：`D:\ai_assistant\akso-workbench-PLAN.md`
 
 ## 里程碑
 
 - **M1** 骨架 + 子进程聚合：知识工作台可用；一键跑 akso-cc `understand`；上传蓝图跑 akso-auto `create`。
 - **M2** 统一账号库 + 托管浏览器 + 自动登录引擎（quick-login 节奏门控 100% 迁移）。
 - **M3** 深度 Python 化（egmp 客户端内核 / 写路径 / 读路径 / Monitor）+ Agent 层。
+- **M4**（当前）桌面壳 Electron 化 + quick-login 混合架构（扩展执行面 + 桌面数据面）+ 浏览器分配政策（快捷登录=用户 Chrome，监听/自动化=内置 Chromium）。
