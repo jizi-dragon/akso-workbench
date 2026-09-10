@@ -99,6 +99,10 @@ function groupPagesByBox(accounts, disabled) {
 
 function buildSectorWheel(root, { pages, pageIndex, onPick }) {
   root.innerHTML = '';
+  if (!pages.length || !pages.some((p) => p.accounts.length)) {
+    root.innerHTML = '<span class="empty">暂无可选账号——请在账号中心添加或启用盒子</span>';
+    return;
+  }
   const svg = svgEl('svg', { class: 'sector-svg', viewBox: `0 0 ${SIZE} ${SIZE}` });
   root.appendChild(svg);
 

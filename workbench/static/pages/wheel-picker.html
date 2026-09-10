@@ -142,8 +142,8 @@
       function buildWheel() {
         const root = document.getElementById('wheel-root');
         root.innerHTML = '';
-        if (!accounts.length) {
-          root.innerHTML = '<span class="empty">暂无账号——请在账号中心添加</span>';
+        if (!accounts.length || !pages.length || !pages.some((p) => p.list.length)) {
+          root.innerHTML = '<span class="empty">暂无可选账号——请在账号中心添加或启用盒子</span>';
           return;
         }
         const svg = svgEl('svg', { class: 'sector-svg', viewBox: `0 0 ${SIZE} ${SIZE}` });

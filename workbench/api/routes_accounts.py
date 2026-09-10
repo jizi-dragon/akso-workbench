@@ -5,24 +5,12 @@
 
 from __future__ import annotations
 
-import json
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..services import accounts as svc
-from ..services.storage import get_setting, set_setting
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
-
-_DISABLED_KEY = "disabled_boxes"
-
-
-def _disabled_boxes() -> list[str]:
-    try:
-        return json.loads(get_setting(_DISABLED_KEY) or "[]")
-    except (TypeError, ValueError):
-        return []
 
 
 # ------------------------------------------------------------------ 平台环境
@@ -102,7 +90,7 @@ class PoolBody(BaseModel):
 def list_accounts(env_id: str | None = None, pool: str | None = None) -> dict:
     if pool:
         return {"accounts": svc.pool_members(pool)}
-    return {"accounts": svc.list_accounts(env_id), "disabled_boxes": _disabled_boxes()}
+    return {"accounts": svc.list_accounts(env_id), "disabled_boxes": svc.list_disabled_boxes()}
 
 
 @router.post("/{account_id}/pool")
@@ -122,7 +110,7 @@ def set_pool(account_id: str, body: PoolBody) -> dict:
 
 @router.get("/boxes")
 def list_boxes() -> dict:
-    return {"boxes": svc.list_boxes(), "disabled": _disabled_boxes()}
+    return {"boxes": svc.list_boxes(), "disabled": svc.list_disabled_boxes()}
 
 
 class BoxDisableBody(BaseModel):
@@ -136,13 +124,7 @@ def disable_box(body: BoxDisableBody) -> dict:
 
     默认盒子无账号时自动禁用语义由前端计算（上游 3.10.0 惯例）。
     """
-    disabled = _disabled_boxes()
-    name = body.box
-    if body.disabled and name not in disabled:
-        disabled.append(name)
-    if not body.disabled and name in disabled:
-        disabled.remove(name)
-    set_setting(_DISABLED_KEY, json.dumps(disabled, ensure_ascii=False))
+    disabled = svc.set_box_disabled(body.box, body.disabled)
     return {"boxes": svc.list_boxes(), "disabled": disabled}
 
 

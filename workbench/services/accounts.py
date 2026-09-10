@@ -21,6 +21,25 @@ from .. import db
 from .storage import get_setting, new_id, now_ms, set_setting
 
 _KEY_SETTING = "account_fernet_key"
+_DISABLED_BOXES_KEY = "disabled_boxes"
+
+
+def list_disabled_boxes() -> list[str]:
+    """禁用盒清单（轮盘跳过语义，上游 3.10；settings 表持久化）。"""
+    try:
+        return json.loads(get_setting(_DISABLED_BOXES_KEY) or "[]")
+    except (TypeError, ValueError):
+        return []
+
+
+def set_box_disabled(box: str, disabled: bool) -> list[str]:
+    current = list_disabled_boxes()
+    if disabled and box not in current:
+        current.append(box)
+    if not disabled and box in current:
+        current.remove(box)
+    set_setting(_DISABLED_BOXES_KEY, json.dumps(current, ensure_ascii=False))
+    return current
 
 
 class AccountError(ValueError):

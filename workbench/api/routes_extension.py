@@ -109,7 +109,7 @@ def snapshot() -> dict[str, Any]:
         "fernetKey": backup["fernetKey"],
         "sites": sites,
         "accounts": accounts,
-        "boxes": backup["boxes"],
+        "boxes": {**backup["boxes"], "disabled": accounts_svc.list_disabled_boxes()},
     }
 
 

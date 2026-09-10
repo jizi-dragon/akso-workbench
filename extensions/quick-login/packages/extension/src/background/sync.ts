@@ -159,11 +159,12 @@ async function applySnapshot(snap: any): Promise<void> {
   }
   await saveMap(map);
 
-  // 盒子清单 / 默认盒名（以桌面为准）
+  // 盒子清单 / 默认盒名 / 禁用盒（以桌面为准）
   const boxes = snap.boxes ?? {};
   const patch: Record<string, unknown> = {};
   if (Array.isArray(boxes.remembered)) patch['ql:boxes'] = boxes.remembered;
   if (boxes.defaultName != null) patch['ql:defaultBox'] = boxes.defaultName;
+  if (Array.isArray(boxes.disabled)) patch['ql:disabledBoxes'] = boxes.disabled;
   if (Object.keys(patch).length) await chrome.storage.local.set(patch);
 
   await chrome.storage.local.set({ [SNAPSHOT_ID_KEY]: snap.snapshotId });
