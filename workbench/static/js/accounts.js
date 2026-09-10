@@ -1,18 +1,29 @@
-/** 账号中心：凭据托管 + 托管会话 + 盒子 + 分配池 + 轮盘（quick-login 全量内化） */
+/** 账号中心 v2（quick-login 管理页复刻）：
+ *  上游 parallel 页的视觉与功能基线（盒子 chips 全操作 / 批量管理 / 四态徽标 /
+ *  移盒弹窗 / 删盒两步处置 / 顶栏统计 / 指纹防闪烁），数据面接桌面 API，
+ *  四态徽标数据来自扩展执行面状态回传（/extension/state）。
+ */
 
-import { api, el, logLine, badgeFor } from './modules-common.js';
+import { api, el, logLine } from './modules-common.js';
 
 // quick-login SESSION_COLORS（轮盘色环语义）
 const COLORS = ['#1E6FFF', '#0FA3B1', '#7C5CFF', '#FF7A1A', '#22C55E'];
-const POOL_LABEL = { config: '配置', monitor: '监听' };
 const WHEEL_MAX = 10;
 const NS = 'http://www.w3.org/2000/svg';
 
 let cacheAccounts = [];
 let cacheSessions = new Map();
 let cacheBoxes = [];
+let cacheDisabled = [];
+let savedCache = new Map();
+const extState = new Map(); // desktopId → {tabs, hasToken, enforcementOff}
 
-/* ———————————————— 轮盘（v3.9 几何移植：扇形 + Hub 切盒 + 半透明覆盖层） ———————————————— */
+let currentBox = ''; // '' = 全部盒子
+let batchOn = false;
+const selection = new Set();
+let lastFp = '';
+
+/* ———————————————— 轮盘（v3.9 几何：扇形 + Hub 切盒 + 半透明覆盖层） ———————————————— */
 
 const SIZE = 520;
 const C = SIZE / 2;
@@ -67,15 +78,19 @@ function radialText(cls, mid, r, content) {
 
 function truncate(s, max) { return s.length > max ? `${s.slice(0, max - 1)}…` : s; }
 
-/** 按盒子分页（缺省归默认盒子；保持账号固有顺序） */
-function groupPagesByBox(accounts, defaultBoxName) {
+function colorOf(i) { return COLORS[((i % COLORS.length) + COLORS.length) % COLORS.length]; }
+function poolList(pool) { return String(pool || '').split(',').filter(Boolean); }
+
+/** 按盒子分页（缺省归默认盒子；跳过禁用盒——轮盘语义） */
+function groupPagesByBox(accounts, disabled) {
   const pages = [];
   const byName = new Map();
   for (const a of accounts) {
-    const name = (a.box || '').trim() ? a.box.trim() : (defaultBoxName || '默认盒子');
+    const name = (a.box || '').trim();
+    if (disabled.includes(name)) continue;
     if (!byName.has(name)) {
       byName.set(name, []);
-      pages.push({ label: name, accounts: byName.get(name) });
+      pages.push({ label: name || '默认盒子', accounts: byName.get(name) });
     }
     byName.get(name).push(a);
   }
@@ -87,7 +102,6 @@ function buildSectorWheel(root, { pages, pageIndex, onPick }) {
   const svg = svgEl('svg', { class: 'sector-svg', viewBox: `0 0 ${SIZE} ${SIZE}` });
   root.appendChild(svg);
 
-  // 盒子轨道（右侧 120° 装饰轨道）+ 盒节点
   const trackA = -20;
   const trackB = 100;
   const track = svgEl('path', {
@@ -113,7 +127,7 @@ function buildSectorWheel(root, { pages, pageIndex, onPick }) {
     const a0 = idx * sweep;
     const a1 = (idx + 1) * sweep;
     const mid = (a0 + a1) / 2;
-    const g = svgEl('g', { class: `sector${isOnline(a) ? ' is-online' : ''}` });
+    const g = svgEl('g', { class: `sector${extBadgeOf(a).cls === 'online' ? ' is-online' : ''}` });
     g.style.setProperty('--acc', colorOf(cacheAccounts.indexOf(a)));
     const hit = svgEl('path', { class: 'sector-hit', d: sectorPath(a0, a1) });
     hit.addEventListener('click', () => onPick(a.id));
@@ -123,10 +137,10 @@ function buildSectorWheel(root, { pages, pageIndex, onPick }) {
     const np = polar(R_IN + 26, mid);
     num.appendChild(svgEl('circle', { cx: np.x, cy: np.y, r: 13 }));
     const nt = svgEl('text', { x: np.x, y: np.y, 'text-anchor': 'middle', 'dominant-baseline': 'central' });
-    nt.textContent = String(idx + 1);
+    nt.textContent = idx === 9 ? '0' : String(idx + 1);
     num.appendChild(nt);
     g.appendChild(num);
-    const dot = svgEl('circle', { class: `sector-dot${isOnline(a) ? ' on' : ''}`, cx: 0, cy: 0, r: 6 });
+    const dot = svgEl('circle', { class: `sector-dot${extBadgeOf(a).cls === 'online' ? ' on' : ''}`, cx: 0, cy: 0, r: 6 });
     const dp = polar(R_OUT - 12, mid);
     dot.setAttribute('cx', dp.x);
     dot.setAttribute('cy', dp.y);
@@ -134,7 +148,6 @@ function buildSectorWheel(root, { pages, pageIndex, onPick }) {
     svg.appendChild(g);
   });
 
-  // Hub：点击/滚轮切盒
   const hub = svgEl('g', { class: 'hub hub-click' });
   hub.appendChild(svgEl('circle', { class: 'hub-bg', cx: C, cy: C, r: 100 }));
   hub.appendChild(radialText('hub-box', 0, 0, truncate(pages[pageIndex]?.label || '默认盒子', 10)));
@@ -149,18 +162,14 @@ function buildSectorWheel(root, { pages, pageIndex, onPick }) {
   root.appendChild(svg);
 }
 
-function isOnline(account) {
-  const s = cacheSessions.get(account.id);
-  return Boolean(s && s.status === 'online');
-}
+function isOnline(a) { return extBadgeOf(a).cls === 'online'; }
 
 function openWheel() {
   if (!cacheAccounts.length) {
-    alert('暂无账号——先在下方新增或从原项目 env 导入。');
+    alert('暂无账号——先在下方新增或从 env 导入。');
     return;
   }
-  const defaultName = cacheBoxes.find((b) => b.box === '')?.displayName || '默认盒子';
-  wheelPages = groupPagesByBox(cacheAccounts, defaultName);
+  wheelPages = groupPagesByBox(cacheAccounts, cacheDisabled);
   wheelPage = Math.min(wheelPage, wheelPages.length - 1);
   wheelOpen = true;
   const overlay = el('wheel-overlay');
@@ -177,13 +186,11 @@ function closeWheel() {
 }
 
 function renderWheelOverlay() {
-  const defaultName = cacheBoxes.find((b) => b.box === '')?.displayName || '默认盒子';
-  wheelPages = groupPagesByBox(cacheAccounts, defaultName);
+  wheelPages = groupPagesByBox(cacheAccounts, cacheDisabled);
   if (wheelPage >= wheelPages.length) wheelPage = 0;
   buildSectorWheel(el('wheel-svg'), {
     pages: wheelPages,
     pageIndex: wheelPage,
-    // 轮盘选人 → quickLogin（先确保 Chrome 在跑再发指令；指令队列 → 扩展切页签）
     onPick: (accountId) => { closeWheel(); quickLogin(accountId); },
   });
 }
@@ -197,8 +204,7 @@ async function postExtCommand(type, payload) {
 }
 
 document.addEventListener('keydown', (e) => {
-  /* Ctrl+Shift+Q：与扩展 quick-wheel 默认键一致；Alt+Q 让位给 Electron 壳全局热键
-    （壳运行时 OS 级抢占，页面内根本收不到 Alt+Q） */
+  /* Ctrl+Shift+Q：与扩展 quick-wheel 默认键一致；Alt+Q 让位给 Electron 壳全局热键 */
   if (e.key.toLowerCase() === 'q' && e.ctrlKey && e.shiftKey) {
     e.preventDefault();
     if (wheelOpen) closeWheel(); else openWheel();
@@ -206,10 +212,12 @@ document.addEventListener('keydown', (e) => {
   }
   if (!wheelOpen) return;
   if (e.key === 'Escape') { closeWheel(); return; }
-  const num = Number(e.key);
-  if (num >= 1 && num <= WHEEL_MAX) {
-    const page = wheelPages[wheelPage];
-    const account = page?.accounts?.[num - 1];
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const page = wheelPages[wheelPage];
+  if (!page) return;
+  const idx = Number(e.key) === 0 ? 9 : Number(e.key) - 1; // 0 = 第 10 个（上游语义）
+  if (!Number.isNaN(idx) && idx >= 0 && idx < 10 && idx < page.accounts.length) {
+    const account = page.accounts[idx];
     if (account) { closeWheel(); quickLogin(account.id); }
   }
 });
@@ -224,10 +232,381 @@ el('wheel-overlay')?.addEventListener('wheel', (e) => {
   renderWheelOverlay();
 }, { passive: false });
 
-/* ———————————————— 轮盘启动 + 卡片墙 + 盒子 + 分配池 ———————————————— */
+/* ———————————————— 指令路径：快捷登录（launch-chrome + par.open） ———————————————— */
 
-function colorOf(index) { return COLORS[index % COLORS.length]; }
-function poolList(pool) { return String(pool || '').split(',').filter(Boolean); }
+async function quickLogin(accountId) {
+  try {
+    await api('/extension/launch-chrome', { method: 'POST' });
+  } catch { /* 壳不可达时仍尝试指令（扩展可能已在轮询） */ }
+  await postExtCommand('par.open', { accountId });
+}
+
+/* ———————————————— 四态徽标（扩展执行面状态 + 内置会话回落） ———————————————— */
+
+function extBadgeOf(a) {
+  const st = extState.get(a.id);
+  if (st) {
+    if (st.enforcementOff) return { cls: 'login_failed', label: '未授权 · 已暂停' };
+    if (st.tabs > 0 && st.hasToken) return { cls: 'online', label: `在线 ×${st.tabs}` };
+    if (st.tabs > 0) return { cls: 'starting', label: '待登录' };
+    return { cls: 'offline', label: '离线' };
+  }
+  const s = cacheSessions.get(a.id);
+  if (s && s.status === 'online') return { cls: 'online', label: '在线 · 内置' };
+  if (s && s.status && s.status !== 'stopped') return { cls: 'starting', label: s.status };
+  return { cls: 'offline', label: '离线' };
+}
+
+/* ———————————————— 数据加载 + 指纹防闪烁渲染 ———————————————— */
+
+async function loadSavedFlags(accounts) {
+  const entries = await Promise.all(accounts.map(async (a) => {
+    const saved = await api(`/api/browser/saved/${a.id}`).catch(() => ({ saved: false }));
+    return [a.id, saved.saved];
+  }));
+  savedCache = new Map(entries);
+}
+
+async function refresh() {
+  const [accData, sessData, boxData, stateData] = await Promise.all([
+    api('/api/accounts'),
+    api('/api/browser/sessions'),
+    api('/api/accounts/boxes'),
+    api('/extension/state').catch(() => ({ items: [] })),
+  ]);
+  cacheAccounts = accData.accounts;
+  cacheSessions = new Map(sessData.sessions.map((s) => [s.account_id, s]));
+  cacheBoxes = boxData.boxes;
+  cacheDisabled = boxData.disabled || accData.disabled_boxes || [];
+  extState.clear();
+  for (const it of stateData.items || []) extState.set(it.desktopId, it);
+  await loadSavedFlags(cacheAccounts);
+
+  renderStats();
+  const fp = JSON.stringify([
+    cacheAccounts.map((a) => [a.id, a.box, a.pool, a.tags, a.has_password, a.env_name, a.env_base_url, a.username, a.role]),
+    [...cacheSessions].map(([k, s]) => [k, s.status, s.has_token, s.monitoring, s.title]),
+    cacheBoxes, cacheDisabled, [...extState], [...savedCache],
+    currentBox, batchOn, [...selection].sort(),
+  ]);
+  if (fp === lastFp) return; // 指纹未变不重建 DOM（防闪烁、保留悬停态）
+  lastFp = fp;
+
+  renderBoxChips();
+  renderPools();
+  const visible = currentBox === ''
+    ? cacheAccounts
+    : cacheAccounts.filter((a) => (a.box || '').trim() === currentBox);
+  renderCards(visible);
+  if (wheelOpen) renderWheelOverlay();
+}
+
+function renderStats() {
+  el('stat-accounts').textContent = String(cacheAccounts.length);
+  const online = cacheAccounts.filter((a) => extBadgeOf(a).cls === 'online').length;
+  el('stat-online').textContent = String(online);
+  el('stat-boxes').textContent = String(new Set(cacheAccounts.map((a) => (a.box || '').trim())).size);
+}
+
+/* ———————————————— 盒子 chips（悬停操作：✎ 重命名 ⏸/▶ 禁用 ✕ 删除） ———————————————— */
+
+function renderBoxChips() {
+  const row = el('box-chips');
+  const total = cacheAccounts.length;
+  const defaultBox = cacheBoxes.find((b) => b.box === '');
+  const named = cacheBoxes.filter((b) => b.box !== '');
+  const parts = [`<span class="chip ${currentBox === '' ? 'active' : ''}" data-box="">全部 <span class="chip-n">${total}</span></span>`];
+  if (defaultBox) {
+    parts.push(`<span class="chip" data-box="" data-default="1">默认盒子 <span class="chip-n">${defaultBox.count}</span><span class="chip-act" data-op="defname">✎</span></span>`);
+  }
+  for (const b of named) {
+    const off = cacheDisabled.includes(b.box);
+    parts.push(`<span class="chip ${currentBox === b.box ? 'active' : ''} ${off ? 'chip-off' : ''}" data-box="${b.box}">${b.displayName} <span class="chip-n">${b.count}</span>`
+      + `<span class="chip-act" data-op="rename">✎</span>`
+      + `<span class="chip-act" data-op="disable">${off ? '▶' : '⏸'}</span>`
+      + `<span class="chip-act chip-act-del" data-op="del">✕</span></span>`);
+  }
+  parts.push('<span class="chip chip-add" data-add="1">＋ 新建盒</span>');
+  row.innerHTML = parts.join('');
+
+  row.querySelectorAll('.chip').forEach((chip) => {
+    chip.onclick = async (ev) => {
+      const op = ev.target?.dataset?.op;
+      if (op) { ev.stopPropagation(); await boxOp(op, chip); return; }
+      if (chip.dataset.add) {
+        const name = prompt('新盒子名称：');
+        if (!name || !name.trim()) return;
+        await api('/api/accounts/boxes/create', { method: 'POST', body: { name: name.trim() } });
+        currentBox = name.trim();
+        refresh();
+        return;
+      }
+      currentBox = chip.dataset.box || '';
+      refresh();
+    };
+  });
+
+  const datalist = el('box-list');
+  if (datalist) {
+    datalist.innerHTML = cacheBoxes
+      .filter((b) => b.box)
+      .map((b) => `<option value="${b.box}"></option>`)
+      .join('');
+  }
+}
+
+async function boxOp(op, chip) {
+  const box = chip.dataset.box || '';
+  const displayName = box || '默认盒子';
+  const inBox = cacheAccounts.filter((a) => (a.box || '').trim() === box);
+  if (op === 'defname') {
+    const name = prompt('默认盒子的显示名：', '') ?? '';
+    await api('/api/accounts/boxes/default-name', { method: 'POST', body: { to: name } });
+    refresh();
+    return;
+  }
+  if (op === 'rename') {
+    const to = prompt(`重命名盒子「${displayName}」为：`, box) ?? '';
+    if (!to.trim() || to.trim() === box) return;
+    const result = await api('/api/accounts/boxes/rename', { method: 'POST', body: { from: box, to: to.trim() } });
+    alert(`已移动 ${result.moved} 个账号`);
+    currentBox = to.trim();
+    refresh();
+    return;
+  }
+  if (op === 'disable') {
+    const off = cacheDisabled.includes(box);
+    await api('/api/accounts/boxes/disable', { method: 'POST', body: { box, disabled: !off } });
+    refresh();
+    return;
+  }
+  if (op === 'del') {
+    if (!confirm(`删除盒子「${displayName}」？`)) return;
+    let withAccounts = false;
+    if (inBox.length) {
+      withAccounts = confirm(`盒内还有 ${inBox.length} 个账号。\n「确定」= 连同账号一并删除；「取消」= 账号并入默认盒，仅删盒子。`);
+    }
+    if (withAccounts) {
+      for (const a of inBox) await api(`/api/accounts/${a.id}`, { method: 'DELETE' });
+    }
+    const result = await api('/api/accounts/boxes/delete', { method: 'POST', body: { from: box } });
+    alert(withAccounts ? '盒子与账号已删除' : `已并入 ${result.moved} 个账号`);
+    currentBox = '';
+    refresh();
+  }
+}
+
+/* ———————————————— 移入盒子弹窗（单选带计数 + 新盒名自动创建） ———————————————— */
+
+let boxModalTargets = [];
+let boxModalChoice = null; // '' = 默认盒；'名' = 命名盒；null = 未选
+
+function openBoxModal(ids) {
+  boxModalTargets = ids;
+  boxModalChoice = null;
+  el('box-modal-title').textContent = ids.length > 1 ? `移入盒子（已选 ${ids.length} 个账号）` : '移入盒子';
+  el('box-new-name').value = '';
+  renderBoxOptions();
+  el('box-modal').classList.remove('hidden');
+}
+
+function renderBoxOptions() {
+  const wrap = el('box-options');
+  const defaultBox = cacheBoxes.find((b) => b.box === '');
+  const options = [`<button type="button" class="box-option ${boxModalChoice === '' ? 'active' : ''}" data-box=""><span>默认盒子</span><span class="chip-n">${defaultBox?.count ?? 0}</span></button>`];
+  for (const b of cacheBoxes.filter((x) => x.box !== '')) {
+    options.push(`<button type="button" class="box-option ${boxModalChoice === b.box ? 'active' : ''}" data-box="${b.box}"><span>${b.displayName}</span><span class="chip-n">${b.count}</span></button>`);
+  }
+  wrap.innerHTML = options.join('');
+  wrap.querySelectorAll('.box-option').forEach((btn) => {
+    btn.onclick = () => {
+      boxModalChoice = btn.dataset.box || '';
+      el('box-new-name').value = '';
+      renderBoxOptions();
+    };
+  });
+}
+
+async function confirmBoxMove() {
+  const newName = el('box-new-name').value.trim();
+  const target = newName || boxModalChoice;
+  if (target === null) return alert('请选择目标盒子，或输入新盒名。');
+  for (const id of boxModalTargets) {
+    await api(`/api/accounts/${id}`, { method: 'PATCH', body: { box: target } });
+  }
+  el('box-modal').classList.add('hidden');
+  selection.clear();
+  updateBatchBar();
+  refresh();
+}
+
+el('box-modal-ok').onclick = () => confirmBoxMove().catch((e) => alert(`移动失败：${e.message}`));
+el('box-modal-cancel').onclick = () => el('box-modal').classList.add('hidden');
+el('box-new-name').addEventListener('input', () => {
+  const v = el('box-new-name').value.trim();
+  boxModalChoice = v || null;
+  renderBoxOptions();
+  if (v) el('box-new-name').focus();
+});
+
+/* ———————————————— 批量管理 ———————————————— */
+
+function updateBatchBar() {
+  el('batch-bar').classList.toggle('hidden', !batchOn);
+  el('sel-count').textContent = String(selection.size);
+  document.body.classList.toggle('batch-on', batchOn);
+}
+
+el('batch-toggle').onclick = () => {
+  batchOn = !batchOn;
+  if (!batchOn) selection.clear();
+  el('batch-toggle').textContent = batchOn ? '退出批量' : '批量管理';
+  lastFp = ''; // 强制重绘（勾选框显隐）
+  updateBatchBar();
+  refresh();
+};
+el('sel-clear').onclick = () => { selection.clear(); updateBatchBar(); lastFp = ''; refresh(); };
+el('sel-move').onclick = () => {
+  if (!selection.size) return alert('先勾选账号。');
+  openBoxModal([...selection]);
+};
+el('sel-delete').onclick = async () => {
+  if (!selection.size) return;
+  if (!confirm(`删除所选 ${selection.size} 个账号？此操作不可撤销。`)) return;
+  for (const id of selection) await api(`/api/accounts/${id}`, { method: 'DELETE' });
+  selection.clear();
+  updateBatchBar();
+  refresh();
+};
+
+/* ———————————————— 账号卡片（上游 account-card 结构 + 四态徽标） ———————————————— */
+
+function renderCards(accounts) {
+  const wall = el('acc-wall');
+  wall.innerHTML = '';
+  if (!accounts.length) {
+    wall.innerHTML = '<li class="empty" style="grid-column:1/-1"><span class="empty-ico">📭</span>暂无账号——先新增环境与账号，或从 env 导入</li>';
+    return;
+  }
+  accounts.forEach((a, i) => {
+    const color = colorOf(i);
+    const badge = extBadgeOf(a);
+    const s = cacheSessions.get(a.id);
+    const boxName = (a.box || '').trim();
+    const selected = selection.has(a.id);
+
+    const chips = [];
+    for (const role of poolList(a.pool)) chips.push(`<span class="chip active">${role === 'config' ? '池·配置' : '池·监听'}</span>`);
+    if (savedCache.get(a.id)) chips.push('<span class="chip">已保存登录态</span>');
+    if (s && s.has_token) chips.push('<span class="chip">已捕获 token</span>');
+    if (s && s.monitoring) chips.push('<span class="chip active">监听中</span>');
+    for (const t of (a.tags || []).slice(0, 3)) chips.push(`<span class="chip">${t}</span>`);
+
+    const li = document.createElement('li');
+    li.className = `account-card${selected ? ' selected' : ''}`;
+    li.dataset.id = a.id;
+    li.style.setProperty('--accent', color);
+    li.innerHTML = `
+      <input type="checkbox" class="ac-check" ${selected ? 'checked' : ''} data-check="${a.id}" />
+      <div class="ac-head">
+        <div class="ac-avatar" style="--ring:${color}">${a.username.slice(0, 1).toUpperCase()}<span class="dot ${badge.cls === 'online' ? 'on' : ''}"></span></div>
+        <div class="meta">
+          <div class="alias">${a.username}</div>
+          <div class="sub">${boxName ? `<span class="box-tag">${boxName}</span>` : ''}${a.env_name}${a.env_base_url ? ` · ${a.env_base_url}` : ''}</div>
+        </div>
+        <span class="badge ${badge.cls}">${badge.label}</span>
+      </div>
+      ${a.role ? `<div class="sub">${a.role}</div>` : ''}
+      ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
+      ${s && (s.title || s.detail) ? `<div class="sub">${s.title || ''}${s.detail ? ` · ${s.detail}` : ''}</div>` : ''}
+      <div class="ac-actions">
+        <button class="btn-primary" data-act="quicklogin" title="经 quick-login 扩展，在你的 Chrome 中打开并自动登录">快捷登录</button>
+        ${s && s.status !== 'stopped'
+          ? `<button class="btn-ghost" data-act="focus">聚焦</button>
+             <button class="btn-ghost" data-act="close">关闭</button>`
+          : `<button class="btn-ghost" data-act="monitor" data-on="${s?.monitoring ? 1 : 0}">监听会话</button>`}
+      </div>
+      <div class="ac-actions">
+        <button class="btn-ghost btn-sm" data-act="edit">编辑</button>
+        <button class="btn-ghost btn-sm" data-act="box">移盒</button>
+        <button class="btn-ghost btn-sm" data-act="pool" data-role="config">配置池${poolList(a.pool).includes('config') ? ' ✓' : ''}</button>
+        <button class="btn-ghost btn-sm" data-act="pool" data-role="monitor">监听池${poolList(a.pool).includes('monitor') ? ' ✓' : ''}</button>
+        ${s && s.monitoring ? '<button class="btn-ghost btn-sm" data-act="monitor" data-on="1">停止监听</button>'
+          : (s && s.status !== 'stopped' ? '<button class="btn-ghost btn-sm" data-act="monitor" data-on="0">开始监听</button>' : '')}
+        ${savedCache.get(a.id) ? '<button class="btn-ghost btn-sm" data-act="forget">忘记会话</button>' : ''}
+        <button class="btn-danger btn-sm" data-act="del">删除</button>
+      </div>`;
+
+    li.querySelector('[data-check]')?.addEventListener('change', (ev) => {
+      const id = ev.target.dataset.check;
+      if (ev.target.checked) selection.add(id); else selection.delete(id);
+      li.classList.toggle('selected', ev.target.checked);
+      updateBatchBar();
+    });
+
+    li.querySelectorAll('button[data-act]').forEach((btn) => {
+      btn.onclick = async () => {
+        const act = btn.dataset.act;
+        try {
+          if (act === 'quicklogin') {
+            btn.disabled = true;
+            await quickLogin(a.id);
+          } else if (act === 'monitor') {
+            await monitorToggle(a.id, btn.dataset.on === '1');
+          } else if (act === 'focus') {
+            await api(`/api/browser/focus/${a.id}`, { method: 'POST' });
+          } else if (act === 'close') {
+            await api(`/api/browser/close/${a.id}`, { method: 'POST' });
+          } else if (act === 'edit') {
+            await editAccount(a.id);
+          } else if (act === 'box') {
+            openBoxModal([a.id]);
+          } else if (act === 'forget') {
+            if (!confirm(`清除 ${a.username} 的持久登录态？下次打开将重新走自动登录。`)) return;
+            await api(`/api/browser/forget/${a.id}`, { method: 'POST' });
+          } else if (act === 'pool') {
+            const role = btn.dataset.role;
+            const current = poolList(a.pool);
+            const next = current.includes(role) ? current.filter((r) => r !== role) : [...current, role];
+            await api(`/api/accounts/${a.id}/pool`, { method: 'POST', body: { pool: next } });
+          } else if (act === 'del') {
+            if (!confirm(`删除账号「${a.username}」？`)) return;
+            await api(`/api/accounts/${a.id}`, { method: 'DELETE' });
+          }
+        } catch (e) {
+          alert(`操作失败：${e.message}`);
+        } finally {
+          refresh();
+        }
+      };
+    });
+    wall.appendChild(li);
+  });
+}
+
+/* ———————————————— 分配池 ———————————————— */
+
+function renderPools() {
+  for (const role of ['config', 'monitor']) {
+    const box = el(`pool-${role}`);
+    const members = cacheAccounts.filter((a) => poolList(a.pool).includes(role));
+    if (!members.length) {
+      box.innerHTML = '<li class="empty">（空）——在账号卡上点击「池」加入</li>';
+      continue;
+    }
+    box.innerHTML = members.map((a) => {
+      const badge = extBadgeOf(a);
+      return `<li class="site-row" data-id="${a.id}" title="打开内置会话">
+        <span class="ac-avatar" style="--ring:${colorOf(cacheAccounts.indexOf(a))}; width:26px; height:26px; font-size:11px">${a.username.slice(0, 1).toUpperCase()}</span>
+        <div class="meta"><div class="alias">${a.username}</div><div class="sub">${a.env_base_url || ''}</div></div>
+        <span class="badge ${badge.cls}">${badge.label}</span>
+      </li>`;
+    }).join('');
+    box.querySelectorAll('[data-id]').forEach((node) => {
+      node.onclick = () => openAccount(node.dataset.id);
+    });
+  }
+}
 
 async function openAccount(accountId) {
   const head = accountId.slice(0, 6);
@@ -238,26 +617,6 @@ async function openAccount(accountId) {
     alert(`启动会话失败：${e.message}`);
   }
   refresh();
-}
-
-/* 弹窗淡出关闭（微交互）：加 .closing 播放退出动画后真正 close */
-function closeDialog(d) {
-  if (!d || !d.open) return;
-  d.classList.add('closing');
-  setTimeout(() => {
-    d.classList.remove('closing');
-    d.close();
-  }, 160);
-}
-
-/* 浏览器分配政策（用户定稿）：
-   快捷登录 = 用户 Chrome（扩展指令 par.open + 拉起 Chrome）；
-   监听/自动化 = 应用内置 Chromium（browser_pool，cdp 模式 = Electron 壳）。 */
-async function quickLogin(accountId) {
-  try {
-    await api('/extension/launch-chrome', { method: 'POST' });
-  } catch { /* 壳不可达时仍尝试指令（扩展可能已在轮询） */ }
-  await postExtCommand('par.open', { accountId });
 }
 
 async function monitorToggle(accountId, active) {
@@ -273,7 +632,7 @@ async function monitorToggle(accountId, active) {
   refresh();
 }
 
-/* ———— 账号编辑（查改） ———— */
+/* ———————————————— 账号编辑 ———————————————— */
 
 let editTargetId = null;
 
@@ -315,11 +674,11 @@ async function saveEdit() {
   refresh();
 }
 
-/* ———— 批量添加（每行：用户名,密码[,盒子]） ———— */
+/* ———————————————— 批量添加 ———————————————— */
 
 async function bulkAdd() {
   const envId = el('acc-env').value;
-  if (!envId) return alert('请先选择/新增平台环境');
+  if (!envId) return alert('请先在「环境管理」新增平台环境');
   const lines = el('acc-bulk').value.split('\n').map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return alert('请粘贴账号行（用户名,密码[,盒子]）');
   const slot = el('bulk-result');
@@ -346,243 +705,7 @@ async function bulkAdd() {
   refresh();
 }
 
-async function loadAccountsAndSessions() {
-  const [accData, sessData, boxData] = await Promise.all([
-    api('/api/accounts'),
-    api('/api/browser/sessions'),
-    api('/api/accounts/boxes'),
-  ]);
-  cacheAccounts = accData.accounts;
-  cacheSessions = new Map(sessData.sessions.map((s) => [s.account_id, s]));
-  cacheBoxes = boxData.boxes;
-  renderBoxChips(boxData.boxes);
-  renderPool(cacheAccounts);
-  const visible = currentBox === ''
-    ? cacheAccounts
-    : cacheAccounts.filter((a) => (a.box || '').trim() === currentBox);
-  renderCards(visible, cacheSessions);
-  if (wheelOpen) renderWheelOverlay();
-}
-
-let savedCache = new Map();
-let currentBox = ''; // '' = 全部盒子；否则按盒过滤（原扩展 box-chips 语义）
-
-async function loadSavedFlags(accounts) {
-  const entries = await Promise.all(accounts.map(async (a) => {
-    const saved = await api(`/api/browser/saved/${a.id}`).catch(() => ({ saved: false }));
-    return [a.id, saved.saved];
-  }));
-  savedCache = new Map(entries);
-}
-
-function renderBoxChips(boxes) {
-  const row = el('box-chips');
-  const total = cacheAccounts.length;
-  const parts = [`<span class="chip chip-btn ${currentBox === '' ? 'chip-active' : ''}" data-box="">全部 · ${total}</span>`];
-  for (const b of boxes) {
-    if (b.box === '' && b.displayName === '默认盒子') {
-      parts.push(`<span class="chip chip-btn" data-box="" title="默认盒子（未入盒账号）">默认盒子 · ${b.count}</span>`);
-      continue;
-    }
-    parts.push(`<span class="chip chip-btn ${currentBox === b.box ? 'chip-active' : ''}" data-box="${b.box}">${b.displayName} · ${b.count}</span>`);
-  }
-  parts.push('<span class="chip chip-btn chip-add" data-add="1">＋ 新建盒</span>');
-  row.innerHTML = parts.join('');
-
-  row.querySelectorAll('.chip-btn').forEach((chip) => {
-    chip.onclick = async () => {
-      if (chip.dataset.add) {
-        const name = prompt('新盒子名称：');
-        if (!name || !name.trim()) return;
-        await api('/api/accounts/boxes/create', { method: 'POST', body: { name: name.trim() } });
-        currentBox = name.trim();
-        refresh();
-        return;
-      }
-      currentBox = chip.dataset.box || '';
-      refresh();
-    };
-  });
-
-  // 选中具体盒子的内联管理行（重命名 / 删除 / 默认盒显示名）
-  const manage = el('box-manage-row');
-  if (currentBox === '') {
-    manage.style.display = 'none';
-    manage.innerHTML = '';
-  } else {
-    manage.style.display = 'flex';
-    manage.style.gap = '8px';
-    const isDefault = false; // 默认盒子归并入「全部」视图语义，管理行仅用于命名盒
-    manage.innerHTML = `
-      <span class="chip chip-active">正在管理：${currentBox}</span>
-      ${isDefault
-        ? '<button class="mbtn ghost" data-m="defname" style="padding:5px 11px; font-size:12px">默认盒显示名</button>'
-        : `<button class="mbtn ghost" data-m="rename" style="padding:5px 11px; font-size:12px">重命名</button>
-           <button class="mbtn danger ghost" data-m="delete" style="padding:5px 11px; font-size:12px">删除盒子（并入默认）</button>`}`;
-    manage.querySelectorAll('button[data-m]').forEach((btn) => {
-      btn.onclick = async () => {
-        const action = btn.dataset.m;
-        if (action === 'rename') {
-          const to = prompt(`重命名盒子「${currentBox}」为：`, currentBox) ?? '';
-          if (!to.trim() || to.trim() === currentBox) return;
-          const result = await api('/api/accounts/boxes/rename', {
-            method: 'POST', body: { from: currentBox, to: to.trim() },
-          });
-          alert(`已移动 ${result.moved} 个账号`);
-          currentBox = to.trim();
-        } else if (action === 'delete') {
-          if (!confirm(`删除盒子「${currentBox}」？其中账号将并入默认盒子。`)) return;
-          const result = await api('/api/accounts/boxes/delete', {
-            method: 'POST', body: { from: currentBox },
-          });
-          alert(`已并入 ${result.moved} 个账号`);
-          currentBox = '';
-        } else if (action === 'defname') {
-          const name = prompt('默认盒子的显示名：', '') ?? '';
-          await api('/api/accounts/boxes/default-name', { method: 'POST', body: { to: name } });
-        }
-        refresh();
-      };
-    });
-  }
-  // 新增账号表单的盒子下拉建议
-  const datalist = el('box-list');
-  if (datalist) {
-    datalist.innerHTML = boxes
-      .filter((b) => b.box)
-      .map((b) => `<option value="${b.box}"></option>`)
-      .join('');
-  }
-}
-
-function renderPool(accounts) {
-  for (const role of ['config', 'monitor']) {
-    const box = el(`pool-${role}`);
-    const members = accounts.filter((a) => poolList(a.pool).includes(role));
-    if (!members.length) {
-      box.innerHTML = '<div class="empty">（空）</div>';
-      continue;
-    }
-    box.innerHTML = members.map((a) => {
-      const s = cacheSessions.get(a.id);
-      const status = s ? s.status : 'stopped';
-      return `<div class="legend-item" data-id="${a.id}" title="启动 ${a.username}">
-        <span class="legend-dot" style="background:${colorOf(cacheAccounts.indexOf(a))}"></span>
-        <span>${a.username}</span>
-        <span class="env">${a.env_base_url || ''}</span>
-        <span class="status-badge ${badgeFor(status) || ''}">${status}</span>
-      </div>`;
-    }).join('');
-    box.querySelectorAll('[data-id]').forEach((node) => {
-      node.onclick = () => openAccount(node.dataset.id);
-    });
-  }
-}
-
-function renderCards(accounts, sessions) {
-  const wall = el('acc-wall');
-  wall.innerHTML = '';
-  if (!accounts.length) {
-    wall.innerHTML = '<div class="empty" style="grid-column:1/-1">暂无账号——先新增环境与账号，或从原项目 env 导入</div>';
-    return;
-  }
-  accounts.forEach((a, i) => {
-    const color = colorOf(i);
-    const s = sessions.get(a.id);
-    const status = s ? s.status : 'stopped';
-    const badgeCls = badgeFor(status) || (s ? 'warn' : '');
-    const chips = [];
-    for (const role of poolList(a.pool)) {
-      chips.push(`<span class="chip chip-active">池·${POOL_LABEL[role] || role}</span>`);
-    }
-    if (savedCache.get(a.id)) chips.push('<span class="chip">已保存登录态</span>');
-    if (s && s.has_token) chips.push('<span class="chip">已捕获 token</span>');
-    if (s && s.monitoring) chips.push('<span class="chip chip-active">监听中</span>');
-    const boxName = (a.box || '').trim();
-    chips.push(`<span class="chip">盒·${boxName || '默认'}</span>`);
-    for (const t of a.tags || []) chips.push(`<span class="chip">${t}</span>`);
-
-    const card = document.createElement('div');
-    card.className = 'acard';
-    card.innerHTML = `
-      <div class="row1">
-        <div class="avatar" style="background:${color}; --ql-ring: ${color}55">${a.username.slice(0, 1).toUpperCase()}</div>
-        <div>
-          <div class="name">${a.username}</div>
-          <div class="env">${a.env_name}${a.env_base_url ? ` · ${a.env_base_url}` : ''}</div>
-        </div>
-        <div style="flex:1"></div>
-        <span class="status-badge ${a.has_password ? 'ok' : 'warn'}">${a.has_password ? '凭据就绪' : '无凭据'}</span>
-      </div>
-      ${a.role ? `<div class="env">${a.role}</div>` : ''}
-      ${chips.length ? `<div class="chip-row">${chips.join('')}</div>` : ''}
-      ${s && (s.title || s.detail) ? `<div class="env">${s.title || ''}${s.detail ? ` · ${s.detail}` : ''}</div>` : ''}
-      <div class="acard-actions-primary">
-        <button class="mbtn" data-act="quicklogin" data-id="${a.id}" title="经 quick-login 扩展，在你的 Chrome 中打开并切换到该账号">快捷登录</button>
-        ${s && s.status !== 'stopped'
-          ? `<button class="mbtn ghost" data-act="focus" data-id="${a.id}" title="聚焦内置 Chromium 会话窗">聚焦</button>
-             <button class="mbtn ghost" data-act="close" data-id="${a.id}">关闭</button>`
-          : `<button class="mbtn ghost" data-act="monitor" data-id="${a.id}" title="在内置 Chromium 会话上开始监听录制">监听会话</button>`}
-      </div>
-      <div class="acard-actions-secondary">
-        <button class="link-btn" data-act="edit" data-id="${a.id}">编辑</button>
-        <button class="link-btn" data-act="box" data-id="${a.id}" data-name="${a.username}" data-box="${boxName}">盒子</button>
-        <button class="link-btn ${poolList(a.pool).includes('config') ? 'link-on' : ''}" data-act="pool" data-id="${a.id}" data-role="config"
-          title="加入/移出配置池（洞察/工厂取用）">配置池</button>
-        <button class="link-btn ${poolList(a.pool).includes('monitor') ? 'link-on' : ''}" data-act="pool" data-id="${a.id}" data-role="monitor"
-          title="加入/移出监听池（Monitor 取用）">监听池</button>
-        ${s && s.monitoring
-          ? `<button class="link-btn link-on" data-act="monitor" data-id="${a.id}">停止监听</button>`
-          : (s && s.status !== 'stopped'
-            ? `<button class="link-btn" data-act="monitor" data-id="${a.id}">开始监听</button>`
-            : '')}
-        ${savedCache.get(a.id) ? `<button class="link-btn" data-act="forget" data-id="${a.id}" data-name="${a.username}">忘记会话</button>` : ''}
-        <button class="link-btn link-danger" data-act="del" data-id="${a.id}" data-name="${a.username}">删除</button>
-      </div>`;
-    card.querySelectorAll('button[data-act]').forEach((btn) => {
-      btn.onclick = async () => {
-        btn.disabled = true;
-        try {
-          if (btn.dataset.act === 'quicklogin') {
-            await quickLogin(a.id);
-          } else if (btn.dataset.act === 'monitor') {
-            await monitorToggle(a.id, Boolean(s && s.monitoring));
-          } else if (btn.dataset.act === 'open') {
-            await openAccount(a.id);
-          } else if (btn.dataset.act === 'focus') {
-            await api(`/api/browser/focus/${a.id}`, { method: 'POST' });
-          } else if (btn.dataset.act === 'edit') {
-            await editAccount(a.id);
-          } else if (btn.dataset.act === 'close') {
-            await api(`/api/browser/close/${a.id}`, { method: 'POST' });
-          } else if (btn.dataset.act === 'box') {
-            const target = prompt(`将 ${a.username} 移动到盒子（留空 = 默认盒子）：`, btn.dataset.box || '');
-            if (target === null) return;
-            await api(`/api/accounts/${a.id}`, { method: 'PATCH', body: { box: target.trim() } });
-          } else if (btn.dataset.act === 'forget') {
-            if (!confirm(`清除 ${a.username} 的持久登录态？下次打开将重新走自动登录。`)) return;
-            await api(`/api/browser/forget/${a.id}`, { method: 'POST' });
-          } else if (btn.dataset.act === 'pool') {
-            const current = poolList(a.pool);
-            const role = btn.dataset.role;
-            const next = current.includes(role) ? current.filter((r) => r !== role) : [...current, role];
-            await api(`/api/accounts/${a.id}/pool`, { method: 'POST', body: { pool: next } });
-          } else if (btn.dataset.act === 'del') {
-            if (!confirm(`删除账号「${a.username}」？`)) return;
-            await api(`/api/accounts/${a.id}`, { method: 'DELETE' });
-          }
-        } catch (e) {
-          alert(`操作失败：${e.message}`);
-        } finally {
-          refresh();
-        }
-      };
-    });
-    wall.appendChild(card);
-  });
-}
-
-/* ———————————————— 环境 / 账号 CRUD / 备份 / 导入 ———————————————— */
+/* ———————————————— 环境（对话框内 CRUD） ———————————————— */
 
 async function loadEnvs() {
   const data = await api('/api/accounts/envs');
@@ -608,6 +731,7 @@ async function loadEnvs() {
     del.onclick = async () => {
       if (!env.account_count || confirm(`删除环境「${env.name}」？（其下 ${env.account_count} 个账号将一并删除）`)) {
         await api(`/api/accounts/envs/${env.id}`, { method: 'DELETE' });
+        loadEnvs();
         refresh();
       }
     };
@@ -622,6 +746,7 @@ async function addEnv() {
   await api('/api/accounts/envs', { method: 'POST', body: { name, base_url: el('env-url').value.trim() } });
   el('env-name').value = '';
   el('env-url').value = '';
+  loadEnvs();
   refresh();
 }
 
@@ -629,7 +754,7 @@ async function addAccount() {
   const env_id = el('acc-env').value;
   const username = el('acc-username').value.trim();
   const password = el('acc-password').value;
-  if (!env_id) return alert('请先新增平台环境');
+  if (!env_id) return alert('请先在「环境管理」新增平台环境');
   if (!username || !password) return alert('用户名与密码必填');
   const tags = el('acc-tags').value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
   const box = el('acc-box').value.trim();
@@ -646,6 +771,8 @@ async function addAccount() {
   el('acc-tags').value = '';
   refresh();
 }
+
+/* ———————————————— 备份 / env 导入 ———————————————— */
 
 async function exportBackup() {
   const data = await api('/api/accounts/export');
@@ -708,21 +835,29 @@ async function runImport() {
   }
 }
 
-async function refresh() {
-  const accData = await api('/api/accounts');
-  await loadSavedFlags(accData.accounts);
-  await loadEnvs();
-  await loadAccountsAndSessions();
+/* 弹窗淡出关闭（微交互） */
+function closeDialog(d) {
+  if (!d || !d.open) return;
+  d.classList.add('closing');
+  setTimeout(() => {
+    d.classList.remove('closing');
+    d.close();
+  }, 160);
 }
 
-el('btn-env-add').onclick = addEnv;
+/* ———————————————— 事件绑定 + 启动 ———————————————— */
+
 el('btn-acc-add').onclick = addAccount;
 el('btn-acc-bulk').onclick = bulkAdd;
+el('btn-acc-bulk-toggle').onclick = () => el('bulk-panel').classList.toggle('hidden');
 el('btn-import').onclick = openImport;
 el('btn-import-close').onclick = () => closeDialog(el('import-dialog'));
 el('btn-import-run').onclick = runImport;
 el('btn-edit-cancel').onclick = () => { closeDialog(el('edit-dialog')); editTargetId = null; };
 el('btn-edit-save').onclick = () => saveEdit().catch((e) => alert(`保存失败：${e.message}`));
+el('btn-manage-env').onclick = () => { loadEnvs(); el('env-dialog').showModal(); };
+el('btn-env-add').onclick = addEnv;
+el('btn-env-close').onclick = () => closeDialog(el('env-dialog'));
 document.querySelectorAll('[data-close-dialog]').forEach((btn) => {
   btn.onclick = () => closeDialog(btn.closest('dialog'));
 });
@@ -736,7 +871,14 @@ el('backup-file').addEventListener('change', () => {
 });
 
 async function boot() {
+  await loadEnvs();
   await refresh();
+  try {
+    const meta = await fetch('/openapi.json').then((r) => r.json());
+    el('ver-chip').textContent = `v${meta.info.version}`;
+  } catch { /* 版本号拿不到就不显示 */ }
 }
+
 boot().catch((e) => alert(`加载失败：${e.message}`));
-setInterval(() => loadAccountsAndSessions().catch(() => {}), 3000);
+setInterval(() => refresh().catch(() => {}), 3000);
+updateBatchBar();

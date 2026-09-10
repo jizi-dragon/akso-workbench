@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **账号中心 UI 复刻一期（0.2.8）**：按上游 quick-login 管理页视觉与功能基线重写（`accounts.html`/`accounts.js` + 移植 `ql-theme.css`/`ql-parallel.css`）。落地：顶栏品牌头 + 实时统计（账号/在线/盒子）+ 版本 chip；盒子 chips 悬停操作（✎ 重命名 / ⏸▶ 禁用启用 / ✕ 两步删除——连同账号删除或并入默认盒）；**批量管理模式**（勾选 + 已选计数 + 批量移盒/删除）；**移入盒子弹窗**（单选带计数 + 新盒名自动创建，替代裸 prompt）；**四态实时徽标**（在线×N/待登录/离线/未授权·已暂停——新增扩展执行面状态回传通道 `/extension/state`，扩展每 ~6s 上报绑定页签数/token/授权暂停）；**指纹防闪烁渲染**（数据未变不重建 DOM）；轮盘 0 键=第 10 账号（页内覆盖层 + Electron 轮盘窗）；禁用盒轮盘跳过（settings 表 `disabled_boxes`）；平台环境管理收进对话框、批量添加收进折叠面板——消除提示冗杂。DOM 验证 11/11（`tools/verify_accounts_ui.py`）。
+
 ### Fixed
 
 - **Fernet 双 bug（0.2.7，E2E 最后一公里）**：①扩展端 fernetDecrypt 键位写反——Fernet 规范 sign-key=key[:16]/enc-key=key[16:32]，原实现互换导致 HMAC 全失败、账号被静默跳过；②WebCrypto AES-CBC 已自动去 PKCS7 填充，原代码再按尾字节手工剥离，把口令尾字符当填充长度剥掉。修复后**隔离 Chrome 全链路真机验收通过（E2E_PASS）**：快照同步 2/2 → par.open 开登录页 → 自动填表提交 → 进入平台工作台。新增 `tools/acceptance_extension_e2e.py` 可复用验收脚本。

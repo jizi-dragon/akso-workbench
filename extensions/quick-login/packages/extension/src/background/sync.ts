@@ -22,6 +22,7 @@ const ACCT_MAP_KEY = 'akso:acctMap'; // desktopId → extension accountId
 const SNAPSHOT_ID_KEY = 'akso:snapshotId';
 
 let syncing = false;
+let tickCount = 0;
 
 /** Fernet 解密（WebCrypto）：token = b64(0x80 | ts8 | iv16 | ct | hmac32)。
  *  Fernet 规范：sign-key = key[0:16]（HMAC-SHA256），enc-key = key[16:32]（AES-128-CBC）——
@@ -212,11 +213,41 @@ async function tick(): Promise<void> {
     const snap = await getJson('/extension/snapshot');
     if (snap) await applySnapshot(snap);
     await pollCommands();
+    // 状态回传（每 3 个 tick ≈6s）：桌面账号中心四态徽标的数据源
+    tickCount += 1;
+    if (tickCount % 3 === 0) await reportState();
   } catch {
     // 静默：桌面不可达是常态（离线回退本地数据）
   } finally {
     syncing = false;
   }
+}
+
+/** 执行面状态上报：desktopId → 绑定页签数 / token / 授权暂停（四态徽标数据源） */
+async function reportState(): Promise<void> {
+  const map = await getMap();
+  const rev = new Map<string, string>();
+  for (const [desktopId, extId] of Object.entries(map)) rev.set(extId, desktopId);
+  if (!rev.size) return;
+  const accounts = await parallelStore.list();
+  const items = [];
+  for (const account of accounts) {
+    const desktopId = rev.get(account.id);
+    if (!desktopId) continue;
+    const st = parallelSession.statusOf(account);
+    items.push({
+      desktopId,
+      tabs: st.tabIds.length,
+      hasToken: st.hasToken,
+      enforcementOff: st.enforcementOff,
+    });
+  }
+  if (!items.length) return;
+  await fetch(`${DESKTOP}/extension/state`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+  }).catch(() => undefined);
 }
 
 export function startDesktopSync(): void {

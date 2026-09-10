@@ -69,6 +69,7 @@
       let accountIds = [];
       let pages = [];
       let wheelPage = 0;
+      let disabledBoxes = [];
 
       /* 关闭：Electron 子窗 window.close 可靠（pywebview 时代的 js_api 已随壳退役） */
       function closeWheel() {
@@ -103,12 +104,13 @@
         return t;
       };
 
-      function groupPagesByBox(accounts) {
+      function groupPagesByBox(list) {
         const pages = [];
         const byName = new Map();
-        for (const a of accounts) {
-          const name = (a.box || '').trim() || '默认盒子';
-          if (!byName.has(name)) { byName.set(name, []); pages.push({ label: name, list: [] }); }
+        for (const a of list) {
+          const name = (a.box || '').trim();
+          if (disabledBoxes.includes(name)) continue; // 禁用盒：轮盘跳过（上游 3.10 语义）
+          if (!byName.has(name)) { byName.set(name, []); pages.push({ label: name || '默认盒子', list: [] }); }
           byName.get(name).push(a);
         }
         return pages;
@@ -202,6 +204,7 @@
             return r.json();
           });
           accounts = data.accounts || [];
+          disabledBoxes = data.disabled_boxes || [];
         } catch (e) {
           document.getElementById('wheel-root').innerHTML =
             `<span class="empty">加载失败：${e.message}（服务未就绪？）</span>`;
@@ -216,10 +219,12 @@
       document.getElementById('close-x').onclick = closeWheel;
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') { closeWheel(); return; }
-        const num = Number(e.key);
-        if (num >= 1 && num <= WHEEL_MAX) {
-          const page = pages[wheelPage];
-          const a = page?.list?.[num - 1];
+        if (e.ctrlKey || e.altKey || e.metaKey) return;
+        const page = pages[wheelPage];
+        if (!page) return;
+        const idx = Number(e.key) === 0 ? 9 : Number(e.key) - 1; // 0 = 第 10 个（上游语义）
+        if (!Number.isNaN(idx) && idx >= 0 && idx < 10 && idx < page.list.length) {
+          const a = page.list[idx];
           if (a) pick(a.id);
         }
       });

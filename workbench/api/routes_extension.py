@@ -28,6 +28,9 @@ _seq: int | None = None  # 惰性从 settings 表恢复（跨进程重启单调�
 _seq_SEQ_KEY = "ext_cmd_seq"
 _commands: list[dict[str, Any]] = []
 _acked: set[int] = set()
+# 执行面状态回传（desktopId → 状态快照），供账号中心四态徽标；带 TTL 淘汰
+_STATE: dict[str, dict[str, Any]] = {}
+_STATE_TTL_MS = 60_000
 
 
 def _next_seq() -> int:
@@ -185,3 +188,37 @@ def ack(body: dict[str, Any]) -> dict[str, Any]:
             _commands.clear()
             _acked.clear()
     return {"acked": seqs}
+
+
+@router.post("/state")
+def report_state(body: dict[str, Any]) -> dict[str, Any]:
+    """扩展执行面状态上报（每 ~6s）：desktopId → 页签数/token/授权暂停。
+
+    仅内存态 + TTL 淘汰——扩展离线后徽标自动回落「离线」，无需清理任务。
+    """
+    now = now_ms()
+    items = body.get("items") or []
+    with _lock:
+        for it in items:
+            desktop_id = str(it.get("desktopId") or "")
+            if not desktop_id:
+                continue
+            _STATE[desktop_id] = {
+                "tabs": int(it.get("tabs") or 0),
+                "hasToken": bool(it.get("hasToken")),
+                "enforcementOff": bool(it.get("enforcementOff")),
+                "at": now,
+            }
+        # 顺手淘汰过期项
+        for key in [k for k, v in _STATE.items() if now - v["at"] > _STATE_TTL_MS]:
+            _STATE.pop(key, None)
+    return {"accepted": len(items)}
+
+
+@router.get("/state")
+def get_state() -> dict[str, Any]:
+    """桌面 UI 读取执行面状态（TTL 内的条目）。"""
+    cutoff = now_ms() - _STATE_TTL_MS
+    with _lock:
+        items = [dict(v, desktopId=k) for k, v in _STATE.items() if v["at"] > cutoff]
+    return {"items": items}
