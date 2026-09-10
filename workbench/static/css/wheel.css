@@ -31,7 +31,10 @@
 }
 
 /* 扇区：账号色低饱和底 + 悬停加深（v3.9 语义，色值经 --acc 注入） */
-.sector-svg { width: 100%; height: 100%; display: block; }
+.sector-svg {
+  width: 100%; height: 100%; display: block;
+  filter: drop-shadow(0 10px 26px rgba(23, 42, 84, 0.18));  /* 极淡外投影，维持层次 */
+}
 .sector .sector-hit {
   fill: var(--acc, #076ce0); fill-opacity: 0.24;
   stroke: rgba(255, 255, 255, 0.35); stroke-width: 1;
@@ -53,13 +56,9 @@
 .sector-dot { fill: rgba(255, 255, 255, 0.35); }
 .sector-dot.on { fill: #16a34a; }
 
-/* 盒子轨道与节点（右侧 120° 装饰轨道；渐变 defs 由 buildSectorWheel 注入） */
-.box-track {
-  fill: none; stroke: url(#track-grad); stroke-width: 9;
-  stroke-linecap: round; opacity: .95;
-}
-.box-node { fill: rgba(255, 255, 255, 0.3); cursor: pointer; }
-.box-node-on { fill: #fff; }
+/* 盒子轨道与节点（右侧 150° 弧；分段渐变色由 JS 逐段内联注入——勿在此设 stroke） */
+.box-node { fill: rgba(23, 42, 84, 0.35); cursor: pointer; }
+.box-node-on { fill: #1E6FFF; }
 
 /* Hub：点击/滚轮切盒 */
 .hub-click { cursor: pointer; }

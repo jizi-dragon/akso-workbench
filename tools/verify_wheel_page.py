@@ -56,14 +56,23 @@ with sync_playwright() as pw:
     checks.append((f"W4c 网络响应: {resp_dump}", True))
     checks.append(("W5 指纹防重绘（3s 轮询未重建 DOM）", bool(marked and same)))
 
-    # W7 浅色主题：轨道渐变 + 背景盘浅色 + 标签深色 + body 浅色磨砂
-    track_stroke = pg.evaluate("() => getComputedStyle(document.querySelector('.box-track')).stroke")
-    backdrop = pg.evaluate("() => document.querySelector('#wheel-root svg circle')?.getAttribute('fill') || ''")
-    label_fill = pg.evaluate("() => getComputedStyle(document.querySelector('text.sector-label')).fill")
-    body_bg = pg.evaluate("() => getComputedStyle(document.body).backgroundColor")
-    checks.append((f"W7 浅色主题（轨道={track_stroke[:28]} 盘={backdrop} 标签={label_fill} body={body_bg}）",
-                   "track-grad" in track_stroke and "255, 255, 255" in backdrop
-                   and "23, 35, 59" in label_fill and "244, 247, 253" in body_bg))
+    # W7 视觉优化：无外圈描边盘 + 右侧 150° 分段渐变轨道 + 极淡投影
+    ring = pg.evaluate("() => !!document.querySelector('#wheel-root svg circle[r=\"262\"]')")
+    segs = pg.evaluate(
+        """() => {
+          const paths = [...document.querySelectorAll('#wheel-root svg path.box-track')];
+          if (!paths.length) return {n: 0};
+          const strokes = paths.map((p) => p.getAttribute('stroke'));
+          const xs = paths.map((p) => +p.getAttribute('d').match(/M (-?[\\d.]+)/)[1]);
+          return {n: paths.length, grad: strokes[0] !== strokes[strokes.length - 1],
+                  allRight: xs.every((x) => x >= 260), sw: paths[0].getAttribute('stroke-width')};
+        }"""
+    )
+    shadow = pg.evaluate("() => getComputedStyle(document.querySelector('.sector-svg')).filter")
+    checks.append(("W7a 外圈描边盘已移除", not ring))
+    checks.append((f"W7b 轨道分段渐变 {segs}", segs.get("n", 0) >= 24 and segs.get("grad") and segs.get("allRight")))
+    checks.append((f"W7c 轨道线宽 {segs.get('sw')} + 极淡投影（{shadow[:44]}）",
+                   segs.get("sw") == "9" and "drop-shadow" in shadow))
 
     checks.append(("W6 零 JS 错误", not errs))
     if errs:

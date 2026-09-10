@@ -105,25 +105,33 @@ function buildSectorWheel(root, { pages, pageIndex, onPick }) {
   }
   const svg = svgEl('svg', { class: 'sector-svg', viewBox: `0 0 ${SIZE} ${SIZE}` });
   root.appendChild(svg);
-  // 背景盘：浅色主题下的层次环（柔和白）
-  svg.appendChild(svgEl('circle', {
-    cx: C, cy: C, r: 262, fill: 'rgba(255, 255, 255, .55)',
-    stroke: 'rgba(180, 200, 240, .6)', 'stroke-width': 1.5,
-  }));
-  const defs = svgEl('defs');
-  const grad = svgEl('linearGradient', { id: 'track-grad', x1: '0%', y1: '0%', x2: '100%', y2: '100%' });
-  for (const [off, col] of [['0%', '#1E6FFF'], ['50%', '#7C5CFF'], ['100%', '#22C55E']]) {
-    grad.appendChild(svgEl('stop', { offset: off, 'stop-color': col }));
-  }
-  defs.appendChild(grad);
-  svg.appendChild(defs);
+  // 0.2.18：移除外圈描边盘（仅保留分区色块/标签/中心文字）；层次靠 .sector-svg 极淡投影（wheel.css）
 
-  const trackA = -75, trackB = 75; // 轨道贴右侧 150° 弧（用户定稿）
-  const track = svgEl('path', {
-    class: 'box-track',
-    d: `M ${polar(R_ARC, trackA).x} ${polar(R_ARC, trackA).y} A ${R_ARC} ${R_ARC} 0 0 1 ${polar(R_ARC, trackB).x} ${polar(R_ARC, trackB).y}`,
-  });
-  svg.appendChild(track);
+  // 轨道：轮盘正右侧 150° 同心弧（-75°→+75°，3 点钟方向为中线，开口朝左），
+  // 与外缘固定间隙；沿弧走向分段渐变（蓝→紫→绿）
+  const trackA = 15, trackB = 165;
+  const SEG = 30;
+  const stops = [[30, 111, 255], [124, 92, 255], [34, 197, 94]];
+  const colAt = (t) => {
+    const seg = t < 0.5 ? 0 : 1;
+    const lt = t < 0.5 ? t / 0.5 : (t - 0.5) / 0.5;
+    const c0 = stops[seg], c1 = stops[seg + 1];
+    const mix = (x, y) => Math.round(x + (y - x) * lt);
+    return `rgb(${mix(c0[0], c1[0])},${mix(c0[1], c1[1])},${mix(c0[2], c1[2])})`;
+  };
+  for (let i = 0; i < SEG; i++) {
+    const a0 = trackA + ((trackB - trackA) * i) / SEG;
+    const a1 = trackA + ((trackB - trackA) * (i + 1)) / SEG;
+    const p0 = polar(R_ARC, a0), p1 = polar(R_ARC, a1);
+    svg.appendChild(svgEl('path', {
+      class: 'box-track',
+      d: `M ${p0.x.toFixed(2)} ${p0.y.toFixed(2)} L ${p1.x.toFixed(2)} ${p1.y.toFixed(2)}`,
+      stroke: colAt((i + 0.5) / SEG),
+      'stroke-width': 9,
+      'stroke-linecap': 'round',
+      fill: 'none',
+    }));
+  }
   pages.forEach((page, idx) => {
     const deg = trackA + ((trackB - trackA) * (idx + 0.5)) / Math.max(pages.length, 1);
     const p = polar(R_ARC, deg);
