@@ -39,6 +39,7 @@ const importCancel = document.getElementById('import-cancel') as HTMLButtonEleme
 const dataExportBtn = document.getElementById('data-export') as HTMLButtonElement;
 const dataImportBtn = document.getElementById('data-import') as HTMLButtonElement;
 const dataImportFile = document.getElementById('data-import-file') as HTMLInputElement;
+const exportDiagBtn = document.getElementById('export-diag') as HTMLButtonElement;
 
 const boxModal = document.getElementById('box-modal') as HTMLDivElement;
 const boxModalList = document.getElementById('box-modal-list') as HTMLDivElement;
@@ -1231,6 +1232,53 @@ async function refreshAll(): Promise<void> {
   await fillBoxOptions();
   syncBatchBar();
 }
+
+/* ==================== 诊断包导出（v3.12.2：一键取证） ==================== */
+
+exportDiagBtn.addEventListener('click', () => {
+  void (async () => {
+    const [diagRes, forensicsData] = await Promise.all([
+      chrome.runtime.sendMessage({ kind: 'ql.diag' }).catch(() => null),
+      chrome.storage.local.get(LOCAL_KEYS.forensics).then((s) => s[LOCAL_KEYS.forensics] ?? []).catch(() => []),
+    ]);
+    const bundle = {
+      exportedAt: new Date().toISOString(),
+      version: EXT_VERSION,
+      // 账号信息脱敏：不含密码/用户名原文，只含结构与状态
+      accounts: browserAccounts.map((a) => ({
+        id: a.id,
+        tabName: a.tabName,
+        siteHost: a.siteHost,
+        box: boxOf(a),
+        hasPassword: a.password,
+        tabIds: a.tabIds,
+        hasToken: a.hasToken,
+        enforcementOff: a.enforcementOff ?? false,
+      })),
+      boxes,
+      rulesState: (diagRes as { result?: { data?: { tabRules?: unknown; parallel?: unknown } } } | null)?.result?.data ?? null,
+      diagLog: (await chrome.storage.local.get('ql:diag').then((s) => s['ql:diag'] ?? []).catch(() => [])) as string[],
+      forensics: forensicsData,
+    };
+    const text = JSON.stringify(bundle, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // 剪贴板不可用（无焦点等）：仍会下载文件
+    }
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `quicklogin-diag-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    exportDiagBtn.textContent = '已导出 ✓';
+    setTimeout(() => {
+      exportDiagBtn.textContent = '导出诊断';
+    }, 2000);
+  })();
+});
 
 /* ==================== 启动装载 ==================== */
 

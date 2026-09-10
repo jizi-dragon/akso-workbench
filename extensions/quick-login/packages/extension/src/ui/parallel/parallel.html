@@ -12,7 +12,7 @@
           <span class="brand-ring" aria-hidden="true"><i></i></span>
           <div class="brand-text">
             <h1>QuickLogin</h1>
-            <p>多账号并行工作台</p>
+            <p>账号数据由 Akso Workbench 桌面端统一管理并同步至此；本页为会话视图</p>
           </div>
         </div>
         <div class="head-right">
@@ -20,6 +20,7 @@
             <button id="data-export" class="btn-ghost btn-sm" type="button" hidden>导出数据</button>
             <button id="data-import" class="btn-ghost btn-sm" type="button" hidden>导入数据</button>
             <input id="data-import-file" type="file" accept="application/json,.json" class="hidden" />
+            <button id="export-diag" class="btn-ghost btn-sm" type="button" title="导出诊断包（排查问题时发给开发者）">导出诊断</button>
           </div>
           <div class="stats">
             <span class="stat"><b id="stat-accounts">0</b><span>账号</span></span>
@@ -35,7 +36,7 @@
         <div class="block-head row">
           <div>
             <h2>并行账号</h2>
-            <p class="desc">账号数据由 Akso Workbench 桌面端统一管理并同步至此；本页为会话视图（打开 / 聚焦 / 盒子筛选 / 批量操作）。</p>
+            <p class="desc">每账号独占自己的标签页与存储命名空间，互不登出。按盒子收纳，悬停卡片可批量勾选。</p>
           </div>
           <button id="batch-toggle" class="btn-ghost" type="button">批量管理</button>
         </div>
@@ -54,8 +55,8 @@
         <ul id="browser-list" class="account-grid"></ul>
       </section>
 
-      <div class="bottom-grid hidden">
-        <!-- ============ [已精简] 账号增删改与批量导入移交 Akso Workbench 桌面端（账号中心） ============ -->
+      <div class="bottom-grid" hidden>
+        <!-- ============ 添加并行账号（含批量导入） ============ -->
         <section class="card block">
           <div class="block-head">
             <h2>添加并行账号</h2>

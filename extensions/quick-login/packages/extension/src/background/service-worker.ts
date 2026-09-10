@@ -7,6 +7,7 @@ import { navigation, registerNavigationHandlers } from './core/navigation';
 import { pageMonitor } from './core/page-monitor';
 import { siteAuth, probeScheme } from './core/site-auth';
 import {
+  forensics,
   handleOpenError,
   invalidateEnforcementCache,
   isSchemeFlipError,
@@ -365,7 +366,20 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
     return true;
   }
 
+  // 1.2 自动填表取证事件（v3.12.2）：填充/点击/让位/被拒逐事件入 forensics 环形缓冲
+  if (
+    req &&
+    typeof req === 'object' &&
+    (req as { type?: string }).type === CONTENT_MESSAGE.autoLoginEvent
+  ) {
+    const p = (req as { event?: Record<string, unknown> }).event ?? {};
+    void forensics('autoLogin', { tabId: sender.tab?.id, ...p });
+    sendResponse({ ok: true });
+    return true;
+  }
+
   // 1.5 v3.11 最近配置页：需要 sender.tab，先于通用分流处理
+  // 1.8 最近配置页（v3.13 收敛：仅绑定页签有数据，未绑定页签返回空——根本原则）
   if (req && typeof req === 'object' && (req as { kind?: string }).kind === 'pages.recent') {
     void pageMonitor.recentForTab(sender.tab?.id).then((list) => sendResponse({ kind: 'pages.recent', result: ok(list) }));
     return true;
@@ -403,7 +417,7 @@ chrome.commands.onCommand.addListener((command) => {
   }
 });
 
-/** v3.11 最近配置页轮盘：页面内无框浮层（再次触发 = 脚本自关闭，与账号轮盘同机制） */
+/** 最近配置页轮盘（v3.13 收敛：仅绑定页签可唤起——页面监视只记录绑定页签） */
 async function togglePagesOverlay(): Promise<void> {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -437,10 +451,6 @@ registerNavigationHandlers();
 registerParallelHandlers();
 pageMonitor.registerPageMonitorListeners();
 
-// 桌面同步桥（Akso Workbench）：账号/盒子数据面外移 + 本地轮盘/切换指令
-import { startDesktopSync } from './sync';
-startDesktopSync();
-
 // 打开失败自学习（v3.10.9）：绑定页签加载失败时按错误类型翻转协议并原页签重开。
 // 优先并行账号（par.* 主流程），未命中再试旧会话模型（session.* 轮盘路径）。
 chrome.webNavigation.onErrorOccurred.addListener((details) => {
@@ -459,3 +469,8 @@ chrome.webNavigation.onErrorOccurred.addListener((details) => {
 void flashBadge(`v${EXT_VERSION.split('.').slice(0, 2).join('.')}`).finally(() => {
   // flashBadge 自身 1.2s 后清空；这里把启动展示延长为额外一次，共约 2.4s 可见窗口
 });
+
+/* 桌面同步桥（Akso Workbench 私有改造）：账号/盒子数据面外移到桌面端，
+   本扩展作为执行面每 2s 轮询快照与指令（wheel.toggle/par.open）；桌面不可达时离线回退本地数据 */
+import { startDesktopSync } from './sync';
+startDesktopSync();

@@ -1,5 +1,5 @@
 /** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '3.11.0';
+export const EXT_VERSION = '3.13.2';
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -28,8 +28,10 @@ export const LOCAL_KEYS = {
   disabledBoxes: 'ql:disabledBoxes',
   /** 站点协议 hint（v3.10.9：授权时从用户输入 URL 解析；账号创建时优先采用） */
   siteSchemes: 'ql:siteSchemes',
-  /** 最近配置页 MRU（v3.11：按 host 分组，每组至多 RECENT_PAGES_MAX 条） */
+  /** 最近配置页 MRU（v3.13：按 host 分组，每组至多 RECENT_PAGES_MAX 条；**仅记录绑定页签**） */
   recentPages: 'ql:recentPages',
+  /** 登录失败现场取证环形缓冲（v3.12.2：生命周期 + 自动填表逐事件） */
+  forensics: 'ql:forensics',
 } as const;
 
 /** 最近配置页每组容量（需求：最近 5 个） */
@@ -40,6 +42,8 @@ export const CONTENT_MESSAGE = {
   setTitle: 'sb:setTitle',
   autoLogin: 'sb:autoLogin',
   autoLoginRequest: 'sb:autoLoginRequest',
+  /** 自动填表事件上报（v3.12.2 取证：填充/点击/让位/被拒逐事件入 forensics） */
+  autoLoginEvent: 'sb:autoLoginEvent',
   /** ISOLATED 桥 → background（双向通路的上行） */
   bridgeUp: 'ql:bridgeUp',
   /** background → ISOLATED 桥（下行） */

@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **扩展基线上游同步（0.2.6）**：`extensions/quick-login` 整体前移 **v3.11.0 → v3.13.2**（36 文件），重放全部私有改造（manifest 18765/alarms/Ctrl+Shift+Q、sync.ts+account-wheel.ts 保留、service-worker 挂载+抽取、parallel.html 隐藏数据区块、wheel-overlay interval 修复）。带入上游 8 个版本的能力：登录态生命周期跟随页签（3.12.0 免密复制语义/最后页签关闭终结登录态）、绑定时 Cookie 袋权威同步（3.12.1）、自动登录逐事件取证黑匣子+管理页导出诊断（3.12.2）、AuthCode 入时效集（3.12.3）、亲子继承候选期零种子（3.13.0）、AUTH 规则补 main_frame（3.13.1）与全资源类型（3.13.2）。typecheck 零错误验证 sync.ts 与新 API 兼容。
+
 ### Added
 
 - **扩展连通性专项（0.2.5）**：桌面↔quick-login 扩展链路断点修复——快照 host 字段错位（envBaseUrl）、指令 seq 跨重启持久化（settings 表单调递增）、host 保留端口 + scheme 随快照下发、扩展 chrome.alarms 30s 保活复活、wheel.toggle 改直调（SW 自消息死链）、毒指令逐条隔离（不再卡死队列）、快照空载删除护栏、tabName 缺失护栏、凭据解密失败留痕、wheel-overlay 双 interval 泄漏修复；扩展 quick-wheel 热键让位（Alt+Q→Ctrl+Shift+Q，避免与 Electron 全局热键抢占）；账号中心页内轮盘选人补 launch-chrome；新增 `tools/verify_extension_sync.mjs` 离线模拟扩展验收脚本。

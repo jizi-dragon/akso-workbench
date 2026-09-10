@@ -63,9 +63,14 @@ function asRule(raw: unknown): chrome.declarativeNetRequest.Rule {
   return raw as unknown as chrome.declarativeNetRequest.Rule;
 }
 
-/** 父域（example.com）：DNR requestDomains 语义为「该域及其全部子域」，覆盖网关/接口子域 */
+/** 父域（example.com）：DNR requestDomains 语义为「该域及其全部子域」，覆盖网关/接口子域。
+ *  IP 字面量（全数字段，内网站点）没有父域概念，返回原 host（在 requestDomains 里重复无害），
+ *  避免把 192.0.2.10 拼出 '0.105' 这类无意义域。 */
 export function parentDomainOf(host: string): string {
   const parts = host.split('.');
+  if (parts.length > 2 && parts.every((p) => /^\d+$/.test(p))) {
+    return host;
+  }
   return parts.length > 2 ? parts.slice(-2).join('.') : host;
 }
 
@@ -84,9 +89,15 @@ function buildAuthRule(ruleId: number, host: string, tabId: number, token: strin
       requestHeaders: [{ header: 'Authorization', operation: 'set', value: `Bearer ${token}` }],
     },
     condition: {
-      // API 调用、WS 握手，以及 iframe 内嵌文档（低代码平台的「管理端」控制台常以
-      // iframe 承载：只带命名空间存储、无 Bearer 的子框架会被服务端当匿名拒入）
-      resourceTypes: ['xmlhttprequest', 'websocket', 'sub_frame'],
+      // 全资源类型（与 COOKIE 规则同宽，v3.13.2）：
+      // - xmlhttprequest/websocket：API 与 WS 握手；
+      // - sub_frame：iframe 内嵌文档（低代码平台「管理端」控制台常以 iframe 承载，
+      //   无 Bearer 的子框架会被服务端当匿名拒入）；
+      // - main_frame：顶层下载导航（纯 Bearer 鉴权平台的导出接口，缺头即 401）；
+      // - other：`<a download>` 属性发起的下载请求在 DNR 里常归为此型（3.13.1 只补
+      //   main_frame 仍 401 的教训——下载归型因发起方式而异，与 COOKIE 规则同宽才算到位）。
+      // 安全边界不变：tabIds + requestDomains 双重锁死，跨域 SSO 跳转不会被附加头。
+      resourceTypes: ALL_MATCH_TYPES,
       requestDomains: [hostNoPortOf(host), parentDomainOf(hostNoPortOf(host))],
       tabIds: [tabId],
     },

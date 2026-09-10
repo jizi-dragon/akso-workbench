@@ -77,7 +77,7 @@ export type RuntimeResponse =
   | { kind: 'data.export'; result: Result<DataBackup> }
   | { kind: 'data.import'; result: Result<{ created: number; skipped: number; hosts: string[] }> };
 
-/** 最近配置页条目（v3.11，按 host 分组的 MRU） */
+/** 最近配置页条目（v3.13 收敛：仅记录绑定页签，按 host 分组的 MRU） */
 export interface RecentPageEntry {
   url: string;
   pageType: string;

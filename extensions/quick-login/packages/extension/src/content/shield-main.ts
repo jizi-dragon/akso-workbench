@@ -724,7 +724,18 @@
 
   /* ================= 绑定处理 ================= */
 
-  function activate(accountId: string, seed?: Record<string, string>): void {
+  /** 袋权威同步（v3.12.1）：把 Cookie 袋整体重置为账号快照视图（保留种子写入的 token）。
+   *  命名空间里残留的上一会话陈旧袋值若不清，会经页内读取/袋回流毒化登录 POST。 */
+  function resetBagTo(view: Record<string, string>): void {
+    const token = loadBag()[TOKEN_KEY] ?? null;
+    bag = { ...view };
+    if (token) {
+      bag[TOKEN_KEY] = token;
+    }
+    saveBag();
+  }
+
+  function activate(accountId: string, seed?: Record<string, string>, bagView?: Record<string, string>): void {
     if (mode === 'active') {
       return;
     }
@@ -734,6 +745,10 @@
     installSwAndCacheShield();
     installBroadcastShield();
     installIdbShield();
+    // 顺序敏感：先重置袋为快照权威视图（清陈旧残留），再灌种子（token 回到袋里）
+    if (bagView) {
+      resetBagTo(bagView);
+    }
     applySeed(seed);
   }
 
@@ -770,14 +785,22 @@
     }
   }
 
-  function handleBind(accountId: string, seed?: Record<string, string>, tabId?: number): void {
+  function handleBind(
+    accountId: string,
+    seed?: Record<string, string>,
+    tabId?: number,
+    bagView?: Record<string, string>,
+  ): void {
     if (typeof tabId === 'number') {
       tabIdForCache = tabId;
     }
     if (settled) {
       if (mode === 'active') {
-        // 已激活：幂等重灌种子（覆盖命名空间键，防御性）
+        // 已激活：幂等重灌种子（覆盖命名空间键，防御性）+ 袋权威同步
         applySeed(seed);
+        if (bagView) {
+          resetBagTo(bagView);
+        }
       }
       // passthrough（已判 unbound）收到迟到的旧 bind 应答：必须忽略——
       // 此时 ns 未定，灌种子会把账号身份写进真实裸层（原始页签泄漏账号会话）
@@ -786,14 +809,14 @@
     settled = true;
 
     if (document.readyState === 'loading') {
-      activate(accountId, seed);
+      activate(accountId, seed, bagView);
       return;
     }
 
     // 页面 bundle 已在无命名空间状态下执行：刷新一次重来（守卫防循环）。
     if (window.sessionStorage.getItem(BOOT_GUARD_KEY) === '1') {
       window.sessionStorage.removeItem(BOOT_GUARD_KEY);
-      activate(accountId, seed);
+      activate(accountId, seed, bagView);
       return;
     }
     window.sessionStorage.setItem(BOOT_GUARD_KEY, '1');
@@ -807,14 +830,19 @@
     }
     const data = event.data as {
       src?: string;
-      payload?: { op?: string; accountId?: string; tabId?: number; seed?: Record<string, string> };
+      payload?: { op?: string; accountId?: string; tabId?: number; seed?: Record<string, string>; bag?: Record<string, string> };
     } | null;
     if (!data || data.src !== SRC_BRIDGE_TO_PAGE) {
       return;
     }
     const payload = data.payload;
     if (payload && payload.op === 'bind' && typeof payload.accountId === 'string') {
-      handleBind(payload.accountId, payload.seed, typeof payload.tabId === 'number' ? payload.tabId : undefined);
+      handleBind(
+        payload.accountId,
+        payload.seed,
+        typeof payload.tabId === 'number' ? payload.tabId : undefined,
+        payload.bag,
+      );
     } else if (payload && payload.op === 'unbound') {
       settled = true; // 显式未绑定：保持直通，不再等待
     } else if (payload && payload.op === 'journalRollback') {

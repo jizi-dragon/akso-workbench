@@ -7,11 +7,23 @@ import { CONTENT_MESSAGE } from '../shared/constants';
  * 必须由**顶层 frame 直接访问 iframe.contentDocument 填密码**。
  * 顶层 frame：填用户名 + 访问 srcdoc iframe 填密码 + 勾选协议 + 提交登录。
  * 子 frame（若注入，如跨域外链 iframe）：仅兜底填自身 frame 内的密码。
+ * v3.12.2：全流程逐事件上报 background 取证（点击/填充/让位/被拒 → ql:forensics）。
  */
 let credentials: { username: string; password: string } | null = null;
 
 function isTopFrame(): boolean {
   return window === window.top;
+}
+
+/** 取证上报：进入 background 的 forensics 环形缓冲（密码/用户名绝不入日志） */
+function report(ev: string, extra: Record<string, unknown> = {}): void {
+  try {
+    void chrome.runtime
+      .sendMessage({ type: CONTENT_MESSAGE.autoLoginEvent, event: { ev, top: isTopFrame(), ...extra } })
+      .catch(() => undefined);
+  } catch {
+    // 取证失败不影响业务
+  }
 }
 
 /** 写入值并触发原生 setter + input/change 事件（兼容 React/Ant Design 受控组件）。
@@ -101,6 +113,19 @@ function runTopFrameFlow(): void {
   let errorSeen = 0; // 提交后观察期内的服务端拒绝次数（错误提示出现）
   let errorFlagged = false; // 本次点击观察期是否已标记过错误（防重复计数）
   let errorsAtLastClick = 0;
+  let lastFillOk: boolean | null = null;
+  let stopped = false;
+  let timer: number | undefined;
+  const stop = (reason: string): void => {
+    if (stopped) {
+      return;
+    }
+    stopped = true;
+    if (timer !== undefined) {
+      window.clearInterval(timer);
+    }
+    report('stand-down', { reason, attempts, errorSeen });
+  };
 
   /** 用户已改写字段值（trusted 键入或手动清空）= 接管；预期值非空才可比对 */
   const detectUserEdit = (el: HTMLInputElement | null, expected: string): void => {
@@ -165,18 +190,35 @@ function runTopFrameFlow(): void {
     return uOk && pOk;
   };
 
-  const timer = window.setInterval(attempt, 800);
+  timer = window.setInterval(attempt, 800);
 
   function attempt(): void {
-    if (userTouched || !credentials || Date.now() > deadline || attempts >= 4 || errorSeen >= 2) {
-      window.clearInterval(timer);
+    if (userTouched) {
+      stop('user-takeover');
+      return;
+    }
+    if (!credentials) {
+      stop('no-credentials');
+      return;
+    }
+    if (Date.now() > deadline) {
+      stop('deadline');
+      return;
+    }
+    if (attempts >= 4) {
+      stop('max-attempts');
+      return;
+    }
+    if (errorSeen >= 2) {
+      stop('server-rejected-twice');
       return;
     }
     const submit = findSubmit();
     if (!submit) {
       // 登录成功跳转后按钮消失；点击过至少一次即认为流程已交付
       if (attempts > 0 && ++absentStreak >= 2) {
-        window.clearInterval(timer);
+        report('submit-gone', { attempts });
+        stop('submit-gone');
       }
       return;
     }
@@ -188,7 +230,7 @@ function runTopFrameFlow(): void {
       credentials.username,
     );
     if (userTouched) {
-      window.clearInterval(timer);
+      stop('user-takeover');
       return;
     }
     const now = Date.now();
@@ -198,9 +240,10 @@ function runTopFrameFlow(): void {
         if (!errorFlagged && countErrors() > errorsAtLastClick) {
           errorFlagged = true;
           errorSeen++;
+          report('rejected', { errorSeen, attempts });
           console.debug('[ql-auto] submit rejected by server', { errorSeen });
           if (errorSeen >= 2) {
-            window.clearInterval(timer);
+            stop('server-rejected-twice');
             return;
           }
         }
@@ -212,7 +255,12 @@ function runTopFrameFlow(): void {
       return; // 表单校验未过（按钮禁用），等待
     }
     // 齐备门槛：任一字段未就绪（iframe 未挂载等）绝不点击——空密码提交即「密码错误」
-    if (!fillAll()) {
+    const fillOk = fillAll();
+    if (lastFillOk !== fillOk) {
+      lastFillOk = fillOk;
+      report('fill-state', { ok: fillOk });
+    }
+    if (!fillOk) {
       return;
     }
     attempts++;
@@ -223,6 +271,7 @@ function runTopFrameFlow(): void {
         return; // 点击落地前用户已接管
       }
       if (!fillAll()) {
+        report('click-aborted', { attempts, reason: 'fields-reset' });
         return; // 点击落地前字段被重渲染清掉/移除 → 放弃本轮，等下轮重填后再点
       }
       const btn = findSubmit();
@@ -230,8 +279,10 @@ function runTopFrameFlow(): void {
       const u = document.querySelector<HTMLInputElement>('input[placeholder="请输入用户名"]') ||
         document.querySelector<HTMLInputElement>('input[type="text"]');
       if (!btn || !u || u.value !== credentials!.username || readPasswordValue() !== credentials!.password) {
+        report('click-aborted', { attempts, reason: 'readback-mismatch' });
         return;
       }
+      report('click', { attempts, btnText: (btn.textContent || '').trim().slice(0, 12) });
       btn.click();
     }, 500);
   }

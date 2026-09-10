@@ -50,19 +50,18 @@
 15. **扩展游标持久 vs 服务端内存 seq**：指令序号必须跨重启单调递增（已落 settings 表 ext_cmd_seq），否则重启一次指令通道整体哑火且无报错
 16. **SW 自消息死链**：SW 内 chrome.runtime.sendMessage 不投递给自身 onMessage——跨模块复用行为请直调函数（toggleAccountWheel 已抽至 account-wheel.ts）
 
-## 扩展基线校正（0.2.5 摸底结论）
-- `extensions/quick-login/` = **上游 v3.11.0（2026-09-08 commit edfb201c）+ 私有改造**（非旧文档说的 v3.9.2）。私有改造：① manifest host_permissions 加 18765；② 新增 `src/background/sync.ts`（桌面同步桥）；③ service-worker 启动挂载；④ parallel.html 隐藏账号增删改区块。0.2.5 又追加：account-wheel.ts 抽取、sync.ts 多项护栏、manifest alarms 权限 + 热键 Ctrl+Shift+Q
-- **上游已 v3.13.2**（github.com/jizi-dragon/quick-login），v3.11.1→v3.13.2 未跟：登录态生命周期跟随页签（3.12.0）、Cookie 袋权威同步（3.12.1）、取证黑匣子+诊断包（3.12.2）、AuthCode 时效集（3.12.3）、亲子继承候选期（3.13.0）、AUTH main_frame/全资源类型（3.13.1/2）
+## 扩展基线校正（0.2.5 摸底 · 0.2.6 已同步）
+- `extensions/quick-login/` = **上游 v3.13.2（2026-09-10 同步，36 文件前移）+ akso-mogul 私有改造**。私有改造清单：① manifest host_permissions:18765 + alarms 权限 + quick-wheel 热键 Ctrl+Shift+Q；② `src/background/sync.ts` 桌面同步桥（含 seq/快照/毒指令全套护栏）；③ `src/background/account-wheel.ts`（toggleAccountWheel 抽取，sync 直调）；④ service-worker 挂载 sync + import 轮盘；⑤ parallel.html 隐藏账号增删改区块 + 会话视图文案；⑥ wheel-overlay 双 interval 修复
+- 上游 v3.11.1→v3.13.2 已带入：登录态生命周期跟随页签、Cookie 袋权威同步、取证黑匣子+导出诊断（parallel 页新增「导出诊断」按钮）、AuthCode 时效集、AUTH main_frame/全资源类型
 - **dist 真实位置 = `extensions/quick-login/dist/`**（不是 packages/extension/dist）；构建 `npm run build`（workspace 根）
 - 账号中心 UI 复刻基线（上游 parallel 管理页 14 项差距）见目标档案：四态徽标/批量管理/diff 防闪烁/移盒弹窗/盒子禁用/删盒两步处置/诊断导出/站点授权健康/顶栏统计/数字键0=第10/轮盘动效等
 
 ## 待办/可选（未做）
-- **上游同步**：v3.11.1→v3.13.2 前移（整体换上游文件 + 重放 4+3 处私有改造，typecheck+build 验证）
 - **真机 Chrome 全链路验收**：装载 dist → Alt+Q 轮盘 → 选账号 → Chrome 自动登录 → 可用
 - **账号中心 UI 复刻**（按 14 项基线，优先级纪律：quick-login 本体优先，akso-auto/akso-cc/Monitor 结合后置）
 - egmp writers 真机首跑验证（create 写配置需测试环境授权；monitor 侧已真机验收）
 - NSIS 安装器静默装 UAC 未落盘验证；若需"关主窗后会话常驻"：服务与壳解耦为独立进程
-- 安全加固（扩展侧产品级隐患，暂挂）：明文凭据 60s 投递窗口（getPendingAutoLogin 读后不删）、同步通道无认证
+- 安全加固（扩展侧产品级隐患，暂挂）：明文凭据 60s 投递窗口（getPendingAutoLogin 读后不删——3.13.2 是否已改需复核）、同步通道无认证
 
 ## 运维速记
 - 启动：服务 `uv run python -m workbench.main`；桌面 `cd desktop && npm install && npm start`

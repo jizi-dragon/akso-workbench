@@ -76,16 +76,21 @@ export type BridgeUpPayload =
    *  绑定页签的 Cookie 写入被 MAIN 壳虚拟化进袋子，永不落真实 jar——服务端登录后
    *  由页内 JS 写入的票据/凭据若不回流快照，网络平面回放永远缺失 */
   | { op: 'bagChanged'; bag: Record<string, string> }
-  /** 名称型 API 嗅探结果（v3.11）：MAIN 壳从白名单响应里抽出的 名称↔ID 对，
+  /** 名称型 API 嗅探结果（v3.13 收敛：仅绑定页签的 MAIN 壳会产生——壳未激活不嗅探）：
    *  供页面监视器建立 guid→名称 表（对象/工作流/菜单三级页面主体名） */
   | { op: 'pageNames'; names: { name: string; id: string }[]; src: string };
 
 /** background → ISOLATED 桥的下行载荷 */
 export type BridgeDownPayload =
   /** 绑定账号并附带初始快照种子（token 等，用于壳激活瞬间同步灌入命名空间）；
-   *  tabId 供壳做页面层缓存分区（_qlck=t<tabId>，DNR urlTransform Chrome 不支持） */
-  | { op: 'bind'; accountId: string; tabId?: number; seed?: Record<string, string> }
+   *  tabId 供壳做页面层缓存分区（_qlck=t<tabId>，DNR urlTransform Chrome 不支持）；
+   *  bag = 账号 Cookie 快照的权威视图（非身份键）——绑定时袋整体同步到该视图
+   *  （v3.12.1：修复登出/过期后重开时命名空间陈旧袋复活并毒化登录 POST） */
+  | { op: 'bind'; accountId: string; tabId?: number; seed?: Record<string, string>; bag?: Record<string, string> }
   | { op: 'unbound' }
+  /** v3.13 收编加固：亲子继承候选页签（URL 未确认授权前）收到 hello 的应答——
+   *  壳保持等待（不置 settled/unbound），待 URL 确认授权后正式收编并灌种子 */
+  | { op: 'hold' }
   /** 身份叛逃处置：回滚本页会话对命名空间的全部写入（含 Cookie 袋），恢复到页签打开前状态 */
   | { op: 'journalRollback' }
   /** 清扫本账号命名空间的 IDB / CacheStorage 共享缓存（叛逃页签写入的他人数据） */

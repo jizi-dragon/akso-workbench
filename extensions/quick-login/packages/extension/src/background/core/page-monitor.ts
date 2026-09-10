@@ -1,5 +1,10 @@
 /**
- * Page Monitor —— 配置页监听 / 主体名解析 / 最近 5 个记录（v3.11）。
+ * Page Monitor —— 配置页监听 / 主体名解析 / 最近 5 个记录（v3.11 / v3.13 收敛）。
+ *
+ * **v3.13 根本原则收敛**：只监听/记录/**作用于绑定页签**（par.open 或亲子继承的账号
+ * 页签，见 `parallel-session.ts` 绑定表）。未绑定页签（原生浏览器用法）的一切导航
+ * 不被记录、不改标题、不进 MRU——监听器虽挂在 tabs.onUpdated 上，但首个检查即
+ * 「该页签是否在绑定表」，不在则直接跳过。
  *
  * 数据流（对应 docs/FEASIBILITY-RECENT-PAGES.md 实测映射表）：
  *   MAIN 壳嗅探名称型 API（BasicObjectDetail / GetWorkflowBasic / 菜单树等）
@@ -24,6 +29,17 @@ import { setTabTitle } from '../tabs/tab-title';
 const PAGE_NAMES_KEY = 'ql:pageNames';
 /** 加载窗口候选的有效期（超过视为陈旧，不用作生命周期主体名） */
 const WINDOW_CANDIDATE_TTL = 60_000;
+
+/** v3.13 收敛：页签是否在账号绑定表中（仅绑定页签参与页面监视） */
+async function isBoundTab(tabId: number): Promise<boolean> {
+  try {
+    const o = await chrome.storage.session.get(SESSION_KEYS.parTabBindings);
+    const map = (o[SESSION_KEYS.parTabBindings] as Record<string, unknown> | undefined) ?? {};
+    return Boolean(map[String(tabId)]);
+  } catch {
+    return false;
+  }
+}
 
 interface PageClass {
   pageType: string;
@@ -195,6 +211,10 @@ async function ingestNames(tabId: number | undefined, names: { name: string; id:
   if (!tabId) {
     return;
   }
+  // v3.13 收敛：仅绑定页签的名称嗅探入表（根本原则）
+  if (!(await isBoundTab(tabId))) {
+    return;
+  }
   let host = tabs.get(tabId)?.host;
   if (!host) {
     try {
@@ -235,6 +255,13 @@ async function onTabUpdated(tabId: number, tab: chrome.tabs.Tab): Promise<void> 
   if (!url || !/^https?:/i.test(url)) {
     return;
   }
+  // v3.13 收敛：仅绑定页签参与页面监视（未绑定页签的导航零记录零标注）
+  if (!(await isBoundTab(tabId))) {
+    if (tabs.delete(tabId)) {
+      windowCandidate.delete(tabId);
+    }
+    return;
+  }
   const cls = classifyConfigPage(url);
   if (!cls) {
     if (tabs.delete(tabId)) {
@@ -273,9 +300,9 @@ export function registerPageMonitorListeners(): void {
 
 /* ---------------- 轮盘数据面 ---------------- */
 
-/** 当前页签所属 host 的最近配置页（轮盘展示用） */
+/** 当前页签所属 host 的最近配置页（轮盘展示用；仅绑定页签有数据——根本原则收敛） */
 export async function recentForTab(tabId: number | undefined): Promise<RecentPageEntry[]> {
-  if (!tabId) {
+  if (!tabId || !(await isBoundTab(tabId))) {
     return [];
   }
   let host = tabs.get(tabId)?.host;
@@ -295,9 +322,10 @@ export async function recentForTab(tabId: number | undefined): Promise<RecentPag
   return all[host] ?? [];
 }
 
-/** 轮盘点击跳转：当前标签页导航（tabId 不变 → 账号绑定与六平面规则无缝延续） */
+/** 轮盘点击跳转：当前标签页导航（tabId 不变 → 账号绑定与六平面规则无缝延续；
+ *  仅绑定页签可跳——根本原则收敛） */
 export async function jumpCurrentTab(tabId: number | undefined, url: string): Promise<boolean> {
-  if (!tabId || !/^https?:/i.test(url)) {
+  if (!tabId || !/^https?:/i.test(url) || !(await isBoundTab(tabId))) {
     return false;
   }
   await chrome.tabs.update(tabId, { url });

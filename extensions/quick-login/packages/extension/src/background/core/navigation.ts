@@ -31,20 +31,14 @@ async function persistBindings(): Promise<void> {
   await chrome.storage.session.set({ [SESSION_KEYS.sessionTabBindings]: map });
 }
 
-/** 根据 Cookie 记录构造可用于 chrome.cookies.remove 的 URL */
-function cookieUrl(c: chrome.cookies.Cookie): string {
-  const domain = c.domain.startsWith('.') ? c.domain.slice(1) : c.domain;
-  const protocol = c.secure ? 'https' : 'http';
-  const path = c.path?.startsWith('/') ? c.path : '/';
-  return `${protocol}://${domain}${path}`;
-}
-
 /**
- * 登出：清空该 host 的登录态。
- * 实测（Akso eGMP）：前端凭 Cookie 中的 token 鉴权，删 Cookie 即失去登录态；
- * localStorage 中的用户信息会在下次登录时被覆盖，这里一并清空以干净登出。
+ * 登出：清空扩展打开页签的本地登录态（v3.11.1 根本原则版）。
+ * 仅清该页签（扩展打开/复用）的 localStorage——**不再触碰真实 Cookie jar**：
+ * `chrome.cookies.remove({domain: host})` 会清掉整个 host 的会话，连带杀死
+ * 原始页签的原生登录态，违反「扩展不得影响原有网页」的根本原则。
+ * 遗留免密切换路径的 Cookie 登出由平台的登出 API / 会话过期自然完成。
  */
-async function clearLoginState(tabId: number, host: string): Promise<void> {
+async function clearLoginState(tabId: number): Promise<void> {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -54,10 +48,6 @@ async function clearLoginState(tabId: number, host: string): Promise<void> {
   } catch {
     // 页面尚未加载（新建标签）或不可注入，忽略；登录时会覆盖 localStorage
   }
-  const cookies = await chrome.cookies.getAll({ domain: host });
-  await Promise.all(
-    cookies.map((c) => chrome.cookies.remove({ url: cookieUrl(c), name: c.name }).catch(() => null)),
-  );
 }
 
 const AUTO_LOGIN_TTL = 60_000;
@@ -152,7 +142,7 @@ export const navigation = {
       reused = false;
     }
 
-    await clearLoginState(tabId, session.siteHost);
+    await clearLoginState(tabId);
     await chrome.tabs.update(tabId, { url: loginUrl, active: true });
 
     const alias = (await accountRegistry.getAlias(session.id)) ?? '';
