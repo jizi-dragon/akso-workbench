@@ -1,5 +1,5 @@
 {
-  "$schema": "docs/模块契约.md#adapters",
+  "$schema": "docs/SCHEMA.md",
   "id": "akso-auto",
   "title": "Akso Auto 配置自动化引擎",
   "repoPath": "D:\\ai_assistant\\akso-auto",

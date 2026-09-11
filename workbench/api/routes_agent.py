@@ -4,7 +4,7 @@
 本文件提供工具的 HTTP 调用面与审计；与 LLM 的对话循环由前端复用
 routes_chat 的 SSE 流（工具结果作为上下文块注入）。
 
-工具清单（命名对齐 docs/模块契约.md §8）：
+工具清单（接口契约见 docs/API.md §10）：
 - login_platform     平台登录验证（egmp client 原生，预热 token）
 - read_config        eGMP 对象元数据只读（egmp.client）
 - run_insight        egmp.insight understand 三层理解报告
@@ -109,7 +109,7 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "run_insight": {
         "fn": _tool_run_insight,
-        "description": "跑 akso-cc understand 生成对象三层理解报告（子进程封装）",
+        "description": "跑对象三层理解报告（egmp.insight 原生实现）",
         "args": {"account_id": "string（必填）", "objects": "逗号分隔对象编码"},
     },
     "browser_status": {

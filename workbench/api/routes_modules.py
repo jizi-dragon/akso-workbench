@@ -1,4 +1,4 @@
-"""模块注册与健康体检路由（阶段 1B，契约见 docs/模块契约.md §4）。"""
+"""模块注册与健康体检路由（阶段 1B，契约见 docs/API.md §5）。"""
 
 from __future__ import annotations
 

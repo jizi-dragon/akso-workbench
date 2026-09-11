@@ -2,6 +2,11 @@
 
 > 桌面端安装包本身一键装完即可用；**唯一需要手动一次**的是把 Chrome 扩展加载进浏览器。
 > 扩展已随安装包携带（`<安装目录>\resources\extension`），不需要联网下载。
+>
+> **配套阅读**：[USER-MANUAL.md](USER-MANUAL.md)（整体使用手册）、
+> [EXTENSION-PLANE.md](EXTENSION-PLANE.md)（扩展的六平面隔离原理与私有改造）、
+> [ADR-0009](adr/0009-nsis-distribution-and-update-channel.md)（为什么只能引导装载而不能静默一键装）。
+> 本文的**第四节**是 `tools/build.ps1` 的发布步骤权威来源（GH_TOKEN 获取路径）。
 
 ## 一、用户操作（一次性，约 30 秒）
 

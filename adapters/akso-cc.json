@@ -1,5 +1,5 @@
 {
-  "$schema": "docs/模块契约.md#adapters",
+  "$schema": "docs/SCHEMA.md",
   "id": "akso-cc",
   "title": "Akso CC 平台配置洞察（gaia-inventory）",
   "repoPath": "D:\\ai_assistant\\akso-cc",

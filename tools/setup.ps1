@@ -6,9 +6,10 @@ $ErrorActionPreference = "Continue"
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 $script:fail = 0
 
-function Check($name, $ok, $detail) {
+function Check($name, $ok, $detail, [switch]$Info) {
     $mark = "OK  "
-    if (-not $ok) { $mark = "MISS"; $script:fail++ }
+    if (-not $ok) { $mark = "MISS"; if (-not $Info) { $script:fail++ } }
+    if ($Info) { $mark = "INFO" }
     Write-Host ("[{0}] {1,-30} {2}" -f $mark, $name, $detail)
 }
 
@@ -64,15 +65,16 @@ $chromiumDetail = "ok"
 if (-not $chromiumOk) { $chromiumDetail = "执行: uv run playwright install chromium" }
 Check "Playwright chromium" $chromiumOk $chromiumDetail
 
-# 5) Node（akso-cc / akso-auto 子进程运行时）
+# 5) Node（**仅构建桌面壳 / 浏览器扩展时需要**；运行时能力已全部原生化，见 docs/adr/0005）
+#    —— 信息项，不计入失败（历史口径「洞察/工厂功能不可用」已过时）
 $nodeCmd = "node"
 if ($env:NODE_COMMAND) { $nodeCmd = $env:NODE_COMMAND }
 $nodePath = Get-Command $nodeCmd -ErrorAction SilentlyContinue
 $nodeVer = $null
 if ($nodePath) { $nodeVer = (& $nodeCmd --version 2>$null) -join "" }
-$nodeDetail = "未找到；洞察/工厂功能不可用，其余功能不受影响"
-if ($nodeVer) { $nodeDetail = $nodeVer }
-Check "Node >= 18 ($nodeCmd)" ($null -ne $nodeVer -and $nodeVer -ne "") $nodeDetail
+$nodeDetail = "未找到；仅影响 desktop/ 与 extensions/ 的构建（运行时不需要）"
+if ($nodeVer) { $nodeDetail = "$nodeVer（仅构建桌面壳/扩展时需要）" }
+Check "Node 20+（仅构建需要）" ($null -ne $nodeVer -and $nodeVer -ne "") $nodeDetail -Info
 
 # 6) 原项目只读引用（adapters 声明，只检查不写入）
 $adaptersDir = Join-Path $PSScriptRoot "..\adapters"

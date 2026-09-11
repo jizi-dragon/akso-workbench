@@ -1,6 +1,6 @@
 """蓝图生成（orchestrate 模式的需求 → 蓝图）。
 
-融合决策（记录于 docs/迁移台账.md）：
+融合决策（记录于 docs/adr/0005-native-internalization-of-four-projects.md）：
 - 复杂度评估：忠实移植 akso-auto gmp/complexity.js（确定性规则）；
 - 蓝图 JSON 生成：**不再移植** 36.8KB 的确定性关键词库，改由 mogul 的
   DeepSeek 客户端按本模块的结构化提示词生成（全家桶灵魂：mogul harness

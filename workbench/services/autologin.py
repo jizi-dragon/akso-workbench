@@ -1,6 +1,6 @@
 """自动登录引擎（quick-login content/auto-login.ts 全量知识迁移 → Playwright）。
 
-节奏门控五重门（参数与原实现一致，见 docs/迁移台账.md 阶段 2B）：
+节奏门控五重门（参数与原实现一致，完整清单见 docs/CONFIG.md §4.1）：
   ① 字段齐备门槛    用户名/密码（srcdoc iframe 内）任一未就绪 → 绝不提交
   ② 提交前回读      点击落地前 500ms 复核两字段值，受控组件状态未落地则推迟
   ③ 即时填充        MutationObserver + window load → 100ms 去抖 attempt；800ms 轮询兜底

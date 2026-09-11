@@ -3,6 +3,73 @@
 本项目遵循语义化版本（SemVer），格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 从第一天开始记录（对齐行业月更节奏惯例）。
 
+## [未发布]
+
+### Added
+
+- **文档体系整体重构（v0.3.4 基准，本轮不动代码）**：把「一份自述版本的架构文档」拆成按
+  **变更频率**分层的常驻文档，并新建四份此前缺失的文档。
+  - **新建** [`AGENT.md`](AGENT.md)：接手手册——项目快照、代码地图、**六条维护红线**、
+    **已知问题清单**（代码缺陷 13 / 安全与产品级 5 / 测试缺口 4 / 构建脚本债 14 / 文档债 3）、
+    **22 条环境坑**（含实测出处）、验收基线（每轮必跑 / 改扩展必跑 / 改蓝图必跑 / 改更新必跑）、
+    真机验收记录与待人工复验项。
+  - **新建** [`docs/API.md`](docs/API.md)：60+ 端点按 13 个路由域手写权威契约（方法/路径/请求/响应/错误码），
+    并设**四类特殊通道专章**：SSE 对话事件序列、SSE 洞察进度流、`/extension` 长轮询与 `seq` 游标、
+    产物读取的路径守卫；附壳控制服务 `:18767` 全部端点。
+  - **新建** [`docs/SCHEMA.md`](docs/SCHEMA.md)：迁移账 1–13 逐条清单、9 张现行表的列级定义、
+    非数据库产物路径与表的对应关系、**扩展协议契约**（快照 / 备份文件 / 指令 / 状态上报），
+    以及五步「改表清单」。
+  - **新建** [`docs/CONFIG.md`](docs/CONFIG.md)：**五层配置全覆盖**（环境变量 / `settings` 表键 /
+    代码内行为参数 / 数据目录文件 / 前端硬编码常量），每项标注默认值、实测值与**「改了会怎样」**；
+    附「我想改 X，该动哪里」速查表。
+  - **新建** [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md)：安装与扩展装载、五个模块的操作步骤、
+    两条登录路径的差异说明（用户 Chrome vs 内置 Chromium）、数据位置与安全须知、11 组 FAQ。
+  - **新建** [`docs/EXTENSION-PLANE.md`](docs/EXTENSION-PLANE.md)：扩展侧权威文档——六平面隔离原理、
+    与上游的差异对照、桌面↔扩展三面协议（数据面/指令面/状态面）及**四条必读护栏**、
+    私有改造史、验证基线、安全边界（含平台侧不可根治的越权方向）。
+  - **新建** 10 篇 ADR [`docs/adr/`](docs/adr/)：SQLite 选型（承接原 `docs/数据层决策.md`）、
+    浏览器分配政策、Electron 壳、扩展=执行面、四项目原生化、browser_pool 单线程、
+    凭据不落明文、更新通道与代理、NSIS 分发、Monitor 不回放危险操作。
+    每篇含**背景 / 决策 / 取舍（含被放弃的方案）/ 后果 / 复核触发器**。
+
+### Changed
+
+- **README.md 收敛为「产品定位 + 用户向快速开始 + 文档地图」**：删去开发/构建内容
+  （全部移入 `CONTRIBUTING.md`），补上「它解决什么问题」对照表与四个来源项目的能力沉淀表。
+- **CONTRIBUTING.md 接管全部开发内容**：环境搭建（强调 `--extra build` 不能省、uv 不在 PATH 时的替代命令）、
+  依赖变更流程、**构建与发布全链路**（6 步链路、版本规则与五写、发布三道自查、构建前必跑体检、
+  PS5.1 脚本纪律、**顺序敏感的两处**）、代码规约、开发流程与分工边界、
+  **已知状态诚实记录**（ruff 9 条违规未绿、`verify_packaging.py` 未被 `build.ps1` 调用、
+  两份 lockfile 版本陈旧等）、验收纪律。
+- **扩展侧文档合并**：`extensions/quick-login/` 下上游 7 份文档（README / PROJECT-STATUS /
+  CODEBASE_OVERVIEW / DIAG-GUIDE / USER-MANUAL / BROWSER-ONLY-MULTILOGIN-RESEARCH / DESIGN）
+  与上游 CHANGELOG 移入该扩展的 `docs/archive/`（加 `UPSTREAM-` 前缀与归档抬头），
+  权威内容合并进根侧 `docs/EXTENSION-PLANE.md`；原位置留指针 stub（README）；
+  **上游 CHANGELOG 与本项目私有改造 CHANGELOG 拆成两份**（前者 490 行上游发布史存档，
+  后者按本项目版本号组织并标注「同步上游时需重新摘除」的 ⚠️ 条目）。
+
+### Removed
+
+- `docs/架构分析.md`、`docs/SESSION-DIGEST.md`、`docs/数据层决策.md` 移入 `docs/archive/`
+  （分别改名 `ARCHITECTURE-2026-09-10.md` / `SESSION-DIGEST-2026-09-10.md` / `DATA-LAYER-DECISION.md`，
+  加归档抬头并写明内容去向）。原因：前两份自述版本为 v0.2.2 且与现状有实质偏差
+  （迁移账、测试项数、依赖口径、桌面分发方式都已变）；第三份已完整并入 ADR-0001。
+
+### 说明
+
+- 本轮**以文档为主，仅附带清掉三处已失效的引用**（均为零行为变更）：
+  ① 6 个服务端模块的文档字符串原先指向**已删除**的 `docs/模块契约.md` / `docs/迁移台账.md`，
+  已改指 `docs/API.md` / `docs/CONFIG.md` / `docs/adr/`；
+  ② `api/routes_agent.py` 的 `run_insight` 工具描述仍写「子进程封装」，已改「egmp.insight 原生实现」；
+  ③ `adapters/*.json` 的 `$schema` 由死链 `docs/模块契约.md#adapters` 改为 `docs/SCHEMA.md`（仅此字段）。
+  另把 `tools/setup.ps1` 的 Node 检查从**必检项降为 INFO 信息项**并改写文案（原文案「洞察/工厂功能不可用」
+  与 [原生化决策](docs/adr/0005-native-internalization-of-four-projects.md) 矛盾）。
+  修完已复跑：`pytest` **64 passed**、`verify_packaging.py` **8/8 PASS**、两个 `.ps1` 语法检查通过
+  （`setup.ps1` 编辑后重补了 UTF-8 BOM）。
+- 盘点中发现的其余代码缺陷与安全风险一律以
+  [`AGENT.md`](AGENT.md) §4 的「已知问题清单」形式落盘（代码缺陷 10 条、安全与产品级 5 条、
+  测试缺口 4 条、构建脚本债 11 条），修复另开一轮。
+
 ## [0.3.4]
 
 ### Added

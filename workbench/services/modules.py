@@ -2,8 +2,8 @@
 
 四个模块：
 - workbench   自身（FastAPI/Python 依赖体检）
-- akso-cc     平台洞察（只读引用，Node 子进程封装）
-- akso-auto   配置自动化（只读引用，Node 子进程封装）
+- akso-cc     平台洞察（只读引用；能力已原生化，体检只做信息项）
+- akso-auto   配置自动化（只读引用；能力已原生化，体检只做信息项）
 - accounts    统一账号库 + 托管浏览器（能力已内化，检查 Playwright）
 
 原仓库只读：本模块绝不写 adapters 指向的目录。
