@@ -678,3 +678,17 @@ dialog#ask-modal::backdrop, dialog#box-modal::backdrop {
   background: rgba(23, 42, 84, .32);
   backdrop-filter: blur(4px);
 }
+
+/* —— 扩展未连接提示条（0.3.1：一键安装引导） ——
+   仅在「从未连上过执行面」时出现（打开 Chrome 后自动消失；关掉 Chrome 不会反复提示）。 */
+.setup-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin: 0 0 16px; padding: 12px 16px;
+  background: var(--amber-dim);
+  border: 1px solid rgba(217, 119, 6, 0.32);
+  border-radius: var(--radius-m);
+}
+.setup-banner .setup-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.setup-banner .setup-text b { color: var(--text-1); font-size: 13.5px; }
+.setup-banner .setup-text span { color: var(--text-2); font-size: 12.5px; }
+.setup-banner .setup-actions { display: flex; gap: 8px; flex: none; }

@@ -274,6 +274,47 @@ async function quickLogin(accountId) {
   await launching;
 }
 
+/* ———————————————— 扩展未连接提示（一键安装引导） ————————————————
+ * 触发条件：/extension/health 在 TTL(60s) 内没收到执行面上报 —— 可能是扩展没装，
+ * 也可能是 Chrome 没开，故文案保持中性。点「一键安装引导」后由桌面壳打开
+ * chrome://extensions + 随包扩展目录，并弹出分步说明（Chrome 不允许非商店扩展静默安装）。 */
+
+let extSetupDismissed = false; // 用户点了「先不管」
+let extEverConnected = false; // 曾经连上过 → 之后断开（如关闭 Chrome）不再反复提示
+
+function updateExtSetupBanner(connected) {
+  const el = document.getElementById('ext-setup');
+  if (!el) return;
+  if (connected) {
+    extEverConnected = true;
+  }
+  el.classList.toggle('hidden', !(connected === false && !extEverConnected && !extSetupDismissed));
+}
+
+document.getElementById('btn-ext-dismiss')?.addEventListener('click', () => {
+  extSetupDismissed = true;
+  document.getElementById('ext-setup')?.classList.add('hidden');
+});
+
+document.getElementById('btn-ext-setup')?.addEventListener('click', () => {
+  void (async () => {
+    try {
+      const r = await api('/extension/setup-helper', { method: 'POST' });
+      if (!r || r.ok === false) {
+        alert(
+          '桌面壳未响应，请手动安装：\n' +
+            '1) 打开 chrome://extensions\n' +
+            '2) 开启右上角「开发者模式」\n' +
+            '3) 点「加载已解压的扩展程序」\n' +
+            '4) 选择桌面端安装目录下的 resources\\extension 文件夹',
+        );
+      }
+    } catch {
+      alert('引导失败：请手动在 chrome://extensions 里「加载已解压的扩展程序」选择 resources\\extension。');
+    }
+  })();
+});
+
 /* ———————————————— 三态徽标（扩展执行面状态 + 内置会话回落） ———————————————— */
 
 function extBadgeOf(a) {
@@ -292,11 +333,12 @@ function extBadgeOf(a) {
 /* ———————————————— 数据加载 + 指纹防闪烁渲染 ———————————————— */
 
 async function refresh() {
-  const [accData, sessData, boxData, stateData] = await Promise.all([
+  const [accData, sessData, boxData, stateData, extHealth] = await Promise.all([
     api('/api/accounts'),
     api('/api/browser/sessions'),
     api('/api/accounts/boxes'),
     api('/extension/state').catch(() => ({ items: [] })),
+    api('/extension/health').catch(() => ({ connected: true })), // 探测失败时不打扰用户
   ]);
   cacheAccounts = accData.accounts;
   cacheSessions = new Map(sessData.sessions.map((s) => [s.account_id, s]));
@@ -304,6 +346,7 @@ async function refresh() {
   cacheDisabled = boxData.disabled || accData.disabled_boxes || [];
   extState.clear();
   for (const it of stateData.items || []) extState.set(it.desktopId, it);
+  updateExtSetupBanner(Boolean(extHealth.connected));
 
   renderStats();
   const fp = JSON.stringify([

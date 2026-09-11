@@ -1,4 +1,4 @@
-# Akso Workbench 一键构建 v3（Electron 壳）
+﻿# Akso Workbench 一键构建 v3（Electron 壳）
 # 用法：powershell -ExecutionPolicy Bypass -File tools\build.ps1
 # 产物：desktop\dist\AksoWorkbench-<ver>-setup.exe（NSIS；内含 AksoServer sidecar + chromium）
 #
@@ -26,11 +26,28 @@ $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
 
 # 1) 版本演进（build 规则：MINOR+1，PATCH=1）
 $version = (& python tools\bump.py build).Trim()
-Write-Host "[1/5] 版本演进 → v$version"
+Write-Host "[1/6] 版本演进 → v$version"
+
+# 1.5) 重建浏览器扩展（安装包会携带它：desktop/package.json 的 extraResources → resources/extension）
+#      必须在 bump 之后——否则打进安装包的扩展 manifest 版本号会停在上一版
+Write-Host "[2/6] 浏览器扩展重建中…"
+Push-Location (Join-Path $root "extensions\quick-login")
+try {
+    & npm run build 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Host "✗ 扩展构建失败" -ForegroundColor Red; exit 1 }
+} finally {
+    Pop-Location
+}
+$extManifest = Join-Path $root "extensions\quick-login\dist\manifest.json"
+if (-not (Test-Path $extManifest)) { Write-Host "✗ 未找到扩展构建产物" -ForegroundColor Red; exit 1 }
+if (-not (Select-String -Path $extManifest -Pattern "`"version`": `"$version`"" -Quiet)) {
+    Write-Host "✗ 扩展产物版本号与本次发布不一致（$extManifest）" -ForegroundColor Red; exit 1
+}
 
 # 2) 版本号入库并推送（release commit）
 if (-not $SkipPush) {
-    git add pyproject.toml workbench\__init__.py desktop\package.json
+    git add pyproject.toml workbench\__init__.py desktop\package.json .version.json `
+        extensions\quick-login\package.json extensions\quick-login\packages\extension\manifest.json
     git commit -m "chore(release): v$version" 2>$null | Out-Null
     $pushed = $false
     foreach ($i in 1..3) {
@@ -38,23 +55,23 @@ if (-not $SkipPush) {
         if ($LASTEXITCODE -eq 0) { $pushed = $true; break }
         Start-Sleep -Seconds 4
     }
-    Write-Host ("[2/5] 版本号推送: " + $(if ($pushed) { "OK" } else { "失败（网络）——稍后手动 git push" }))
+    Write-Host ("[3/6] 版本号推送: " + $(if ($pushed) { "OK" } else { "失败（网络）——稍后手动 git push" }))
 } else {
-    Write-Host "[2/5] 跳过推送（-SkipPush）"
+    Write-Host "[3/6] 跳过推送（-SkipPush）"
 }
 
 # 3) 依赖
 & python -m uv sync --extra dev --extra build 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Host "✗ uv sync 失败" -ForegroundColor Red; exit 1 }
-Write-Host "[3/5] 依赖就绪"
+Write-Host "[4/6] 依赖就绪"
 
 # 4) 服务端 sidecar（PyInstaller onedir，含 chromium）
-Write-Host "[4/5] AksoServer sidecar 打包中（数分钟）…"
+Write-Host "[5/6] AksoServer sidecar 打包中（数分钟）…"
 & python -m PyInstaller workbench\server.spec --noconfirm --distpath dist --workpath build 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Host "✗ AksoServer 打包失败" -ForegroundColor Red; exit 1 }
 
 # 5) Electron 壳（NSIS 安装包）
-Write-Host "[5/5] electron-builder 打包中…"
+Write-Host "[6/6] electron-builder 打包中…"
 Push-Location desktop
 try {
     & npx electron-builder --win nsis --publish never 2>&1 | Out-Null

@@ -31,6 +31,10 @@
       {
         "from": "../dist/AksoServer",
         "to": "server"
+      },
+      {
+        "from": "../extensions/quick-login/dist",
+        "to": "extension"
       }
     ],
     "win": {

@@ -269,3 +269,45 @@ def get_state() -> dict[str, Any]:
     with _lock:
         items = [dict(v, desktopId=k) for k, v in _STATE.items() if v["at"] > cutoff]
     return {"items": items}
+
+
+# 桌面壳的会话控制服务（Electron 主进程内）：扩展安装引导走它执行
+CONTROL_BASE = "http://127.0.0.1:18767"
+
+
+@router.get("/health")
+def health() -> dict[str, Any]:
+    """执行面健康：TTL 内是否收到状态上报。
+
+    桌面 UI 用它判断「浏览器扩展是否已装/Chrome 是否在跑」——未连接时提示一键安装引导。
+    注意：connected=false 同时涵盖「扩展没装」与「Chrome 没开」两种情形，文案需中性。
+    """
+    cutoff = now_ms() - _STATE_TTL_MS
+    with _lock:
+        fresh = [v for v in _STATE.values() if v["at"] > cutoff]
+    return {"connected": bool(fresh), "reportedAccounts": len(fresh)}
+
+
+@router.post("/setup-helper")
+def setup_helper() -> dict[str, Any]:
+    """请桌面壳执行扩展安装引导：打开 chrome://extensions + 打开随包扩展目录 + 弹步骤说明。
+
+    为什么不是「一键装好」：Chrome 在 Windows 上禁止非商店扩展直接安装，策略强制安装
+    （ExtensionInstallForcelist）在 HKCU 下普遍不生效、自托管 update_url 亦常见失败，
+    且本仓库无签名私钥 → 用户必须亲手点「加载已解压的扩展程序」。详见 docs/EXTENSION-INSTALL.md。
+    壳不在时返回 ok=false，UI 退化为纯文字指引。
+    """
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(
+            f"{CONTROL_BASE}/extension-setup",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            payload = json.loads(resp.read() or b"{}")
+        return {"ok": True, "helper": payload}
+    except Exception as exc:  # noqa: BLE001 —— 壳不可用时 UI 退化为文字指引
+        return {"ok": False, "error": f"桌面壳未响应：{exc}"}

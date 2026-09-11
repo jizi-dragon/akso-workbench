@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- **安装包携带浏览器扩展 + 应用内一键安装引导（0.3.1）**：`desktop/package.json` 的 `extraResources` 增带 `extensions/quick-login/dist` → 安装后位于 `<安装目录>\resources\extension`，**无需联网下载扩展**。
+  - 账号中心新增「未检测到浏览器扩展」提示条（数据源 `GET /extension/health`：TTL 60s 内有无执行面上报；**仅在从未连上过**时出现，关掉 Chrome 不会反复提示），按钮「一键安装引导」→ `POST /extension/setup-helper` → 桌面壳控制服务 `POST /extension-setup`：自动打开 `chrome://extensions` + 打开随包扩展目录 + 弹出分步说明；托盘菜单同样新增「安装浏览器扩展…」。
+  - **为什么做不到静默一键装（逐条实证）**：Chrome 在 Windows 上拦截非商店 `.crx` 安装；`ExtensionInstallForcelist` 在 HKCU 下普遍不生效（[SO](https://stackoverflow.com/feeds/question/36208439)）、自托管 `update_url` 亦常见失败（[SO](https://stackoverflow.com/feeds/question/49473933)）；本仓库**无签名私钥**（只有 manifest 公钥 `key`），无法用既有 ID 重打 CRX。取舍与依据见新增 `docs/EXTENSION-INSTALL.md`（含"要真一键只能先上架商店"的后续路径）。代价：用户首次点 4 下，之后永久可用。
+  - `tools/build.ps1` 增补：bump 之后**自动重建扩展**并校验包内 `manifest.json` 版本号 == 本次发布版本号（此前扩展不进安装包，故无此风险）；release commit 一并纳入扩展 manifest/package 与 `.version.json`。
+
 ### Changed
 
 - **「桌面点击 → 浏览器打开」延迟优化（0.2.24）：约 1.1s → 约 30ms**。实测定位到延迟主项是**扩展每 2s 轮询一次指令队列**（量化延迟 0~2s，均值 ~1s），再叠加点击路径上一次 `tasklist` 子进程探测（~124ms）且与指令入队**串行**：

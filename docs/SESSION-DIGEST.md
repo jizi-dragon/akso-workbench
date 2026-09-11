@@ -89,6 +89,13 @@
 5. 盒子新建/编辑输入框复测（原生 dialog，Electron 焦点最稳）
 6. 若下载仍失败：扩展弹窗「**导出诊断**」（0.2.22 起位于品牌头右上角）→ 把 JSON 发开发者（ql:diag 里有每次下载失败的错误码与归属判定日志）
 
+## 0.3.1 首个可安装版本（扩展随包 + 安装引导）
+- **交付链**：`powershell -File tools\build.ps1` → bump build（MINOR+1 = 0.3.1）→ **扩展重建并校验版本一致**（本次新增步骤）→ release commit + push → uv sync → PyInstaller `dist/AksoServer` → electron-builder NSIS → `desktop/dist/AksoWorkbench-0.3.1-setup.exe` + `latest.yml`。
+- **扩展分发（本次核心问题）**：随安装包携带（`extraResources` → `resources/extension`）+ 应用内引导：账号中心提示条 / 托盘「安装浏览器扩展…」→ 打开 `chrome://extensions` + 打开扩展目录 + 步骤弹窗。用户首次点 4 下，之后永久可用；账号由桌面端快照自动下发，无需在扩展里建。
+- **为什么不能静默一键装（实证，勿再重复踩）**：Chrome Windows 拦截非商店 `.crx`；`ExtensionInstallForcelist` 在 **HKCU 下普遍不生效**（[SO](https://stackoverflow.com/feeds/question/36208439)）；自托管 `update_url` 亦常装不上（[SO](https://stackoverflow.com/feeds/question/49473933)）；本仓库**无签名私钥**（只有 manifest 公钥 `key`）→ 无法用既有 ID 重打 CRX。**要真·一键只有一条正路：上架商店（可不公开列出）后把商店 ID 写进策略**。详见 `docs/EXTENSION-INSTALL.md`。
+- **新增接口**：`GET /extension/health`（TTL 60s 内是否有执行面上报）→ 账号中心提示条数据源；`POST /extension/setup-helper`（Python 18765 → Electron 控制服务 18767 `/extension-setup`）。
+- **踩坑记录**：编辑 `tools/build.ps1` 会丢 UTF-8 BOM（PS5.1 下中文会乱码）——改完务必用 `[System.IO.File]::ReadAllBytes()` 核对前 3 字节是否为 239,187,191。
+
 ## 0.2.24 延迟优化（指令下发改长轮询）
 - **实测定位**：用户实感「点击后要等一两秒」的主项 = 扩展每 2s 轮询 `/extension/commands`（量化延迟 0~2s，实测均值 **964ms**、最大 1671ms）；次项 = 点击路径上 `tasklist` 探测 **124ms** 且与入队串行。
 - **改法**：服务端 `GET /extension/commands?wait=N` 长轮询（`threading.Condition` + 入队 `notify_all`；默认 `wait=0` 向后兼容）；扩展 `sync.ts` 新增 `commandStream()` 长轮询流（与原 2s 数据面 tick 解耦）；`launch-chrome` 探测加缓存（正 10s / 负 2s）+ 两个前端点击路径改并行。

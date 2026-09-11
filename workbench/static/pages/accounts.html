@@ -39,6 +39,18 @@
         </div>
       </header>
 
+      <!-- ============ 扩展未连接提示（一键安装引导；仅在从未连上过时出现） ============ -->
+      <section id="ext-setup" class="setup-banner hidden">
+        <div class="setup-text">
+          <b>未检测到浏览器扩展</b>
+          <span>快捷登录依赖 Chrome 扩展（当前未安装，或 Chrome 未运行）。一次性加载，之后无需再管。</span>
+        </div>
+        <div class="setup-actions">
+          <button id="btn-ext-setup" class="btn-primary btn-sm" type="button">一键安装引导</button>
+          <button id="btn-ext-dismiss" class="btn-ghost btn-sm" type="button">先不管</button>
+        </div>
+      </section>
+
       <!-- ============ 并行账号（盒子收纳 + 批量管理 + 四态徽标） ============ -->
       <section class="card block">
         <div class="block-head row">
