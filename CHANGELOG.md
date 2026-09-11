@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **两个静默失效缺陷（0.2.23，红/绿验证）**：
+  - **虚拟 Cookie 袋被无关操作清空**：MAIN 壳的 `Storage.prototype.clear` 补丁未区分存储实例，而 Cookie 袋住在 **localStorage** 命名空间——页面调 `sessionStorage.clear()` 会把袋（含 token）一并清空 = 登录态被无关操作销毁。修法：仅当 `this === window.localStorage` 才重置袋子（探测用 `try/catch`，避免沙箱 iframe 里裸读 `win.localStorage` 抛 SecurityError 穿出补丁）；`Storage.prototype` 其余补丁（getItem/setItem/removeItem/key/length）语义不变。`onNamespaceWrite` 的两存储 token 同步**刻意保留**（站点把 token 只写 sessionStorage 时仍需镜像进袋）。
+  - **多 iframe 页面自动填表静默失效**：`auto-login.fillPasswordInIframes` 在第一个可访问 iframe 上就 `return Boolean(field)`——若该 iframe 不是登录表单，函数直接返回 false → 上层判「密码未填」→ **永不点提交**。修法：扫描全部 iframe（与 `readPasswordValue` 的全量语义一致），返回语义 = 「是否有 iframe 含密码框」。
+  - 验证：新增 `tools/verify_extension_isolation.py`，**先红跑复现**（恰好两条 ★ 回归断言失败）**再绿跑 8/8**。
+
+### Added
+
+- **扩展端三个自动化回归工具（0.2.23）**——此前扩展端**没有任何自动化回归**，改动只能靠 typecheck（保类型不保运行期）：
+  - `tools/verify_extension_boot.py`：隔离 profile 启动冒烟（SW 能否启动 / 命令清单 / storage 键 / 桌面数据面同步）。⚠ 必须 headful——MV3 扩展在旧 headless 下不加载（实测 `service_workers` 为空）。
+  - `tools/verify_host_logic.mjs`：用 esbuild 单独打包 `host.ts` 后跑 22 条断言，锁住端口口径三平面分工（含 `127.0.0.1:18765` vs `:18996` 不串号、默认端口规范化、IP 父域不含端口）。
+  - `tools/verify_extension_isolation.py`：自建 fixture 页 + 装载 dist 内容脚本产物，验 Cookie 袋隔离与多 iframe 自动填表（两条 ★ 即上述缺陷的回归点）。
+
 ### Changed
 
 - **quick-login 架构清理（0.2.23，用户定稿：不影响功能）**：以「可达性分析 + 协议面审计」为依据清理死代码、合并重复实现，扩展收敛为**执行面**（收 `par.list` / `par.open` / `wheel.toggle` + 六平面隔离）。

@@ -54,9 +54,15 @@ function fillUsername(): boolean {
   return Boolean(field);
 }
 
-/** 顶层直接访问 srcdoc/同源 iframe，把密码填进 iframe 内的 password 输入框 */
+/** 顶层直接访问 srcdoc/同源 iframe，把密码填进 iframe 内的 password 输入框。
+ *
+ *  ⚠ 必须**扫描全部 iframe**：早期实现在第一个可访问的 iframe 上就 `return Boolean(field)`，
+ *  若该 iframe 恰好不是登录表单（多 iframe 页面的常见形态），函数直接返回 false →
+ *  上层认为密码未填 → 永不点提交 → 自动填表静默失效（2026-09-11 修复）。
+ *  返回语义 = 「是否有 iframe 里存在密码框」（与 readPasswordValue 的全量扫描一致）。 */
 function fillPasswordInIframes(): boolean {
   const iframes = document.querySelectorAll<HTMLIFrameElement>('iframe');
+  let found = false;
   for (const iframe of Array.from(iframes)) {
     try {
       const doc = iframe.contentDocument;
@@ -68,16 +74,19 @@ function fillPasswordInIframes(): boolean {
         doc.querySelector<HTMLInputElement>('input[type="password"]') ||
         doc.querySelector<HTMLInputElement>('input[placeholder*="密码"]') ||
         doc.querySelector<HTMLInputElement>('input[placeholder*="password"]');
-      if (field && credentials && field.value !== credentials.password) {
+      if (!field) {
+        continue; // 该 iframe 不是登录表单：继续看下一个，不可早退
+      }
+      found = true;
+      if (credentials && field.value !== credentials.password) {
         // 值为空/被框架重渲染清掉时才回填（防御 srcdoc 重渲染清值）
         setValue(field, credentials.password, win);
       }
-      return Boolean(field);
     } catch {
       // 跨域 iframe 无法从顶层访问；由该 frame 自身注入的 content script 兜底填充
     }
   }
-  return false;
+  return found;
 }
 
 function checkAgreement(): void {

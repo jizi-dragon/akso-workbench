@@ -434,12 +434,27 @@ import {
       configurable: true,
       writable: true,
       value: function (this: Storage): void {
-        // 仅清空本账号命名空间 + Cookie 袋，等价「该标签页视角下的 clear」
+        // 仅清空**本存储**的本账号命名空间，等价「该标签页视角下的 clear」。
+        //
+        // ⚠ Cookie 袋住在 localStorage 的命名空间里（见 loadBag），而 clear 补丁挂在
+        // Storage.prototype 上、localStorage 与 sessionStorage 共用 → 只有 localStorage.clear()
+        // 才能重置袋子。2026-09-11 修复：此前页面调 sessionStorage.clear() 会把 Cookie 袋
+        // （含 token）一并清空 = 无关操作销毁账号登录态。
+        // 探测方式用 try/catch 而非裸读 win.localStorage：沙箱 iframe 里该访问会抛
+        // SecurityError（且那种环境下袋子也写不进去，跳过重置是正确的）。
         for (const raw of namespaceKeys(this)) {
           origRemoveItem.call(this, raw);
         }
-        bag = {};
-        saveBag();
+        let isBagStorage = false;
+        try {
+          isBagStorage = this === win.localStorage;
+        } catch {
+          isBagStorage = false;
+        }
+        if (isBagStorage) {
+          bag = {};
+          saveBag();
+        }
       },
     });
     Object.defineProperty(proto, 'key', {
