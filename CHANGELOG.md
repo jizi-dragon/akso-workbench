@@ -3,7 +3,39 @@
 本项目遵循语义化版本（SemVer），格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 从第一天开始记录（对齐行业月更节奏惯例）。
 
-## [Unreleased]
+## [0.3.4]
+
+### Added
+
+- **网络代理自动接管（0.3.4，实测倒逼）**：`v0.3.3` 发布后真机验证发现一个致命断层——更新
+  **能发现新版、却下载不下来**。逐跳实测：`api.github.com`（查版本）通、CDN
+  `release-assets.githubusercontent.com` 通，唯独中间的 `github.com/…/releases/download/…`
+  （302 跳转那一跳）本机直连**超时**；而 Electron 的 Chromium 默认并不使用系统代理
+  （注册表 `ProxyEnable=1 / 127.0.0.1:7890` 摆着，请求仍然直连超时）。修法：新增
+  `desktop/proxy.js`，按 **环境变量 `AKSO_PROXY`/`HTTPS_PROXY` → 数据目录 `proxy.txt`（空文件=强制直连）
+  → Windows 系统代理（注册表）→ 直连** 的优先级解析，并在 `app.whenReady()` 里于任何出网动作
+  **之前** `session.defaultSession.setProxy(...)`。两个必守细节：**必须显式放行回环**
+  （`proxyBypassRules = <local>;127.0.0.1;localhost;[::1]`，否则壳与 sidecar/CDP(18765/18766/18767)
+  的本地通信会被塞进代理，表现为"网络正常但功能全废"）；代理解析结果写进 `shell-state.json`
+  的 `proxy` 字段并透出到 `GET /api/update`，排障时一眼能看到"到底走没走代理、从哪来的"。
+  实测：同一台机器同一 URL，直连 7.3s 偶发成功/20s 超时，走代理稳定 1.7s。
+- **`tools/verify_update_proxy.js`**：用**真实 Electron 网络栈**（`electron.net.fetch`，即
+  electron-updater 内部同一套）对真实 Release 资产 URL 做 A/B——不设代理 vs 按 `proxy.js` 策略设代理。
+  判定以"应用代理后必须拿到 `latest.yml`"为准；直连是否成功只作参考（本机直连是间歇性的，
+  实测同一 URL 超时与成功都出现过）。
+- **`tools/publish_release.py`**：发布到 GitHub Releases 的可核对工具（建 draft → 传资产 → 转正 →
+  匿名复验 `latest.yml`）。发布前三道自检：`latest.yml` 版本号 == 发布版本、其 sha512 == 安装包
+  实际 sha512、指向本次安装包——发布错的清单会让**所有客户端**更新失败。资产顺序是"先小后大"
+  （350MB 最容易失败，先把重试预算花在大头上）。支持 `--no-proxy`：关掉 Clash 后 **git 自己的
+  `http.proxy` 仍写着 127.0.0.1:7890**，脚本会对着没人监听的端口连（`WinError 10061`）——
+  "我关了代理"这句话必须在脚本里有对应开关。
+
+### Changed
+
+- 托盘「检查更新…」改为先**同步**把 `phase=checking` 落盘、再弹结论弹窗：手动检查在无新版/开发态
+  会走弹窗分支，用户不点按钮时状态会永远停在 checking，排障与自动化验证都看不到结论。
+
+## [0.3.3]
 
 ### Added
 

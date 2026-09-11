@@ -4,7 +4,7 @@
 // 架构不变量：窗口只做"壳"，业务全在 FastAPI 服务（HTTP 暴露）；
 //       托管会话复用本壳的 Chromium（CDP 18766 ← playwright connect_over_cdp）。
 
-const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, shell, dialog } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, session, Tray, Menu, shell, dialog } = require('electron');
 const http = require('http');
 const { spawn, execSync } = require('child_process');
 const path = require('path');
@@ -12,6 +12,7 @@ const fs = require('fs');
 
 const updater = require('./updater');
 const shellState = require('./shell-state');
+const proxy = require('./proxy');
 
 const SERVER_PORT = 18765;
 const CONTROL_PORT = 18767;
@@ -24,6 +25,8 @@ let tray = null;
 let quitting = false;
 /** updater 状态最后一次快照：供控制服务 /update-state 与渲染层 IPC 读取 */
 let updateState = null;
+/** 代理解析结果（写入壳状态，便于排障："更新下载不动"时先看这里） */
+let proxyInfo = { server: null, source: 'pending' };
 
 // 会话窗注册表：windowId → BrowserWindow（browser_pool CDP 模式经控制服务开户窗）
 const sessionWindows = new Map();
@@ -328,7 +331,7 @@ function createTray() {
     { label: '账号轮盘 (Alt+Q)', click: toggleWheel },
     { label: '安装浏览器扩展…', click: () => { void openExtensionSetup(); } },
     { type: 'separator' },
-    { label: '检查更新…', click: () => { void updater.checkAndReport(); } },
+    { label: '检查更新…', click: () => { void checkUpdateFromTray(); } },
     { label: `关于 v${app.getVersion()}`, click: () => {
       const s = updateState || updater.state();
       const detail = s.phase === 'ready'
@@ -355,6 +358,7 @@ function createTray() {
 
 // ------------------------------------------------------------ 自动更新
 // 分工（用户定稿）：updater.js 负责状态机（启动检查/静默下载/退出时安装/手动检查），
+// proxy.js 负责出网通道（Electron 默认不读系统代理，更新下载会卡在 github.com 一跳），
 // 本文件负责三件壳内的事：托盘与提示、状态落盘（供账号中心版本角标）、退出前 drain。
 
 function onUpdateState(s) {
@@ -362,6 +366,7 @@ function onUpdateState(s) {
   shellState.write({
     app: 'akso-workbench-desktop',
     version: s.currentVersion || app.getVersion(),
+    proxy: proxyInfo,
     ...s,
   });
   const hint = updater.trayHint();
@@ -384,6 +389,23 @@ function setupUpdater() {
   updater.start();
 }
 
+/**
+ * 托盘「检查更新…」：先**同步**记下动作（phase=checking 立即落盘），再弹结论。
+ *
+ * 为什么不等结论落盘：手动检查在开发态/无新版时会走弹窗分支，若用户不点按钮，
+ * 弹窗会一直挂着，状态就永远停在 checking —— 排障时（以及自动化验证时）看不到结论。
+ * 先落盘让「谁在什么时候查过、结果如何」在任何情况下都可查。
+ */
+async function checkUpdateFromTray() {
+  updateState = { ...(updateState || updater.state()), phase: 'checking', label: '正在检查更新…', busy: true };
+  onUpdateState(updateState);
+  const r = await updater.checkAndReport();
+  updateState = updater.state();
+  onUpdateState(updateState);
+  console.log(`[akso-shell] 手动检查更新：ok=${r.ok} phase=${r.phase} ${r.message || ''}`);
+  return r;
+}
+
 // ------------------------------------------------------------ 启动流程
 
 app.whenReady().then(async () => {
@@ -392,6 +414,17 @@ app.whenReady().then(async () => {
   createTray();
 
   globalShortcut.register('Alt+Q', toggleWheel);
+
+  // 代理必须先于任何出网动作（含 updater 的检查/下载）：Electron 默认不读系统代理，
+  // 而更新下载链中的 github.com 一跳在本机直连会超时 → 必须显式设置。
+  try {
+    proxyInfo = await proxy.apply(session.defaultSession, {
+      dataDir: shellState.dataDir(),
+      log: (m) => console.log(`[akso-shell] ${m}`),
+    });
+  } catch (e) {
+    proxyInfo = { server: null, source: `fail: ${e && e.message}` };
+  }
 
   const ready = await waitReady();
   createMain();
