@@ -53,11 +53,16 @@ if (-not (Select-String -Path $extManifest -Pattern "`"version`": `"$version`"" 
     Write-Host "✗ 扩展产物版本号与本次发布不一致（$extManifest）" -ForegroundColor Red; exit 1
 }
 
-# 2) 版本号入库并推送（release commit）
+# 2) 依赖（**必须在 release commit 之前**：uv sync 会把项目版本写进 uv.lock，
+#    顺序反了则 commit 里的 lock 立刻过期、工作区再次变脏——0.3.2 构建实测踩到）
+Write-Host "[3/6] uv sync…"
+& python -m uv sync --extra dev --extra build 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Host "✗ uv sync 失败" -ForegroundColor Red; exit 1 }
+
+# 3) 版本号入库并推送（release commit：含扩展 manifest/package 与 uv.lock）
 if (-not $SkipPush) {
-    git add pyproject.toml workbench\__init__.py desktop\package.json .version.json `
+    git add pyproject.toml workbench\__init__.py desktop\package.json .version.json uv.lock `
         extensions\quick-login\package.json extensions\quick-login\packages\extension\manifest.json
-    git add uv.lock   # uv sync 会把项目版本写进 lock；不纳管则 lock 永远滞后一版
     git commit -m "chore(release): v$version" 2>$null | Out-Null
     $pushed = $false
     foreach ($i in 1..3) {
@@ -65,15 +70,10 @@ if (-not $SkipPush) {
         if ($LASTEXITCODE -eq 0) { $pushed = $true; break }
         Start-Sleep -Seconds 4
     }
-    Write-Host ("[3/6] 版本号推送: " + $(if ($pushed) { "OK" } else { "失败（网络）——稍后手动 git push" }))
+    Write-Host ("[4/6] 版本号推送: " + $(if ($pushed) { "OK" } else { "失败（网络）——稍后手动 git push" }))
 } else {
-    Write-Host "[3/6] 跳过推送（-SkipPush）"
+    Write-Host "[4/6] 跳过推送（-SkipPush）"
 }
-
-# 3) 依赖
-& python -m uv sync --extra dev --extra build 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { Write-Host "✗ uv sync 失败" -ForegroundColor Red; exit 1 }
-Write-Host "[4/6] 依赖就绪"
 
 # 4) 服务端 sidecar（PyInstaller onedir，含 chromium）
 Write-Host "[5/6] AksoServer sidecar 打包中（数分钟）…"
