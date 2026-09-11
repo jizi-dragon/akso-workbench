@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **打包链路的两个静默断点（0.3.1 首次真机构建暴露）**：
+  - **`workbench/server_entry.py` 丢失** → `server.spec` 仍指向它，PyInstaller 直接失败（`script … not found`），而开发态走 venv + uvicorn 完全不受影响，故长期无人察觉。已重建：**绝对导入**（PyInstaller 把入口当顶层脚本执行，相对导入必 ImportError）、接受壳的 `--server` 调用约定、**不打开浏览器**（打包态 UI 由 Electron 主窗承载）、冻结态把启动信息落 `DATA_DIR/server.log`（壳以 `stdio:'ignore'` 启动，现场零输出）。实测：`AksoServer.exe` 正常起服，日志记 `AksoServer v0.3.1 pid=… (frozen=True)`。
+  - **`desktop/icon.ico` 自首次提交起就是坏文件**：整份二进制被"当文本另存为 Unicode"了一次（UTF-16LE BOM + 每字节占 2 字节），且该过程**有损、无法还原**（git 历史里也只有坏版本）。后果两处且都静默：`electron-builder` 报 `image … shas unknown format` 导致**构建失败**；Electron 托盘图标一直是空白（被 main.js 的 try/catch 吞掉）。已新增 `tools/make_app_icon.py` 从品牌 PNG 重新生成 7 尺寸 ICO（16/24/32/48/64/128/256）。⚠ 两个坑写进工具注释：Pillow 的 ICO 写出**不会放大**（请求尺寸大于源图会被静默跳过），而 electron-builder 要求至少 256 → 必须先把源图 LANCZOS 放大到 256 再生成。
+- 新增 `tools/verify_packaging.py`：**打包前置体检（秒级 7 项）**——spec 入口存在 / 入口只用绝对导入 / 壳 spawn 的 `resources/server/AksoServer.exe` 与 extraResources 映射一致 / 安装包要携带的扩展产物齐备且 manifest 版本 == 项目版本 / `tools/build.ps1` 具备 UTF-8 BOM。上述两个断点都能被它提前拦住，不必烧掉数分钟构建才失败。
+
 ### Added
 
 - **安装包携带浏览器扩展 + 应用内一键安装引导（0.3.1）**：`desktop/package.json` 的 `extraResources` 增带 `extensions/quick-login/dist` → 安装后位于 `<安装目录>\resources\extension`，**无需联网下载扩展**。

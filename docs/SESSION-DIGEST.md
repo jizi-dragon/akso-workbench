@@ -95,6 +95,9 @@
 - **为什么不能静默一键装（实证，勿再重复踩）**：Chrome Windows 拦截非商店 `.crx`；`ExtensionInstallForcelist` 在 **HKCU 下普遍不生效**（[SO](https://stackoverflow.com/feeds/question/36208439)）；自托管 `update_url` 亦常装不上（[SO](https://stackoverflow.com/feeds/question/49473933)）；本仓库**无签名私钥**（只有 manifest 公钥 `key`）→ 无法用既有 ID 重打 CRX。**要真·一键只有一条正路：上架商店（可不公开列出）后把商店 ID 写进策略**。详见 `docs/EXTENSION-INSTALL.md`。
 - **新增接口**：`GET /extension/health`（TTL 60s 内是否有执行面上报）→ 账号中心提示条数据源；`POST /extension/setup-helper`（Python 18765 → Electron 控制服务 18767 `/extension-setup`）。
 - **踩坑记录**：编辑 `tools/build.ps1` 会丢 UTF-8 BOM（PS5.1 下中文会乱码）——改完务必用 `[System.IO.File]::ReadAllBytes()` 核对前 3 字节是否为 239,187,191。
+- **首次真机构建暴露的两个静默断点（已修）**：① `workbench/server_entry.py` 丢失而 spec 仍指向它 → PyInstaller 失败（开发态走 venv+uvicorn 不受影响，故潜伏很久）；② `desktop/icon.ico` 自首次提交就是坏文件（二进制被"当文本另存为 Unicode"，有损不可还原）→ electron-builder 失败 + 托盘图标一直空白。**新增 `tools/verify_packaging.py` 秒级前置体检（7 项）**，这两类问题以后在跑构建前就能拦住。
+- **产物与验证（0.3.1）**：`desktop/dist/AksoWorkbench-0.3.1-setup.exe`（349.7 MB）+ `latest.yml`；包内 `resources/extension`（扩展 v0.3.1）+ `resources/server`（sidecar + ms-playwright chromium）。**打包态真机冒烟通过**：`AksoServer.exe` 起服并在 `%APPDATA%\AksoWorkbench\server.log` 记 `frozen=True`；18765/18766/18767 就位；账号 4 个；`/extension/health` connected=true（扩展已连上打包态）；安装引导路由注册正常（GET → 405）。
+- **icon.ico 生成**：`tools/make_app_icon.py`（需 Pillow，仅生成时需要）；源图 `extensions/quick-login/assets/Icon128.png`；⚠ Pillow 不会放大、electron-builder 要求 ≥256 → 先 LANCZOS 到 256 再出全尺寸。
 
 ## 0.2.24 延迟优化（指令下发改长轮询）
 - **实测定位**：用户实感「点击后要等一两秒」的主项 = 扩展每 2s 轮询 `/extension/commands`（量化延迟 0~2s，实测均值 **964ms**、最大 1671ms）；次项 = 点击路径上 `tasklist` 探测 **124ms** 且与入队串行。
