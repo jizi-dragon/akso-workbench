@@ -123,6 +123,10 @@ def main() -> int:
 
         _, t_default = get("/extension/commands?after=0")
         data_to, t_timeout = get("/extension/commands?after=0&wait=1")
+        # 握手契约：客户端据此判断「本次是否真的被挂起过」。旧版服务端不认 wait 参数、
+        # 立即返回且无 longPoll 字段 → 扩展侧必须退避成轮询节拍（否则会热循环打满 CPU）。
+        data_lp, _ = get("/extension/commands?after=0&wait=1")
+        data_np_raw, _ = get("/extension/commands?after=0")
         print(f"兼容 wait=0 立即返回: {t_default:.1f}ms   超时路径 wait=1: {t_timeout:.0f}ms（空={not data_to['commands']}）")
         print()
         old = run_phase("【旧】每 2s 轮询", wait=0)
@@ -134,6 +138,8 @@ def main() -> int:
             "C3 旧节拍复现 0~2000ms 量化延迟": statistics.mean(old) > 700,
             "C4 长轮询平均延迟 < 50ms": statistics.mean(new) < 50,
             "C5 长轮询最大延迟 < 150ms": max(new) < 150,
+            "C6 wait>0 时响应带 longPoll=true（客户端据此确认已挂起）": data_lp.get("longPoll") is True,
+            "C7 wait=0 时 longPoll=false（旧语义，客户端应退避）": data_np_raw.get("longPoll") is False,
         }
         print()
         for name, ok in checks.items():

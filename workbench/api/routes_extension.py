@@ -142,10 +142,12 @@ def commands(after: int = 0, wait: float = 0) -> dict[str, Any]:
             pending = [c for c in _commands if c["seq"] > after and c["seq"] not in _acked]
             cursor = max((c["seq"] for c in _commands), default=after)
             if pending or timeout <= 0:
-                return {"commands": pending, "cursor": cursor}
+                # longPoll 显式告知客户端「本次是否真的挂起过」：旧版服务端不认 wait 参数，
+                # 扩展侧据此退避，避免把立即返回当成有效长轮询而成热循环
+                return {"commands": pending, "cursor": cursor, "longPoll": timeout > 0}
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return {"commands": [], "cursor": cursor}
+                return {"commands": [], "cursor": cursor, "longPoll": True}
             _cond.wait(timeout=remaining)
 
 

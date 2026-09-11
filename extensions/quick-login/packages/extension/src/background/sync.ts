@@ -257,13 +257,18 @@ async function commandStream(): Promise<void> {
         continue;
       }
       streamAliveAt = Date.now();
-      if (Array.isArray(data.commands) && data.commands.length && !consuming) {
+      const got = Array.isArray(data.commands) ? data.commands : [];
+      if (got.length && !consuming) {
         consuming = true;
         try {
-          await applyCommands(data.commands, after);
+          await applyCommands(got, after);
         } finally {
           consuming = false;
         }
+      } else if (!got.length && data.longPoll !== true) {
+        // 服务端没挂起（旧版不认 wait 参数）：退避成轮询节拍。
+        // ⚠ 没有这条护栏，旧版服务端下本循环会以 HTTP 往返速度空转（热循环打满 CPU）。
+        await new Promise((r) => setTimeout(r, 1500));
       }
     } catch {
       await new Promise((r) => setTimeout(r, 1500));
