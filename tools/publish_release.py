@@ -351,17 +351,29 @@ def main() -> int:
     )
     print(f"\n✔ 已发布：{pub['html_url']}")
 
-    try:
-        with build_opener(proxy).open(
-            f"https://github.com/{REPO}/releases/latest/download/latest.yml", timeout=60
-        ) as resp:
-            anon = resp.read().decode("utf-8")
-        ok_anon = f"version: {version}" in anon
-        print(f"{'PASS' if ok_anon else 'FAIL'}  匿名下载 latest.yml（更新器的读取路径）")
-        return 0 if ok_anon else 1
-    except urllib.error.HTTPError as exc:
-        print(f"FAIL  匿名下载 latest.yml：HTTP {exc.code}（仓库是否私有？）")
-        return 1
+    # 收尾校验：latest.yml 必须能被**匿名**读到（更新器的读取方式）。
+    # ⚠ 这一步失败**不代表发布失败**（资产都已 uploaded、Release 已转正）——
+    # 本机直连 github.com 偶发被重置，实测就出现过"发布成功但校验报 ConnectionReset"。
+    # 所以这里重试几次、并且只作为告警，不改变退出码。
+    anon_ok = False
+    anon_err = ""
+    for i in range(4):
+        try:
+            with build_opener(proxy).open(
+                f"https://github.com/{REPO}/releases/latest/download/latest.yml", timeout=60
+            ) as resp:
+                anon = resp.read().decode("utf-8")
+            anon_ok = f"version: {version}" in anon
+            break
+        except Exception as exc:  # noqa: BLE001
+            anon_err = f"{type(exc).__name__}: {exc}"
+            time.sleep(3)
+    if anon_ok:
+        print("PASS  匿名下载 latest.yml（更新器的读取路径）")
+    else:
+        print(f"WARN  匿名校验未通过（{anon_err}）——发布本身已完成，请稍后手动复核：")
+        print(f"      curl -L https://api.github.com/repos/{REPO}/releases/tags/{tag}")
+    return 0
 
 
 if __name__ == "__main__":

@@ -7,22 +7,24 @@
 
 ### Added
 
-- **网络代理自动接管（0.3.4，实测倒逼）**：`v0.3.3` 发布后真机验证发现一个致命断层——更新
-  **能发现新版、却下载不下来**。逐跳实测：`api.github.com`（查版本）通、CDN
-  `release-assets.githubusercontent.com` 通，唯独中间的 `github.com/…/releases/download/…`
-  （302 跳转那一跳）本机直连**超时**；而 Electron 的 Chromium 默认并不使用系统代理
-  （注册表 `ProxyEnable=1 / 127.0.0.1:7890` 摆着，请求仍然直连超时）。修法：新增
-  `desktop/proxy.js`，按 **环境变量 `AKSO_PROXY`/`HTTPS_PROXY` → 数据目录 `proxy.txt`（空文件=强制直连）
-  → Windows 系统代理（注册表）→ 直连** 的优先级解析，并在 `app.whenReady()` 里于任何出网动作
-  **之前** `session.defaultSession.setProxy(...)`。两个必守细节：**必须显式放行回环**
-  （`proxyBypassRules = <local>;127.0.0.1;localhost;[::1]`，否则壳与 sidecar/CDP(18765/18766/18767)
-  的本地通信会被塞进代理，表现为"网络正常但功能全废"）；代理解析结果写进 `shell-state.json`
-  的 `proxy` 字段并透出到 `GET /api/update`，排障时一眼能看到"到底走没走代理、从哪来的"。
-  实测：同一台机器同一 URL，直连 7.3s 偶发成功/20s 超时，走代理稳定 1.7s。
+- **出网通道自动选择（0.3.4，实测倒逼；用户定稿："能直连就别配代理"）**：`v0.3.3` 发布后真机
+  验证发现一个致命断层——更新**能发现新版、却下载不下来**。逐跳实测：查版本走
+  `github.com/<o>/<r>/releases.atom`（1.9s）、资产走 `github.com/…/releases/download/…`（302）
+  → CDN `release-assets.githubusercontent.com`（很快）；而本机**直连 `github.com` 是间歇性的**
+  （同一 URL 1.1s 成功与 20s 超时都出现过），Chromium 默认又不真用系统代理（注册表
+  `ProxyEnable=1` 摆着，请求仍直连超时）→ 于是表现为"检查得到、下载不动"。
+  修法：新增 `desktop/proxy.js`，**默认优先生成直连**，只有直连探测失败才回落到代理：
+  **环境变量 `AKSO_PROXY`/`HTTPS_PROXY`（强制代理）→ 数据目录 `proxy.txt`（一行=强制代理；
+  空文件=强制直连，终极兜底开关）→ 自动（直连探测 Atom feed，通就直连、不通再用 Windows
+  系统代理）**；探测带 6s 超时（直连失败在本机表现为"卡住不返回"，无超时会挂死启动）。
+  三个必守细节：**必须显式放行回环**（`proxyBypassRules = <local>;127.0.0.1;localhost;[::1]`，
+  否则壳与 sidecar/CDP(18765/18766/18767) 的本地通信会被塞进代理，表现为"网络正常但功能全废"）；
+  通道在**任何联网动作之前**定下（`app.whenReady()` 里、updater 之前）；选中的通道与探测结果
+  写进 `shell-state.json` 的 `proxy` 字段并透出 `GET /api/update`，排障一眼可见。
+  实测：直连可用时选直连（探测 1131ms、取资产 1201ms），**完全不经过代理**。
 - **`tools/verify_update_proxy.js`**：用**真实 Electron 网络栈**（`electron.net.fetch`，即
-  electron-updater 内部同一套）对真实 Release 资产 URL 做 A/B——不设代理 vs 按 `proxy.js` 策略设代理。
-  判定以"应用代理后必须拿到 `latest.yml`"为准；直连是否成功只作参考（本机直连是间歇性的，
-  实测同一 URL 超时与成功都出现过）。
+  electron-updater 内部同一套）对真实 Release 资产 URL 做基线 + 应用自动策略后的对比。
+  判定以"策略生效后必须拿到 `latest.yml`"为准；直连基线成功不算失败（那正是 auto 想要的结果）。
 - **`tools/publish_release.py`**：发布到 GitHub Releases 的可核对工具（建 draft → 传资产 → 转正 →
   匿名复验 `latest.yml`）。发布前三道自检：`latest.yml` 版本号 == 发布版本、其 sha512 == 安装包
   实际 sha512、指向本次安装包——发布错的清单会让**所有客户端**更新失败。资产顺序是"先小后大"

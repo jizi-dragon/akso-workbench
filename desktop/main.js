@@ -4,7 +4,7 @@
 // 架构不变量：窗口只做"壳"，业务全在 FastAPI 服务（HTTP 暴露）；
 //       托管会话复用本壳的 Chromium（CDP 18766 ← playwright connect_over_cdp）。
 
-const { app, BrowserWindow, globalShortcut, ipcMain, session, Tray, Menu, shell, dialog } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, net, session, Tray, Menu, shell, dialog } = require('electron');
 const http = require('http');
 const { spawn, execSync } = require('child_process');
 const path = require('path');
@@ -415,11 +415,13 @@ app.whenReady().then(async () => {
 
   globalShortcut.register('Alt+Q', toggleWheel);
 
-  // 代理必须先于任何出网动作（含 updater 的检查/下载）：Electron 默认不读系统代理，
-  // 而更新下载链中的 github.com 一跳在本机直连会超时 → 必须显式设置。
+  // 出网通道必须在任何联网动作（含 updater 检查/下载）之前定下来。
+  // 默认**优先生成直连**（快），只有直连探测失败才回落到系统代理（稳但慢）——
+  // 用户明确要求"能直连就别配代理"。探测带超时，最长拖 6s，不会挂死启动。
   try {
     proxyInfo = await proxy.apply(session.defaultSession, {
       dataDir: shellState.dataDir(),
+      net,
       log: (m) => console.log(`[akso-shell] ${m}`),
     });
   } catch (e) {

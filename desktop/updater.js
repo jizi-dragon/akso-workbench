@@ -109,6 +109,19 @@ function wire() {
   autoUpdater.allowPrerelease = false;
   autoUpdater.logger = null;                // 不额外引 electron-log
 
+  // 离线自测通道：AKSO_UPDATE_OVERRIDE=<url> 指向一个静态目录（内含 latest.yml 与安装包），
+  // 用 generic provider 代替 GitHub。为什么需要：验证"检查→下载→就绪→退出时安装"整条链
+  // 若必须真的拉一次 350MB 安装包，成本高到没人会做；有了它，本地起个静态服务就能在几十秒内
+  // 跑完整条链（tools/verify_update_flow.py 即基于此）。**只影响更新源，不改任何判定逻辑**。
+  const override = (process.env.AKSO_UPDATE_OVERRIDE || '').trim();
+  if (override) {
+    try {
+      autoUpdater.setFeedURL({ provider: 'generic', url: override });
+    } catch (e) {
+      S.lastError = `覆盖更新源失败：${e && e.message}`;
+    }
+  }
+
   autoUpdater.on('checking-for-update', () => {
     S.phase = 'checking';
     S.message = '';

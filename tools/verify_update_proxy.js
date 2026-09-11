@@ -1,19 +1,20 @@
-// 验证代理接管是否真的让「更新下载」走得通（真跑 Electron 的网络栈，不是模拟）
+// 验证「出网通道自动选择」是否真的让更新下载走得通（真跑 Electron 网络栈，不是模拟）
 //
-// 背景（实测）：electron-updater 的下载链是
-//   api.github.com（查版本，通）→ github.com/…/releases/download/…（302，本机直连**超时**）→ CDN（通）
-// 所以"能发现新版却下载不动"的根因在中间那一跳，而 Chromium 默认并不使用系统代理。
+// 背景（实测）：electron-updater 的链路是
+//   github.com/<o>/<r>/releases.atom（查版本）→ github.com/…/releases/download/…（302）
+//   → release-assets.githubusercontent.com（CDN）
+// 这台机器**直连 github.com 是间歇性的**：实测同一 URL 1.1s 成功与 20s 超时都出现过；
+// 而代理稳定但慢 —— 所以默认应该走直连，只有直连真不通才回落代理。
 //
 // 本脚本做两件事：
-//   1) 不设代理：直接用 net.fetch 拉一次真实 Release 资产 URL —— 期望失败（复现问题）；
-//   2) 按 proxy.js 的策略设置代理后再拉同一个 URL —— 期望成功（证明修复有效）。
-// 用的是 electron.net（= electron-updater 内部走的那套栈），所以结论可直接外推。
+//   1) 不设任何通道，用 net.fetch 拉一次真实 Release 资产 URL（基线，仅参考）；
+//   2) 调 proxy.js 的自动策略（直连探测 → 失败才回落系统代理），再拉同一个 URL。
+// 判定：**策略生效后必须能拿到 latest.yml**。直连基线成功不算失败——那正是 auto 策略
+// 想要的结果（能直连就不配代理）。
 //
-// 运行（由 tools/verify_update_proxy.py 调用）：
-//   electron.exe tools/verify_update_proxy.js
+// 运行：electron.exe tools/verify_update_proxy.js
 
 const { app, net, session } = require('electron');
-
 const ASSET =
   'https://github.com/jizi-dragon/akso-mogul/releases/latest/download/latest.yml';
 
@@ -44,33 +45,34 @@ app.whenReady().then(async () => {
   const path = require('path');
   const proxy = require('../desktop/proxy.js');
 
-  // 不设代理先跑一次（Chromium 默认行为，用于基线对比）
+  // 1) 直连能不能用（Chromium 默认行为）
   const before = await tryFetch('no-proxy', 20000);
-  // dataDir 指向一个不存在的临时目录 → 不读 proxy.txt 覆盖，走到"系统代理/直连"分支
+  // 2) 按 proxy.js 的自动策略选通道：优先生成直连，失败才回落系统代理
   const info = await proxy.apply(session.defaultSession, {
     dataDir: path.join(os.tmpdir(), 'akso-proxy-probe-none'),
+    net,
     log: () => {},
   });
   log({ appliedProxy: info });
-  const after = await tryFetch('with-proxy', 30000);
+  const after = await tryFetch('after-apply', 30000);
 
-  // 判定标准：**应用代理后必须能拿到 latest.yml** —— 这是更新下载链的第一跳，
+  // 判定标准：**应用策略后必须能拿到 latest.yml** —— 这是更新下载链的第一跳，
   // 它不通后面 350MB 的安装包更不可能下来。
-  // 对比项 `before` 只作参考：本机直连 github.com 是**时通时不通**（实测同一 URL
-  // 20s 超时与 7.3s 成功都出现过），所以不能把"直连也成功"当成失败。
-  const speedup = before && after ? null : undefined;
+  // 注意 `before` 只作参考：本机直连 github.com 是**间歇性**的（实测同一 URL
+  // 1.1s 成功与 20s 超时都出现过），所以"直连也成功"不是失败信号——
+  // 那正是 auto 策略想要的结果：能直连就不碰代理。
   log({
     conclusion: {
-      withProxyOk: after,
+      strategyOk: after,
       directOk: before,
-      proxy: info.server,
+      chosen: info.server ? `代理 ${info.server}` : '直连',
       source: info.source,
+      probe: info.probe,
       verdict: after
-        ? before
-          ? 'PASS（代理可用；直连本次也通，属间歇性）'
-          : 'PASS（直连不通、代理修复有效）'
-        : 'FAIL（应用代理后仍拿不到 latest.yml：代理未运行/端口不对/被墙）',
-      speedupNote: speedup,
+        ? info.server
+          ? 'PASS（直连不稳，已自动回落到代理且下载通道可用）'
+          : 'PASS（直连可用 → 不配代理）'
+        : 'FAIL（两种通道都拿不到 latest.yml：检查网络/代理端口）',
     },
   });
   app.exit(after ? 0 : 1);
