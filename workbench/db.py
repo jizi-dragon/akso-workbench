@@ -5,7 +5,10 @@
 - 迁移机制沿用旧版的 _sqlx_migrations 表，保证同一个 mogul.db 在
   旧 Tauri 版与本 Python 版之间无缝互认（版本 1-4 已含知识工作台全部表）
 - 迁移 1-6 为 fork 历史（含已下线的知识库表结构），按不可变纪律保留；
-  迁移 7-9 为 Workbench 新增（账号库/任务台账/Agent 审计）
+  迁移 7-9 为 Workbench 新增（账号库/任务台账/Agent 审计）；
+  迁移 10-12 为账号中心扩展（分配池/盒子/页签名）；迁移 13 为列表查询索引。
+- 交付形态为单机单人，故不引入 MySQL/Redis（详见 docs/数据层决策.md）；
+  SQLite 特有构造收拢在下方「方言边界」一节
 """
 
 from __future__ import annotations
@@ -203,7 +206,39 @@ ALTER TABLE account ADD COLUMN box TEXT NOT NULL DEFAULT '';
     (12, "add_account_tab_name", """
 ALTER TABLE account ADD COLUMN tab_name TEXT NOT NULL DEFAULT '';
 """),
+    (13, "add_created_at_indexes", """
+CREATE INDEX IF NOT EXISTS idx_agent_audit_created_at ON agent_audit(created_at);
+CREATE INDEX IF NOT EXISTS idx_blueprint_jobs_created_at ON blueprint_jobs(created_at);
+CREATE INDEX IF NOT EXISTS idx_insight_runs_created_at ON insight_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_account_box ON account(box);
+"""),
 ]
+
+
+# ------------------------------------------------------------------ 方言边界
+# 交付形态是单机单人（Electron + 本机 sidecar），因此保留 SQLite。为了让将来
+# 万一改判为「服务端多人部署」时是一次受控迁移而不是全库搜索替换，SQLite 特有
+# 构造全部收拢在下面这一节，以及 MIGRATIONS 里标注的少数几处：
+#   1. PRAGMA 语句            → _PRAGMAS
+#   2. 逗号串包含匹配          → csv_like()
+#   3. `?` 占位符              → 全库统一（psycopg/PyMySQL 为 %s，改 wrapper 即可）
+#   4. `INTEGER PRIMARY KEY AUTOINCREMENT`（迁移 8 的 job_logs.id）
+#      —— 迁移历史不可变，保留；新表不要再用它，改用 `TEXT PRIMARY KEY`（本项目
+#      其余表均为 UUID 文本主键，本身就与方言无关）
+_PRAGMAS = (
+    "PRAGMA journal_mode = WAL;",
+    "PRAGMA foreign_keys = ON;",
+)
+
+
+def csv_like(column: str, values: list[str]) -> tuple[str, list[Any]]:
+    """逗号串列「包含任一值」的匹配片段（pool / tags / boxes 这类组合字段）。
+
+    SQLite 写法为 `(',' || col || ',') LIKE '%值%'`，两端包夹逗号保证组合值命中。
+    MySQL 默认 `||` 是逻辑或、PostgreSQL 需 `LIKE ANY(...)`，换库时只改本函数。
+    """
+    conditions = " OR ".join(f"(',' || {column} || ',') LIKE ?" for _ in values)
+    return conditions, [f"%,{value}%" for value in values]
 
 
 def connect() -> sqlite3.Connection:
@@ -213,8 +248,8 @@ def connect() -> sqlite3.Connection:
             path = config.bootstrap_database()
             _conn = sqlite3.connect(str(path), check_same_thread=False)
             _conn.row_factory = sqlite3.Row
-            _conn.execute("PRAGMA journal_mode = WAL;")
-            _conn.execute("PRAGMA foreign_keys = ON;")
+            for pragma in _PRAGMAS:
+                _conn.execute(pragma)
             _migrate(_conn)
         return _conn
 

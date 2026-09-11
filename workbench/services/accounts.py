@@ -184,8 +184,7 @@ def pool_members(role: str) -> list[dict[str, Any]]:
     normalized = _normalize_pool(role)
     if not normalized:
         return []
-    conditions = " OR ".join("(',' || pool || ',') LIKE ?" for _ in normalized.split(","))
-    params = [f"%,{r}%" for r in normalized.split(",")]
+    conditions, params = db.csv_like("pool", normalized.split(","))
     rows = db.query(
         "SELECT a.*, e.name AS env_name, e.base_url AS env_base_url "
         "FROM account a JOIN platform_env e ON e.id = a.env_id "
