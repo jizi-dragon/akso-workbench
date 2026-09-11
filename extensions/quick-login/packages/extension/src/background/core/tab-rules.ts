@@ -65,9 +65,11 @@ function asRule(raw: unknown): chrome.declarativeNetRequest.Rule {
 
 /** 父域（example.com）：DNR requestDomains 语义为「该域及其全部子域」，覆盖网关/接口子域。
  *  IP 字面量（全数字段，内网站点）没有父域概念，返回原 host（在 requestDomains 里重复无害），
- *  避免把 192.0.2.10 拼出 '0.105' 这类无意义域。 */
+ *  避免把 192.0.2.10 拼出 '0.105' 这类无意义域。
+ *  入参先剥端口（幂等：调用方已剥也无害）——带端口的内网 host 会让 IP 判定失配，
+ *  并把 "192.0.2.10:8080" 拼出 "0.105:8080" 这类无意义域。 */
 export function parentDomainOf(host: string): string {
-  const parts = host.split('.');
+  const parts = hostNoPortOf(host).split('.');
   if (parts.length > 2 && parts.every((p) => /^\d+$/.test(p))) {
     return host;
   }

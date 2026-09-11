@@ -3,7 +3,6 @@ import type { Scheme } from './site-auth';
 import type { BridgeDownPayload, BridgeUpPayload, ParallelAccount } from '../../shared/types';
 import { credentials } from './credentials';
 import { setTabTitle } from '../tabs/tab-title';
-import { pageMonitor } from './page-monitor';
 import { parallelStore } from './parallel-store';
 import { tabRules, parentDomainOf, hostNoPortOf } from './tab-rules';
 
@@ -100,6 +99,22 @@ async function readBlockedHosts(): Promise<Set<string>> {
 }
 
 /**
+ * 停用名单命中判定（0.2.22）。
+ *
+ * 名单条目来自 `chrome.permissions.getAll().origins` 推导的 host（`*://192.0.2.10:8080/*`
+ * → `192.0.2.10:8080`，**带端口**），而运行期查询在部分路径上只能拿到无端口 host。
+ * 若直接 `Set.has` 比较，带端口站点的停用会**静默失效**（名单里有 `host:port`，
+ * 查询用 `host` → 查不到 → 判定"可执行" → 规则照装）。
+ *
+ * 命中规则：① 带端口精确命中；② 无端口条目视为覆盖该 host 的全部端口
+ * （历史数据 / 仅填 host 的站点配置）；③ 反之不成立——带端口条目**不**跨端口误伤，
+ * 与「同主机不同端口是不同站点」的站点身份口径一致。
+ */
+function blockedHit(blocked: Set<string>, host: string): boolean {
+  return blocked.has(host) || blocked.has(hostNoPortOf(host));
+}
+
+/**
  * 检查某 host 的网络平面是否可执行。
  *
  * 0.2.21 起 manifest 声明 `host_permissions: ["<all_urls>"]`（装载即获得，无需逐站点授权），
@@ -119,7 +134,7 @@ async function isEnforceable(host: string, force = false): Promise<boolean> {
     return cached;
   }
   const blocked = await readBlockedHosts();
-  const granted = !blocked.has(host);
+  const granted = !blockedHit(blocked, host);
   enforcement.set(host, granted);
   enforcementAt.set(host, Date.now());
   void diag(
@@ -141,9 +156,29 @@ export async function warmEnforcementCache(hosts: string[]): Promise<void> {
 
 /* ---------------- 归属判定辅助 ---------------- */
 
+/** URL → host **带端口**（URL API 已把默认端口规范化掉：http:80 / https:443 不会造成假不匹配）。
+ *
+ *  ⚠ 站点身份判定一律走本函数，**不要用 `URL.hostname`**：它永远不含端口，会让 hostRelated
+ *  的「两端都带端口才比端口」守卫恒不触发（守卫 `up && bp` 中 `up` 恒为空）。
+ *  这正是 0.2.21 那次修正只修了一半的原因——守卫写对了，调用方却把端口丢了，
+ *  于是"同主机不同端口是不同站点"从未真正生效（含桌面 127.0.0.1:18765 那条）。
+ *  口径分工见 hostRelated 注释：身份平面用端口，规则/ Cookie 平面不用。 */
+function urlHostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
+}
+
 /** URL 的 host 是否与绑定 host 同族（同域 / 子域 / 同父域）。
  *  两端都带端口时必须端口一致——同主机的不同端口是不同的站点
- *  （否则桌面自己的页面 127.0.0.1:18765 会被当成内网站点 127.0.0.1:18996 而串号）。 */
+ *  （否则桌面自己的页面 127.0.0.1:18765 会被当成内网站点 127.0.0.1:18996 而串号）。
+ *
+ *  口径分工（勿混）：
+ *   - **身份平面**（归属判定 / 停用名单 / 收编）→ 用本函数，端口参与比较，入参必须来自 urlHostOf；
+ *   - **规则覆盖平面**（DNR requestDomains 与 Cookie 作用域）→ 端口天然不参与
+ *     （DNR 无法表达端口、Cookie 按 RFC 6265 与端口无关），那类判定请用 hostNoPortOf 比较。 */
 function hostRelated(urlHost: string, bindHost: string): boolean {
   const uh = hostNoPortOf(urlHost);
   const bh = hostNoPortOf(bindHost);
@@ -778,6 +813,8 @@ async function reportFailureStatus(details: {
   } catch {
     return;
   }
+  // covered = 「DNR 规则本该覆盖这个请求吗」→ 与规则同口径：requestDomains 无端口表达能力，
+  // 故这里**故意**按无端口比较（勿改成 hostRelated/带端口，否则规则已覆盖的跨端口 401 会漏自愈）。
   const bindHostname = hostNoPortOf(binding.host);
   const parent = parentDomainOf(bindHostname);
   const covered = urlHostname === bindHostname || urlHostname.endsWith(`.${parent}`);
@@ -844,6 +881,8 @@ function noteRequestAttribution(details: { tabId: number; url: string; type?: st
   } catch {
     return;
   }
+  // 覆盖域判定**故意**不含端口：Cookie 作用域按 RFC 6265 与端口无关（浏览器 cookie jar 亦然）。
+  // 端口的站点身份意义只作用于归属判定 / 停用名单 / 页签收编（口径分工见 hostRelated 注释）。
   const bindHostname = hostNoPortOf(bindHost);
   const parent = parentDomainOf(bindHostname);
   if (urlHostname !== bindHostname && !urlHostname.endsWith(`.${parent}`)) {
@@ -929,7 +968,7 @@ async function syncAccountRules(accountId: string, host: string): Promise<void> 
   const bound = boundTabsOf(accountId);
   void diag(`syncAccountRules(${accountId}) 绑定标签=${bound.join(',') || '无'}`);
   const blocked = await readBlockedHosts();
-  if (blocked.has(host)) {
+  if (blockedHit(blocked, host)) {
     void diag(`syncAccountRules(${accountId}) 跳过：本地停用名单`);
     return;
   }
@@ -1196,11 +1235,6 @@ export const parallelSession = {
       }
       return undefined;
     }
-    if (payload.op === 'pageNames') {
-      // v3.11 名称嗅探上行：交页面监视器建 guid→名称 表（host 由监视器自查）
-      void pageMonitor.ingestNames(tabId, payload.names ?? [], payload.src ?? '');
-      return undefined;
-    }
     return undefined;
   },
 
@@ -1253,12 +1287,14 @@ export const parallelSession = {
    *      一站两账号的情形会永远判不出 → 下载永远不重试 → 用户看到的 401）；
    *  ③ 全库唯一账号（无活跃页签时的兜底，对齐 v3.10.8 的安全原则）。
    * 三者都不成立时不注入（绝不盲目把某账号的凭证发给不确定的请求），并留痕候选数量。
+   *
+   * 0.2.22：②③ 层的 host 比较改用 **带端口** 的 host（`urlHostOf`）。此前用 `URL.hostname`
+   * 让 hostRelated 的端口守卫恒不触发 → 同主机不同端口的账号会互相串号
+   * （内网 host:8080 与 host:18996 两个站点即典型）。
    */
   async authHeaderForUrl(url: string): Promise<{ name: string; value: string } | null> {
-    let host = '';
-    try {
-      host = new URL(url).hostname;
-    } catch {
+    const host = urlHostOf(url);
+    if (!host) {
       return null;
     }
 
@@ -1347,16 +1383,16 @@ export const parallelSession = {
       let path = '';
       try {
         const u = new URL(url);
-        urlHost = u.hostname;
+        urlHost = u.host; // 带端口：同主机的别的端口是另一个站点，不得收编
         path = u.pathname.toLowerCase();
       } catch {
         void diag(`adopt-candidate tab=${tabId} URL 不可解析：丢弃候选`);
         void pushDown(tabId, { op: 'unbound' });
         return;
       }
-      const pendingHost = hostNoPortOf(pending.host);
-      const parent = parentDomainOf(pendingHost);
-      const sameSite = urlHost === pendingHost || urlHost.endsWith(`.${parent}`);
+      // 0.2.22：改走 hostRelated（带端口身份口径）。旧实现用无端口 urlHost 比无端口
+      // pendingHost，同主机的其它端口会被当成"本站"而收编。
+      const sameSite = hostRelated(urlHost, pending.host);
       if (!sameSite) {
         void diag(`adopt-candidate tab=${tabId} 目标 ${urlHost} 非授权域：丢弃候选（根本原则）`);
         void forensics('adopt-dropped', { tabId, accountId: pending.accountId, host: urlHost, reason: 'external-domain' });
@@ -1400,13 +1436,18 @@ export const parallelSession = {
       return;
     }
     if (/^https?:\/\//i.test(url)) {
-      const host = new URL(url).hostname;
+      const urlHost = urlHostOf(url); // 带端口：停用名单 / 健康缓存的键
+      const urlBare = hostNoPortOf(urlHost); // 无端口：与 DNR requestDomains 同口径
       // 0.2.21 修正：站点自己的 host 可能带端口（siteHost = "192.0.2.10:8080"），而
       // URL.hostname 永远不含端口——旧实现直接字符串比较，导致这类站点一打开就被误判为
       // 「漫游到非授权域」而解绑（规则不装、身份不注入）。比较前先去端口。
+      // 0.2.22：同一判定里的两个平面口径分开——「是否本站」按无端口比（DNR 规则无端口
+      // 表达能力，见 tab-rules 的 requestDomains），而停用名单与健康缓存一律以 siteHost
+      // 原样（可带端口）为键，必须用**带端口** host 查，否则名单写的是 "host:port"、
+      // 查询用 "host" → 永远查不到 → 带端口站点的停用静默失效。
       const bindingHostname = hostNoPortOf(binding.host);
-      if (host !== bindingHostname && !(await isEnforceable(host))) {
-        void diag(`onNavigation 非授权域 ${host}：解除 tab=${tabId} 绑定`);
+      if (urlBare !== bindingHostname && !(await isEnforceable(urlHost))) {
+        void diag(`onNavigation 非授权域 ${urlHost}：解除 tab=${tabId} 绑定`);
         await this.unbindTab(tabId);
         return;
       }

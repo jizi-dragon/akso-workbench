@@ -141,6 +141,9 @@
         return pages;
       }
 
+      /** 扇区显示名：页签名优先，未设置则回落账号名（与扩展端 wheel-core 同口径） */
+      const labelOf = (a) => (a.tab_name || '').trim() || a.username || '';
+
       async function postCommand(type, payload) {
         await fetch('/extension/commands', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -214,8 +217,9 @@
           const hit = svgEl('path', { class: 'sector-hit', d: sectorPath(a0, a1) });
           hit.addEventListener('click', () => pick(a.id));
           g.appendChild(hit);
+          const name = labelOf(a);
           g.appendChild(radialText('sector-label', mid, (R_IN + R_OUT) / 2,
-            a.username.length > 8 ? a.username.slice(0, 7) + '…' : a.username));
+            name.length > 8 ? name.slice(0, 7) + '…' : name));
           const np = polar(R_IN + 26, mid);
           const num = svgEl('g', { class: 'sector-num' });
           num.appendChild(svgEl('circle', { cx: np.x, cy: np.y, r: 13 }));
@@ -259,8 +263,12 @@
         accountIds = accounts.map((a) => a.id);
         pages = groupPagesByBox(accounts);
         if (wheelPage >= pages.length) wheelPage = 0;
-        // 指纹防重绘：数据未变不重建（入场动画不重播、悬停态不丢）
-        const fp = JSON.stringify([pages.map((p) => [p.label, p.list.map((a) => a.id)]), wheelPage]);
+        // 指纹防重绘：数据未变不重建（入场动画不重播、悬停态不丢）。
+        // 0.2.22：指纹含显示名——扇区名改为页签名后，改页签名必须触发重建，否则标签一直是旧名
+        const fp = JSON.stringify([
+          pages.map((p) => [p.label, p.list.map((a) => `${a.id}:${labelOf(a)}`)]),
+          wheelPage,
+        ]);
         if (fp === lastWheelFp) return;
         lastWheelFp = fp;
         buildWheel();

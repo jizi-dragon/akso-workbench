@@ -1,6 +1,6 @@
 import type { ParallelAccount, ParallelAccountStatus } from '../../shared/types';
 import type { DataBackup } from '../../shared/messages';
-import { EXT_VERSION, LOCAL_KEYS } from '../../shared/constants';
+import { extVersion, LOCAL_KEYS } from '../../shared/constants';
 import { send } from '../send';
 
 type BrowserAccount = ParallelAccount & ParallelAccountStatus & { password: boolean };
@@ -8,7 +8,7 @@ type BrowserAccount = ParallelAccount & ParallelAccountStatus & { password: bool
 /* ==================== 元素引用 ==================== */
 
 const verChip = document.getElementById('ver-chip') as HTMLSpanElement;
-verChip.textContent = `v${EXT_VERSION}`;
+verChip.textContent = `v${extVersion()}`;
 
 const browserListEl = document.getElementById('browser-list') as HTMLUListElement;
 const parForm = document.getElementById('par-form') as HTMLFormElement;
@@ -1243,7 +1243,7 @@ exportDiagBtn.addEventListener('click', () => {
     ]);
     const bundle = {
       exportedAt: new Date().toISOString(),
-      version: EXT_VERSION,
+      version: extVersion(),
       // 账号信息脱敏：不含密码/用户名原文，只含结构与状态
       accounts: browserAccounts.map((a) => ({
         id: a.id,

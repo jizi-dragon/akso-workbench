@@ -16,7 +16,8 @@ body {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 4px 2px 0;
+  /* 水平内边距为 0：彩环左缘与「导出诊断」右缘因此与下方统计卡两端对齐（原 2px 会让两端各内缩） */
+  padding: 4px 0 0;
 }
 
 .brand-ring {
@@ -55,14 +56,28 @@ body {
   color: var(--sb-text-secondary);
 }
 
-.ver {
-  font-size: 10.5px;
-  color: var(--sb-text-secondary);
+/* 导出诊断（0.2.22 从「站点授权」卡片移入品牌头右上角）：次级操作 → 柔和描边胶囊，
+   不与品牌主视觉抢注意力；保留文字标签（不做纯图标按钮，可读且可被读屏识别）。 */
+.diag-btn {
+  flex: none;
+  align-self: center;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--sb-brand);
   background: var(--sb-brand-soft);
   border: 1px solid var(--sb-border);
-  padding: 3px 8px;
+  padding: 6px 10px;
   border-radius: 999px;
-  font-variant-numeric: tabular-nums;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.diag-btn:hover {
+  background: var(--sb-surface);
+  border-color: var(--sb-brand);
+}
+.diag-btn:focus-visible {
+  outline: 2px solid var(--sb-brand);
+  outline-offset: 2px;
 }
 
 /* ---- 实时统计条 ---- */
@@ -159,77 +174,47 @@ body {
   transform: translateX(3px);
 }
 
-/* ---- 底部提示 ---- */
+/* ---- 底部提示 + 版本号（0.2.22：版本从品牌头右上角移到右下角） ----
+   字号 10px / 间距 6px 是实测结果：10.5px+8px 时「提示 + 版本」总宽 305px > 300px 内容宽，
+   会导致「呼出账号轮盘」的尾字与「切换」被挤到第二行（footH 37px）；10px+6px 后总宽 290px，
+   留 10px 余量单行放下，文案无需删改。 */
 .foot {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 10.5px;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10px;
   color: var(--sb-text-secondary);
   padding-bottom: 2px;
 }
-.foot i {
+.foot-hints {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.foot-hints span {
+  white-space: nowrap;
+}
+.foot-hints .dot {
+  flex: none;
   width: 3px;
   height: 3px;
   border-radius: 50%;
   background: var(--sb-border-strong);
 }
-
-/* ---- 站点授权（0.2.17 恢复：并行管理页退役后唯一的授权入口） ---- */
-.grant {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 10px 11px;
-  border: 1px solid var(--sb-border);
-  border-radius: var(--sb-radius);
-  background: var(--sb-surface-2);
-}
-.grant-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--sb-text);
-}
-.grant-hint {
-  font-size: 10.5px;
-  font-weight: 400;
+.ver {
+  flex: none;
+  font-size: 10px;
   color: var(--sb-text-secondary);
-}
-.grant-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.grant-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-}
-.grant-host {
-  font-weight: 600;
-  color: var(--sb-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.grant-host.ok { color: var(--sb-text-secondary); }
-.grant-state.ok { color: var(--sb-success); font-weight: 700; }
-.grant-btn {
-  background: var(--sb-brand);
-  color: #fff;
-  font-size: 11.5px;
-  font-weight: 700;
-  padding: 4px 12px;
+  background: var(--sb-brand-soft);
+  border: 1px solid var(--sb-border);
+  padding: 2px 7px;
   border-radius: 999px;
+  font-variant-numeric: tabular-nums;
 }
-.grant-btn:hover { background: var(--sb-brand-hover); }
-.grant-empty { color: var(--sb-text-secondary); }
+
+/* ---- 站点授权区块样式已删除（0.2.22） ----
+   该区块 UI 已从弹窗下线：manifest 声明 `host_permissions: ["<all_urls>"]` 后装载即获得全站
+   权限，逐站点授权列表既无操作价值、又误导用户以为还要手动授权。
+   核心逻辑保留在 background（site-auth.ts / par.grantChanged / ql:blockedHosts），只删展示层。 */

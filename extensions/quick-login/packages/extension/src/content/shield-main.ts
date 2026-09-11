@@ -249,60 +249,7 @@
     );
   }
 
-  /* ---- fetch / XHR 出站 Authorization 头嗅探 + 页面层缓存分区 + 名称型 API 响应嗅探 ---- */
-
-  /* ---- v3.11 名称嗅探：白名单 API 响应 → 名称↔ID 对 → 桥上行 ----
-   * 白名单与映射表见 docs/FEASIBILITY-RECENT-PAGES.md §〇（实测）：
-   * BasicObjectDetail（对象名）/ GetWorkflowBasic*（工作流名）/ GetUserMenuPermission +
-   * MenuGroup/QueryList（菜单树/组）/ UserView/GetView（视图名）。
-   * 只读不阻塞：fetch 走 clone 异步读取，XHR 挂 load 监听；任何异常静默吞掉。 */
-  const NAME_API_RE =
-    /api\/platform\/(.*BasicObjectDetail|.*GetWorkflowBasic|.*GetUserMenuPermission|MenuGroup\/QueryList|UserView\/GetView(\?|$))/i;
-
-  function extractNamePairs(json: unknown, out: { name: string; id: string }[], depth = 0): void {
-    if (depth > 4 || out.length >= 24 || !json || typeof json !== 'object') {
-      return;
-    }
-    if (Array.isArray(json)) {
-      for (const it of json.slice(0, 30)) {
-        extractNamePairs(it, out, depth + 1);
-      }
-      return;
-    }
-    const rec = json as Record<string, unknown>;
-    const name = rec.name ?? rec.Name ?? rec.title ?? rec.menuName ?? rec.objectName;
-    const id = rec.id ?? rec.guid ?? rec.code ?? rec.viewId ?? rec.objectId;
-    if (typeof name === 'string' && name.trim() && id !== undefined && id !== null && String(id).trim()) {
-      out.push({ name: String(name).slice(0, 60), id: String(id).slice(0, 40) });
-    }
-    for (const v of Object.values(rec)) {
-      if (v && typeof v === 'object') {
-        extractNamePairs(v, out, depth + 1);
-      }
-    }
-  }
-
-  function reportPageNames(text: string, srcUrl: string): void {
-    try {
-      if (!text || text.length > 262_144) {
-        return;
-      }
-      const json = JSON.parse(text) as unknown;
-      const names: { name: string; id: string }[] = [];
-      extractNamePairs(json, names);
-      if (names.length) {
-        window.postMessage(
-          {
-            src: SRC_PAGE_TO_BRIDGE,
-            payload: { op: 'pageNames', names, src: srcUrl.slice(0, 200) },
-          },
-          '*',
-        );
-      }
-    } catch {
-      // 非 JSON / 解析失败：静默
-    }
-  }
+  /* ---- fetch / XHR 出站 Authorization 头嗅探 + 页面层缓存分区 ---- */
 
   /**
    * 缓存分区：同源 GET 请求查询串追加 `_qlck=t<tabId>`。
@@ -373,28 +320,6 @@
         if (auth) {
           reportAuthHeader(auth);
         }
-        // 名称嗅探（clone 异步读取，不阻塞响应流）
-        if (method.toUpperCase() === 'GET' && NAME_API_RE.test(urlStr)) {
-          try {
-            const result = nativeFetch.call(this, input, init) as Promise<Response>;
-            void result
-              .then((res) => {
-                try {
-                  void res
-                    .clone()
-                    .text()
-                    .then((t) => reportPageNames(t, urlStr))
-                    .catch(() => undefined);
-                } catch {
-                  // clone 不可得（流已被消费等）忽略
-                }
-                return res;
-              })
-              .catch(() => undefined);
-          } catch {
-            // 嗅探失败忽略，走不到就跳过
-          }
-        }
       } catch {
         // 探测失败不影响请求本身
       }
@@ -427,20 +352,6 @@
       const auth = (this as unknown as Record<symbol, string | undefined>)[AUTH_SLOT];
       if (auth) {
         reportAuthHeader(auth);
-      }
-      try {
-        const u = String(this.responseURL || '');
-        if (u && NAME_API_RE.test(u)) {
-          this.addEventListener('load', () => {
-            try {
-              reportPageNames(String(this.responseText ?? ''), u);
-            } catch {
-              // 读取失败忽略
-            }
-          });
-        }
-      } catch {
-        // 嗅探失败忽略
       }
       return nativeSend.apply(this, [body] as unknown[]);
     } as typeof XMLHttpRequest.prototype.send;

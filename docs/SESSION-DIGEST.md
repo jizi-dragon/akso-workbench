@@ -62,13 +62,14 @@
 - ⚠ 教训：/extension/* 无 pytest 覆盖——`verify_extension_sync.mjs` 就是它的回归测试，改该蓝图必跑
 
 ## 扩展基线校正（0.2.5 摸底 · 0.2.6 已同步）
-- `extensions/quick-login/` = **上游 v3.13.2（2026-09-10 同步，36 文件前移）+ akso-mogul 私有改造**。私有改造清单：① manifest host_permissions:18765 + alarms 权限 + quick-wheel 热键 Ctrl+Shift+Q；② `src/background/sync.ts` 桌面同步桥（含 seq/快照/毒指令全套护栏）；③ `src/background/account-wheel.ts`（toggleAccountWheel 抽取，sync 直调）；④ service-worker 挂载 sync + import 轮盘；⑤ parallel.html 隐藏账号增删改区块 + 会话视图文案；⑥ wheel-overlay 双 interval 修复
+- `extensions/quick-login/` = **上游 v3.13.2（2026-09-10 同步，36 文件前移）+ akso-mogul 私有改造**。私有改造清单：① manifest host_permissions:18765 + alarms 权限 + quick-wheel 热键 Ctrl+Shift+Q；② `src/background/sync.ts` 桌面同步桥（含 seq/快照/毒指令全套护栏）；③ `src/background/account-wheel.ts`（toggleAccountWheel 抽取，sync 直调）；④ service-worker 挂载 sync + import 轮盘；⑤ parallel.html 隐藏账号增删改区块 + 会话视图文案；⑥ wheel-overlay 双 interval 修复；⑦ **撤销上游 Page Monitor**（0.2.22：页签标题不再被页面信息改写，Alt+W 最近配置页轮盘整套下线，见文末 0.2.22 节）；⑧ 弹窗改版（0.2.22：站点授权 UI 下线、导出诊断入品牌头右上角、版本号入页脚右下角）；⑨ 版本真源改 manifest（0.2.22：`extVersion()` 取代硬编码 `EXT_VERSION`）；⑩ 身份平面端口口径修复（0.2.22：`urlHostOf()`，补完 0.2.21 只修一半的端口守卫）；⑪ 声明式全站权限（0.2.21：`host_permissions: ["<all_urls>"]`，逐站点授权链路整套退役）
 - 上游 v3.11.1→v3.13.2 已带入：登录态生命周期跟随页签、Cookie 袋权威同步、取证黑匣子+导出诊断（parallel 页新增「导出诊断」按钮）、AuthCode 时效集、AUTH main_frame/全资源类型
 - **dist 真实位置 = `extensions/quick-login/dist/`**（不是 packages/extension/dist）；构建 `npm run build`（workspace 根）
 - 账号中心 UI 复刻基线（上游 parallel 管理页 14 项差距）见目标档案：四态徽标/批量管理/diff 防闪烁/移盒弹窗/盒子禁用/删盒两步处置/诊断导出/站点授权健康/顶栏统计/数字键0=第10/轮盘动效等
 
 ## 待办/可选（未做）
-- **账号中心 UI 复刻二期**（基线剩余 polish 项）：轮盘扇区入场/节点滑移动效、账号别名（tabName，需 account 表加列）、扩展端授权清单展示（state 已回传 enforcementOff，细化到 host）
+- **账号中心 UI 复刻二期**（基线剩余 polish 项）：轮盘扇区入场/节点滑移动效、扩展端授权清单展示（state 已回传 enforcementOff，细化到 host）
+  - ~~账号别名（tabName，需 account 表加列）~~ **已落地**（0.2.22）：`account.tab_name` 列早已存在，账号卡（`accounts.js`）与**轮盘扇区名**（`wheel-picker.html` 的 `labelOf()`）均走「页签名优先、空则账号名」
 - **人工复验**：真实 Chrome 装载 dist → 桌面 Alt+Q 轮盘选人 → 真实 profile 自动登录（自动化侧已 E2E_PASS）
 - egmp writers 真机首跑验证（create 写配置需测试环境授权；monitor 侧已真机验收）
 - NSIS 安装器静默装 UAC 未落盘验证；若需"关主窗后会话常驻"：服务与壳解耦为独立进程
@@ -83,7 +84,19 @@
 ## 0.2.20 复验顺序（下载修复 + 轮盘视觉 · 缺一不可）
 1. `chrome://extensions` 重载 QuickLogin（新增 downloads 权限；版本应显示 v0.2.20）
 2. 任务管理器确认无 AksoServer.exe / python.exe 残留进程，然后完全重启桌面壳（`cd desktop && npm start`）——sidecar 不重启就是旧代码（孤儿进程教训见环境坑 #20）
-3. 扩展弹窗 → 站点授权 → 各站点点「授权」至显示已授权（并行管理页退役后这是唯一授权入口）
+3. ~~扩展弹窗 → 站点授权 → 各站点点「授权」~~ **已废弃**（0.2.21 声明式全站权限后无需授权；0.2.22 起弹窗的站点授权区块整体下线——别再找这个按钮）
 4. 快捷登录 → 登录成功后下载文件（若首次失败，扩展会自动带 Bearer 重发并落地；重试日志在 ql:diag）
 5. 盒子新建/编辑输入框复测（原生 dialog，Electron 焦点最稳）
-6. 若下载仍失败：扩展弹窗「**导出诊断**」→ 把 JSON 发开发者（ql:diag 里有每次下载失败的错误码与归属判定日志）
+6. 若下载仍失败：扩展弹窗「**导出诊断**」（0.2.22 起位于品牌头右上角）→ 把 JSON 发开发者（ql:diag 里有每次下载失败的错误码与归属判定日志）
+
+## 0.2.22 撤销与改版（Page Monitor 下线 · 轮盘页签名 · 弹窗 · 版本真源 · 端口口径）
+- **Page Monitor 整块撤销（用户定稿）**：删除 `background/core/page-monitor.ts`、`content/pages-overlay.ts`、`docs/FEASIBILITY-RECENT-PAGES.md`；摘除 manifest `quick-pages`(Alt+W) 命令、桥上行 `pageNames`、`shield-main` 名称嗅探、`pages.recent`/`pages.jump`/`RecentPageEntry`、`ql:recentPages`/`RECENT_PAGES_MAX`、SW 的对应消息与命令分支及 `togglePagesOverlay`、`build.mjs` 入口。
+  - 页签标题**仍然是页签名**（`tabs/tab-title.ts` + `content/title-hook.ts` 未动）——撤销的是「用页面信息改写标题」，不是「标题显示页签名」。
+  - 别混淆：`services/browser_pool.monitor_start/stop` + `runtime/monitor/`（托管会话请求录制）是**另一套**，未动。
+  - ⚠ 上游同步会把它带回来（v3.11/v3.13 特性）→ 按上清单再摘一次。
+- **轮盘扇区名口径**：页签名优先、空则账号名（桌面 `wheel-picker.html` 的 `labelOf()` ≡ 扩展 `ui/wheel/wheel-core.ts`）；防重绘指纹已含显示名（否则改页签名后标签不刷新）。
+- **弹窗**：站点授权区块下线（**只删 UI**——`site-auth.ts` / `par.grantChanged` / `ql:blockedHosts` 全保留）、导出诊断入品牌头右上角、版本号入页脚右下角。
+- **版本真源**：`extVersion()` 读 `chrome.runtime.getManifest().version`（bump.py 五写含 manifest → 自动跟随项目升版）；**不要再引入手写版本常量**（上游文档仍写「EXT_VERSION 三处必须一致」，已过时）。
+- **身份平面端口口径**：`urlHostOf()`（= `new URL(u).host`，带端口）统一用于归属/停用名单/页签收编；规则覆盖（DNR requestDomains）与 Cookie 作用域**故意**无端口。DNR 无法表达端口 → 同主机跨端口的网络平面隔离仍是结构性限制（真要做得换 `urlFilter`）。
+- **验证基线（0.2.22 本轮）**：扩展启动冒烟 7/7（隔离 profile：SW 启动未崩 / 命令清单仅 `quick-wheel` / 无 `ql:recentPages` / 无 `ql:pageNames` / `akso:acctMap` 数据面同步成功）；轮盘真机数据 5/5（`T0901`→TTTTT、未设页签名回落账号名）；弹窗渲染 8/8。
+- **扩展端仍无单测框架** → 改扩展必跑 `npm run typecheck` + `npm run build` + 启动冒烟。冒烟要点：**有头模式** + `--load-extension=dist` + 读 SW 的 manifest/commands/storage（headless 下 MV3 扩展不加载，实测 `service_workers` 为空）；本轮为临时脚本，建议提升为 `tools/verify_extension_boot.py`。

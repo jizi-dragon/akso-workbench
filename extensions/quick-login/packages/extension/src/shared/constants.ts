@@ -1,5 +1,21 @@
-/** 扩展版本号（与根 package.json / manifest.json 保持同步；UI 中显性展示以区分构建） */
-export const EXT_VERSION = '3.13.2';
+/**
+ * 扩展版本号。**唯一真源 = manifest.json**（`tools/bump.py` 五写机制会同步它），
+ * 因此 UI 展示的版本号自动跟随项目升版，无需任何手工同步。
+ *
+ * 历史教训：此处曾硬编码上游版本常量（`EXT_VERSION = '3.13.2'`），而 bump.py 不写本文件
+ * → 弹窗、扩展图标徽标、管理页三处版本号在上游同步后永远停在旧号（实测：项目已是 0.2.21，
+ * 弹窗仍显示 v3.13.2）。**不要再引入手写版本常量。**
+ *
+ * 用函数而非模块级常量：内容脚本也会 import 本模块（其它符号），模块级求值会在
+ * 不保证 `chrome.runtime` 的场景下抛错；此处 try/catch 兜底为 '0.0.0'。
+ */
+export function extVersion(): string {
+  try {
+    return chrome.runtime.getManifest().version;
+  } catch {
+    return '0.0.0';
+  }
+}
 export const IDB_NAME = 'sessionbox-reborn';
 export const IDB_VERSION = 2;
 export const IDB_STORE_SESSIONS = 'sessions';
@@ -28,14 +44,9 @@ export const LOCAL_KEYS = {
   disabledBoxes: 'ql:disabledBoxes',
   /** 站点协议 hint（v3.10.9：授权时从用户输入 URL 解析；账号创建时优先采用） */
   siteSchemes: 'ql:siteSchemes',
-  /** 最近配置页 MRU（v3.13：按 host 分组，每组至多 RECENT_PAGES_MAX 条；**仅记录绑定页签**） */
-  recentPages: 'ql:recentPages',
   /** 登录失败现场取证环形缓冲（v3.12.2：生命周期 + 自动填表逐事件） */
   forensics: 'ql:forensics',
 } as const;
-
-/** 最近配置页每组容量（需求：最近 5 个） */
-export const RECENT_PAGES_MAX = 5;
 
 /** background 向内容脚本下发的消息 type */
 export const CONTENT_MESSAGE = {

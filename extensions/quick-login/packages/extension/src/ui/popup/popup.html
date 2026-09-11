@@ -13,7 +13,14 @@
           <h1>QuickLogin</h1>
           <p>多账号并行 · 纯浏览器隔离</p>
         </div>
-        <span class="ver" id="ext-version">v—</span>
+        <button
+          id="export-diag"
+          class="diag-btn"
+          type="button"
+          title="下载诊断包（排查问题时发给开发者）"
+        >
+          导出诊断
+        </button>
       </header>
 
       <section class="stats">
@@ -33,18 +40,13 @@
         </div>
       </section>
 
-      <section class="grant">
-        <div class="grant-head">
-          <span>站点授权</span>
-          <button id="export-diag" class="grant-btn" type="button" title="下载诊断包（排查问题时发给开发者）" style="padding: 2px 9px; font-weight: 400">导出诊断</button>
-        </div>
-        <ul id="grant-list" class="grant-list"></ul>
-      </section>
-
       <footer class="foot">
-        <span><kbd>Alt+Q</kbd> 呼出账号轮盘</span>
-        <i></i>
-        <span>轮盘内点击扇区即可切换</span>
+        <span class="foot-hints">
+          <span><kbd>Alt+Q</kbd> 呼出账号轮盘</span>
+          <i class="dot"></i>
+          <span>轮盘内点击扇区即可切换</span>
+        </span>
+        <span class="ver" id="ext-version">v—</span>
       </footer>
     </main>
 

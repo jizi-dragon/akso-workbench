@@ -5,6 +5,37 @@
 
 ## [Unreleased]
 
+### Added
+
+- **数据层决策与维护工具（0.2.22）**：实测 `workbench.db` 曾达 **82.02 MB**，其中 **74.03 MB 是 `doc_chunks.embedding`**——知识库功能下线后遗留的向量数据，运行时代码**零处读取**（全仓库仅 `db.py` 的迁移定义与 `storage.py` 的一句注释提及这两张表）；空闲页仅 0.25 MB，说明不是碎片而是「仍然存活但已无人使用」的行。真实业务数据合计不到 20 KB（4 账号 / 3 环境 / 5 条任务台账 / 11 项设置），`job_logs` 建了索引却零处写入（日志走磁盘 `log_path`，不入库）。
+  - **决策定稿：继续使用 SQLite，不引入 MySQL，不引入 Redis。** 依据与量化触发器见新增 `docs/数据层决策.md`。要点：① Redis 不是数据库——RDB 间隔快照 / AOF `everysec` 均有丢失窗口，而本项目核心资产是 Fernet 加密凭据（`password_enc` + `account_fernet_key`），**丢失不可重建**，且 Redis 无关系约束（现依赖 `ON DELETE CASCADE`），数据还须全驻内存；② MySQL 的决定性理由是**交付形态而非性能**——单机安装包（Electron + 本机 sidecar + Inno Setup）多装一个服务端守护进程（服务账号/端口/root 密码/升级/防火墙）会直接损害「一键安装」卖点，而 `uvicorn` 默认 `workers=1`、`db.py` 单连接 + 全局 RLock 的单写入负载下，MySQL 相对 SQLite WAL 没有任何收益；③ 反例佐证：`routes_extension.py` 的扩展指令队列**刻意**用内存 `_commands` + ack + 单调 `ext_cmd_seq` 游标实现，未拉 Redis——⚠️ 该队列与 `_STATE` 均为进程内状态，是**多 worker/多机部署时最先静默失效的地方**，届时修法是把指令队列落成数据库表，而不是上 Redis。
+  - 新增 `tools/db_maintenance.py`：默认只读诊断（表规模 / 大列体积 / 遗留 settings 键 / 独占锁探测），`--all` = `VACUUM INTO` 一致性备份 → 置空遗留向量（**保留文档与分块正文**）→ `VACUUM` 回收。刻意**不做成自动迁移**：迁移历史不可变，且「自动删除用户数据」的迁移风险过高。真机执行结果：**82.02 MB → 2.90 MB（回收 79.12 MB）**，`PRAGMA integrity_check = ok`、`foreign_key_check` 无违规，129 份文档 / 3,420 个分块正文全保留、4 账号 3 环境与盒子/分配池/导出备份全部正常，桌面端重启后服务 200、模块 4/4。
+- **迁移 13 `add_created_at_indexes`**：补齐列表查询索引 `agent_audit(created_at)`、`blueprint_jobs(created_at)`、`insight_runs(created_at)`——三处列表接口均为 `ORDER BY created_at DESC LIMIT ?`，而既有索引只建在 `tool` / `status` 上；另加 `account(box)` 对齐 `rename_box` 的 `UPDATE ... WHERE box = ?`。已在真实数据副本上先行验证：升至版本 13、四个索引到位、账号/分配池/盒子/导出备份查询全部正常，随后 50 项 pytest 全绿、ruff 通过。
+
+### Changed
+
+- **`db.py` 增设「方言边界」一节（0.2.22）**：为「万一将来改判为服务端多人部署」预留切换缝，SQLite 特有构造全部收拢并注明——`PRAGMA` → `_PRAGMAS`；逗号串包含匹配 `(',' || col || ',') LIKE ?` → 新增 `db.csv_like()`（`pool_members` 已改用，组合值语义由既有测试覆盖）；`?` 占位符全库统一（psycopg/PyMySQL 为 `%s`，改 wrapper 即可）；`INTEGER PRIMARY KEY AUTOINCREMENT` 仅存于迁移 8 的 `job_logs.id`（历史不可变，保留），**新表不再使用**（其余表均为 UUID 文本主键，本身与方言无关）。换库 = 改这一节 + 数据搬迁，而非全库搜索替换。
+- **扩展弹窗改版（0.2.22，用户定稿三点）**：① **「站点授权」区块整块从 UI 下线**——manifest 已声明 `host_permissions: ["<all_urls>"]`，装载即获全站权限，逐站点授权列表既无操作价值、又误导用户以为仍需手动授权；**只删展示层**，授权/停用名单核心逻辑（`site-auth.ts`、`par.grantChanged` 消息、`ql:blockedHosts`、`isEnforceable`）一律保留，随之删除的仅是 `renderGrantList()`（含其生成的「授权」按钮）与 `.grant*` 样式。② **「导出诊断」移入品牌头右上角**（柔和描边胶囊，保留文字标签而非纯图标，可读屏识别，`title` 说明用途）。③ **版本号从右上角移入页脚右下角**。弹窗高度 303px → 174px。
+  - 页脚排版为实测结论：10.5px 字号 + 8px 间距时「提示 + 版本」总宽 305px > 300px 内容宽 → 提示尾字（「盘」「换」）被挤到第二行；改 10px + 6px 后总宽 290px 单行放下，**文案一字未改**。另将品牌头水平内边距 2px → 0，使彩环左缘与「导出诊断」右缘和统计卡两端对齐。
+- **撤销上游 Page Monitor（0.2.22，用户定稿）**：该功能监听页面（MAIN 壳嗅探平台名称型 API → 桥上行 `pageNames` → 按 URL 分类解析主体名）并把结果**作用于页签**（合成标题 `账号别名 · 主体名·类型`，未解析时先占位 `类型 · guid前8位`），副产物是「最近配置页 MRU」与其 Alt+W 浮层轮盘。整块下线：
+  - **删除**：`background/core/page-monitor.ts`、`content/pages-overlay.ts`、设计文档 `docs/FEASIBILITY-RECENT-PAGES.md`；`build.mjs` 的 `content/pages-overlay` 入口；manifest 的 `quick-pages` 命令（Alt+W）；桥上行 `pageNames` 载荷类型及其在 `parallel-session` 的消费分支；`shield-main` 的名称嗅探（`NAME_API_RE` / `extractNamePairs` / `reportPageNames` 及 fetch/XHR 两处钩子）；`messages.ts` 的 `pages.recent` / `pages.jump` 与 `RecentPageEntry`；`constants.ts` 的 `recentPages` 键与 `RECENT_PAGES_MAX`；`service-worker` 的对应消息分支、`quick-pages` 命令分支与 `togglePagesOverlay`。
+  - **保留**：页签标题仍由既有 title 管线（`tabs/tab-title.ts` + `content/title-hook.ts`）权威写入**页签名**——撤销的是「用页面信息改写标题」，不是「标题显示页签名」；账号轮盘（Alt+Q）与浏览器池的监听录制（`services/browser_pool.monitor_start/stop` + `runtime/monitor/`，另一套东西）均未受影响。
+  - 隔离 profile 启动冒烟 7/7：SW 可启动且未崩、`commands.getAll()` 仅剩 `quick-wheel`、storage 无 `ql:recentPages`、session 无 `ql:pageNames`、桌面数据面 `akso:acctMap` 仍同步成功。
+  - ⚠ 上游同步注意：该功能来自上游 v3.11/v3.13，下次同步会把它带回来（manifest 命令 / 桥上行 op / 内容脚本入口 / SW 注册 / 构建入口），需按本清单再次摘除。
+- **桌面轮盘扇区名改为「页签名优先」（0.2.22，用户定稿）**：`wheel-picker.html` 此前用 `a.username`，导致设了页签名的账号在轮盘上仍显示账号名；改为 `(a.tab_name || '').trim() || a.username`，与扩展端 `ui/wheel/wheel-core.ts` 的口径完全一致。另修一处连带缺陷：轮盘防重绘指纹只含 `id`，改页签名不触发重建（标签会一直停在旧名），现将显示名并入指纹。真机数据验证 5/5：`T0901`（页签名 TTTTT）显示 TTTTT，未设页签名的 `dev-admin`/`dev-user` 回落账号名。
+
+### Fixed
+
+- **弹窗/徽标/管理页版本号不随项目升版（0.2.22）**：`shared/constants.ts` 曾硬编码上游版本常量（`EXT_VERSION = '3.13.2'`），而 `tools/bump.py` 的五写只同步 manifest.json / package.json 等、**从不写这个 TS 常量** → 上游同步后版本号永久停旧（实测：项目已 0.2.21，弹窗仍显示 v3.13.2、扩展图标徽标显示 v3.13）。改为 `extVersion()` 读取 `chrome.runtime.getManifest().version`——**唯一真源 = manifest.json**，随后续 `bump.py` 五写自动跟随；弹窗、徽标、管理页、诊断包四处版本号一并同步。用函数而非模块级常量，避免内容脚本 import 本模块时的求值风险（`try/catch` 兜底 `'0.0.0'`）。
+  - ⚠ 上游文档 `extensions/quick-login/README.md`、`extensions/quick-login/CHANGELOG.md`、`extensions/quick-login/docs/CODEBASE_OVERVIEW.md` 仍写「`EXT_VERSION` 三处必须一致」，已过时（上游文件，待下次同步时一并校正）。
+- **带端口站点误判：0.2.21 那次修正只做了一半（0.2.22）**：0.2.21 给 `hostRelated` 加了「两端都带端口时必须端口一致」的守卫，但调用方仍用 `URL.hostname` 取 host——它**永远不含端口**，守卫 `up && bp` 里的 `up` 恒为空 → 「同主机不同端口是不同站点」从未真正生效。统一改走新增的 `urlHostOf()`（`new URL(url).host`；URL API 已把 http:80/https:443 规范化掉，不会造成假不匹配）：
+  - `authHeaderForUrl`（下载归属 ②③ 层）：同主机其它端口的账号会互相串号（内网 `host:8080` / `host:18996`、桌面自身 `127.0.0.1:18765` 即典型）；
+  - `adopt-candidate`（继承页签收编）：落到同主机别的端口会被当成"本站"而收编（身份头经 DNR 端口无关地注入）；
+  - `onNavigation`：「是否本站」继续按无端口比（与 DNR `requestDomains` 同口径），但停用名单与健康缓存改用**带端口** host 查——名单条目来自 origin 推导（`192.0.2.10:8080`）、查询却用无端口 `192.0.2.10` → 永远查不到，**带端口站点的停用此前静默失效**。
+  - **口径分工（勿混）**：身份平面（归属/停用名单/收编）端口参与比较；规则覆盖平面（DNR `requestDomains`）与 Cookie 作用域（RFC 6265）端口天然不参与，那两处按无端口比较是**正确**的，本次未改。
+- **停用名单命中改双形匹配（0.2.22）**：新增 `blockedHit()`——带端口精确命中，或条目不带端口时覆盖该 host 全部端口（历史数据/仅填 host 的配置兼容）；带端口条目不跨端口误伤，与站点身份口径一致。`isEnforceable` 与 `syncAccountRules` 同步改用它。
+- **`parentDomainOf` 入参先剥端口（0.2.22）**：带端口内网 host（`192.0.2.10:8080`）会让"全数字段=IP 字面量"判定失配，进而拼出 `0.105:8080` 这类无意义父域。当前调用方均已预剥端口，此为幂等加固（防后续踩坑）。
+
 ### Changed
 
 - **扩展改为声明式全站权限，按站点授权整套下线（0.2.21，用户定稿）**：`manifest.host_permissions` 从"仅 127.0.0.1:18765 + `optional_host_permissions: ["*://*/*"]`（逐站点申请）"改为 **`["<all_urls>"]`**。

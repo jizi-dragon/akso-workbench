@@ -23,8 +23,6 @@ export type RuntimeRequest =
   | { kind: 'par.grantChanged' }
   | { kind: 'ql.diag' }
   | { kind: 'wheel.toggle' }
-  | { kind: 'pages.recent' }
-  | { kind: 'pages.jump'; url: string }
   | { kind: 'data.export' }
   | { kind: 'data.import'; data: DataBackup };
 
@@ -72,19 +70,7 @@ export type RuntimeResponse =
   | { kind: 'par.grantChanged'; result: Result<boolean> }
   | { kind: 'ql.diag'; result: Result<Record<string, unknown>> }
   | { kind: 'wheel.toggle'; result: Result<{ opened: boolean }> }
-  | { kind: 'pages.recent'; result: Result<RecentPageEntry[]> }
-  | { kind: 'pages.jump'; result: Result<{ jumped: boolean }> }
   | { kind: 'data.export'; result: Result<DataBackup> }
   | { kind: 'data.import'; result: Result<{ created: number; skipped: number; hosts: string[] }> };
-
-/** 最近配置页条目（v3.13 收敛：仅记录绑定页签，按 host 分组的 MRU） */
-export interface RecentPageEntry {
-  url: string;
-  pageType: string;
-  suffix: string;
-  subject: string;
-  accountAlias: string;
-  ts: number;
-}
 
 export type { Result };
