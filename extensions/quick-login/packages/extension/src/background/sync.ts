@@ -171,15 +171,21 @@ async function applySnapshot(snap: any): Promise<void> {
   await chrome.storage.local.set({ [SNAPSHOT_ID_KEY]: snap.snapshotId });
 }
 
-async function pollCommands(): Promise<void> {
-  const stored = await chrome.storage.local.get('akso:cmdCursor');
-  const after = Number(stored['akso:cmdCursor'] ?? 0);
-  const data = await getJson(`/extension/commands?after=${after}`);
-  if (!data || !Array.isArray(data.commands)) return;
+const COMMAND_WAIT_S = 15;
+const CMD_CURSOR_KEY = 'akso:cmdCursor';
+
+/** 指令消费互斥：长轮询流与 tick 兜底轮询都可能拿到同一批指令，
+ *  并发消费会让同一条 par.open 开两个页签（JS 单线程，布尔判定的置位是原子的）。 */
+let consuming = false;
+/** 长轮询流最近一次成功取回的时间：流不健康时由 tick 兜底，避免指令滞留 */
+let streamAliveAt = 0;
+
+/** 应用一批指令（逐条隔离）+ 持久化游标 + ack。 */
+async function applyCommands(commands: any[], after: number): Promise<void> {
   let cursor = after;
   const map = await getMap();
 
-  for (const cmd of data.commands) {
+  for (const cmd of commands) {
     cursor = Math.max(cursor, Number(cmd.seq) || 0);
     // 逐条隔离：单条失败不得阻塞后继指令，更不能阻止 cursor 持久化 + ack
     //（曾因 open 抛错穿出循环 → 每 2s 无限重试、队列整体卡死）
@@ -200,11 +206,68 @@ async function pollCommands(): Promise<void> {
     }
   }
   if (cursor !== after) {
-    await chrome.storage.local.set({ 'akso:cmdCursor': cursor });
+    await chrome.storage.local.set({ [CMD_CURSOR_KEY]: cursor });
     await fetch(`${DESKTOP}/extension/ack`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ seqs: [cursor] }),
     }).catch(() => undefined);
+  }
+}
+
+/** 非阻塞取一次指令（兜底路径；默认语义与服务端 wait=0 一致）。 */
+async function pollCommandsOnce(): Promise<void> {
+  if (consuming) return;
+  consuming = true;
+  try {
+    const stored = await chrome.storage.local.get(CMD_CURSOR_KEY);
+    const after = Number(stored[CMD_CURSOR_KEY] ?? 0);
+    const data = await getJson(`/extension/commands?after=${after}`);
+    if (data && Array.isArray(data.commands) && data.commands.length) {
+      await applyCommands(data.commands, after);
+    }
+  } finally {
+    consuming = false;
+  }
+}
+
+/**
+ * 长轮询指令流（延迟主项优化）：服务端在无指令时挂起请求，一旦桌面入队即被唤醒返回。
+ *
+ * 此前扩展每 2s 轮询一次 → "桌面点击 → 浏览器打开"带 0~2s 的量化延迟（均值 ~1s，
+ * 即用户实感的「要等一两秒」）。长轮询把这段压到一次本机回环。
+ * SW 被回收时本循环随之消失，由 chrome.alarms（0.5min）复活后重连——退化为旧行为，不会更差。
+ */
+/** 长轮询流是否已在运行（幂等闸：alarm 每次触发都会调用 commandStream） */
+let streaming = false;
+
+async function commandStream(): Promise<void> {
+  if (streaming) {
+    return;
+  }
+  streaming = true;
+  for (;;) {
+    try {
+      // 顺带作为 SW 活跃信号（chrome API 调用计入活动，降低被回收概率）
+      const stored = await chrome.storage.local.get(CMD_CURSOR_KEY);
+      const after = Number(stored[CMD_CURSOR_KEY] ?? 0);
+      const data = await getJson(`/extension/commands?after=${after}&wait=${COMMAND_WAIT_S}`);
+      if (data === null) {
+        // 桌面不可达（离线回退）：退避后重试，避免热循环
+        await new Promise((r) => setTimeout(r, 1500));
+        continue;
+      }
+      streamAliveAt = Date.now();
+      if (Array.isArray(data.commands) && data.commands.length && !consuming) {
+        consuming = true;
+        try {
+          await applyCommands(data.commands, after);
+        } finally {
+          consuming = false;
+        }
+      }
+    } catch {
+      await new Promise((r) => setTimeout(r, 1500));
+    }
   }
 }
 
@@ -214,7 +277,10 @@ async function tick(): Promise<void> {
   try {
     const snap = await getJson('/extension/snapshot');
     if (snap) await applySnapshot(snap);
-    await pollCommands();
+    // 指令面默认由长轮询流负责；流不健康（超过一次等待周期仍未取回）时才兜底轮询
+    if (Date.now() - streamAliveAt > (COMMAND_WAIT_S + 10) * 1000) {
+      await pollCommandsOnce();
+    }
     // 状态回传（每 3 个 tick ≈6s）：桌面账号中心四态徽标的数据源
     tickCount += 1;
     if (tickCount % 3 === 0) await reportState();
@@ -258,8 +324,12 @@ export function startDesktopSync(): void {
   // chrome.alarms 是唯一的复活通道：alarm 触发时 SW 被拉起并跑一次同步。
   void chrome.alarms.create('akso:sync', { periodInMinutes: 0.5, delayInMinutes: 0.5 });
   chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name === 'akso:sync') void tick();
+    if (alarm.name === 'akso:sync') {
+      void tick();
+      void commandStream(); // SW 被回收后重连长轮询（幂等：流已在跑时直接返回）
+    }
   });
   void tick();
+  void commandStream();
   setInterval(tick, SYNC_INTERVAL_MS);
 }

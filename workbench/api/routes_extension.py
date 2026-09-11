@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,8 @@ from ..services.storage import get_setting, now_ms, set_setting
 router = APIRouter(prefix="/extension", tags=["extension"])
 
 _lock = threading.Lock()
+# 长轮询的等待/唤醒条件变量：复用同一把锁，保证「队列内容」与「等待者」状态一致
+_cond = threading.Condition(_lock)
 _seq: int | None = None  # 惰性从 settings 表恢复（跨进程重启单调递增）
 _seq_SEQ_KEY = "ext_cmd_seq"
 _commands: list[dict[str, Any]] = []
@@ -31,6 +34,12 @@ _acked: set[int] = set()
 # 执行面状态回传（desktopId → 状态快照），供账号中心四态徽标；带 TTL 淘汰
 _STATE: dict[str, dict[str, Any]] = {}
 _STATE_TTL_MS = 60_000
+
+# Chrome 运行状态探测缓存：tasklist 是一次子进程（实测 ~200ms），点击路径不该每次都付
+# 这个代价（它是「桌面点击 → 打开浏览器」链路上除轮询外的第二笔固定开销）。
+_PROBE_TTL_RUNNING_MS = 10_000  # 正结果 10s（Chrome 不会无声消失）
+_PROBE_TTL_STOPPED_MS = 2_000  # 负结果只信 2s（刚退出时仍要能拉起）
+_chrome_probe: dict[str, Any] = {"running": False, "at": 0.0}
 
 
 def _next_seq() -> int:
@@ -58,8 +67,10 @@ def _next_seq() -> int:
 def dispatch_command(command_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """桌面侧入口：写入一条扩展指令（轮盘呼出 / 切换账号）。"""
     cmd = {"seq": _next_seq(), "type": command_type, "payload": payload or {}, "at": now_ms()}
-    with _lock:
+    with _cond:
         _commands.append(cmd)
+        # 唤醒正在长轮询等待的扩展：指令延迟 = 一次本机回环（旧实现要等 ≤2s 的轮询节拍）
+        _cond.notify_all()
     return cmd
 
 
@@ -114,12 +125,28 @@ def snapshot() -> dict[str, Any]:
 
 
 @router.get("/commands")
-def commands(after: int = 0) -> dict[str, Any]:
-    """拉取 after 序号之后的待执行指令。"""
-    with _lock:
-        pending = [c for c in _commands if c["seq"] > after and c["seq"] not in _acked]
-        cursor = max((c["seq"] for c in _commands), default=after)
-    return {"commands": pending, "cursor": cursor}
+def commands(after: int = 0, wait: float = 0) -> dict[str, Any]:
+    """拉取 after 序号之后的待执行指令。
+
+    `wait>0` = **长轮询**：无待执行指令时挂起至多 wait 秒，指令一入队立即返回。
+
+    这是「桌面点击 → 浏览器打开」延迟的主项：旧实现由扩展每 2s 轮询一次，指令平均要等
+    ~1s、最坏 ~2s（用户实感「要等一两秒」）。长轮询把这段量化延迟压到一次本机回环（~1ms）。
+    默认 `wait=0` 保持原非阻塞语义（既有调用方与 `tools/verify_extension_sync.mjs` 不受影响）。
+    同步端点由 FastAPI 放进线程池执行，故阻塞安全；上限 25s 防止连接堆积。
+    """
+    timeout = min(max(wait, 0.0), 25.0)
+    deadline = time.monotonic() + timeout
+    with _cond:
+        while True:
+            pending = [c for c in _commands if c["seq"] > after and c["seq"] not in _acked]
+            cursor = max((c["seq"] for c in _commands), default=after)
+            if pending or timeout <= 0:
+                return {"commands": pending, "cursor": cursor}
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {"commands": [], "cursor": cursor}
+            _cond.wait(timeout=remaining)
 
 
 @router.post("/commands")
@@ -134,6 +161,32 @@ def push_command(body: dict[str, Any]) -> dict[str, Any]:
     return {"seq": cmd["seq"], "accepted": True}
 
 
+def _probe_chrome_running() -> bool:
+    """tasklist 探测 Chrome 是否在运行（子进程，实测 ~200ms）。"""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq chrome.exe"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return "chrome.exe" in (out.stdout or "")
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _chrome_running_cached() -> bool:
+    """带缓存的探测：它位于「点击 → 打开浏览器」的关键路径上，不该每次都付 200ms。"""
+    now = time.monotonic() * 1000
+    age = now - float(_chrome_probe["at"])
+    ttl = _PROBE_TTL_RUNNING_MS if _chrome_probe["running"] else _PROBE_TTL_STOPPED_MS
+    if age < ttl:
+        return bool(_chrome_probe["running"])
+    running = _probe_chrome_running()
+    _chrome_probe.update({"running": running, "at": now})
+    return running
+
+
 @router.post("/launch-chrome")
 def launch_chrome() -> dict[str, Any]:
     """确保 Chrome 正在运行（扩展在用户默认 profile 里；未运行则拉起）。
@@ -141,19 +194,7 @@ def launch_chrome() -> dict[str, Any]:
     关键约束：Chrome 未运行时，扩展 SW 不会轮询指令——此时点击轮盘选人，
     指令会滞留队列。故桌面在派发前先探测/拉起 Chrome。
     """
-    import subprocess
-
-    def chrome_running() -> bool:
-        try:
-            out = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq chrome.exe"],
-                capture_output=True, text=True, timeout=10,
-            )
-            return "chrome.exe" in (out.stdout or "")
-        except Exception:  # noqa: BLE001
-            return False
-
-    if chrome_running():
+    if _chrome_running_cached():
         return {"launched": False, "running": True}
 
     candidates = [
@@ -173,7 +214,11 @@ def launch_chrome() -> dict[str, Any]:
 
     for path in candidates:
         if Path(path).exists():
+            import subprocess
+
             subprocess.Popen([path])
+            # 立即标记「运行中」：Chrome 启动期间连点不应再拉起第二个实例/多开窗口
+            _chrome_probe.update({"running": True, "at": time.monotonic() * 1000})
             return {"launched": True, "running": True, "path": path}
     return {"launched": False, "running": False, "detail": "未找到 chrome.exe"}
 

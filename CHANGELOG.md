@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **「桌面点击 → 浏览器打开」延迟优化（0.2.24）：约 1.1s → 约 30ms**。实测定位到延迟主项是**扩展每 2s 轮询一次指令队列**（量化延迟 0~2s，均值 ~1s），再叠加点击路径上一次 `tasklist` 子进程探测（~124ms）且与指令入队**串行**：
+  - **长轮询取代轮询节拍**：`GET /extension/commands` 新增 `wait` 参数——无指令时服务端挂起请求（`threading.Condition`；`dispatch_command` 入队即 `notify_all`），指令延迟从「等下一拍」压到一次本机回环。默认 `wait=0` 保持原非阻塞语义（既有调用方与 `tools/verify_extension_sync.mjs` 不受影响）。A/B 实测：**平均 964ms → 20ms（≈50×）**，最坏 1671ms → 34ms。
+  - **扩展侧改为长轮询流**（`sync.ts`）：新增 `commandStream()` 独立循环（`wait=15`），与 2s 的数据面 `tick()` 解耦。护栏四项：**消费互斥**（`consuming`——否则同一条 `par.open` 会开两个页签）、**流幂等闸**（`streaming`——alarm 每次触发都会调用它，无闸会累积并发循环）、**兜底轮询**（流 >25s 未取回时由 tick 补一次非阻塞拉取）、**离线退避**（`getJson` 返回 null 时退避 1.5s，避免热循环）。SW 被回收时退化为原 alarm 行为，不会更差。
+  - **探测缓存 + 并行化**：`/extension/launch-chrome` 的 `tasklist` 探测加缓存（正结果 10s / 负结果 2s；实测探测成本 124ms → 命中 9ms，14×），拉起后立即标记「运行中」防连点多开；`wheel-picker.html` 与 `accounts.js` 的点击路径改为 launch-chrome 与指令入队**并行**（两者仍都 await 完才关轮盘——关窗会中断在途 fetch，冷启动时若 launch 没发出去会永久滞留指令）。
+  - 新增回归工具 `tools/verify_command_latency.py`：独立实例上 A/B 旧节拍与长轮询，钉住该延迟契约（误删 `notify_all` 或 `wait` 会立刻红）。
+  - **尚未优化（需产品决策）**：**Chrome 冷启动**（tasklist 124ms + Chrome 启动 1~3s 是硬成本）。可选两条：① `launch-chrome` 直接带登录 URL 打开，省掉「启动 → SW 起来 → 取指令 → 开页签」的往返（需配一条「绑定已开页签」的指令）；② 桌面应用启动或账号中心打开时预热 Chrome。
+
 ### Fixed
 
 - **两个静默失效缺陷（0.2.23，红/绿验证）**：

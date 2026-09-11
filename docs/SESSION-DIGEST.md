@@ -89,7 +89,15 @@
 5. 盒子新建/编辑输入框复测（原生 dialog，Electron 焦点最稳）
 6. 若下载仍失败：扩展弹窗「**导出诊断**」（0.2.22 起位于品牌头右上角）→ 把 JSON 发开发者（ql:diag 里有每次下载失败的错误码与归属判定日志）
 
-## 0.2.23 扩展架构清理（用户定稿：不影响功能 · 未提交）
+## 0.2.24 延迟优化（指令下发改长轮询）
+- **实测定位**：用户实感「点击后要等一两秒」的主项 = 扩展每 2s 轮询 `/extension/commands`（量化延迟 0~2s，实测均值 **964ms**、最大 1671ms）；次项 = 点击路径上 `tasklist` 探测 **124ms** 且与入队串行。
+- **改法**：服务端 `GET /extension/commands?wait=N` 长轮询（`threading.Condition` + 入队 `notify_all`；默认 `wait=0` 向后兼容）；扩展 `sync.ts` 新增 `commandStream()` 长轮询流（与原 2s 数据面 tick 解耦）；`launch-chrome` 探测加缓存（正 10s / 负 2s）+ 两个前端点击路径改并行。
+- **结果**：指令下发 **平均 964ms → 20ms（≈50×）**；暖 Chrome 下点击到开页签约 30ms。
+- **回归工具**：`tools/verify_command_latency.py`（A/B 钉契约：删 `notify_all`/`wait` 立刻红）。至此扩展/链路自动化回归共 5 件：boot / isolation / host_logic / command_latency + 项目自带 wheel_page。
+- **护栏（改 `sync.ts` 必读）**：`consuming` 互斥（否则同一 par.open 开两个页签）、`streaming` 幂等（alarm 每次触发都会调 `commandStream()`，无闸会累积并发循环）、流 >25s 未取回时由 tick 兜底、`getJson` 返回 null 时退避 1.5s（防热循环）。
+- **未做（需产品决策）**：Chrome **冷启动**是硬成本（启动 1~3s）——可选 ① `launch-chrome` 带 URL 直开 + 新增「绑定已开页签」指令；② 桌面应用启动/账号中心打开时预热 Chrome。
+
+## 0.2.23 扩展架构清理（用户定稿：不影响功能）
 - **收敛定位**：扩展 = **执行面**（收 `par.list` / `par.open` / `wheel.toggle` + 六平面隔离）；账号数据的增删改一律归桌面端，扩展侧只在 `sync.ts` 里对账。
 - **删了什么**：① 死文件 `ui/parallel/*`（1,290+130+629）与 `ui/send.ts`；② 旧会话模型 `session-manager.ts`/`account-registry.ts`/`navigation.ts` + `session.*` 协议 + `Session` 类型 + `sessionTabBindings`；③ 并行页专用协议 `par.create/update/delete/moveBox/renameBox/deleteBox/probeScheme` + `data.export/import`（SW 死分发 ≈275 行）。净删 **−2,849 行**（18 文件）。
 - **保留（别误删）**：`parallelStore` 的增删改（`sync.ts` 直接调用＝活数据面）；`site-auth.ts` + `site.grants.*` + `par.grantChanged`（0.2.21 定稿保留的授权/停用核心，现为**休眠源码**）；`ql.diag`（诊断）；`wheel.toggle`（桌面通道）。

@@ -154,8 +154,12 @@
         await fetch('/extension/launch-chrome', { method: 'POST' }).catch(() => undefined);
       }
       async function pick(accountId) {
-        await launchChrome();                 // Chrome 未运行则拉起（扩展随之接管）
+        // 两者并行：launch-chrome 内含 tasklist 子进程探测（~200ms，服务端已加 10s 缓存），
+        // 不该挡住指令入队。两条请求都要发完才关窗——关窗会中断在途 fetch，冷启动时
+        // 若 launch 没发出去，Chrome 永不启动、指令会滞留队列。
+        const launching = launchChrome();
         await postCommand('par.open', { accountId });
+        await launching;
         closeWheel();
       }
 

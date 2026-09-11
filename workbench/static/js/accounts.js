@@ -267,10 +267,11 @@ el('wheel-overlay')?.addEventListener('wheel', (e) => {
 /* ———————————————— 指令路径：快捷登录（launch-chrome + par.open） ———————————————— */
 
 async function quickLogin(accountId) {
-  try {
-    await api('/extension/launch-chrome', { method: 'POST' });
-  } catch { /* 壳不可达时仍尝试指令（扩展可能已在轮询） */ }
+  // 并行发起：launch-chrome 内含 tasklist 探测（~200ms，服务端已加缓存），
+  // 不该挡住指令入队——「点击 → 浏览器打开」的延迟里它是纯粹的白等。
+  const launching = api('/extension/launch-chrome', { method: 'POST' }).catch(() => undefined);
   await postExtCommand('par.open', { accountId });
+  await launching;
 }
 
 /* ———————————————— 三态徽标（扩展执行面状态 + 内置会话回落） ———————————————— */
