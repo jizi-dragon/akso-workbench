@@ -23,7 +23,7 @@ export const IDB_STORE_ACCOUNTS = 'accounts';
 
 /** 存在 session 级 chrome.storage.session 中的键 */
 export const SESSION_KEYS = {
-  sessionTabBindings: 'sb:tabBindings',
+  /** 待自动登录凭证前缀（实际键为 `sb:pendingAutoLogins:<tabId>`，见 core/pending-login.ts） */
   pendingAutoLogins: 'sb:pendingAutoLogins',
   /** 并行账号的 tabId ↔ accountId 绑定表 */
   parTabBindings: 'ql:parTabBindings',
@@ -68,10 +68,32 @@ export const WINDOW_CHANNEL = {
 } as const;
 
 /**
- * 需要按账号隔离、并在被写入时上报 background 的共享 localStorage 键。
- * 与目标站约定：__auth_token__ 为 JWT 持久化副本；后两项为身份与设备指纹展示键。
+ * 以下「壳协议键」是 MAIN world 壳（content/shield-main.ts）与 background/ISOLATED 桥之间的
+ * 约定，两端必须逐字一致 → **只在本模块定义一次**，其余文件一律 import，禁止再写字面量。
+ * （2026-09-11 收敛：此前 `__ql_ns_`/`__ql_cookies__`/`__auth_token__`/桥消息源标识
+ *  在 shield-main.ts 与 parallel-session.ts 各自硬编码，共 6 处重复，改一处即静默失配。）
+ *
+ * ⚠ 本模块会被 **MAIN world** 的内容脚本 import：模块顶层只允许放纯数据/纯函数，
+ * 不得出现任何依赖浏览器扩展 API 的顶层求值（例如 `chrome.runtime`），否则会在宿主页
+ * 抛错并破坏隔离壳。参考 `extVersion()`——正是因为这一点才写成函数而非模块级常量。
  */
-export const SHIELD_WATCH_KEYS = ['__auth_token__', '__auth_user__', '__device_fp__'] as const;
+
+/** 站点 JWT 持久化副本的键（袋内同名；token 捕获与显式清除都用它） */
+export const SHIELD_TOKEN_KEY = '__auth_token__';
+/** 身份展示键（用户名）：壳上报写入，后台据此判定「用户主体变更」 */
+export const SHIELD_USER_KEY = '__auth_user__';
+/** 设备指纹展示键：随种子回灌，不参与身份判定 */
+export const SHIELD_DEVICE_FP_KEY = '__device_fp__';
+
+/**
+ * 需要按账号隔离、并在被写入时上报 background 的共享 localStorage 键。
+ * 与目标站约定：`__auth_token__` 为 JWT 持久化副本；后两项为身份与设备指纹展示键。
+ */
+export const SHIELD_WATCH_KEYS: readonly string[] = [
+  SHIELD_TOKEN_KEY,
+  SHIELD_USER_KEY,
+  SHIELD_DEVICE_FP_KEY,
+];
 
 /** 账号命名空间内保存「虚拟 Cookie 袋」（JSON 序列化的 document.cookie 视图）的键 */
 export const SHIELD_COOKIE_BAG_KEY = '__ql_cookies__';

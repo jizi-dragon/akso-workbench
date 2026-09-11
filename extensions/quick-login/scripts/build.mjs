@@ -47,7 +47,8 @@ const extensionOptions = {
     'content/auto-login': path.join(extDir, 'src', 'content', 'auto-login.ts'),
     'content/wheel-overlay': path.join(extDir, 'src', 'content', 'wheel-overlay.ts'),
     'ui/popup/popup': path.join(extDir, 'src', 'ui', 'popup', 'popup.ts'),
-    // ui/parallel 并行管理页已随桌面化退役（0.2.13）：账号数据由桌面账号中心统一管理
+    // ui/parallel 并行管理页已于 0.2.13 随桌面化退役、0.2.22 删除源码
+    //（账号数据由桌面账号中心统一管理并同步至此；桌面端样式是独立的 workbench/static/css/ql-parallel.css）
     'ui/wheel/wheel': path.join(extDir, 'src', 'ui', 'wheel', 'wheel.ts'),
   },
 };

@@ -1,10 +1,21 @@
-import { CONTENT_MESSAGE, LOCAL_KEYS, SESSION_KEYS } from '../../shared/constants';
+import {
+  CONTENT_MESSAGE,
+  LOCAL_KEYS,
+  SESSION_KEYS,
+  SHIELD_COOKIE_BAG_KEY,
+  SHIELD_DEVICE_FP_KEY,
+  SHIELD_TOKEN_KEY,
+  SHIELD_USER_KEY,
+  SHIELD_WATCH_KEYS,
+} from '../../shared/constants';
 import type { Scheme } from './site-auth';
 import type { BridgeDownPayload, BridgeUpPayload, ParallelAccount } from '../../shared/types';
 import { credentials } from './credentials';
-import { setTabTitle } from '../tabs/tab-title';
+import { applyTitle } from '../tabs/tab-title';
+import { setPendingAutoLogin } from './pending-login';
 import { parallelStore } from './parallel-store';
-import { tabRules, parentDomainOf, hostNoPortOf } from './tab-rules';
+import { hostNoPortOf, hostRelated, parentDomainOf, urlHostOf } from './host';
+import { tabRules } from './tab-rules';
 
 /**
  * 「多平面隔离」运行时编排（纯扩展多账号并行，见 docs/BROWSER-ONLY-MULTILOGIN-RESEARCH.md §4）：
@@ -60,8 +71,6 @@ const URL_HINT_TTL_MS = 120_000;
 const URL_HINT_MAX = 400;
 /** 桌面同步端点：其响应属于桌面轮询，不归属任何绑定账号（否则每 2s 刷屏淹没真日志） */
 const DESKTOP_SYNC_HOSTS = new Set(['127.0.0.1:18765', 'localhost:18765']);
-/** MAIN 壳 Cookie 袋的命名空间键名（与 shield-main.ts 的 COOKIE_BAG_KEY 一致） */
-const COOKIE_BAG_KEY = '__ql_cookies__';
 
 /** 诊断埋点：写入 storage.local['ql:diag']（环形 60 条），供 E2E 台架经扩展页读取 */
 async function diag(msg: string): Promise<void> {
@@ -156,53 +165,6 @@ export async function warmEnforcementCache(hosts: string[]): Promise<void> {
 
 /* ---------------- 归属判定辅助 ---------------- */
 
-/** URL → host **带端口**（URL API 已把默认端口规范化掉：http:80 / https:443 不会造成假不匹配）。
- *
- *  ⚠ 站点身份判定一律走本函数，**不要用 `URL.hostname`**：它永远不含端口，会让 hostRelated
- *  的「两端都带端口才比端口」守卫恒不触发（守卫 `up && bp` 中 `up` 恒为空）。
- *  这正是 0.2.21 那次修正只修了一半的原因——守卫写对了，调用方却把端口丢了，
- *  于是"同主机不同端口是不同站点"从未真正生效（含桌面 127.0.0.1:18765 那条）。
- *  口径分工见 hostRelated 注释：身份平面用端口，规则/ Cookie 平面不用。 */
-function urlHostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return '';
-  }
-}
-
-/** URL 的 host 是否与绑定 host 同族（同域 / 子域 / 同父域）。
- *  两端都带端口时必须端口一致——同主机的不同端口是不同的站点
- *  （否则桌面自己的页面 127.0.0.1:18765 会被当成内网站点 127.0.0.1:18996 而串号）。
- *
- *  口径分工（勿混）：
- *   - **身份平面**（归属判定 / 停用名单 / 收编）→ 用本函数，端口参与比较，入参必须来自 urlHostOf；
- *   - **规则覆盖平面**（DNR requestDomains 与 Cookie 作用域）→ 端口天然不参与
- *     （DNR 无法表达端口、Cookie 按 RFC 6265 与端口无关），那类判定请用 hostNoPortOf 比较。 */
-function hostRelated(urlHost: string, bindHost: string): boolean {
-  const uh = hostNoPortOf(urlHost);
-  const bh = hostNoPortOf(bindHost);
-  if (!bh) {
-    return false;
-  }
-  const up = portOf(urlHost);
-  const bp = portOf(bindHost);
-  if (up && bp && up !== bp) {
-    return false;
-  }
-  if (uh === bh || uh.endsWith(`.${bh}`)) {
-    return true;
-  }
-  const parent = parentDomainOf(bh);
-  return parent !== bh && (uh === parent || uh.endsWith(`.${parent}`));
-}
-
-/** 取端口（无端口返回空串） */
-function portOf(host: string): string {
-  const idx = host.indexOf(':');
-  return idx >= 0 ? host.slice(idx + 1) : '';
-}
-
 /** 记录「某 URL 属于某账号」的观察（webRequest 侧调用，供下载重试归属） */
 function noteUrlAccount(url: string, accountId: string): void {
   if (!url) {
@@ -270,22 +232,6 @@ async function persistTokens(): Promise<void> {
 }
 
 /* ---------------- 标题与待登录凭证（复用既有内容脚本协议） ---------------- */
-
-async function applyTitle(tabId: number, tabName: string): Promise<void> {
-  await setTabTitle(tabId, tabName);
-  try {
-    await chrome.tabs.sendMessage(tabId, { type: CONTENT_MESSAGE.setTitle, alias: tabName });
-  } catch {
-    // 内容脚本未就绪：标题已权威写入；后续 onUpdated 会再推
-  }
-}
-
-/** 与 navigation.ts 相同约定的待登录凭证缓存（auto-login 内容脚本按 tabId 拉取） */
-async function setPendingAutoLogin(tabId: number, username: string, password: string): Promise<void> {
-  await chrome.storage.session.set({
-    [`${SESSION_KEYS.pendingAutoLogins}:${tabId}`]: { username, password, at: Date.now() },
-  });
-}
 
 function boundTabsOf(accountId: string): number[] {
   const out: number[] = [];
@@ -462,7 +408,7 @@ async function defectTabToRaw(tabId: number, accountId: string, host: string, re
  * 的请求（3.7.2 修复：真实环境复现「普通用户获得管理员」——普通页签登录态残留 jar，
  * 被下一次任意账号的登录时点快照打包）。回放只需 WAF 会话对等非身份 Cookie。
  */
-const IDENTITY_COOKIE_BLACKLIST = new Set(['__auth_token__', '__auth_user__', '__device_fp__']);
+const IDENTITY_COOKIE_BLACKLIST = new Set<string>(SHIELD_WATCH_KEYS);
 
 /* ---------------- 会话卫生（v3.10.2）：真实 jar 永不留存扩展账号的会话 Cookie ----------------
  * 冲突机制：绑定页签登录时响应 Set-Cookie 不经拦截直接落入真实 jar；此后用户 Ctrl+T 的
@@ -634,7 +580,7 @@ async function evictJarCookie(change: chrome.cookies.CookieChangeInfo): Promise<
       known.add(`${k.name}|${k.value}`);
     }
     if (snap.token) {
-      known.add(`__auth_token__|${snap.token}`);
+      known.add(`${SHIELD_TOKEN_KEY}|${snap.token}`);
     }
   }
   if (!known.has(key)) {
@@ -858,7 +804,7 @@ function noteRequestAttribution(details: { tabId: number; url: string; type?: st
     const binding = bindings.get(details.tabId);
     accountId = binding?.accountId;
     bindHost = binding?.host;
-  } else if (details.tabId <= 0) {
+  } else {
     // v3.10.8 归属优化：无页签请求（Service Worker 内 fetch / 下载管理器重试 / 预取）
     // 此前直接丢弃——下载票据恰好经此通道获得时即「下载被拒」。仅当当前恰好只有
     // 一个已绑定账号时才可唯一归属；多账号并存仍无法判定，维持丢弃。
@@ -930,7 +876,7 @@ function noteRequestAttribution(details: { tabId: number; url: string; type?: st
 async function mergeBagIntoSnapshot(accountId: string, host: string, bag: Record<string, string>): Promise<void> {
   const updates: { name: string; value: string }[] = [];
   for (const [name, value] of Object.entries(bag)) {
-    if (name === COOKIE_BAG_KEY || IDENTITY_COOKIE_BLACKLIST.has(name) || !value) {
+    if (name === SHIELD_COOKIE_BAG_KEY || IDENTITY_COOKIE_BLACKLIST.has(name) || !value) {
       continue;
     }
     updates.push({ name, value });
@@ -1080,7 +1026,7 @@ export const parallelSession = {
       // 窗口可能已被关闭
     }
     void diag(`open(${accountId}) 完成 tabId=${tabId}`);
-    return { tabId, reused: tabId !== null && reusedFlag };
+    return { tabId, reused: reusedFlag };
   },
 
   /** 解绑单个标签页（不动账号数据）；最后一个绑定页签关闭 = 该账号登录态终结（v3.12.0） */
@@ -1131,20 +1077,6 @@ export const parallelSession = {
     void diag(`adopt-candidate tab=${tabId} ← opener=${openerId} 账号=${account.id}（候选，待 URL 确认）`);
   },
 
-  /** 删除账号：关闭其全部绑定标签页、摘除规则、清 token */
-  async deleteAccount(accountId: string): Promise<void> {
-    const tabs = boundTabsOf(accountId);
-    for (const tabId of tabs) {
-      await this.unbindTab(tabId);
-    }
-    if (tabs.length) {
-      await chrome.tabs.remove(tabs).catch(() => undefined);
-    }
-    tokens.delete(accountId);
-    await persistTokens();
-    await parallelStore.delete(accountId);
-  },
-
   /** ISOLATED 桥上行消息入口 */
   async handleBridge(payload: BridgeUpPayload, tabId: number | undefined): Promise<BridgeDownPayload | undefined> {
     if (payload.op === 'hello') {
@@ -1170,7 +1102,7 @@ export const parallelSession = {
     }
     if (payload.op === 'storageWrite') {
       const snap = tokens.get(binding.accountId) ?? {};
-      if (payload.key === '__auth_token__') {
+      if (payload.key === SHIELD_TOKEN_KEY) {
         if (payload.value === null) {
           // 页面内登出：清 token + 摘规则
           delete snap.token;
@@ -1195,7 +1127,7 @@ export const parallelSession = {
           await captureToken(binding.accountId, binding.host, payload.value);
           // 快照触发已内聚到 captureToken（首捕可能来自 authHeader 嗅探通道）
         }
-      } else if (payload.key === '__auth_user__') {
+      } else if (payload.key === SHIELD_USER_KEY) {
         if (
           payload.value !== null &&
           snap.authUser &&
@@ -1214,7 +1146,7 @@ export const parallelSession = {
         snap.authUser = payload.value ?? undefined;
         tokens.set(binding.accountId, snap);
         await persistTokens();
-      } else if (payload.key === '__device_fp__') {
+      } else if (payload.key === SHIELD_DEVICE_FP_KEY) {
         snap.deviceFp = payload.value ?? undefined;
         tokens.set(binding.accountId, snap);
         await persistTokens();
@@ -1255,16 +1187,6 @@ export const parallelSession = {
     // 0.2.21 起该字段语义 = 用户手动停用名单（manifest 已声明全站权限，授权不再是变量）
     const enforcementOff = host ? enforcement.get(host) === false : true;
     return { tabIds: tabs, hasToken: Boolean(tokens.get(account.id)?.token), enforcementOff };
-  },
-
-  /** 页签是否已绑定账号（0.2.21 内容脚本授权横幅用：非绑定页签不打扰用户） */
-  isBoundTab(tabId: number | undefined): boolean {
-    return tabId !== undefined && bindings.has(tabId);
-  },
-
-  /** 页签绑定 host（0.2.21 授权消息用：以 SW 侧绑定为准，不信任页面自称的 host） */
-  hostOfTab(tabId: number | undefined): string | undefined {
-    return tabId === undefined ? undefined : bindings.get(tabId)?.host;
   },
 
   /** 授权变更后重装全部绑定规则（0.2.16 弹窗授权入口——新授权立即生效，不等下一次事件） */
@@ -1335,12 +1257,6 @@ export const parallelSession = {
       }
     }
     return null;
-  },
-
-  /** 账号改名后刷新所有绑定标签页标题 */
-  async refreshTitle(accountId: string): Promise<void> {
-    const account = await parallelStore.get(accountId);
-    await Promise.all(boundTabsOf(accountId).map((t) => applyTitle(t, account.tabName)));
   },
 
   /** 诊断用内部状态快照（经 ql.diag 消息暴露给台架） */
@@ -1519,17 +1435,17 @@ function buildBindPayload(accountId: string, tabId?: number): BridgeDownPayload 
   const snap = tokens.get(accountId);
   const seed: Record<string, string> = {};
   if (snap?.token) {
-    seed['__auth_token__'] = snap.token;
+    seed[SHIELD_TOKEN_KEY] = snap.token;
   } else {
     // v3.12.3：无快照 token = 登录前窗口——**显式清空命名空间残留的上一会话 token**。
     // 否则平台登录页读到残留 token 自动续用（authHeader 嗅探捕为「首捕」），用户
     // 再次登录签发的新 token（AuthCode 已变）会被身份护栏误判为异账号而拦截，
     // 快照卡死旧 token → API 全 401 → 反复登录失败（用户实测链路实锤）。
-    seed['__auth_token__'] = '';
+    seed[SHIELD_TOKEN_KEY] = '';
   }
-  seed['__auth_user__'] = snap?.authUser ?? '';
+  seed[SHIELD_USER_KEY] = snap?.authUser ?? '';
   if (snap?.deviceFp) {
-    seed['__device_fp__'] = snap.deviceFp;
+    seed[SHIELD_DEVICE_FP_KEY] = snap.deviceFp;
   }
   // 账号 Cookie 快照的权威视图（非身份键；v3.12.1）：绑定时壳把袋整体同步到该视图。
   // 无 token（登录前窗口）时为空对象 = 清空上一会话残留的陈旧袋值——

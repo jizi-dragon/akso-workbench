@@ -1,20 +1,3 @@
-export interface Session {
-  id: string;
-  /** 会话展示名 */
-  name: string;
-  /** 账号名/用户名 —— 用作标签页标题 */
-  accountAlias: string;
-  color: string;
-  /** 绑定的站点 host，例如 example.com */
-  siteHost: string;
-  /** 站点协议（v3.10.9）：缺省 = https（兼容存量）；打开 URL 与 Cookie 查询跟随 */
-  scheme?: 'http' | 'https';
-  /** 加密存储的账号密码（可选） */
-  credentials?: EncryptedCredentials;
-  createdAt: number;
-  updatedAt: number;
-}
-
 /** 加密后的账号密码 */
 export interface EncryptedCredentials {
   /** 加密后的用户名（Base64） */

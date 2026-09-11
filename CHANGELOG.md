@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **quick-login 架构清理（0.2.23，用户定稿：不影响功能）**：以「可达性分析 + 协议面审计」为依据清理死代码、合并重复实现，扩展收敛为**执行面**（收 `par.list` / `par.open` / `wheel.toggle` + 六平面隔离）。
+  - **死文件 2,060 行**：`ui/parallel/*`（并行管理页 0.2.13 已退役：1,290 + 130 + 629 行）与 `ui/send.ts`。此前 `copyUiStatics` 仍把该页 html/css 复制进 dist，现 `dist/ui` 只剩 popup / wheel / theme.css。
+  - **旧会话模型退役（≈260 行）**：删 `session-manager.ts`、`account-registry.ts`、`navigation.ts`（其唯一活口「页签关闭清凭证」迁入新建 `core/pending-login.ts`）、`Session` 类型、`SESSION_KEYS.sessionTabBindings`、`session.*` 协议与 SW 分支、`onErrorOccurred` 里的会话兜底。依据：`session.*` 在扩展内外**均无发送者**（桌面端只发 `par.open`/`wheel.toggle`），其绑定表恒空故兜底恒为 no-op。
+  - **并行页专用协议（SW 死分发 ≈275 行，占该函数 55%）**：删 `par.create/update/delete/moveBox/renameBox/deleteBox/probeScheme`、`data.export/data.import`、`DataBackup`。它们不只是「没人调」——`sync.ts` 每 2s 用桌面快照对账并删除快照外账号，故本地增删改会在 2s 内被撤销，属**语义冲突**而非休眠能力。⚠ `parallelStore` 的增删改**保留**（`sync.ts` 直接调用，是活的数据面）。
+  - **按 0.2.21 定稿保留**：`site-auth.ts` 与 `site.grants.*`（授权核心）、`par.grantChanged`（规则重装钩子）、`ql.diag`（台架/现场诊断）、`wheel.toggle`（桌面通道）。如实说明：清掉并行页协议后 `site-auth` 已无运行时入口，成为「休眠源码」（仅 `Scheme` 类型被引用）。
+  - **协议键收敛为单一真源**：`__ql_ns_` / `__ql_cookies__` / `__auth_token__` / `__auth_user__` / `__device_fp__` / `QL_PAGE_TO_BRIDGE` / `QL_BRIDGE_TO_PAGE` 此前在 `shield-main.ts` 与 `parallel-session.ts` 各自硬编码（17 处），现全部 import `shared/constants.ts`（新增 `SHIELD_USER_KEY` / `SHIELD_DEVICE_FP_KEY`）；并在该模块注明「会被 MAIN world import，顶层禁止任何扩展 API 求值」。
+  - **合并重复实现**：`applyTitle`（navigation 与 parallel-session 逐字重复）→ `background/tabs/tab-title.ts`；待登录凭证「键格式 + 读写」两份 → `background/core/pending-login.ts`；host/端口五函数（分居 tab-rules 与 parallel-session）→ 新建 `background/core/host.ts`；`sync.ts` 的盒子键字面量 → `LOCAL_KEYS`。
+  - **顺带修掉潜伏 bug**：`parentDomainOf` 带端口入参时两个 `return` 仍返回**带端口的原 host**（契约要求 DNR 域不含端口；此前调用方都预剥端口故未暴露）。
+  - 死代码：`parallelSession.isBoundTab` / `hostOfTab` / `deleteAccount` / `refreshTitle`、恒真分支 `details.tabId <= 0`、恒真表达式 `tabId !== null && reusedFlag`。
+  - **验证**：typecheck 0 错误；build OK；隔离 profile 启动冒烟 7/7；`host.ts` 行为断言 23/23（端口口径三平面分工逐条锁定）；协议键复查——全仓库仅 `constants.ts` 保留定义，两个 bundle 内仍各出现 1 次（跨进程约定未变）。
+  - **未做（需单独决策/回归）**：审查另发现 2 个**真功能缺陷**（`shield-main` 的 `Storage.clear` 补丁会让 `sessionStorage.clear()` 清空虚拟 Cookie 袋 → token 丢失；`auto-login.fillPasswordInIframes` 首个可访问 iframe 无密码框即 early-return → 多 iframe 页面自动填表静默失效），以及 bridge 上行入口缺 `.catch`、`title-hook` 观察器过宽等加固项——均属**行为变更**，不纳入本次「不影响功能」的清理，另行排期。
+
 ### Added
 
 - **数据层决策与维护工具（0.2.22）**：实测 `workbench.db` 曾达 **82.02 MB**，其中 **74.03 MB 是 `doc_chunks.embedding`**——知识库功能下线后遗留的向量数据，运行时代码**零处读取**（全仓库仅 `db.py` 的迁移定义与 `storage.py` 的一句注释提及这两张表）；空闲页仅 0.25 MB，说明不是碎片而是「仍然存活但已无人使用」的行。真实业务数据合计不到 20 KB（4 账号 / 3 环境 / 5 条任务台账 / 11 项设置），`job_logs` 建了索引却零处写入（日志走磁盘 `log_path`，不入库）。

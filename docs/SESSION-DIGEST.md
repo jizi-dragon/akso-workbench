@@ -89,6 +89,15 @@
 5. 盒子新建/编辑输入框复测（原生 dialog，Electron 焦点最稳）
 6. 若下载仍失败：扩展弹窗「**导出诊断**」（0.2.22 起位于品牌头右上角）→ 把 JSON 发开发者（ql:diag 里有每次下载失败的错误码与归属判定日志）
 
+## 0.2.23 扩展架构清理（用户定稿：不影响功能 · 未提交）
+- **收敛定位**：扩展 = **执行面**（收 `par.list` / `par.open` / `wheel.toggle` + 六平面隔离）；账号数据的增删改一律归桌面端，扩展侧只在 `sync.ts` 里对账。
+- **删了什么**：① 死文件 `ui/parallel/*`（1,290+130+629）与 `ui/send.ts`；② 旧会话模型 `session-manager.ts`/`account-registry.ts`/`navigation.ts` + `session.*` 协议 + `Session` 类型 + `sessionTabBindings`；③ 并行页专用协议 `par.create/update/delete/moveBox/renameBox/deleteBox/probeScheme` + `data.export/import`（SW 死分发 ≈275 行）。净删 **−2,849 行**（18 文件）。
+- **保留（别误删）**：`parallelStore` 的增删改（`sync.ts` 直接调用＝活数据面）；`site-auth.ts` + `site.grants.*` + `par.grantChanged`（0.2.21 定稿保留的授权/停用核心，现为**休眠源码**）；`ql.diag`（诊断）；`wheel.toggle`（桌面通道）。
+- **单一真源**：协议键（`__ql_ns_`/`__ql_cookies__`/`__auth_token__`/`__auth_user__`/`__device_fp__`/`QL_PAGE_TO_BRIDGE`/`QL_BRIDGE_TO_PAGE`）只在 `shared/constants.ts` 定义；host/端口五函数收归 `background/core/host.ts`（口径分工注释随迁）；`applyTitle` → `tabs/tab-title.ts`；待登录凭证 → `core/pending-login.ts`。
+- **⚠ 改扩展时的硬约束**：`shared/constants.ts` 会被 **MAIN world**（`content/shield-main.ts`）import → 顶层**禁止**任何扩展 API 求值（`extVersion()` 因此写成函数）。
+- **验证基线**：`npm run typecheck` + `npm run build` + 启动冒烟 7/7 + `host.ts` 断言 23/23（`%TEMP%\ql_boot_smoke.py`、`%TEMP%\ql_host_test.mjs`，建议提升进 `tools/`）。
+- **待排期（真功能缺陷，属行为变更，本次故意未动）**：① `shield-main` 的 `Storage.prototype.clear` 补丁未区分 storage 实例 → 页面调 `sessionStorage.clear()` 会**清空虚拟 Cookie 袋（含 token）**；② `auto-login.fillPasswordInIframes` 首个可访问 iframe 无密码框即 early-return → **多 iframe 页面自动填表静默失效**；③ bridge 上行入口缺 `.catch`（storage 故障时 unhandled rejection + `sendResponse` 永不调用）；④ `title-hook` 观察器挂 `documentElement` 全树（性能税）；⑤ `pendingAdoptions` 的 TTL 是惰性的（注释承诺的"超时自动放弃"永不发生，加定时器＝行为变更）。
+
 ## 0.2.22 撤销与改版（Page Monitor 下线 · 轮盘页签名 · 弹窗 · 版本真源 · 端口口径）
 - **Page Monitor 整块撤销（用户定稿）**：删除 `background/core/page-monitor.ts`、`content/pages-overlay.ts`、`docs/FEASIBILITY-RECENT-PAGES.md`；摘除 manifest `quick-pages`(Alt+W) 命令、桥上行 `pageNames`、`shield-main` 名称嗅探、`pages.recent`/`pages.jump`/`RecentPageEntry`、`ql:recentPages`/`RECENT_PAGES_MAX`、SW 的对应消息与命令分支及 `togglePagesOverlay`、`build.mjs` 入口。
   - 页签标题**仍然是页签名**（`tabs/tab-title.ts` + `content/title-hook.ts` 未动）——撤销的是「用页面信息改写标题」，不是「标题显示页签名」。

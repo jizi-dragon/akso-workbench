@@ -1,11 +1,13 @@
 import { IDB_NAME, IDB_STORE_ACCOUNTS, IDB_STORE_SESSIONS, IDB_VERSION } from '../shared/constants';
-import type { ParallelAccount, Session } from '../shared/types';
+import type { ParallelAccount } from '../shared/types';
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(IDB_NAME, IDB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      // 旧会话模型的 store：**保留建表以维持 IDB schema 稳定**——删它必须抬 IDB_VERSION
+      // 触发 onupgradeneeded 升级（= 对存量安装的存储层行为变更），而该 store 已无人读写。
       if (!db.objectStoreNames.contains(IDB_STORE_SESSIONS)) {
         db.createObjectStore(IDB_STORE_SESSIONS, { keyPath: 'id' });
       }
@@ -32,20 +34,6 @@ function tx<T>(store: string, mode: IDBTransactionMode, run: (s: IDBObjectStore)
 }
 
 export const db = {
-  sessions: {
-    async list(): Promise<Session[]> {
-      return tx<Session[]>(IDB_STORE_SESSIONS, 'readonly', (s) => s.getAll() as IDBRequest<Session[]>);
-    },
-    async get(id: string): Promise<Session | undefined> {
-      return tx<Session | undefined>(IDB_STORE_SESSIONS, 'readonly', (s) => s.get(id) as IDBRequest<Session | undefined>);
-    },
-    async put(session: Session): Promise<void> {
-      await tx(IDB_STORE_SESSIONS, 'readwrite', (s) => s.put(session));
-    },
-    async delete(id: string): Promise<void> {
-      await tx(IDB_STORE_SESSIONS, 'readwrite', (s) => s.delete(id));
-    },
-  },
   accounts: {
     async list(): Promise<ParallelAccount[]> {
       return tx<ParallelAccount[]>(IDB_STORE_ACCOUNTS, 'readonly', (s) => s.getAll() as IDBRequest<ParallelAccount[]>);

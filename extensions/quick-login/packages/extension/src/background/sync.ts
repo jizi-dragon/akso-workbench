@@ -11,6 +11,7 @@
  * 扩展端仅在内存解密为明文交给既有加密存储，不做任何落盘明文。
  */
 
+import { LOCAL_KEYS } from '../shared/constants';
 import { credentials } from './core/credentials';
 import { parallelSession } from './core/parallel-session';
 import { parallelStore } from './core/parallel-store';
@@ -159,12 +160,12 @@ async function applySnapshot(snap: any): Promise<void> {
   }
   await saveMap(map);
 
-  // 盒子清单 / 默认盒名 / 禁用盒（以桌面为准）
+  // 盒子清单 / 默认盒名 / 禁用盒（以桌面为准）——键一律走 LOCAL_KEYS，勿写字面量
   const boxes = snap.boxes ?? {};
   const patch: Record<string, unknown> = {};
-  if (Array.isArray(boxes.remembered)) patch['ql:boxes'] = boxes.remembered;
-  if (boxes.defaultName != null) patch['ql:defaultBox'] = boxes.defaultName;
-  if (Array.isArray(boxes.disabled)) patch['ql:disabledBoxes'] = boxes.disabled;
+  if (Array.isArray(boxes.remembered)) patch[LOCAL_KEYS.boxList] = boxes.remembered;
+  if (boxes.defaultName != null) patch[LOCAL_KEYS.defaultBox] = boxes.defaultName;
+  if (Array.isArray(boxes.disabled)) patch[LOCAL_KEYS.disabledBoxes] = boxes.disabled;
   if (Object.keys(patch).length) await chrome.storage.local.set(patch);
 
   await chrome.storage.local.set({ [SNAPSHOT_ID_KEY]: snap.snapshotId });

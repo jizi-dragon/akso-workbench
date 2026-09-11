@@ -15,6 +15,8 @@
  * 页面存储层继续由 MAIN 壳虚拟化；目标站为无状态 JWT 设计（DESIGN.md §3）。
  */
 
+import { hostNoPortOf, parentDomainOf } from './host';
+
 /** AUTH 规则 id 区间 */
 const AUTH_BASE = 100_000;
 /** COOKIE 规则 id 区间 */
@@ -61,25 +63,6 @@ const ALL_MATCH_TYPES: chrome.declarativeNetRequest.ResourceType[] = [
 
 function asRule(raw: unknown): chrome.declarativeNetRequest.Rule {
   return raw as unknown as chrome.declarativeNetRequest.Rule;
-}
-
-/** 父域（example.com）：DNR requestDomains 语义为「该域及其全部子域」，覆盖网关/接口子域。
- *  IP 字面量（全数字段，内网站点）没有父域概念，返回原 host（在 requestDomains 里重复无害），
- *  避免把 192.0.2.10 拼出 '0.105' 这类无意义域。
- *  入参先剥端口（幂等：调用方已剥也无害）——带端口的内网 host 会让 IP 判定失配，
- *  并把 "192.0.2.10:8080" 拼出 "0.105:8080" 这类无意义域。 */
-export function parentDomainOf(host: string): string {
-  const parts = hostNoPortOf(host).split('.');
-  if (parts.length > 2 && parts.every((p) => /^\d+$/.test(p))) {
-    return host;
-  }
-  return parts.length > 2 ? parts.slice(-2).join('.') : host;
-}
-
-/** DNR requestDomains 不含端口；siteHost 带 ":port" 时剥离（v3.10.6 加固） */
-export function hostNoPortOf(host: string): string {
-  const idx = host.indexOf(':');
-  return idx >= 0 ? host.slice(0, idx) : host;
 }
 
 function buildAuthRule(ruleId: number, host: string, tabId: number, token: string): chrome.declarativeNetRequest.Rule {

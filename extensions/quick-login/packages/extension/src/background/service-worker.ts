@@ -1,10 +1,7 @@
 import type { RuntimeRequest, RuntimeResponse, Result } from '../shared/messages';
 import type { BridgeUpPayload } from '../shared/types';
-import { CONTENT_MESSAGE, extVersion, LOCAL_KEYS } from '../shared/constants';
-import { accountRegistry } from './core/account-registry';
-import { credentials } from './core/credentials';
-import { navigation, registerNavigationHandlers } from './core/navigation';
-import { siteAuth, probeScheme } from './core/site-auth';
+import { CONTENT_MESSAGE, extVersion } from '../shared/constants';
+import { getPendingAutoLogin, registerPendingLoginHandlers } from './core/pending-login';
 import {
   forensics,
   handleOpenError,
@@ -15,7 +12,6 @@ import {
   warmEnforcementCache,
 } from './core/parallel-session';
 import { parallelStore } from './core/parallel-store';
-import { sessionManager } from './core/session-manager';
 import { tabRules } from './core/tab-rules';
 
 async function diag(msg: string): Promise<void> {
@@ -47,71 +43,6 @@ async function tryRun<T>(fn: () => Promise<T>): Promise<Result<T>> {
 
 async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
   switch (req.kind) {
-    case 'session.list':
-      return { kind: 'session.list', result: await tryRun(() => sessionManager.list()) };
-    case 'session.update': {
-      const r = await tryRun(() => sessionManager.update(req.id, req.patch));
-      if (r.ok) {
-        accountRegistry.invalidate(req.id);
-      }
-      return { kind: 'session.update', result: r };
-    }
-    case 'session.delete': {
-      const r = await tryRun(() => sessionManager.delete(req.id));
-      accountRegistry.invalidate(req.id);
-      return { kind: 'session.delete', result: r };
-    }
-    case 'session.open': {
-      const r = await tryRun(async () => {
-        const session = await sessionManager.getOrThrow(req.id);
-        let creds: { username: string; password: string } | undefined;
-        if (session.credentials) {
-          creds = await credentials.decryptCredentials(session.credentials);
-        }
-        const { tabId } = await navigation.switchAccount(session, creds);
-        return { tabId };
-      });
-      return { kind: 'session.open', result: r };
-    }
-    case 'session.openOrCreate': {
-      const r = await tryRun(async () => {
-        const all = await sessionManager.list();
-        const byHost = all.filter((s) => s.siteHost === req.host);
-
-        let session: Awaited<ReturnType<typeof sessionManager.get>>;
-        if (req.accountAlias) {
-          // 显式指定账号：精确匹配该账号（标签标题）的既有会话，否则视为新账号
-          session = byHost.find((s) => (s.accountAlias || s.name) === req.accountAlias);
-        } else {
-          // 快捷打开（未指定账号）：复用该 host 最近更新的会话
-          session = byHost.sort((a, b) => b.updatedAt - a.updatedAt)[0];
-        }
-
-        if (!session) {
-          session = await sessionManager.create({
-            name: req.accountAlias || req.username || req.host,
-            accountAlias: req.accountAlias || req.username || req.host,
-            siteHost: req.host,
-          });
-        }
-
-        // 本次带入了明文账号密码：加密持久化，并作为本次自动登录凭证
-        let creds: { username: string; password: string } | undefined;
-        if (req.username && req.password) {
-          await sessionManager.updateCredentials(
-            session.id,
-            await credentials.encryptCredentials(req.username, req.password),
-          );
-          creds = { username: req.username, password: req.password };
-        } else if (session.credentials) {
-          creds = await credentials.decryptCredentials(session.credentials);
-        }
-
-        const { tabId, reused } = await navigation.switchAccount(session, creds);
-        return { tabId, sessionId: session.id, reused };
-      });
-      return { kind: 'session.openOrCreate', result: r };
-    }
     case 'site.grants.list':
       // v2.4：旧站点清单入口已移除；保留空实现避免旧调用报 unhandled
       return { kind: 'site.grants.list', result: { ok: true, data: [] } };
@@ -197,51 +128,6 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
       });
       return { kind: 'par.list', result: r };
     }
-    case 'par.create': {
-      const r = await tryRun(async () => {
-        const account = await parallelStore.create({
-          siteHost: req.siteHost,
-          tabName: req.tabName,
-          username: req.username,
-          password: req.password,
-          box: req.box,
-          scheme: req.scheme,
-        });
-        if (req.open) {
-          await parallelSession.open(account.id, false);
-        }
-        return account;
-      });
-      return { kind: 'par.create', result: r };
-    }
-    case 'par.probeScheme': {
-      const r = await tryRun(() => probeScheme(req.host));
-      return { kind: 'par.probeScheme', result: r };
-    }
-    case 'par.moveBox': {
-      const r = await tryRun(() => parallelStore.updateBox(req.id, req.box));
-      return { kind: 'par.moveBox', result: r };
-    }
-    case 'par.renameBox': {
-      const r = await tryRun(async () => ({ moved: await parallelStore.renameBox(req.from, req.to) }));
-      return { kind: 'par.renameBox', result: r };
-    }
-    case 'par.deleteBox': {
-      const r = await tryRun(async () => ({ moved: await parallelStore.clearBox(req.name) }));
-      return { kind: 'par.deleteBox', result: r };
-    }
-    case 'par.update': {
-      const r = await tryRun(async () => {
-        const account = await parallelStore.updateTabName(req.id, req.patch.tabName ?? '');
-        await parallelSession.refreshTitle(req.id);
-        return account;
-      });
-      return { kind: 'par.update', result: r };
-    }
-    case 'par.delete': {
-      const r = await tryRun(() => parallelSession.deleteAccount(req.id));
-      return { kind: 'par.delete', result: r };
-    }
     case 'par.open': {
       const r = await tryRun(() => parallelSession.open(req.id, req.forceNewTab === true));
       return { kind: 'par.open', result: r };
@@ -254,98 +140,6 @@ async function dispatch(req: RuntimeRequest): Promise<RuntimeResponse> {
         return { opened: true };
       });
       return { kind: 'wheel.toggle', result: r };
-    }
-    case 'data.export': {
-      const r = await tryRun(async () => {
-        const [accounts, grants, stored] = await Promise.all([
-          parallelStore.list(),
-          siteAuth.list(),
-          chrome.storage.local.get([LOCAL_KEYS.boxList, LOCAL_KEYS.defaultBox, LOCAL_KEYS.disabledBoxes]),
-        ]);
-        return {
-          format: 'quicklogin-backup' as const,
-          version: 1 as const,
-          exportedAt: new Date().toISOString(),
-          cryptoSeed: await credentials.getKeySeed(),
-          sites: grants.map((g) => g.host),
-          boxes: {
-            default: (stored[LOCAL_KEYS.defaultBox] as string | undefined)?.trim() || undefined,
-            remembered: (stored[LOCAL_KEYS.boxList] as string[] | undefined) ?? [],
-            disabled: (stored[LOCAL_KEYS.disabledBoxes] as string[] | undefined) ?? [],
-          },
-          accounts: accounts.map((a) => ({
-            siteHost: a.siteHost,
-            tabName: a.tabName,
-            box: a.box,
-            credentials: a.credentials ?? null,
-          })),
-        };
-      });
-      return { kind: 'data.export', result: r };
-    }
-    case 'data.import': {
-      const r = await tryRun(async () => {
-        const data = req.data;
-        if (data?.format !== 'quicklogin-backup' || data.version !== 1) {
-          throw new Error('不是有效的 QuickLogin 备份文件（format/version 不符）');
-        }
-        if (!data.cryptoSeed || !Array.isArray(data.accounts)) {
-          throw new Error('备份缺少加密种子或账号清单');
-        }
-        const fileKey = await credentials.deriveKey(data.cryptoSeed);
-        let created = 0;
-        let skipped = 0;
-        for (const item of data.accounts) {
-          if (!item?.siteHost || !item.credentials) {
-            skipped++;
-            continue;
-          }
-          let username: string;
-          let password: string;
-          try {
-            username = await credentials.decryptValue(item.credentials.encryptedUsername, item.credentials.iv, fileKey);
-            password = await credentials.decryptValue(
-              item.credentials.encryptedPassword,
-              item.credentials.ivPassword,
-              fileKey,
-            );
-          } catch {
-            skipped++; // 凭证无法用文件种子解开（文件损坏/被篡改）
-            continue;
-          }
-          const all = await parallelStore.list();
-          if (all.some((x) => x.siteHost === item.siteHost && x.username === username)) {
-            skipped++; // 同站同名账号已存在
-            continue;
-          }
-          await parallelStore.create({
-            siteHost: item.siteHost,
-            tabName: item.tabName || username,
-            username,
-            password,
-            box: item.box || undefined,
-          });
-          created++;
-        }
-        // 盒子配置：恢复备份语义 = 以文件为准覆盖（记住盒/默认盒名/禁用名单）
-        if (data.boxes) {
-          const patch: Record<string, unknown> = {};
-          if (Array.isArray(data.boxes.remembered)) {
-            patch[LOCAL_KEYS.boxList] = data.boxes.remembered;
-          }
-          if (data.boxes.default?.trim()) {
-            patch[LOCAL_KEYS.defaultBox] = data.boxes.default.trim();
-          }
-          if (Array.isArray(data.boxes.disabled)) {
-            patch[LOCAL_KEYS.disabledBoxes] = data.boxes.disabled;
-          }
-          if (Object.keys(patch).length) {
-            await chrome.storage.local.set(patch);
-          }
-        }
-        return { created, skipped, hosts: Array.isArray(data.sites) ? data.sites : [] };
-      });
-      return { kind: 'data.import', result: r };
     }
   }
 }
@@ -375,7 +169,7 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
       sendResponse(null);
       return true;
     }
-    void navigation.getPendingAutoLogin(tabId).then((creds) => sendResponse(creds));
+    void getPendingAutoLogin(tabId).then((creds) => sendResponse(creds));
     return true;
   }
 
@@ -425,20 +219,17 @@ async function flashBadge(text: string): Promise<void> {
   }
 }
 
-registerNavigationHandlers();
+registerPendingLoginHandlers();
 registerParallelHandlers();
 
-// 打开失败自学习（v3.10.9）：绑定页签加载失败时按错误类型翻转协议并原页签重开。
-// 优先并行账号（par.* 主流程），未命中再试旧会话模型（session.* 轮盘路径）。
+// 打开失败自学习（v3.10.9）：绑定页签加载失败时按错误类型翻转协议并原页签重开（并行账号主流程）。
+// 旧会话模型（session.*）的兜底路径已随该模型退役（0.2.22）——其绑定表恒空，兜底恒为 no-op。
 chrome.webNavigation.onErrorOccurred.addListener((details) => {
   if (details.frameId !== 0 || !isSchemeFlipError(details.error)) {
     return; // 仅主 frame 的 scheme 类导航失败才触发协议翻转
   }
   void (async () => {
-    if (await handleOpenError(details.tabId, details.error)) {
-      return;
-    }
-    await navigation.handleSessionOpenError(details.tabId);
+    await handleOpenError(details.tabId, details.error);
   })();
 });
 

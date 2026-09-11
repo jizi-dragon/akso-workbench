@@ -18,6 +18,14 @@
  *    是四象限权限串号的直接载体（详见 installIdbShield）。
  */
 
+import {
+  SHIELD_COOKIE_BAG_KEY,
+  SHIELD_TOKEN_KEY,
+  SHIELD_WATCH_KEYS,
+  WINDOW_CHANNEL,
+  shieldNsPrefix,
+} from '../shared/constants';
+
 (() => {
   const win = window as typeof window & { __QL_SHIELD_INSTALLED__?: boolean };
   if (win.__QL_SHIELD_INSTALLED__) {
@@ -25,13 +33,13 @@
   }
   win.__QL_SHIELD_INSTALLED__ = true;
 
-  const WATCH_KEYS = ['__auth_token__', '__auth_user__', '__device_fp__'];
-  const TOKEN_KEY = '__auth_token__';
-  const NS_TAG = '__ql_ns_';
-  const COOKIE_BAG_KEY = '__ql_cookies__';
+  // 协议键唯一真源 = shared/constants（本地别名仅为就近可读；**勿再写字面量**）
+  const WATCH_KEYS = SHIELD_WATCH_KEYS;
+  const TOKEN_KEY = SHIELD_TOKEN_KEY;
+  const COOKIE_BAG_KEY = SHIELD_COOKIE_BAG_KEY;
   const BOOT_GUARD_KEY = '__ql_boot_guard';
-  const SRC_PAGE_TO_BRIDGE = 'QL_PAGE_TO_BRIDGE';
-  const SRC_BRIDGE_TO_PAGE = 'QL_BRIDGE_TO_PAGE';
+  const SRC_PAGE_TO_BRIDGE = WINDOW_CHANNEL.pageToBridge;
+  const SRC_BRIDGE_TO_PAGE = WINDOW_CHANNEL.bridgeToPage;
 
   type Mode = 'passthrough' | 'active';
   let mode: Mode = 'passthrough';
@@ -651,7 +659,7 @@
       return;
     }
     mode = 'active';
-    ns = `${NS_TAG}${accountId}__`;
+    ns = shieldNsPrefix(accountId);
     installStoragePatch();
     installSwAndCacheShield();
     installBroadcastShield();
