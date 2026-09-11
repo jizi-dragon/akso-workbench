@@ -7,6 +7,10 @@
 
 ### Fixed
 
+- **安装引导提示条每次都弹（0.3.2，用户实测反馈）**：「未检测到浏览器扩展」横幅的判据此前放在**浏览器内存**里（`extEverConnected`）→ 刷新页面/重启应用即复位，于是每次打开账号中心都会重新弹出。改为**按安装实例落库的一次性闩锁**：`/extension/state` 收到执行面上报（或 `/extension/health` 判为已连接）的**第一次**即把 `ext_connected_once=1` 写入 settings 表，`/extension/health` 随之返回 `everConnected`；前端只在 `!connected && !everConnected` 时显示横幅。**语义（用户定稿）：以"能否与浏览器连接成功一次"为依据——连上过一次即永久静默**（之后即便关掉 Chrome 也不提示），单纯的 `connected=false` 不再触发提示。找回入口仍在托盘「安装浏览器扩展…」。
+  - 实测（隔离实例 + 跨进程重启）：全新装机 `everConnected=false`（会提示）→ 首次上报后 `true`（立即静默）→ **重启服务进程后仍为 `true`**（核心回归点）→ 闩锁确实落在 settings 表。
+- **`tools/build.ps1` 新增 `-Bump build|push|none`**：此前版本演进只有 MINOR+1 一条路，补丁修复也会被抬成 MINOR 版本（本次 0.3.2 即为 `-Bump push` 的补丁发布）。
+
 - **打包链路的两个静默断点（0.3.1 首次真机构建暴露）**：
   - **`workbench/server_entry.py` 丢失** → `server.spec` 仍指向它，PyInstaller 直接失败（`script … not found`），而开发态走 venv + uvicorn 完全不受影响，故长期无人察觉。已重建：**绝对导入**（PyInstaller 把入口当顶层脚本执行，相对导入必 ImportError）、接受壳的 `--server` 调用约定、**不打开浏览器**（打包态 UI 由 Electron 主窗承载）、冻结态把启动信息落 `DATA_DIR/server.log`（壳以 `stdio:'ignore'` 启动，现场零输出）。实测：`AksoServer.exe` 正常起服，日志记 `AksoServer v0.3.1 pid=… (frozen=True)`。
   - **`desktop/icon.ico` 自首次提交起就是坏文件**：整份二进制被"当文本另存为 Unicode"了一次（UTF-16LE BOM + 每字节占 2 字节），且该过程**有损、无法还原**（git 历史里也只有坏版本）。后果两处且都静默：`electron-builder` 报 `image … shas unknown format` 导致**构建失败**；Electron 托盘图标一直是空白（被 main.js 的 try/catch 吞掉）。已新增 `tools/make_app_icon.py` 从品牌 PNG 重新生成 7 尺寸 ICO（16/24/32/48/64/128/256）。⚠ 两个坑写进工具注释：Pillow 的 ICO 写出**不会放大**（请求尺寸大于源图会被静默跳过），而 electron-builder 要求至少 256 → 必须先把源图 LANCZOS 放大到 256 再生成。

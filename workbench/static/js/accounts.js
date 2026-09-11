@@ -275,20 +275,20 @@ async function quickLogin(accountId) {
 }
 
 /* ———————————————— 扩展未连接提示（一键安装引导） ————————————————
- * 触发条件：/extension/health 在 TTL(60s) 内没收到执行面上报 —— 可能是扩展没装，
- * 也可能是 Chrome 没开，故文案保持中性。点「一键安装引导」后由桌面壳打开
- * chrome://extensions + 随包扩展目录，并弹出分步说明（Chrome 不允许非商店扩展静默安装）。 */
+ * 显示判据（用户定稿）：**仅当从未成功连接过扩展时**才出现——连上过一次即永久静默。
+ * 「曾经连接过」由桌面端 DB 记录（`/extension/health` 的 everConnected），
+ * 因此不随页面刷新 / 应用重启复位。
+ * 旧实现把这个标志放在浏览器内存里（`extEverConnected`）→ 刷新即复位、每次开账号中心
+ * 都重新弹「未检测到浏览器扩展」，这正是用户实测反馈的问题。
+ * 「先不管」仅忽略本次页面（未连接状态下刷新仍会提示，属预期——安装引导要能被找回）。 */
 
-let extSetupDismissed = false; // 用户点了「先不管」
-let extEverConnected = false; // 曾经连上过 → 之后断开（如关闭 Chrome）不再反复提示
+let extSetupDismissed = false;
 
-function updateExtSetupBanner(connected) {
+function updateExtSetupBanner(health) {
   const el = document.getElementById('ext-setup');
   if (!el) return;
-  if (connected) {
-    extEverConnected = true;
-  }
-  el.classList.toggle('hidden', !(connected === false && !extEverConnected && !extSetupDismissed));
+  const show = !health.connected && !health.everConnected && !extSetupDismissed;
+  el.classList.toggle('hidden', !show);
 }
 
 document.getElementById('btn-ext-dismiss')?.addEventListener('click', () => {
@@ -338,7 +338,8 @@ async function refresh() {
     api('/api/browser/sessions'),
     api('/api/accounts/boxes'),
     api('/extension/state').catch(() => ({ items: [] })),
-    api('/extension/health').catch(() => ({ connected: true })), // 探测失败时不打扰用户
+    // 探测失败时按「已连接且曾连接过」处理，绝不误报引导（不打扰用户）
+    api('/extension/health').catch(() => ({ connected: true, everConnected: true })),
   ]);
   cacheAccounts = accData.accounts;
   cacheSessions = new Map(sessData.sessions.map((s) => [s.account_id, s]));
@@ -346,7 +347,7 @@ async function refresh() {
   cacheDisabled = boxData.disabled || accData.disabled_boxes || [];
   extState.clear();
   for (const it of stateData.items || []) extState.set(it.desktopId, it);
-  updateExtSetupBanner(Boolean(extHealth.connected));
+  updateExtSetupBanner(extHealth);
 
   renderStats();
   const fp = JSON.stringify([

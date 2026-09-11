@@ -259,6 +259,11 @@ def report_state(body: dict[str, Any]) -> dict[str, Any]:
         # 顺手淘汰过期项
         for key in [k for k, v in _STATE.items() if now - v["at"] > _STATE_TTL_MS]:
             _STATE.pop(key, None)
+    # 收到执行面上报本身即「连接成功过一次」的证据——立刻落库闩锁，
+    # 这样即使账号中心页面从未打开过，安装引导也不会在以后重新出现。
+    # （放在锁外：写库不该持状态锁；_mark_ever_connected 自身幂等）
+    if items:
+        _mark_ever_connected()
     return {"accepted": len(items)}
 
 
@@ -274,18 +279,55 @@ def get_state() -> dict[str, Any]:
 # 桌面壳的会话控制服务（Electron 主进程内）：扩展安装引导走它执行
 CONTROL_BASE = "http://127.0.0.1:18767"
 
+# 「曾成功连接过一次」的一次性闩锁（安装引导提示条据此永久静默）。
+# 为什么必须落库：早期实现把它放在浏览器内存里，刷新页面/重启应用即复位 →
+# 每次打开账号中心都重新弹「未检测到浏览器扩展」（用户实测反馈）。
+# 语义：按**安装实例**记一次，之后无论扩展是否在线都不再提示（连接判据见 /health）。
+_EVER_KEY = "ext_connected_once"
+_ever_connected = False  # 进程内缓存（单进程应用，写入后置位）
+
+
+def _read_ever_connected() -> bool:
+    global _ever_connected
+    if not _ever_connected:
+        try:
+            _ever_connected = bool(get_setting(_EVER_KEY))
+        except Exception:  # noqa: BLE001 —— settings 读失败按未连接处理（顶多多提示一次）
+            pass
+    return _ever_connected
+
+
+def _mark_ever_connected() -> None:
+    """首次连接成功即落库；写成功才置内存位，失败留待下次上报重试。"""
+    global _ever_connected
+    if _ever_connected:
+        return
+    try:
+        set_setting(_EVER_KEY, "1")
+        _ever_connected = True
+    except Exception:  # noqa: BLE001 —— 落库失败不影响本次判定
+        pass
+
 
 @router.get("/health")
 def health() -> dict[str, Any]:
-    """执行面健康：TTL 内是否收到状态上报。
+    """执行面健康 + 是否曾经连接成功过。
 
-    桌面 UI 用它判断「浏览器扩展是否已装/Chrome 是否在跑」——未连接时提示一键安装引导。
-    注意：connected=false 同时涵盖「扩展没装」与「Chrome 没开」两种情形，文案需中性。
+    `connected` = TTL 内是否收到状态上报（同时涵盖「扩展没装」与「Chrome 没开」两种情形，
+    故文案保持中性）；`everConnected` = 本安装实例是否成功连接过至少一次——
+    账号中心的安装引导提示条**只在从未连接过时**出现，且该判据持久在 DB、不随刷新复位。
     """
     cutoff = now_ms() - _STATE_TTL_MS
     with _lock:
         fresh = [v for v in _STATE.values() if v["at"] > cutoff]
-    return {"connected": bool(fresh), "reportedAccounts": len(fresh)}
+    connected = bool(fresh)
+    if connected:
+        _mark_ever_connected()
+    return {
+        "connected": connected,
+        "reportedAccounts": len(fresh),
+        "everConnected": _read_ever_connected(),
+    }
 
 
 @router.post("/setup-helper")

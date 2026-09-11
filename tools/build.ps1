@@ -1,19 +1,23 @@
 ﻿# Akso Workbench 一键构建 v3（Electron 壳）
-# 用法：powershell -ExecutionPolicy Bypass -File tools\build.ps1
-# 产物：desktop\dist\AksoWorkbench-<ver>-setup.exe（NSIS；内含 AksoServer sidecar + chromium）
+# 用法：powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none] [-SkipPush]
+# 产物：desktop\dist\AksoWorkbench-<ver>-setup.exe（NSIS；内含 AksoServer sidecar + chromium + 浏览器扩展）
 #
 # 链路：
-#   1. 版本演进（build：MINOR+1，PATCH 重置 1）
-#   2. 提交并推送版本号（release commit）
-#   3. uv sync（确保 PyInstaller）
-#   4. PyInstaller 打包服务端 sidecar（workbench/server.spec → dist/AksoServer）
-#   5. electron-builder（NSIS 安装包；extraResources 带 sidecar；updater 产物 latest.yml）
+#   1. 版本演进（-Bump：build=MINOR+1 / push=PATCH+1 / none=沿用当前）
+#   2. 重建浏览器扩展并校验版本一致（安装包会携带它）
+#   3. 提交并推送版本号（release commit；含扩展 manifest/package 与 uv.lock）
+#   4. uv sync（确保 PyInstaller）
+#   5. PyInstaller 打包服务端 sidecar（workbench/server.spec → dist/AksoServer）
+#   6. electron-builder（NSIS 安装包；extraResources 带 sidecar 与扩展；updater 产物 latest.yml）
 #
 # 更新发布（可选）：设 GH_TOKEN 后改用 --publish always，或手动上传 desktop\dist\*.exe
 # 与 latest.yml 到 GitHub Releases（electron-updater 按 latest.yml 检查更新）。
 
 param(
-    [switch]$SkipPush
+    [switch]$SkipPush,
+    # 版本演进方式：build = MINOR+1 的正式发布（默认）；push = PATCH+1 的补丁发布；
+    # none = 沿用当前版本号只重出安装包。此前只有 MINOR 一条路，补丁修复也会被抬成 MINOR。
+    [ValidateSet('build', 'push', 'none')][string]$Bump = 'build'
 )
 
 # 注意：不要用 $ErrorActionPreference="Stop"——PS5.1 会把 git/npm 写到 stderr 的
@@ -24,9 +28,14 @@ Set-Location $root
 $env:Path = (Join-Path $root ".venv\Scripts") + ";" + $env:Path
 $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
 
-# 1) 版本演进（build 规则：MINOR+1，PATCH=1）
-$version = (& python tools\bump.py build).Trim()
-Write-Host "[1/6] 版本演进 → v$version"
+# 1) 版本演进（build：MINOR+1 且 PATCH=1；push：PATCH+1；none：沿用当前版本）
+if ($Bump -eq 'none') {
+    $version = (& python tools\bump.py show).Trim()
+    Write-Host "[1/6] 沿用当前版本 → v$version（-Bump none）"
+} else {
+    $version = (& python tools\bump.py $Bump).Trim()
+    Write-Host "[1/6] 版本演进（$Bump）→ v$version"
+}
 
 # 1.5) 重建浏览器扩展（安装包会携带它：desktop/package.json 的 extraResources → resources/extension）
 #      必须在 bump 之后——否则打进安装包的扩展 manifest 版本号会停在上一版
