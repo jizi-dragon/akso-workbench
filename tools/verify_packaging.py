@@ -10,6 +10,7 @@
   P3 桌面壳 spawn 的 sidecar 路径 与 electron-builder 的 extraResources 映射一致
   P4 安装包要携带的扩展产物存在，且其 manifest 版本 == 项目版本（三写一致性）
   P5 tools/build.ps1 具备 UTF-8 BOM（PS5.1 约定；编辑后极易丢失）
+  P6 桌面壳的每个源文件都在 electron-builder 的 files 白名单里
 
 用法：
     .venv\\Scripts\\python.exe tools\\verify_packaging.py
@@ -99,6 +100,17 @@ def main() -> int:
     checks["P5 tools/build.ps1 具备 UTF-8 BOM（PS5.1）"] = head == b"\xef\xbb\xbf"
     if head != b"\xef\xbb\xbf":
         details.append("   缺 BOM → PS5.1 下中文会乱码；用 [System.IO.File]::WriteAllText(..., UTF8Encoding($true)) 补回")
+
+    # P6 壳源码文件 vs electron-builder files 白名单
+    # 为什么必须查：files 是**白名单**，新增 .js 模块（如 0.3.3 的 updater.js / shell-state.js）
+    # 若忘了加，开发态一切正常、装出来的应用却 require 失败——只有打包后才会暴露。
+    listed = pkg.get("build", {}).get("files", [])
+    shell_sources = sorted(p.name for p in MAIN_JS.parent.glob("*.js"))
+    missing_src = [n for n in shell_sources if n not in listed]
+    checks["P6 桌面壳全部 .js 都在 files 白名单"] = not missing_src
+    details.append(f"   files = {listed}；壳源文件 = {shell_sources}")
+    if missing_src:
+        details.append(f"   缺：{missing_src}（打包后会 require 失败）")
 
     print("\n".join(details))
     print()

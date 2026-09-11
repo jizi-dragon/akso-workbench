@@ -35,7 +35,7 @@
             <span class="stat stat-online"><i class="pulse-dot"></i><b id="stat-online">0</b><span>在线</span></span>
             <span class="stat"><b id="stat-boxes">0</b><span>盒子</span></span>
           </div>
-          <span id="ver-chip" class="status-chip">v—</span>
+          <button id="ver-chip" class="status-chip ver-chip" type="button" title="点击检查更新（桌面壳运行时生效）">v—</button>
         </div>
       </header>
 
@@ -48,6 +48,18 @@
         <div class="setup-actions">
           <button id="btn-ext-setup" class="btn-primary btn-sm" type="button">一键安装引导</button>
           <button id="btn-ext-dismiss" class="btn-ghost btn-sm" type="button">先不管</button>
+        </div>
+      </section>
+
+      <!-- ============ 扩展需重新加载（升级后一次性；与安装引导条同构） ============ -->
+      <section id="ext-stale" class="setup-banner banner-stale hidden">
+        <div class="setup-text">
+          <b>浏览器扩展版本过旧</b>
+          <span id="ext-stale-detail">桌面端已升级，但 Chrome 里加载的仍是旧版扩展。请在 chrome://extensions 点一次「重新加载」。</span>
+        </div>
+        <div class="setup-actions">
+          <button id="btn-ext-reload" class="btn-primary btn-sm" type="button">重新加载引导</button>
+          <button id="btn-ext-stale-dismiss" class="btn-ghost btn-sm" type="button">先不管</button>
         </div>
       </section>
 

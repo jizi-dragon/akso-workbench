@@ -12,6 +12,9 @@
 #
 # 更新发布（可选）：设 GH_TOKEN 后改用 --publish always，或手动上传 desktop\dist\*.exe
 # 与 latest.yml 到 GitHub Releases（electron-updater 按 latest.yml 检查更新）。
+# GH_TOKEN 的完整获取路径（fine-grained vs classic、需要哪些权限、只显示一次的复制时机）
+# 见 docs/EXTENSION-INSTALL.md 第四节「发布更新到 GitHub Releases」。
+# ⚠ 更新器匿名读取 Release ⇒ 仓库必须公开，私有仓库的自动更新静默失效。
 
 param(
     [switch]$SkipPush,

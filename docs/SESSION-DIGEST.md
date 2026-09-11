@@ -19,7 +19,8 @@
 - 扩展执行面 `extensions/quick-login/`：MV3 + 六平面隔离（存储/AUTH/COOKIE/CACHE/SW/IDB）；`background/sync.ts` 每 2s 轮询桌面快照（snapshotId 幂等，Fernet WebCrypto 解密直连 parallelStore，离线回退）；构建 `npm run build` → dist，更新后须在扩展卡片"重新加载"
 - 前端：`static/pages/{insight,factory,accounts}.html` + `modules.css v3`（Akso 蓝白令牌）+ 轮盘（Alt+Q 透明独立窗，`wheel-picker.html?transparent=1`）
 - 账号中心（合并原两页）：盒子过滤芯片+内联管理行 → 卡片墙（会话+凭据+池芯片+监听中 chip）→ 分配池 → 环境/新增 → 备份/导入
-- 桌面壳 `desktop/main.js`（Electron 33）：sidecar（打包态 AksoServer.exe --server / 开发态 venv uvicorn）+ 主窗 + 透明轮盘窗（Alt+Q 单例 toggle）+ 托盘 + 会话控制服务 :18767（每账号 persist: 分区开户/聚焦/关闭）+ electron-updater 自动更新；退出 killServer（taskkill /T /F）
+- 桌面壳 `desktop/main.js`（Electron 33）：sidecar（打包态 AksoServer.exe --server / 开发态 venv uvicorn）+ 主窗 + 透明轮盘窗（Alt+Q 单例 toggle）+ 托盘 + 会话控制服务 :18767（每账号 persist: 分区开户/聚焦/关闭）；退出 killServer（taskkill /T /F）+ `updater.installOnExit()`（**顺序不可换**：先放 sidecar 文件句柄再拉安装器）
+- 自动更新（0.3.3）：`desktop/updater.js` 状态机（启动 20s 后静默检查 / 每 6h / `autoDownload` 后台下载 / `autoInstallOnAppQuit` 退出时安装 / 托盘「检查更新…」手动）+ `desktop/shell-state.js` 写 `%APPDATA%\AksoWorkbench\shell-state.json`（壳每 15s 心跳）→ Python `workbench/api/routes_update.py` 的 `GET /api/update` 读它（超 60s 判 `live=false`）→ 账号中心右上角版本角标；发布侧见 `docs/EXTENSION-INSTALL.md` 第四节（GH_TOKEN 获取路径）
 
 ## 已下线（源码已删，勿恢复）
 知识库/钉钉同步全链路（routes_knowledge/sync、chunking/embedding/retrieval/ddkb/dingtalk_sync、harness 知识工具、前端 knowledge 视图）；DB 迁移 1-6 按不可变纪律保留；**pywebview 桌面壳（shell/shell.py，壳换代 Electron）**；**Inno Setup（tools/installer.iss、ChineseSimplified.isl，2026-09-10 删，NSIS 接管）**；tools/start-desktop.vbs
@@ -103,7 +104,7 @@
 - **实测定位**：用户实感「点击后要等一两秒」的主项 = 扩展每 2s 轮询 `/extension/commands`（量化延迟 0~2s，实测均值 **964ms**、最大 1671ms）；次项 = 点击路径上 `tasklist` 探测 **124ms** 且与入队串行。
 - **改法**：服务端 `GET /extension/commands?wait=N` 长轮询（`threading.Condition` + 入队 `notify_all`；默认 `wait=0` 向后兼容）；扩展 `sync.ts` 新增 `commandStream()` 长轮询流（与原 2s 数据面 tick 解耦）；`launch-chrome` 探测加缓存（正 10s / 负 2s）+ 两个前端点击路径改并行。
 - **结果**：指令下发 **平均 964ms → 20ms（≈50×）**；暖 Chrome 下点击到开页签约 30ms。
-- **回归工具**：`tools/verify_command_latency.py`（A/B 钉契约：删 `notify_all`/`wait` 立刻红）。至此扩展/链路自动化回归共 5 件：boot / isolation / host_logic / command_latency + 项目自带 wheel_page。
+- **回归工具**：`tools/verify_command_latency.py`（A/B 钉契约：删 `notify_all`/`wait` 立刻红）。扩展/链路自动化回归共 7 件：boot / isolation / host_logic / command_latency / **updater_logic**（0.3.3，更新状态机 47 断言，纯 node 桩 electron）/ **extension_version**（0.3.3，真实 Chrome 验「扩展版本上报 → extStale」6/6；必须在 18765 且该端口空闲，因扩展的桌面地址是编译期常量）+ 项目自带 wheel_page。
 - **护栏（改 `sync.ts` 必读）**：`consuming` 互斥（否则同一 par.open 开两个页签）、`streaming` 幂等（alarm 每次触发都会调 `commandStream()`，无闸会累积并发循环）、流 >25s 未取回时由 tick 兜底、`getJson` 返回 null 时退避 1.5s（防热循环）。
 - **未做（需产品决策）**：Chrome **冷启动**是硬成本（启动 1~3s）——可选 ① `launch-chrome` 带 URL 直开 + 新增「绑定已开页签」指令；② 桌面应用启动/账号中心打开时预热 Chrome。
 

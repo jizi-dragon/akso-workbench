@@ -692,3 +692,40 @@ dialog#ask-modal::backdrop, dialog#box-modal::backdrop {
 .setup-banner .setup-text b { color: var(--text-1); font-size: 13.5px; }
 .setup-banner .setup-text span { color: var(--text-2); font-size: 12.5px; }
 .setup-banner .setup-actions { display: flex; gap: 8px; flex: none; }
+
+/* —— 版本角标 / 更新提示（0.3.3：启动检查 + 静默下载 + 退出时安装） ——
+   角标是按钮：平时只显示版本号，有新版才上色；点击 = 手工检查更新（结论由桌面壳弹窗落地）。 */
+.ver-chip {
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: border-color 0.14s ease, color 0.14s ease, background 0.14s ease;
+}
+.ver-chip:hover { border-color: var(--sb-brand); color: var(--sb-brand); }
+.ver-chip.has-update {
+  border-color: rgba(30, 111, 255, 0.35);
+  background: var(--sb-brand-soft);
+  color: var(--sb-brand);
+}
+.ver-chip.is-ready {
+  border-color: rgba(217, 119, 6, 0.4);
+  background: var(--amber-dim);
+  color: #b45309;
+}
+.ver-chip .ver-note { font-size: 10.5px; opacity: 0.9; }
+.ver-chip .ver-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.8s ease-in-out infinite;
+}
+.ver-chip:disabled { cursor: default; opacity: 0.75; }
+
+/* —— 扩展需重新加载提示条（升级后一次性；与安装引导条同构，色相区分） —— */
+.setup-banner.banner-stale {
+  background: var(--sb-brand-soft);
+  border-color: rgba(30, 111, 255, 0.28);
+}

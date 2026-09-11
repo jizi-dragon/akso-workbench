@@ -11,7 +11,7 @@
  * 扩展端仅在内存解密为明文交给既有加密存储，不做任何落盘明文。
  */
 
-import { LOCAL_KEYS } from '../shared/constants';
+import { LOCAL_KEYS, extVersion } from '../shared/constants';
 import { credentials } from './core/credentials';
 import { parallelSession } from './core/parallel-session';
 import { parallelStore } from './core/parallel-store';
@@ -24,6 +24,10 @@ const SNAPSHOT_ID_KEY = 'akso:snapshotId';
 
 let syncing = false;
 let tickCount = 0;
+
+/** 桌面端版本（快照/指令面回传；换桌面版本时置空，触发一次即时上报）。
+ *  用途：桌面端据此判断「已加载进 Chrome 的扩展是不是旧版」，从而在账号中心提示重新加载。 */
+let desktopVersion = '';
 
 /** Fernet 解密（WebCrypto）：token = b64(0x80 | ts8 | iv16 | ct | hmac32)。
  *  Fernet 规范：sign-key = key[0:16]（HMAC-SHA256），enc-key = key[16:32]（AES-128-CBC）——
@@ -81,6 +85,23 @@ async function getJson(path: string): Promise<any | null> {
 async function getMap(): Promise<Record<string, string>> {
   const stored = await chrome.storage.local.get(ACCT_MAP_KEY);
   return (stored[ACCT_MAP_KEY] as Record<string, string>) ?? {};
+}
+
+/**
+ * 记录桌面端版本。规则（用户定稿：桌面安装包与扩展版本同步升版）：
+ * 扩展版本 == 桌面版本；不一致即「Chrome 里加载的仍是旧扩展」，需要用户重新加载。
+ * 只记录事实，不做自动 reload —— 重载 SW 会打断进行中的自动登录，
+ * 因此把结论上报给桌面，由账号中心提示用户手动重新加载。
+ */
+function noteDesktopVersion(snap: any): void {
+  const v = typeof snap?.desktopVersion === 'string' ? snap.desktopVersion : '';
+  if (!v || v === desktopVersion) return;
+  const mine = extVersion();
+  desktopVersion = v;
+  tickCount = 2; // 下一 tick 立即上报（版本不一致要让账号中心尽快看到）
+  if (v !== mine) {
+    console.warn(`[akso-sync] 扩展版本 v${mine} ≠ 桌面端 v${v}：请在 chrome://extensions 重新加载扩展`);
+  }
 }
 
 async function saveMap(map: Record<string, string>): Promise<void> {
@@ -281,7 +302,10 @@ async function tick(): Promise<void> {
   syncing = true;
   try {
     const snap = await getJson('/extension/snapshot');
-    if (snap) await applySnapshot(snap);
+    if (snap) {
+      noteDesktopVersion(snap);
+      await applySnapshot(snap);
+    }
     // 指令面默认由长轮询流负责；流不健康（超过一次等待周期仍未取回）时才兜底轮询
     if (Date.now() - streamAliveAt > (COMMAND_WAIT_S + 10) * 1000) {
       await pollCommandsOnce();
@@ -296,31 +320,35 @@ async function tick(): Promise<void> {
   }
 }
 
-/** 执行面状态上报：desktopId → 绑定页签数 / token / 授权暂停（四态徽标数据源） */
+/** 执行面状态上报：desktopId → 绑定页签数 / token（四态徽标数据源）+ 自身版本。
+ *
+ *  版本必须**无条件**上报：账号/映射为空时（`!items.length`）早期实现直接 return，
+ *  于是「扩展是旧版」这一事实永远传不到桌面端——那正是需要提示用户重新加载的场景。
+ *  故 items 为空也照发，只上报版本元数据。 */
 async function reportState(): Promise<void> {
+  const items = [];
   const map = await getMap();
   const rev = new Map<string, string>();
   for (const [desktopId, extId] of Object.entries(map)) rev.set(extId, desktopId);
-  if (!rev.size) return;
-  const accounts = await parallelStore.list();
-  const items = [];
-  for (const account of accounts) {
-    const desktopId = rev.get(account.id);
-    if (!desktopId) continue;
-    const st = parallelSession.statusOf(account);
-    // 不上报 enforcementOff：0.2.21 起 manifest 声明全站权限，授权不再是变量（该字段仅剩
-    // "用户手动停用名单"语义），桌面无需展示
-    items.push({
-      desktopId,
-      tabs: st.tabIds.length,
-      hasToken: st.hasToken,
-    });
+  if (rev.size) {
+    const accounts = await parallelStore.list();
+    for (const account of accounts) {
+      const desktopId = rev.get(account.id);
+      if (!desktopId) continue;
+      const st = parallelSession.statusOf(account);
+      // 不上报 enforcementOff：0.2.21 起 manifest 声明全站权限，授权不再是变量（该字段仅剩
+      // "用户手动停用名单"语义），桌面无需展示
+      items.push({
+        desktopId,
+        tabs: st.tabIds.length,
+        hasToken: st.hasToken,
+      });
+    }
   }
-  if (!items.length) return;
   await fetch(`${DESKTOP}/extension/state`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items }),
+    body: JSON.stringify({ items, extVersion: extVersion(), desktopVersion }),
   }).catch(() => undefined);
 }
 

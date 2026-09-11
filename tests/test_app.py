@@ -16,6 +16,7 @@ def client() -> TestClient:
 EXPECTED_PREFIXES = (
     "/api/conversations", "/api/settings", "/api/chat",
     "/api/modules", "/api/insight", "/api/factory", "/api/accounts", "/api/browser", "/api/agent",
+    "/api/update",
 )
 
 

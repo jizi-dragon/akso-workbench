@@ -4,11 +4,14 @@
 // 架构不变量：窗口只做"壳"，业务全在 FastAPI 服务（HTTP 暴露）；
 //       托管会话复用本壳的 Chromium（CDP 18766 ← playwright connect_over_cdp）。
 
-const { app, BrowserWindow, globalShortcut, Tray, Menu, shell, dialog } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, shell, dialog } = require('electron');
 const http = require('http');
 const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+
+const updater = require('./updater');
+const shellState = require('./shell-state');
 
 const SERVER_PORT = 18765;
 const CONTROL_PORT = 18767;
@@ -19,6 +22,8 @@ let mainWindow = null;
 let wheelWindow = null;
 let tray = null;
 let quitting = false;
+/** updater 状态最后一次快照：供控制服务 /update-state 与渲染层 IPC 读取 */
+let updateState = null;
 
 // 会话窗注册表：windowId → BrowserWindow（browser_pool CDP 模式经控制服务开户窗）
 const sessionWindows = new Map();
@@ -174,8 +179,12 @@ function findChrome() {
   return null;
 }
 
-/** 打开 chrome://extensions + 扩展目录，并给出分步说明。幂等，可反复调用。 */
-async function openExtensionSetup() {
+/** 打开 chrome://extensions + 扩展目录，并给出分步说明。
+ *  `mode='install'`（默认）走首次安装四步；`mode='reload'` 是桌面端升版后的
+ *  一次性「重新加载」——扩展文件由安装包覆盖，Chrome 必须先重新加载才会用新版。
+ *  幂等，可反复调用。 */
+async function openExtensionSetup(mode = 'install') {
+  const reload = mode === 'reload';
   const dir = extensionDir();
   if (dir) {
     await shell.openPath(dir).catch(() => undefined);
@@ -188,27 +197,38 @@ async function openExtensionSetup() {
       // 打不开就让用户手动访问
     }
   }
-  const detail = [
-    chrome
-      ? '1) 已在 Chrome 打开 chrome://extensions（没弹出请手动访问）'
-      : '1) 手动打开 Chrome，访问 chrome://extensions',
-    '2) 打开右上角「开发者模式」开关',
-    '3) 点「加载已解压的扩展程序」',
-    '4) 在文件夹选择框里选中已为你打开的目录（选到它本身，不要进子目录）：',
-    `     ${dir || '（未找到扩展目录——请重新安装桌面端）'}`,
-    '',
-    '装好后「在线」徽标与 Alt+Q 轮盘即可用；账号数据由桌面端自动下发，无需在扩展里另建。',
-    '注意：该目录随桌面端安装目录存在，卸载桌面端后扩展会失效。',
-  ].join('\n');
+  const detail = reload
+    ? [
+        chrome
+          ? '1) 已在 Chrome 打开 chrome://extensions（没弹出请手动访问）'
+          : '1) 手动打开 Chrome，访问 chrome://extensions',
+        '2) 在扩展列表里找到 Akso 快捷登录',
+        '3) 点该扩展卡片上的「重新加载」按钮（↻）',
+        '',
+        '为什么需要这一步：扩展文件随桌面端一起更新，Chrome 只在重新加载后才会用上新版本。',
+        '数据（账号 / 登录态）不会丢——重新加载只重启扩展本身。',
+      ].join('\n')
+    : [
+        chrome
+          ? '1) 已在 Chrome 打开 chrome://extensions（没弹出请手动访问）'
+          : '1) 手动打开 Chrome，访问 chrome://extensions',
+        '2) 打开右上角「开发者模式」开关',
+        '3) 点「加载已解压的扩展程序」',
+        '4) 在文件夹选择框里选中已为你打开的目录（选到它本身，不要进子目录）：',
+        `     ${dir || '（未找到扩展目录——请重新安装桌面端）'}`,
+        '',
+        '装好后「在线」徽标与 Alt+Q 轮盘即可用；账号数据由桌面端自动下发，无需在扩展里另建。',
+        '注意：该目录随桌面端安装目录存在，卸载桌面端后扩展会失效。',
+      ].join('\n');
   await dialog.showMessageBox({
     type: 'info',
-    title: '安装浏览器扩展（一次性）',
-    message: '还差一步：把这个扩展加载进 Chrome',
+    title: reload ? '重新加载浏览器扩展（一次性）' : '安装浏览器扩展（一次性）',
+    message: reload ? '扩展文件已更新：请重新加载一次' : '还差一步：把这个扩展加载进 Chrome',
     detail,
     buttons: ['知道了'],
     noLink: true,
   });
-  return { dir, chrome };
+  return { dir, chrome, mode };
 }
 
 // ------------------------------------------------- 会话控制服务（18767）
@@ -229,10 +249,24 @@ function createControlServer() {
 
       // 安装扩展引导（供桌面 UI 的「扩展未连接」提示条调用；也可由托盘菜单直接触发）
       if (req.method === 'POST' && url.pathname === '/extension-setup') {
-        void openExtensionSetup()
+        void openExtensionSetup(payload.mode === 'reload' ? 'reload' : 'install')
           .then((r) => json(res, 200, { ok: true, ...r }))
           .catch((e) => json(res, 500, { ok: false, error: String(e) }));
         return;
+      }
+
+      // 更新面（账号中心版本角标 → 本壳）：state 只读快照，check 走同一条静默下载路径
+      if (url.pathname === '/update-state') {
+        return json(res, 200, { ok: true, shell: true, ...(updateState || updater.state()) });
+      }
+      if (req.method === 'POST' && url.pathname === '/update-check') {
+        void updater.checkAndReport()
+          .then((r) => json(res, 200, { ok: true, ...r }))
+          .catch((e) => json(res, 500, { ok: false, error: String(e) }));
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/update-install') {
+        return json(res, 200, { ok: updater.installOnExit() });
       }
 
       if (req.method === 'POST' && url.pathname === '/windows') {
@@ -294,11 +328,60 @@ function createTray() {
     { label: '账号轮盘 (Alt+Q)', click: toggleWheel },
     { label: '安装浏览器扩展…', click: () => { void openExtensionSetup(); } },
     { type: 'separator' },
+    { label: '检查更新…', click: () => { void updater.checkAndReport(); } },
+    { label: `关于 v${app.getVersion()}`, click: () => {
+      const s = updateState || updater.state();
+      const detail = s.phase === 'ready'
+        ? `新版本 v${s.availableVersion} 已下载完成，退出应用时自动安装。`
+        : s.phase === 'downloading'
+          ? `正在后台下载 v${s.availableVersion}（${s.percent || 0}%），退出应用时自动安装。`
+          : '自动更新：启动时静默检查，后台下载，退出应用时安装。';
+      void dialog.showMessageBox({
+        type: 'info',
+        title: '关于 Akso Workbench',
+        message: `Akso Workbench v${app.getVersion()}`,
+        detail,
+        buttons: ['好'],
+        noLink: true,
+      });
+    } },
+    { type: 'separator' },
     { label: '退出', click: () => app.quit() },
   ]);
   tray.setToolTip('Akso Workbench');
   tray.setContextMenu(menu);
   tray.on('double-click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
+}
+
+// ------------------------------------------------------------ 自动更新
+// 分工（用户定稿）：updater.js 负责状态机（启动检查/静默下载/退出时安装/手动检查），
+// 本文件负责三件壳内的事：托盘与提示、状态落盘（供账号中心版本角标）、退出前 drain。
+
+function onUpdateState(s) {
+  updateState = s;
+  shellState.write({
+    app: 'akso-workbench-desktop',
+    version: s.currentVersion || app.getVersion(),
+    ...s,
+  });
+  const hint = updater.trayHint();
+  if (tray) {
+    tray.setToolTip(hint ? `Akso Workbench ${s.currentVersion}\n${hint}` : `Akso Workbench ${s.currentVersion}`);
+  }
+  // 渲染层实时刷新（账号中心版本角标），无需等 3s 轮询
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      try { win.webContents.send('akso:update-state', s); } catch { /* 窗口正在销毁 */ }
+    }
+  }
+}
+
+function setupUpdater() {
+  updater.init({ onState: onUpdateState });
+  updateState = updater.state();
+  // 控制服务/渲染层都是同一份数据的读取者：一次性把当前态写出去（避免首屏空窗）
+  onUpdateState(updateState);
+  updater.start();
 }
 
 // ------------------------------------------------------------ 启动流程
@@ -319,14 +402,12 @@ app.whenReady().then(async () => {
     mainWindow.show();
   }
 
-  // 自动更新（打包态；未发布版本时静默失败）
-  if (app.isPackaged) {
-    try {
-      const { autoUpdater } = require('electron-updater');
-      autoUpdater.autoDownload = true;
-      autoUpdater.checkForUpdatesAndNotify().catch(() => {});
-    } catch { /* updater 未配置时忽略 */ }
-  }
+  // 自动更新（打包态生效：启动静默检查 → 后台下载 → 退出时安装）
+  setupUpdater();
+
+  ipcMain.handle('akso:update-check', () => updater.checkAndReport());
+  ipcMain.handle('akso:update-state', () => updateState || updater.state());
+  ipcMain.handle('akso:update-install', () => updater.installOnExit());
 });
 
 app.on('window-all-closed', () => {
@@ -337,5 +418,8 @@ app.on('before-quit', () => {
   if (quitting) return;
   quitting = true;
   globalShortcut.unregisterAll();
+  // 顺序关键：先停 sidecar（释放 AksoServer.exe / 扩展目录的文件句柄），
+  // 再让 updater 拉起安装器覆盖文件；否则安装器会因文件被占用而失败。
   killServer();
+  updater.installOnExit();
 });

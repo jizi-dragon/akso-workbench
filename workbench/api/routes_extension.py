@@ -19,6 +19,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from .. import __version__
 from ..services import accounts as accounts_svc
 from ..services.storage import get_setting, now_ms, set_setting
 
@@ -34,6 +35,9 @@ _acked: set[int] = set()
 # 执行面状态回传（desktopId → 状态快照），供账号中心四态徽标；带 TTL 淘汰
 _STATE: dict[str, dict[str, Any]] = {}
 _STATE_TTL_MS = 60_000
+
+# 执行面元信息（扩展自身版本）：与 _STATE 同寿命，供「扩展是否需要重新加载」判定
+_ext_meta: dict[str, Any] = {"extVersion": "", "desktopVersionSeen": "", "at": 0.0}
 
 # Chrome 运行状态探测缓存：tasklist 是一次子进程（实测 ~200ms），点击路径不该每次都付
 # 这个代价（它是「桌面点击 → 打开浏览器」链路上除轮询外的第二笔固定开销）。
@@ -116,6 +120,8 @@ def snapshot() -> dict[str, Any]:
         "format": "akso-workbench-snapshot",
         "version": 1,
         "generatedAt": now_ms(),
+        # 桌面端版本：扩展据此自查「我是不是旧版」（用户定稿：两者版本号同步升版）
+        "desktopVersion": __version__,
         "snapshotId": snapshot_id,
         "fernetKey": backup["fernetKey"],
         "sites": sites,
@@ -239,7 +245,7 @@ def ack(body: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("/state")
 def report_state(body: dict[str, Any]) -> dict[str, Any]:
-    """扩展执行面状态上报（每 ~6s）：desktopId → 页签数/token/授权暂停。
+    """扩展执行面状态上报（每 ~6s）：desktopId → 页签数/token + 扩展自身版本。
 
     仅内存态 + TTL 淘汰——扩展离线后徽标自动回落「离线」，无需清理任务。
     """
@@ -259,10 +265,16 @@ def report_state(body: dict[str, Any]) -> dict[str, Any]:
         # 顺手淘汰过期项
         for key in [k for k, v in _STATE.items() if now - v["at"] > _STATE_TTL_MS]:
             _STATE.pop(key, None)
+        # 版本元信息独立于 items 更新：映射为空（还没同步过账号）时也要能上报版本，
+        # 否则「扩展是旧版」永远传不到桌面端
+        ext_version = str(body.get("extVersion") or "").strip()
+        if ext_version:
+            _ext_meta["extVersion"] = ext_version
+            _ext_meta["at"] = now
     # 收到执行面上报本身即「连接成功过一次」的证据——立刻落库闩锁，
     # 这样即使账号中心页面从未打开过，安装引导也不会在以后重新出现。
     # （放在锁外：写库不该持状态锁；_mark_ever_connected 自身幂等）
-    if items:
+    if items or ext_version:
         _mark_ever_connected()
     return {"accepted": len(items)}
 
@@ -311,40 +323,71 @@ def _mark_ever_connected() -> None:
 
 @router.get("/health")
 def health() -> dict[str, Any]:
-    """执行面健康 + 是否曾经连接成功过。
+    """执行面健康 + 是否曾经连接成功过 + 版本一致性。
 
     `connected` = TTL 内是否收到状态上报（同时涵盖「扩展没装」与「Chrome 没开」两种情形，
     故文案保持中性）；`everConnected` = 本安装实例是否成功连接过至少一次——
     账号中心的安装引导提示条**只在从未连接过时**出现，且该判据持久在 DB、不随刷新复位。
+
+    版本面（用户定稿：桌面安装包与扩展版本同号升版）：
+    `extVersion` < `desktopVersion` ⇒ Chrome 里加载的仍是旧扩展目录内容，
+    需要用户在 chrome://extensions 点一次「重新加载」（扩展随安装包更新，见 docs/EXTENSION-INSTALL.md）。
     """
+    from .routes_update import version_tuple
+
     cutoff = now_ms() - _STATE_TTL_MS
     with _lock:
         fresh = [v for v in _STATE.values() if v["at"] > cutoff]
-    connected = bool(fresh)
+        ext_version = str(_ext_meta["extVersion"]) if _ext_meta["at"] > cutoff else ""
+    # 「已连接」= TTL 内收到过上报。**含只有版本、没有账号映射的上报**——否则用户还没同步过
+    # 账号（或刚清空映射）时执行面明明活着，UI 却在说"未连接"，与"曾经连上过"的闩锁自相矛盾。
+    connected = bool(fresh) or bool(ext_version)
     if connected:
         _mark_ever_connected()
+    # 扩展未上报版本（旧版扩展 / 尚未上报）时不做旧版判定——避免误报打扰用户
+    ext_stale = bool(ext_version) and version_tuple(ext_version) < version_tuple(__version__)
     return {
         "connected": connected,
         "reportedAccounts": len(fresh),
         "everConnected": _read_ever_connected(),
+        "desktopVersion": __version__,
+        "extVersion": ext_version,
+        "extStale": ext_stale,
     }
 
 
+@router.post("/update-state")
+def update_state() -> dict[str, Any]:
+    """读桌面壳落盘的更新状态（见 desktop/shell-state.js）。
+
+    为什么回环读文件而不是 HTTP 探壳：账号中心每 3s 刷新一次，读本地文件更便宜；
+    壳没运行时 `live=false`，UI 优雅降级为「只显示版本号」。
+    该路由放在扩展蓝图内，是为了让「壳 ↔ 扩展 ↔ UI」三者的运行态信息集中在一处。
+    """
+    from .routes_update import read_shell_state
+
+    return {"version": __version__, "shell": read_shell_state()}
+
+
 @router.post("/setup-helper")
-def setup_helper() -> dict[str, Any]:
+def setup_helper(body: dict[str, Any] | None = None) -> dict[str, Any]:
     """请桌面壳执行扩展安装引导：打开 chrome://extensions + 打开随包扩展目录 + 弹步骤说明。
 
     为什么不是「一键装好」：Chrome 在 Windows 上禁止非商店扩展直接安装，策略强制安装
     （ExtensionInstallForcelist）在 HKCU 下普遍不生效、自托管 update_url 亦常见失败，
     且本仓库无签名私钥 → 用户必须亲手点「加载已解压的扩展程序」。详见 docs/EXTENSION-INSTALL.md。
+
+    `mode="reload"`：桌面端升版后，扩展文件被安装包覆盖但 Chrome 仍持有旧版内存镜像，
+    此时引导用户点一次「重新加载」（同一套壳能力，仅文案不同）。
     壳不在时返回 ok=false，UI 退化为纯文字指引。
     """
     import urllib.request
 
+    mode = str((body or {}).get("mode") or "install")
     try:
         req = urllib.request.Request(
             f"{CONTROL_BASE}/extension-setup",
-            data=b"{}",
+            data=json.dumps({"mode": mode}).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )

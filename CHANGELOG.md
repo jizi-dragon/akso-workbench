@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- **桌面端自动更新（0.3.3，用户定稿：通道 = GitHub Releases；策略 = 启动检查 + 静默后台下载 + 退出时安装 + 手动检查）**：
+  - **壳内更新引擎**：新增 `desktop/updater.js`（状态机 + 事件接线，纯数据 `state()` 便于纯 node 验证）。启动后 20s 首次静默检查、此后每 6h 一次；`autoDownload=true` 后台静默下载（**不弹窗、不抢焦点**）；下载完成后只改托盘提示与账号中心角标，真正安装交给「你退出应用时」——`autoInstallOnAppQuit=true`，并在 `before-quit` 里**先 `killServer()` 再拉安装器**（顺序关键：安装器要覆盖 `AksoServer.exe` 与扩展目录，sidecar 还活着会锁文件）。托盘新增「检查更新…」（结论必落弹窗）与「关于 vX.Y.Z」；账号中心右上角版本角标可点击即手动检查。
+  - **跨进程状态通道**：壳每 15s 把状态写 `%APPDATA%\AksoWorkbench\shell-state.json`（原子写；`%APPDATA%` 规则与 `workbench/config.py` 的 `DATA_DIR` 对齐），Python 侧 `workbench/api/routes_update.py` 提供 `GET /api/update`（超 60s 无心跳判 `live=false` → UI 显示「桌面壳未运行」）与 `POST /api/update/check|install`（代理到壳控制服务 18767）。开发态（未打包）返回 `phase=unsupported`，弹窗提示改用 `git pull`，**绝不误报**。
+  - **为什么读文件而不是每次 HTTP 探壳**：账号中心每 3s 刷新，读本地 JSON 更便宜且壳不在时能优雅降级。
+  - **为什么不做「静默自动重启安装」**：会打断正在进行的自动登录/页面操作——静默下载 + 退出时安装是「零打扰」与「必达」的平衡点。
+- **扩展升级后自动检测「需重新加载」（0.3.3）**：扩展随安装包更新（`resources/extension` 被覆盖），但 Chrome 只在「重新加载」后才用新代码 → 此前升级后可能长期跑旧扩展而无任何迹象。现在：扩展在 `POST /extension/state` 上报自身版本（`extVersion`，**账号映射为空也照发**——旧实现 `if (!items.length) return` 会让这条事实永远传不出去），桌面端比对版本并把 `extVersion` / `desktopVersion` / `extStale` 加进 `GET /extension/health`；账号中心据此显示「浏览器扩展版本过旧」提示条 →「重新加载引导」= `POST /extension/setup-helper {mode:"reload"}` → 壳打开 `chrome://extensions` 并给出「点 ↻ 重新加载」步骤说明（与首次安装共用同一套壳能力，仅文案不同）。**刻意不做自动 `chrome.runtime.reload()`**：重载会掐断进行中的自动登录，把不可控时序留给用户点一次。
+- **`tools/verify_updater_logic.mjs`（47 条断言，纯 node 秒级）**：用 `Module._load` 钩子把 `electron` / `electron-updater` 换成桩，验证开发态不崩、打包态装配（`autoDownload`/`autoInstallOnAppQuit`/`allowPrerelease`）、事件链（checking → available → progress → downloaded）、就绪后再检查走短路、无更新、失败路径（自动静默 / 手动弹窗）、`installOnExit` 参数与幂等、下载完成提示不打断。⚠ 脚本注释记下一个真实踩坑：**桩必须在 `init()` 期间仍然生效**——真实 `electron-updater` 包在模块体里就调用 `app.getVersion()`，只在 load 期间挂钩会让 init 内部那次 require 落到真实包并抛错，而错误会被 `init` 的 try/catch 静默吞掉（表现为 `supported` 恒为 false）。
+- **扩展版本号纳入自动同步（0.3.3 修正）**：`tools/bump.py` 的「扩展双写」路径此前指向**不存在**的 `packages/extension/package.json`（唯一存在的是工作区根 `extensions/quick-login/package.json`），因有 `exists()` 守卫而**静默少写一次**——规则本意是"扩展版本随项目演进"，实际只写了 manifest。路径已修正，扩展版本面重新变为 manifest + 工作区 package.json 两处齐步走。
+
+### Changed
+
+- `tools/build.ps1` 的发布说明与 `docs/EXTENSION-INSTALL.md` 第四节新增「发布更新到 GitHub Releases」：含 **GH_TOKEN 的完整获取路径**（头像 → Settings → Developer settings → Personal access tokens → fine-grained（Contents: Read and write，选 `jizi-dragon/akso-mogul`）或 classic（勾 `repo`）→ Generate → 只显示一次的复制时机）、两种发布方式（`--publish always` 注入 `$env:GH_TOKEN` / 网页手动传 `setup.exe + latest.yml + blockmap`）、tag 与版本号必须一致的顺序要求、token 有效性与吊销的核对方法。**更新器匿名读取 Release ⇒ 仓库必须公开**（本仓库即公开）。
+- 账号中心右上角版本角标从静态 `<span>` 变为可点击按钮：平时只显示版本号，有新版/下载中/已就绪时分别上色（`has-update` / `is-ready`），`title` 给出具体状态；浏览器直开本页（无壳）时依旧是纯展示，不影响任何既有功能。
+
 ### Fixed
 
 - **安装引导提示条每次都弹（0.3.2，用户实测反馈）**：「未检测到浏览器扩展」横幅的判据此前放在**浏览器内存**里（`extEverConnected`）→ 刷新页面/重启应用即复位，于是每次打开账号中心都会重新弹出。改为**按安装实例落库的一次性闩锁**：`/extension/state` 收到执行面上报（或 `/extension/health` 判为已连接）的**第一次**即把 `ext_connected_once=1` 写入 settings 表，`/extension/health` 随之返回 `everConnected`；前端只在 `!connected && !everConnected` 时显示横幅。**语义（用户定稿）：以"能否与浏览器连接成功一次"为依据——连上过一次即永久静默**（之后即便关掉 Chrome 也不提示），单纯的 `connected=false` 不再触发提示。找回入口仍在托盘「安装浏览器扩展…」。

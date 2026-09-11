@@ -315,6 +315,109 @@ document.getElementById('btn-ext-setup')?.addEventListener('click', () => {
   })();
 });
 
+/* ———————————————— 扩展版本过旧提示（桌面端升版后一次性） ————————————————
+ * 判据（用户定稿）：桌面安装包与扩展版本同号升版。`/extension/health` 的
+ * extStale = 执行面自报版本 < 当前桌面版本 ⇒ Chrome 里加载的仍是旧扩展目录内容。
+ * 为什么不自动 chrome.runtime.reload()：重载会掐断进行中的自动登录，风险不可控——
+ * 改为提示用户点一次「重新加载」（扩展随安装包更新，无需重装）。 */
+
+let extStaleDismissed = false;
+
+function updateExtStaleBanner(health) {
+  const el = document.getElementById('ext-stale');
+  if (!el) return;
+  const show = Boolean(health.extStale) && !extStaleDismissed;
+  if (show) {
+    const d = document.getElementById('ext-stale-detail');
+    if (d) {
+      d.textContent =
+        `Chrome 里加载的是扩展 v${health.extVersion || '?'}，当前桌面端为 v${health.desktopVersion || '?'}。` +
+        '请在 chrome://extensions 点一次该扩展的「重新加载」（↻），数据不会丢。';
+    }
+  }
+  el.classList.toggle('hidden', !show);
+}
+
+document.getElementById('btn-ext-stale-dismiss')?.addEventListener('click', () => {
+  extStaleDismissed = true;
+  document.getElementById('ext-stale')?.classList.add('hidden');
+});
+
+document.getElementById('btn-ext-reload')?.addEventListener('click', () => { void reloadExtension(); });
+
+/** 请桌面壳引导「重新加载扩展」（打开 chrome://extensions + 步骤说明） */
+async function reloadExtension() {
+  try {
+    const r = await api('/extension/setup-helper', { method: 'POST', body: { mode: 'reload' } });
+    if (!r || r.ok === false) {
+      alert('请手动重新加载：\n1) 打开 chrome://extensions\n2) 找到本扩展\n3) 点「重新加载」（↻）');
+    }
+  } catch {
+    alert('请手动重新加载：打开 chrome://extensions → 找到本扩展 → 点「重新加载」（↻）。');
+  }
+}
+
+/* ———————————————— 版本角标 + 检查更新（启动检查 / 静默下载 / 退出时安装） ————————————————
+ * 角标显示「当前版本」；有新版时上色并显示下载进度（数据来自 /api/update，读的是
+ * 桌面壳落盘的 shell-state.json）。点击 = 手工检查更新，结论由桌面壳弹窗落地——
+ * 浏览器直开本页（无壳）时退化为 alert 提示，不影响其它功能。 */
+
+let checkingUpdate = false;
+
+function updateVerChip(info, health) {
+  const chip = el('ver-chip');
+  const shell = info?.shell || {};
+  const version = info?.version || health?.desktopVersion || '';
+  if (version) chip.textContent = `v${version}`;
+  chip.classList.remove('has-update', 'is-ready');
+  let title = version ? `Akso Workbench v${version}` : 'Akso Workbench';
+  if (!shell.live) {
+    title += '\n桌面壳未运行：浏览器直接打开本页时无法检查更新（改用托盘菜单「检查更新…」）。';
+  } else if (shell.phase === 'ready') {
+    chip.classList.add('is-ready');
+    title += `\n新版本 v${shell.availableVersion} 已下载完成，退出应用时自动安装。`;
+  } else if (shell.phase === 'downloading') {
+    chip.classList.add('has-update');
+    title += `\n正在后台下载 v${shell.availableVersion}（${shell.percent || 0}%），退出应用时自动安装。`;
+  } else if (info?.updateAvailable) {
+    chip.classList.add('has-update');
+    title += `\n发现新版本 v${shell.availableVersion}。`;
+  } else if (shell.phase === 'latest') {
+    title += `\n${shell.label || '已是最新版本'}`;
+  } else {
+    title += `\n${shell.label || '检查更新'}`;
+  }
+  chip.title = title;
+}
+
+el('ver-chip').addEventListener('click', () => {
+  void (async () => {
+    if (checkingUpdate) return;
+    checkingUpdate = true;
+    const chip = el('ver-chip');
+    chip.disabled = true;
+    try {
+      const r = await api('/api/update/check', { method: 'POST' });
+      if (!r || r.ok === false) {
+        alert(
+          '未能检查更新：桌面壳未响应。\n' +
+            '自动更新只在桌面安装版里生效——请用托盘菜单「检查更新…」，或确认桌面应用正在运行。',
+        );
+      } else {
+        // 桌面壳已经把结论（已是最新 / 正在下载 / 失败原因）弹窗告知；这里只刷新角标
+        updateVerChip(await api('/api/update').catch(() => null), null);
+      }
+    } catch (e) {
+      alert(`检查更新失败：${e.message}`);
+    } finally {
+      checkingUpdate = false;
+      chip.disabled = false;
+    }
+  })();
+});
+
+
+
 /* ———————————————— 三态徽标（扩展执行面状态 + 内置会话回落） ———————————————— */
 
 function extBadgeOf(a) {
@@ -333,13 +436,15 @@ function extBadgeOf(a) {
 /* ———————————————— 数据加载 + 指纹防闪烁渲染 ———————————————— */
 
 async function refresh() {
-  const [accData, sessData, boxData, stateData, extHealth] = await Promise.all([
+  const [accData, sessData, boxData, stateData, extHealth, updateInfo] = await Promise.all([
     api('/api/accounts'),
     api('/api/browser/sessions'),
     api('/api/accounts/boxes'),
     api('/extension/state').catch(() => ({ items: [] })),
     // 探测失败时按「已连接且曾连接过」处理，绝不误报引导（不打扰用户）
     api('/extension/health').catch(() => ({ connected: true, everConnected: true })),
+    // 更新面：读壳落盘的状态（壳没跑时 live=false → 角标只显示版本号）
+    api('/api/update').catch(() => null),
   ]);
   cacheAccounts = accData.accounts;
   cacheSessions = new Map(sessData.sessions.map((s) => [s.account_id, s]));
@@ -348,6 +453,8 @@ async function refresh() {
   extState.clear();
   for (const it of stateData.items || []) extState.set(it.desktopId, it);
   updateExtSetupBanner(extHealth);
+  updateExtStaleBanner(extHealth);
+  updateVerChip(updateInfo, extHealth);
 
   renderStats();
   const fp = JSON.stringify([
@@ -1016,8 +1123,11 @@ async function boot() {
   await loadEnvs();
   await refresh();
   try {
-    const meta = await fetch('/openapi.json').then((r) => r.json());
-    el('ver-chip').textContent = `v${meta.info.version}`;
+    // 版本号来源：优先 /api/update（同时带回更新状态），失败回落 openapi
+    const info = await api('/api/update').catch(() => null);
+    const meta = info?.version ? null : await fetch('/openapi.json').then((r) => r.json());
+    const version = info?.version || meta?.info?.version || '';
+    if (version) el('ver-chip').textContent = `v${version}`;
   } catch { /* 版本号拿不到就不显示 */ }
 }
 
