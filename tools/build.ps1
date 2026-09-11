@@ -48,6 +48,7 @@ if (-not (Select-String -Path $extManifest -Pattern "`"version`": `"$version`"" 
 if (-not $SkipPush) {
     git add pyproject.toml workbench\__init__.py desktop\package.json .version.json `
         extensions\quick-login\package.json extensions\quick-login\packages\extension\manifest.json
+    git add uv.lock   # uv sync 会把项目版本写进 lock；不纳管则 lock 永远滞后一版
     git commit -m "chore(release): v$version" 2>$null | Out-Null
     $pushed = $false
     foreach ($i in 1..3) {
