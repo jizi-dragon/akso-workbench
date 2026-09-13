@@ -5,6 +5,22 @@
 
 ## [未发布]
 
+### Fixed
+
+- **全站权限切换后遗留的误导性诊断文案（0.3.5）**：`manifest` 早在 0.2.21 就改成声明式
+  `host_permissions: ["<all_urls>"]`（装载即得、永不弹窗），但扩展内若干提示仍在暗示
+  "浏览器未授权、需去站点页面点一次授权"，排障时会把人引向不存在的动作。本轮只改文案与
+  注释、不动逻辑：
+  - `parallel-session.ts` 401 自愈：`仍未获站点授权（需在该站点页面完成一次授权）` →
+    `在手动停用名单内，规则不生效（如非本意请在扩展弹窗恢复）`；`授权有效` → `网络平面可用`；
+  - `syncAccountRules` 的安装尾注：`未获站点授权，规则待授权后自动生效` →
+    `在手动停用名单内，规则不生效`；
+  - 模块头、`selfHealRules` / `statusOf` / `reapplyAllRules` 注释、webRequest 监听注释同步
+    改为"网络平面健康 = 未被手动停用"的口径（webRequest 注释另更正：改声明式权限后事件
+    覆盖全部站点，归属仍只认绑定页签）。
+  - 复跑：`npm run typecheck` 零错、`verify_extension_boot.py` 7/7、
+    `verify_extension_isolation.py` 8/8、`verify_host_logic.mjs` 22/22。
+
 ### Added
 
 - **文档体系整体重构（v0.3.4 基准，本轮不动代码）**：把「一份自述版本的架构文档」拆成按

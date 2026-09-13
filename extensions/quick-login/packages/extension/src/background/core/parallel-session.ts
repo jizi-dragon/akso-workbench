@@ -23,7 +23,8 @@ import { tabRules } from './tab-rules';
  *   桥接脚本上报 `__auth_token__` 等键的写入 → 本模块捕获 token 快照。
  * - 网络平面：每绑定标签两条 DNR 规则——Authorization 改写 + 出站 Cookie 头剥离（v3 新增，
  *   封堵「真实 jar = 最后登录者」的串号通道）。
- * - 授权健康：host 缺少浏览器授权或被手动停用时，网络平面整体关闭并在 UI 显著提示。
+ * - 网络平面健康：host 被用户手动停用（`ql:blockedHosts`）时该站点的网络平面不生效。
+ *   （0.2.21 起 manifest 声明 `host_permissions: ["<all_urls>"]`，浏览器授权不再是变量）
  */
 
 interface ParBinding {
@@ -713,9 +714,12 @@ const HEAL_MIN_INTERVAL_MS = 10_000;
 
 /**
  * 401/403 自愈（0.2.21）：绑定页签被服务端拒绝，最常见的原因不是"没登录"，而是
- * 「规则没装上/装的是旧 token」——授权判定被误判为不可执行时规则从未安装，页面就会
- * 一路裸奔到 401（用户实测的下载 401 根因）。这里强制重查授权并重装该页签规则，
- * 让"授权其实已给"的情形自愈，无需重启扩展。
+ * 「规则没装上 / 装的是旧 token」——网络平面被误判为不可执行时规则从未安装，页面就会
+ * 一路裸奔到 401（用户实测的下载 401 根因）。这里强制重查网络平面健康并重装该页签规则，
+ * 让"其实可以执行、只是判定/安装漏了"的情形自愈，无需重启扩展。
+ *
+ * 注（0.2.21 起）：manifest 已声明 `host_permissions: ["<all_urls>"]`，浏览器授权不再是
+ * 变量——`isEnforceable` 现在等价于"该 host 不在用户手动停用名单里"。
  */
 async function selfHealRules(tabId: number, binding: ParBinding): Promise<void> {
   const now = Date.now();
@@ -725,13 +729,13 @@ async function selfHealRules(tabId: number, binding: ParBinding): Promise<void> 
   lastHealAt.set(tabId, now);
   const enforceable = await isEnforceable(binding.host, true);
   if (!enforceable) {
-    void diag(`401 自愈：${binding.host} 仍未获站点授权（需在该站点页面完成一次授权）`);
+    void diag(`401 自愈：${binding.host} 在手动停用名单内，规则不生效（如非本意请在扩展弹窗恢复）`);
     return;
   }
   const token = tokens.get(binding.accountId)?.token ?? null;
   try {
     await tabRules.applyBinding(binding.host, tabId, token, cookieHeaderOf(binding.accountId));
-    void diag(`401 自愈：${binding.host} 授权有效 → 重装 tab=${tabId} 规则（token=${token ? '有' : '无'}）`);
+    void diag(`401 自愈：${binding.host} 网络平面可用 → 重装 tab=${tabId} 规则（token=${token ? '有' : '无'}）`);
   } catch (e) {
     void diag(`401 自愈失败 tab=${tabId}：${e instanceof Error ? e.message : String(e)}`);
   }
@@ -925,7 +929,7 @@ async function syncAccountRules(accountId: string, host: string): Promise<void> 
     const enforceable = await isEnforceable(host);
     void diag(
       `syncAccountRules(${accountId}) 完成：applyBinding ×${bound.length}（token=${token ? '有' : '无'} cookie=${cookieHeader ? `${cookieHeader.length}B` : '剥离'}）` +
-        (enforceable ? '' : `｜注意：${host} 未获站点授权，规则待授权后自动生效`),
+        (enforceable ? '' : `｜注意：${host} 在手动停用名单内，规则不生效（如非本意请在扩展弹窗恢复）`),
     );
   } catch (e) {
     void diag(`syncAccountRules(${accountId}) 异常：${e instanceof Error ? e.message : String(e)}`);
@@ -1172,9 +1176,9 @@ export const parallelSession = {
 
   /**
    * UI 列表：返回实时状态（绑定标签页 / token / 网络平面健康）。
-   * host 取绑定标签页的，无绑定时取账号自身 siteHost；授权健康读取 isEnforceable
+   * host 取绑定标签页的，无绑定时取账号自身 siteHost；网络平面健康读取 isEnforceable
    * 的同步缓存（par.list 已预先预热）——修复旧实现「无绑定账号永远显示离线、
-   * 未授权状态不可见」的问题。
+   * 停用状态不可见」的问题。
    */
   statusOf(account: ParallelAccount): {
     tabIds: number[];
@@ -1189,7 +1193,7 @@ export const parallelSession = {
     return { tabIds: tabs, hasToken: Boolean(tokens.get(account.id)?.token), enforcementOff };
   },
 
-  /** 授权变更后重装全部绑定规则（0.2.16 弹窗授权入口——新授权立即生效，不等下一次事件） */
+  /** 停用名单变更/授权事件后重装全部绑定规则（`par.grantChanged` 钩子——变更立即生效，不等下一次事件） */
   async reapplyAllRules(): Promise<void> {
     const list = await parallelStore.list();
     for (const account of list) {
@@ -1507,7 +1511,8 @@ export function registerParallelHandlers(): void {
 
   // 快照动态化（v3.10.6）+ 写入者归属（v3.11.1）：绑定页签收到的响应 Set-Cookie
   // 实时并入账号快照，并记录写入者归属（根本原则：原生页签写入不受卫生机制影响）。
-  // 观察型 webRequest（MV3 允许；无 host 权限的站点不产生事件——授权门控天然成立）。
+  // 观察型 webRequest（MV3 允许）。0.2.21 前它天然只覆盖"已逐站点授权"的站点；
+  // 改 `<all_urls>` 声明式权限后事件覆盖全部站点，归属判定仍只认绑定页签（见 captureResponseCookies）。
   if (chrome.webRequest?.onHeadersReceived) {
     chrome.webRequest.onHeadersReceived.addListener(
       (details: {
