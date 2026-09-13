@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | 11 | `add_account_box` | `account.box` | 账号中心 |
 | 12 | `add_account_tab_name` | `account.tab_name` | 账号中心 |
 | 13 | `add_created_at_indexes` | `agent_audit` / `blueprint_jobs` / `insight_runs` 的 `created_at` 索引 + `account(box)` | 数据层维护 |
+| 14 | `add_insight_workspace_and_coverage` | `insight_runs` 增 `workspace_dir`（多个工作区目录以**换行分隔**）与 `coverage_status`（三态覆盖度） | 平台洞察工作区 |
 
 > **迁移 1–6 为 fork 历史，按不可变纪律保留**。其中 `documents` / `doc_chunks` / `qa_metrics`
 > 的知识库相关功能**源码已删**（表仅留存、不再读写）；`knowledge_nodes` / `knowledge_edges` /

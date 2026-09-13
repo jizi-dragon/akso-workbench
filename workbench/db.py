@@ -212,6 +212,10 @@ CREATE INDEX IF NOT EXISTS idx_blueprint_jobs_created_at ON blueprint_jobs(creat
 CREATE INDEX IF NOT EXISTS idx_insight_runs_created_at ON insight_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_account_box ON account(box);
 """),
+    (14, "add_insight_workspace_and_coverage", """
+ALTER TABLE insight_runs ADD COLUMN workspace_dir TEXT NOT NULL DEFAULT '';
+ALTER TABLE insight_runs ADD COLUMN coverage_status TEXT NOT NULL DEFAULT '';
+"""),
 ]
 
 

@@ -137,7 +137,7 @@ workbench/services/egmp/
 
 ## 4. 输出物与存储模型
 
-### 4.1 存储模型（已拍板）
+### 4.1 存储模型（✅ 已落地，2026-09-13）
 
 **可配工作区根目录 + 每次运行自动建「对象 / 时间戳」。**
 
@@ -161,6 +161,12 @@ workbench/services/egmp/
 
 `insight_runs` 增列记录工作区路径（**新增迁移 14，不改动 1–13**，见 §7）。
 
+**实现落点**：新模块 `workbench/services/egmp/insight/workspace.py`（根目录解析与校验、`run_dir()`、
+三态覆盖度、manifest 读写）；`run_understand` 在不给 `output_dir` 时走工作区模型，
+**每个对象一格**（`<root>/<code>/<时间戳>/`），`insight_runs.workspace_dir` 用换行分隔存多个目录；
+产物读取接口（`/artifacts/*`）优先从工作区取，历史行仍回落到 `artifact_dir`。
+工作区根由设置键 `insight_workspace_root` 决定，接口 `GET/PUT /api/insight/workspace`。
+
 ### 4.2 文件名安全（✅ 已修，2026-09-13）
 
 修复前：对象 code 由用户输入，**仅做 `strip()`** 就直接拼进文件名（`understand.py:124,127,96`），
@@ -179,7 +185,7 @@ workbench/services/egmp/
 
 验收：`tests/test_paths.py` **88 项**（恒等性 + 对抗性输入 + 真实落盘端到端）。
 
-### 4.3 产物契约（本轮新增 `manifest.json`）
+### 4.3 产物契约（✅ `manifest.json` 已落地，2026-09-13）
 
 每次运行的清单，让产物**自证覆盖度**：
 
@@ -268,7 +274,7 @@ workbench/services/egmp/
 | C3 | 凡有「发起工作流」动作，必有对应 `.drawio`；且 `drawio` **可被 XML 解析器解析** | 自动断言 |
 | C3 | 工作流触发状态 = 按钮发现 ∪ `lifecycleStatusIds` | 对拍真实环境 |
 | C4 | 关联对象被列出，且悬空目标计入 unresolved | 产物断言 |
-| C5 | 用户可改工作区根目录；产物出现在 `<root>/<code>/<ts>/` | 端到端 |
+| C5 | 用户可改工作区根目录；产物出现在 `<root>/<code>/<ts>/` | ✅ 端到端（`run_understand` + 真实夹具） |
 
 ### 6.2 质量门禁
 
@@ -285,8 +291,17 @@ workbench/services/egmp/
 - ✅ **路径安全夹具（已建立，2026-09-13）**：`tests/test_paths.py` **88 项**——正常编码恒等性、
   逐条对抗性输入（`../`、绝对路径、`:`、保留设备名、控制字符、双向覆盖字符、尾点空格、超长）、
   以及**真实落盘**的端到端断言（恶意 code 的产物必须仍在 `output_dir` 内）。
-- ⬜ **环境隔离夹具**：同一进程内先后查两个环境，断言元数据缓存**不串**。
-- ⬜ **离线回放夹具**：用 Monitor 录制的真实平台响应回放跑通全链路（取代当前只在 `tests/fakes.py` 假平台上的测试）。
+- ✅ **环境隔离夹具（已建立，2026-09-13）**：`tests/test_env_isolation.py` **19 项**——token 跨环境/
+  跨账号不泄漏、归属校验、JWT `exp` 优先于本地 TTL、原子写、缓存作用域隔离、假值可缓存。
+- ✅ **离线回放夹具（已建立，2026-09-13）**：`workbench/services/egmp/replay.py`（夹具格式 +
+  `Recorder` + `ReplayClient`）、`tests/fixtures/egmp/understand-capa-plan.json`（手写的真实形态夹具）、
+  `tests/test_replay.py` **23 项**、`tools/record_insight_fixture.py`（对着真实环境录一次即可复用）。
+  两条覆盖度保证：回放时**既不能有请求缺失**（`ReplayMiss` 会列出可用键），
+  **也不能有夹具条目从未被用到**（后者能抓住夹具腐化）。
+  > **记录粒度**：录制发生在 `get`/`post`/`paged_post` 这一层（逻辑调用），`paged_post` 内部的翻页
+  > 循环看不到——分页正确性由 client 层测试负责，本台架不重复覆盖。
+- ✅ **工作区与 manifest 门禁（已建立，2026-09-13）**：`tests/test_workspace.py` **32 项**——
+  根目录校验、运行目录布局与越界防护、三态覆盖度、manifest 原子写与 sha256、迁移 14 在册。
 
 ---
 

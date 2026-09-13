@@ -96,18 +96,20 @@ class FakeEgmpClient:
         self.calls.append(("GET", path))
         if path in self.fail_paths:
             raise RuntimeError(f"模拟失败：{path}")
-        if path.startswith("/api/openapi/v1.0/BasicObject/"):
-            code = path.rsplit("/", 1)[-1]
-            meta = self.objects.get(code)
-            if meta is None:
-                raise RuntimeError(f"对象不存在：{code}")
-            return dict(meta)
         if path.startswith("/api/openapi/v1.0/BasicObject/field/"):
             code = path.rsplit("/", 1)[-1]
             return self.fields_by_object.get(code, [])
         if path.startswith("/api/openapi/v1.0/BasicObject/lifecycleStatus/"):
             code = path.rsplit("/", 1)[-1]
             return self.statuses_by_object.get(code, [])
+        if path.startswith("/api/openapi/v1.0/BasicObject/"):
+            # ⚠ 必须放在上面两条**之后**：`BasicObject/field/...` 与 `BasicObject/lifecycleStatus/...`
+            # 同样以本前缀开头，顺序写反会把它们误判成对象元数据（真实平台由路由区分，不靠前缀）。
+            code = path.rsplit("/", 1)[-1]
+            meta = self.objects.get(code)
+            if meta is None:
+                raise RuntimeError(f"对象不存在：{code}")
+            return dict(meta)
         if path.startswith("/api/openapi/v1.0/ObjectPicklist/"):
             code = path.rsplit("/", 1)[-1]
             meta = self.picklists.get(code)

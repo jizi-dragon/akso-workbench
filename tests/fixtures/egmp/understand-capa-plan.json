@@ -1,0 +1,147 @@
+{
+  "formatVersion": 1,
+  "name": "understand-capa-plan",
+  "baseUrl": "https://demo-val.example.com",
+  "envName": "测试环境",
+  "note": "手写的真实形态夹具（非从假平台导出）。刻意覆盖：进入动作（带/不带动作栏）、用户动作发起工作流、工作流触发状态 lifecycleStatusIds、自引用父对象、未知 dataType、选项集内嵌。真实录制的夹具应由 tools/record_insight_fixture.py 生成，格式与此一致。",
+  "interactions": [
+    {
+      "method": "GET",
+      "path": "/api/openapi/v1.0/BasicObject/capa_plan__c",
+      "ok": true,
+      "response": {
+        "id": "obj-1",
+        "code": "capa_plan__c",
+        "name": "纠正预防措施计划",
+        "objectClass": "CUSTOM",
+        "enableLifeCycle": true,
+        "enableTree": false,
+        "lifeCycleId": "lc-1"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/platform/BasicObject/FieldPage",
+      "body": { "objectId": "obj-1" },
+      "ok": true,
+      "response": [
+        { "id": "f-1", "code": "name__ak", "name": "名称", "dataType": 1, "isRequired": true },
+        { "id": "f-2", "code": "owner__c", "name": "负责人", "dataType": 15,
+          "referenceObjectCode": "user__c", "isRequired": true },
+        { "id": "f-3", "code": "capa_type__c", "name": "类型", "dataType": 4,
+          "options": [ { "name": "纠正" }, { "name": "预防" } ] },
+        { "id": "f-4", "code": "parent__c", "name": "父计划", "dataType": 16,
+          "referenceObjectCode": "capa_plan__c" },
+        { "id": "f-5", "code": "future__c", "name": "未来类型", "dataType": 99 },
+        { "id": "f-6", "code": "description__c", "name": "描述", "dataType": 2 }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/openapi/v1.0/BasicObject/lifecycleStatus/capa_plan__c",
+      "ok": true,
+      "response": [
+        { "id": "st-1", "code": "init_status__c", "name": "开启" },
+        { "id": "st-2", "code": "review_status__c", "name": "待审批" },
+        { "id": "st-3", "code": "complete_status__c", "name": "关闭" }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/UserAction/GetList",
+      "params": { "statusId": "st-1" },
+      "ok": true,
+      "response": [
+        { "id": "ua-1", "actions": "提交", "executeType": 1, "description": "提交" },
+        { "id": "ua-4", "actions": "驳回", "executeType": 1, "description": "驳回" }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/UserAction/GetList",
+      "params": { "statusId": "st-2" },
+      "ok": true,
+      "response": [
+        { "id": "ua-2", "actions": "自动送审", "executeType": 2, "description": "送审" },
+        { "id": "ua-3", "actions": "自动完成", "executeType": 2,
+          "description": "修改状态为[关闭]" }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/UserAction/GetList",
+      "params": { "statusId": "st-3" },
+      "ok": true,
+      "response": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/config/lifecycle/UserAction/GetActionBar",
+      "body": { "ids": [ "ua-1", "ua-4", "ua-2", "ua-3" ] },
+      "ok": true,
+      "response": [
+        { "id": "ua-1", "name": "提交", "behaviorType": 7, "targetId": "wfb-1" },
+        { "id": "ua-4", "name": "驳回", "behaviorType": 9, "targetId": "st-3", "targetName": "关闭" },
+        { "id": "ua-2", "name": "自动送审", "behaviorType": 7, "targetId": "wfb-1" }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/platform/Workflow/GetWorkflowBasicPageViewList",
+      "body": { "filters": [] },
+      "ok": true,
+      "response": [
+        {
+          "id": "wfrow-1",
+          "workflowBasicId": "wfb-1",
+          "name": "CAPA审批流",
+          "objectId": "obj-1",
+          "lifecycleStatusIds": [ "st-1", "st-2", "st-ghost" ]
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/platform/Workflow/GetWorkflowSteps",
+      "params": { "workflowConfigId": "wfrow-1" },
+      "ok": true,
+      "response": [
+        { "id": "step-1", "name": "开始", "stepType": 10, "nextStepId": "step-2" },
+        { "id": "step-2", "name": "质量部审批", "stepType": 30, "nextStepId": "step-3" },
+        { "id": "step-3", "name": "结束", "stepType": 20 }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/platform/Workflow/GetWorkflowStepWithDetails",
+      "params": { "id": "step-1" },
+      "ok": true,
+      "response": { "step": { "id": "step-1", "stepType": 10 } }
+    },
+    {
+      "method": "GET",
+      "path": "/api/platform/Workflow/GetWorkflowStepWithDetails",
+      "params": { "id": "step-2" },
+      "ok": true,
+      "response": {
+        "step": {
+          "id": "step-2",
+          "stepType": 30,
+          "stepTaskConfig": { "dispatchMode": 20, "approverContent": "质量部" },
+          "stepAction": {
+            "actions": [
+              { "configs": [ { "behaviorType": 9, "behaviorValue": "关闭" } ] }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/platform/Workflow/GetWorkflowStepWithDetails",
+      "params": { "id": "step-3" },
+      "ok": true,
+      "response": { "step": { "id": "step-3", "stepType": 20 } }
+    }
+  ]
+}

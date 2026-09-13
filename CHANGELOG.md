@@ -7,6 +7,18 @@
 
 ### Fixed
 
+- **平台洞察：关系网的自环判定恒假（拿编码比显示名）**。`build_relation_graph` 用字段里的
+  `referenceObjectCode`（**编码**）去比 `object_name`（**显示名**），比较永远不成立 →
+  `enableTree=false` 时树形自引用**根本没被过滤**，`selfLoop` 标记也永远是 false。
+  现改为比编码（新增 `object_code` 参数，`understand` 传入）。
+- **平台洞察：任务状态会把「部分成功」记成成功**。`run_understand` 原先按「没抛异常」计数成功，
+  平台返回空响应也会走到成功分支 → 10 个对象只读到 1 个仍记 `succeeded`。
+  现改为按**每对象覆盖度**计数：只有 `coverage.status != degraded` 才算成功，
+  并映射为任务状态 `complete→succeeded / partial→partial / degraded→failed`。
+- **测试台架：`FakeEgmpClient.get` 的前缀路由顺序写反**。`BasicObject/` 的通用分支排在
+  `BasicObject/field/` 与 `BasicObject/lifecycleStatus/` **之前**，后者被误判成对象元数据
+  （真实平台靠路由区分，不靠前缀）。此前未暴露是因为假客户端自己实现了便捷方法绕过 `get()`；
+  录制回放（走 `get()`）把它翻了出来。
 - **平台洞察：跨环境/跨账号共用 token 与元数据缓存串台（正确性）**。
   token 缓存原先**只按 `env_id` 分键**、缺省回落 `token-cli.json` —— A 环境的 token 会被交给
   B 环境的 base_url 使用；同一环境的两个账号（真实数据里示例租户就有 `dev-user` 与 `T0901`）共享同一张票，
@@ -73,6 +85,21 @@
 
 ### Added
 
+- **新增 `workbench/services/egmp/replay.py` + 离线回放夹具**：把真实平台的响应录成夹具，
+  之后无需联网即可跑通洞察全链路。含 `Recorder`（包住真实客户端录制，**失败也录**）、
+  `ReplayClient`（按夹具回放，返回值深拷贝）、夹具格式与版本校验。
+  两条覆盖度保证：回放时不得有请求缺失（`ReplayMiss` 会列出可用键），
+  也**不得有夹具条目从未被用到**（能抓住夹具腐化）。
+  配套 `tests/fixtures/egmp/understand-capa-plan.json`（手写真实形态夹具，刻意覆盖进入动作、
+  `lifecycleStatusIds`、自引用父对象、未知 dataType）与 `tools/record_insight_fixture.py`
+  （对着真实环境录一次即可长期复用；只走只读链路）。
+- **新增 `workbench/services/egmp/insight/workspace.py` + 迁移 14**：洞察产物落到**用户可配的工作区**
+  `<root>/<对象code>/<时间戳>/`，每对象一格并各带一份 `manifest.json`（含 `schemaVersion`、环境、
+  覆盖度三态、产物 sha256、失败清单）。新增设置键 `insight_workspace_root` 与接口
+  `GET/PUT /api/insight/workspace`；`insight_runs` 增列 `workspace_dir` / `coverage_status`
+  （**只追加迁移 14，1–13 不动**）；产物读取接口优先从工作区取、历史行回落 `artifact_dir`。
+- **新增 `tests/test_replay.py`（23 项）与 `tests/test_workspace.py`（32 项）**：
+  离线回放与工作区/manifest 门禁。全量测试由 240 项增至 **294 项**。
 - **新增 `tests/test_lifecycle_coverage.py`（13 项）**：L3 生命周期图的覆盖面与语义门禁——
   同名按钮跨状态不得错配、进入动作必须归入「进入动作」、`lifecycleStatusIds` 与按钮通道取并集、
   未知状态 id 不得产出悬空触发、进入条件仍取 `description`。

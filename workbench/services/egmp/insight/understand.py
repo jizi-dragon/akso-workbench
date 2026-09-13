@@ -31,7 +31,7 @@ def understand_object(client: Any, code: str, *, llm_summary_fn=None) -> dict[st
     fields = crawler.page_fields(object_id)
     statuses = client.get_object_statuses(code) or []
     relations = build_relation_graph(fields, str(queries_meta.get("name") or code),
-                                     bool(queries_meta.get("enableTree")))
+                                     bool(queries_meta.get("enableTree")), object_code=code)
 
     # 状态动作 + 按钮行为
     user_actions_by_status: dict[str, list[dict[str, Any]]] = defaultdict(list)

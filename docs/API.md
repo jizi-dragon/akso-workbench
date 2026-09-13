@@ -120,10 +120,24 @@ POST /api/chat/stream   Content-Type: application/json
 | POST | `/api/insight/run` | **同步**执行，返回 `{job_id, status, exit_code, duration_ms, result, workdir}` |
 | POST | `/api/insight/run-sse` | **SSE** 进度流（见 §12.2） |
 | GET | `/api/insight/runs?limit=30` | 任务列表（`limit` 上限 200） |
-| GET | `/api/insight/artifacts/{job_id}` | `{job_id, status, files:[{name,size,suffix}]}`（递归列产物） |
+| GET | `/api/insight/artifacts/{job_id}` | `{job_id, status, coverageStatus, workspaces[], files:[{name,size,suffix,workspace}]}`（递归列产物） |
 | GET | `/api/insight/artifacts/{job_id}/file?name=&download=` | 读产物（见 §12.4 路径守卫） |
+| GET | `/api/insight/workspace` | `{root, default, custom, exists}` —— 产物工作区根（用户可配） |
+| PUT | `/api/insight/workspace` | `{path}`：设置工作区根；**空串 = 恢复默认**；非绝对路径 / 是文件 / 无法创建 → 400 |
 
-`status` ∈ `running` / `succeeded` / `failed`；`result` 内为各命令的 `{summary|succeeded|stats, artifacts[]}`。
+`status` ∈ `running` / `succeeded` / **`partial`** / `failed`；`result` 内为各命令的
+`{summary|succeeded|stats, artifacts[], coverage, workspaces[]}`。
+
+> **`partial` 与 `coverage`（0.3.6 起）**：任务状态不再取布尔 `ok`，而是由**三态覆盖度**映射——
+> `complete→succeeded`、`partial→partial`、`degraded→failed`。这样「10 个对象只成功 3 个」
+> 不会再被记成 succeeded。`coverage` 形如
+> `{status, total, succeeded, failureCount, fieldsRead, statesRead, workflowsFound, workflowsWithGraph, entryConditionSource}`；
+> `entryConditionSource` 恒为 `"description"`（平台没有进入条件的读接口）。
+
+> **产物落点（0.3.6 起）**：`understand` 不再写 `runtime/insight/<job_id>/`，而是落到**用户可配的工作区**
+> `<root>/<对象code>/<时间戳>/`（每对象一格，各带一份 `manifest.json` 自证覆盖度）；
+> `inventory` / `spider` 仍是单目录、落在 runtime 的 `artifact_dir`。
+> 读取接口优先从 `workspace_dir` 取，**历史行自动回落到 `artifact_dir`**（不打断既有数据）。
 
 ## 7. 配置工厂 `/api/factory`（`routes_factory.py`）
 
