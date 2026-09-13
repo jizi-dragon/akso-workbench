@@ -15,8 +15,8 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-LAYOUT_CODE_SUFFIXES = ("_table__ak", "_base_layout__ak")
-OBJECT_SUFFIX_CANDIDATES = ("__c", "__ak", "__sys", "")
+from ..kernel import endpoints
+from ..kernel.semantics import LAYOUT_CODE_SUFFIXES, OBJECT_SUFFIX_CANDIDATES
 
 
 def strip_layout_code(code: str) -> str:
@@ -74,7 +74,7 @@ class Crawler:
         layout_codes: list[str] = []
         for oid in object_ids:
             try:
-                rows = self._client.get("/api/platform/Listlayout/List", params={"objectId": oid}) or []
+                rows = self._client.get(endpoints.LISTLAYOUT_LIST, params={"objectId": oid}) or []
                 for row in rows:
                     code = str(row.get("code") or "")
                     if code:
@@ -83,7 +83,7 @@ class Crawler:
             except Exception:  # noqa: BLE001 —— 降级到 LayoutList
                 try:
                     data = self._client.get(
-                        "/api/platform/Layout/LayoutList",
+                        endpoints.LAYOUT_LIST,
                         params={"basicObjectId": oid, "pageIndex": 1, "pageSize": 5},
                     )
                     for row in (data or []):
@@ -132,7 +132,7 @@ class Crawler:
     def page_fields(self, object_id: str) -> list[dict[str, Any]]:
         """字段主通道（含内嵌选项集实例）。"""
         try:
-            return self._client.paged_post("/api/platform/BasicObject/FieldPage", {"objectId": object_id})
+            return self._client.paged_post(endpoints.FIELD_PAGE, {"objectId": object_id})
         except Exception as exc:  # noqa: BLE001
             self.failures.append({"item": f"fields:{object_id}", "error": str(exc)})
             return []
@@ -148,7 +148,7 @@ class Crawler:
 
     def list_menu_groups(self) -> list[dict[str, Any]]:
         try:
-            return self._client.post("/api/platform/MenuGroup/QueryList", {}) or []
+            return self._client.post(endpoints.MENU_GROUP_QUERY, {}) or []
         except Exception as exc:  # noqa: BLE001
             self.failures.append({"item": "menu-groups", "error": str(exc)})
             return []
@@ -165,7 +165,7 @@ class Crawler:
     def form_layouts(self, object_id: str) -> list[dict[str, Any]]:
         try:
             data = self._client.get(
-                "/api/platform/Layout/LayoutList",
+                endpoints.LAYOUT_LIST,
                 params={"basicObjectId": object_id, "pageIndex": 1, "pageSize": 100},
             )
             return list(data or [])
@@ -175,7 +175,7 @@ class Crawler:
 
     def list_layouts(self, object_id: str) -> list[dict[str, Any]]:
         try:
-            rows = self._client.get("/api/platform/Listlayout/List", params={"objectId": object_id})
+            rows = self._client.get(endpoints.LISTLAYOUT_LIST, params={"objectId": object_id})
             return list(rows or [])
         except Exception as exc:  # noqa: BLE001
             self.failures.append({"item": f"list-layouts:{object_id}", "error": str(exc)})

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..auth import is_reference_field
+from ..kernel.semantics import is_reference_field, object_suffix_of
 
 
 def annotate_purpose(object_meta: dict[str, Any], fields: list[dict[str, Any]],
@@ -17,12 +17,10 @@ def annotate_purpose(object_meta: dict[str, Any], fields: list[dict[str, Any]],
     code = str(object_meta.get("code") or "")
     name = str(object_meta.get("name") or "")
 
-    if code.endswith("__c"):
-        traits.append({"trait": "自定义对象（__c）", "evidence": f"编码 {code}"})
-    elif code.endswith("__ak"):
-        traits.append({"trait": "标准对象（__ak）", "evidence": f"编码 {code}"})
-    elif code.endswith("__sys"):
-        traits.append({"trait": "系统对象（__sys）", "evidence": f"编码 {code}"})
+    suffix = object_suffix_of(code)
+    if suffix:
+        label = {"__c": "自定义对象", "__ak": "标准对象", "__sys": "系统对象"}[suffix]
+        traits.append({"trait": f"{label}（{suffix}）", "evidence": f"编码 {code}"})
 
     if lifecycle_state_count:
         traits.append({"trait": "启用生命周期", "evidence": f"{lifecycle_state_count} 个状态"})

@@ -16,6 +16,7 @@ from . import drawio as drawio_mod
 from .crawler import SIGNATURE_RE
 from .lifecycle import LifecycleApi
 from .report import _table  # noqa: PLC2701 —— 同包渲染工具
+from ..kernel import endpoints
 
 # ---------------------------------------------------------------- 第 1 步
 
@@ -230,7 +231,7 @@ def run_spider(client: Any, codes: list[str]) -> dict[str, Any]:
 
     for code in codes:
         meta = client.get_object(code) or {}
-        fields = client.paged_post("/api/platform/BasicObject/FieldPage",
+        fields = client.paged_post(endpoints.FIELD_PAGE,
                                    {"objectId": str(meta.get("id") or "")})
         relations = collect_relations(fields, code)
 
@@ -245,7 +246,7 @@ def run_spider(client: Any, codes: list[str]) -> dict[str, Any]:
                 continue
             scoped.append({"code": related_code, "name": rmeta.get("name"), "meta": rmeta,
                            "fields": client.paged_post(
-                               "/api/platform/BasicObject/FieldPage",
+                               endpoints.FIELD_PAGE,
                                {"objectId": str(rmeta.get("id") or "")}),
                            "statuses": (client.get_object_statuses(related_code) if rmeta.get("enableLifeCycle") else [])})
         if meta.get("enableLifeCycle"):

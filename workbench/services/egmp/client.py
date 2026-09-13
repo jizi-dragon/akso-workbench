@@ -22,6 +22,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from .. import accounts as accounts_svc
+from .kernel import endpoints
 
 TOKEN_TTL_S = 55 * 60
 
@@ -137,7 +138,7 @@ def login(base_url: str, username: str, password: str, env_id: str = "") -> str:
         resp.raise_for_status()
         payload = resp.json()
     if payload.get("code") != 0 or not isinstance(payload.get("data"), str):
-        raise ApiError("POST", "/api/openapi/v1.0/Auth",
+        raise ApiError("POST", endpoints.AUTH,
                        payload.get("code"), str(payload.get("message")))
     token = payload["data"]
     save_cached_token(base_url, username, token, env_id)
@@ -222,27 +223,27 @@ class EgmpClient:
 
     def get_object(self, code: str) -> dict:
         """OpenAPI 4.8：对象元数据。"""
-        return self.get(f"/api/openapi/v1.0/BasicObject/{code}")
+        return self.get(endpoints.render(endpoints.OBJECT, code=code))
 
     def get_object_fields(self, code: str) -> list:
         """OpenAPI 4.6：字段（降级通道；主通道 FieldPage 见 page_fields）。"""
-        return self.get(f"/api/openapi/v1.0/BasicObject/field/{code}") or []
+        return self.get(endpoints.render(endpoints.OBJECT_FIELD, code=code)) or []
 
     def get_object_statuses(self, code: str) -> list:
         """OpenAPI 4.5：生命周期状态。"""
-        return self.get(f"/api/openapi/v1.0/BasicObject/lifecycleStatus/{code}") or []
+        return self.get(endpoints.render(endpoints.OBJECT_LIFECYCLE, code=code)) or []
 
     def page_fields(self, object_id: str) -> list[dict]:
         """字段主通道（含内嵌选项集实例）。"""
-        return self.paged_post("/api/platform/BasicObject/FieldPage", {"objectId": object_id})
+        return self.paged_post(endpoints.FIELD_PAGE, {"objectId": object_id})
 
     def list_workflows(self) -> list[dict]:
         return self.paged_post(
-            "/api/platform/Workflow/GetWorkflowBasicPageViewList", {"filters": []}
+            endpoints.WORKFLOW_LIST, {"filters": []}
         )
 
     def list_menus(self) -> list:
-        return self.get("/api/platform/Menu/GetMenuList") or []
+        return self.get(endpoints.MENU_LIST) or []
 
 
 def egmp_client_for_account(account_id: str) -> EgmpClient:

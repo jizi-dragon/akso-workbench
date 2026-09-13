@@ -82,29 +82,28 @@ _2026-09-13 定稿 · 基于 `d0efa84`（v0.3.5）代码实测 + 上游 [akso-cc
 
 ## 3. 数据来源：平台知识层（与配置工厂共用）
 
-### 3.1 目标结构
+### 3.1 目标结构（✅ 已落地，2026-09-13）
 
 抽出**显式的平台知识层**，读路径与写路径都依赖它，**任一侧不再各自硬编码平台约定**：
 
 ```
 workbench/services/egmp/
-├── kernel/                  ← 【新增】平台知识层（读/写路径共用）
-│   ├── endpoints.py         ← 唯一天威端点表（含命名空间归属，见 §3.2）
-│   ├── semantics.py         ← 语义词典：dataType / behaviorType / stepType /
-│   │                          dispatchMode / 后缀约定 / 状态编码约定
-│   ├── client.py            ← HTTP 内核（超时/重试/错误分类，见 §3.3）
-│   ├── auth.py              ← 登录 + token 生命周期（按环境+账号分键）
-│   ├── cache.py             ← 元数据缓存（**按环境命名空间**）
-│   └── capability.py        ← 【新增】平台版本 / 能力探测
-├── insight/                 ← 读路径（本规格主体）
+├── kernel/                  ← ✅ 平台知识层（读/写路径共用）
+│   ├── endpoints.py         ← ✅ 唯一端点表（49 条，含命名空间归属与 render/namespace_of）
+│   ├── semantics.py         ← ✅ 语义词典 + 判定函数（+ 未识别值可见化的 *_name() 助手）
+│   ├── capability.py        ← ⬜ 平台版本/能力探测（**尚未实现**，manifest 的 platformVersion 仍为 null）
+│   └── （client/auth/cache 仍留在 egmp/ 顶层）
+├── insight/                 ← 读路径
 ├── writers/                 ← 写路径
 └── monitor/
 ```
 
-**迁移注意**：`writers/endpoints.py` 现被 `writers/idempotency.py` 导入——提升为 `kernel/endpoints.py` 时需同步改引用，
-并在 `writers/endpoints.py` 留一层**转发垫片**（re-export）以免打断其它调用点。
+**实际做法（与草案的差异，有意为之）**：`client.py` / `auth.py` / `cache.py` **没有搬进 kernel**——
+它们已被众多模块导入，纯搬家会把一次知识层抽取变成全仓改动。本轮先抽**端点表与语义词典**
+这两样真正"各写了一遍"的东西；`auth.py` 与 `writers/endpoints.py` 保留为**转发垫片**，
+既有调用点一行未动（`tests/test_kernel.py` 验证垫片仍可解析）。
 
-### 3.2 端点表必须成为唯一事实来源
+### 3.2 端点表必须成为唯一事实来源（✅ 已落地，2026-09-13）
 
 现状问题：insight **绕过**了端点表，自行硬编码约 **14 处**字面量；另有 **6 个 insight 在用的端点表里根本没有**。
 
@@ -118,6 +117,13 @@ workbench/services/egmp/
 
 - `/api/openapi/v1.0/*` —— **版本化**标准 API（登录、对象、字段降级、生命周期状态）
 - `/api/platform/*`、`/api/config/*` —— **私有、无版本**的 web 控制台接口（平台升级时最先断的就是这些）
+
+**落地结果**：`kernel/endpoints.py` 共 **49 条**端点，含上表全部缺项与 3 条探针；
+`endpoints.render(template, **params)` 统一展开模板并对路径参数做 URL 编码
+（对象编码来自用户输入，原样拼接会改变路径结构）；
+`namespace_of()` / `is_versioned()` 区分版本化与私有端点，便于排障时优先怀疑后者。
+insight 与 egmp 顶层的**硬编码字面量归零**（36 处全部改为引用端点表）——由
+`tests/test_kernel.py` 的**源码扫描**钉死，改回硬编码会立刻红。
 
 ### 3.3 知识层必须同时解决的基础问题
 

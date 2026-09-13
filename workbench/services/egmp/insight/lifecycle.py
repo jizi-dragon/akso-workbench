@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from typing import Any
+from ..kernel import endpoints
 
 
 class LifecycleApi:
@@ -21,7 +22,7 @@ class LifecycleApi:
     def user_actions(self, status_id: str) -> list[dict[str, Any]]:
         """状态动作记录（统一视图，executeType 1/2）。"""
         data = self._client.get(
-            "/api/config/lifecycle/UserAction/GetList", params={"statusId": status_id}
+            endpoints.USER_ACTION_LIST, params={"statusId": status_id}
         )
         return list(data or [])
 
@@ -29,24 +30,24 @@ class LifecycleApi:
         """动作行为（按钮目标：behaviorType 7/9）。"""
         if not action_ids:
             return []
-        data = self._client.post("/api/config/lifecycle/UserAction/GetActionBar", {"ids": action_ids})
+        data = self._client.post(endpoints.USER_ACTION_BAR, {"ids": action_ids})
         return list(data or [])
 
     def status_detail(self, status_id: str) -> dict[str, Any]:
-        data = self._client.get("/api/config/lifecycle/Status/Detail", params={"id": status_id})
+        data = self._client.get(endpoints.STATUS_DETAIL, params={"id": status_id})
         return dict(data or {})
 
     def workflow_steps(self, workflow_row_id: str) -> list[dict[str, Any]]:
         """工作流步骤（注意：用工作流行 id）。"""
         data = self._client.get(
-            "/api/platform/Workflow/GetWorkflowSteps",
+            endpoints.WORKFLOW_STEPS,
             params={"workflowConfigId": workflow_row_id},
         )
         return list(data or [])
 
     def workflow_step_detail(self, step_id: str) -> dict[str, Any]:
         data = self._client.get(
-            "/api/platform/Workflow/GetWorkflowStepWithDetails", params={"id": step_id}
+            endpoints.WORKFLOW_STEP_DETAIL, params={"id": step_id}
         )
         data = data or {}
         if isinstance(data, dict) and isinstance(data.get("step"), dict):
@@ -56,13 +57,13 @@ class LifecycleApi:
     def form_layout_detail(self, layout_id: str, object_id: str) -> dict[str, Any]:
         """⚠ 双参数缺一返回 500（实证）。"""
         data = self._client.get(
-            "/api/platform/Layout/LayoutDetail",
+            endpoints.LAYOUT_DETAIL,
             params={"layoutId": layout_id, "basicObjectId": object_id},
         )
         return dict(data or {})
 
     def list_columns(self, listlayout_id: str) -> list[dict[str, Any]]:
         data = self._client.get(
-            "/api/platform/Listlayout/Columns", params={"listlayoutId": listlayout_id}
+            endpoints.LISTLAYOUT_COLUMNS, params={"listlayoutId": listlayout_id}
         )
         return list(data or [])

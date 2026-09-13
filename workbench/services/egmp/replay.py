@@ -21,6 +21,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from .kernel import endpoints
 
 FIXTURE_FORMAT_VERSION = 1
 
@@ -140,24 +141,24 @@ class Recorder:
     # ---- 便捷只读方法：与 EgmpClient 同形（录制的是逻辑调用，不展开内部翻页）----
 
     def get_object(self, code: str) -> dict:
-        return self.get(f"/api/openapi/v1.0/BasicObject/{code}") or {}
+        return self.get(endpoints.render(endpoints.OBJECT, code=code)) or {}
 
     def get_object_fields(self, code: str) -> list:
-        return self.get(f"/api/openapi/v1.0/BasicObject/field/{code}") or []
+        return self.get(endpoints.render(endpoints.OBJECT_FIELD, code=code)) or []
 
     def get_object_statuses(self, code: str) -> list:
-        return self.get(f"/api/openapi/v1.0/BasicObject/lifecycleStatus/{code}") or []
+        return self.get(endpoints.render(endpoints.OBJECT_LIFECYCLE, code=code)) or []
 
     def page_fields(self, object_id: str) -> list[dict]:
-        return self.paged_post("/api/platform/BasicObject/FieldPage", {"objectId": object_id})
+        return self.paged_post(endpoints.FIELD_PAGE, {"objectId": object_id})
 
     def list_workflows(self) -> list[dict]:
         return self.paged_post(
-            "/api/platform/Workflow/GetWorkflowBasicPageViewList", {"filters": []}
+            endpoints.WORKFLOW_LIST, {"filters": []}
         )
 
     def list_menus(self) -> list:
-        return self.get("/api/platform/Menu/GetMenuList") or []
+        return self.get(endpoints.MENU_LIST) or []
 
     def __enter__(self) -> "Recorder":
         return self
@@ -218,24 +219,24 @@ class ReplayClient:
     # ---- 便捷只读方法 ----
 
     def get_object(self, code: str) -> dict:
-        return self.get(f"/api/openapi/v1.0/BasicObject/{code}") or {}
+        return self.get(endpoints.render(endpoints.OBJECT, code=code)) or {}
 
     def get_object_fields(self, code: str) -> list:
-        return self.get(f"/api/openapi/v1.0/BasicObject/field/{code}") or []
+        return self.get(endpoints.render(endpoints.OBJECT_FIELD, code=code)) or []
 
     def get_object_statuses(self, code: str) -> list:
-        return self.get(f"/api/openapi/v1.0/BasicObject/lifecycleStatus/{code}") or []
+        return self.get(endpoints.render(endpoints.OBJECT_LIFECYCLE, code=code)) or []
 
     def page_fields(self, object_id: str) -> list[dict]:
-        return self.paged_post("/api/platform/BasicObject/FieldPage", {"objectId": object_id})
+        return self.paged_post(endpoints.FIELD_PAGE, {"objectId": object_id})
 
     def list_workflows(self) -> list[dict]:
         return self.paged_post(
-            "/api/platform/Workflow/GetWorkflowBasicPageViewList", {"filters": []}
+            endpoints.WORKFLOW_LIST, {"filters": []}
         )
 
     def list_menus(self) -> list:
-        return self.get("/api/platform/Menu/GetMenuList") or []
+        return self.get(endpoints.MENU_LIST) or []
 
     def __enter__(self) -> "ReplayClient":
         return self

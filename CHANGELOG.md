@@ -85,6 +85,20 @@
 
 ### Added
 
+- **新增 `workbench/services/egmp/kernel/` 平台知识层（读写路径共用）**：把此前「各写一遍」的
+  平台约定收成单点。
+  - `kernel/endpoints.py`：**唯一**端点表（49 条），含命名空间归属（版本化 `/api/openapi/v1.0/*`
+    vs 私有无版本 `/api/platform|config/*`）、`render()` 模板展开（路径参数做 URL 编码）、
+    `namespace_of()` / `is_versioned()`；补齐此前表外缺失的 6 条，以及上游给出但从未实现的
+    3 条发现链探针（`BasicObject/QueryList|GetPageList|Page`）。
+  - `kernel/semantics.py`：dataType / behaviorType / stepType / dispatchMode / 后缀约定等实证词典
+    ＋判定函数；新增 `object_suffix_of()` 与 `*_name()` 助手——**未登记的枚举值回
+    `dataType=<n>` 而不是静默消失**。
+  - `auth.py` 与 `writers/endpoints.py` 保留为**转发垫片**，既有调用点一行未动；
+    旧名（`MENUGROUP_QUERY` / `OPENAPI_*`）以 `LEGACY_ALIASES` 显式标注保留。
+  - **insight 与 egmp 顶层的硬编码端点字面量归零（36 处）**；后缀约定不再在
+    `crawler.py` / `annotate.py` 各写一遍。`tests/test_kernel.py`（35 项）用**源码扫描**钉死：
+    出现硬编码端点、模板未展开、常量重复定义都会立刻红。
 - **新增 `workbench/services/egmp/replay.py` + 离线回放夹具**：把真实平台的响应录成夹具，
   之后无需联网即可跑通洞察全链路。含 `Recorder`（包住真实客户端录制，**失败也录**）、
   `ReplayClient`（按夹具回放，返回值深拷贝）、夹具格式与版本校验。

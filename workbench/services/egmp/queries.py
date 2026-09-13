@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from .cache import cache_key, default_cache
+from .kernel import endpoints
 
 
 class GaiaQueries:
@@ -46,14 +47,14 @@ class GaiaQueries:
     def get_picklist(self, code: str) -> dict[str, Any] | None:
         """选项集（验证/幂等用）。"""
         try:
-            data = self._client.get(f"/api/openapi/v1.0/ObjectPicklist/{code}")
+            data = self._client.get(endpoints.render(endpoints.OBJECT_PICKLIST, code=code))
             return data or None
         except Exception:  # noqa: BLE001 —— 不存在/无权限按未命中处理
             return None
 
     def get_workflow(self, code: str) -> dict[str, Any] | None:
         try:
-            data = self._client.get(f"/api/openapi/v1.0/Workflow/{code}")
+            data = self._client.get(endpoints.render(endpoints.WORKFLOW, code=code))
             return data or None
         except Exception:  # noqa: BLE001
             return None
