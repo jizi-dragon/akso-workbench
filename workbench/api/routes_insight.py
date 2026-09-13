@@ -210,9 +210,14 @@ def read_artifact(job_id: str, name: str, download: bool = False):
     row = db.query_one("SELECT * FROM insight_runs WHERE id = ?", (job_id,))
     if not row:
         raise HTTPException(404, f"任务不存在：{job_id}")
-    artifact_dir = Path(row["artifact_dir"] or ".").resolve()
+    raw_dir = row["artifact_dir"]
+    if not raw_dir:
+        # 空 artifact_dir 会让 "." 解析成 CWD，守卫退化为「当前目录下任意文件」——直接拒绝
+        raise HTTPException(404, f"任务无可读产物目录：{job_id}")
+    artifact_dir = Path(raw_dir).resolve()
     target = (artifact_dir / name).resolve()
-    if not str(target).startswith(str(artifact_dir)) or not target.exists() or not target.is_file():
+    # 必须用「路径包含」而非字符串前缀比较：`.../insight/abc` 在字符串上「包含」`.../insight/abc_evil`
+    if not target.is_relative_to(artifact_dir) or not target.exists() or not target.is_file():
         raise HTTPException(404, f"产物不存在：{name}")
     if download or target.suffix.lower() not in {".md", ".json", ".txt", ".log", ".csv"}:
         return FileResponse(target, filename=target.name)

@@ -109,11 +109,11 @@ def to_markdown(object_meta: dict[str, Any], understanding: dict[str, Any]) -> s
     parts.append("")
 
     parts.append("### 生命周期状态与动作明细")
-    parts.append("> 平台实证口径：进入条件语义取自 UserAction/GetList 的 description；"
-                 "进入动作的结构化配置无公开读接口。")
+    parts.append("> **进入条件取自平台自动生成的描述文本（`description`），不是结构化字段**——"
+                 "平台未提供进入条件的读接口（上游六轮 48+ 路径探测均不存在），故标记为「描述推断」。")
     parts.append("")
     if lifecycle.get("states"):
-        parts.append("| 生命周期状态名称 | 进入动作 | 用户动作 | 进入条件 |")
+        parts.append("| 生命周期状态名称 | 进入动作 | 用户动作 | 进入条件（描述推断） |")
         parts.append("|---|---|---|---|")
         for state in lifecycle["states"]:
             enter = "、".join(
@@ -132,6 +132,17 @@ def to_markdown(object_meta: dict[str, Any], understanding: dict[str, Any]) -> s
     else:
         parts.append("_（未启用生命周期）_")
     parts.append("")
+
+    if lifecycle.get("workflowTriggerEdges"):
+        parts.append("### 工作流触发状态")
+        parts.append("> 来自工作流行的 `lifecycleStatusIds`（平台声明的工作流触发绑定），"
+                     "与上表「用户动作 / 进入动作」中发起工作流的边**取并集**。")
+        parts.append("")
+        parts.append("| 触发状态 | 工作流 |")
+        parts.append("|---|---|")
+        for trigger in lifecycle["workflowTriggerEdges"]:
+            parts.append(f"| {_mid(trigger.get('statusName'))} | {_mid(trigger.get('workflowName'))} |")
+        parts.append("")
 
     if lifecycle.get("involvedWorkflows"):
         parts.append("### 动作涉及的工作流")

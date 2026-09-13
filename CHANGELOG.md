@@ -7,6 +7,56 @@
 
 ### Fixed
 
+- **平台洞察：跨环境/跨账号共用 token 与元数据缓存串台（正确性）**。
+  token 缓存原先**只按 `env_id` 分键**、缺省回落 `token-cli.json` —— A 环境的 token 会被交给
+  B 环境的 base_url 使用；同一环境的两个账号（真实数据里示例租户就有 `dev-user` 与 `T0901`）共享同一张票，
+  第二个账号实际以第一个的身份运行。元数据缓存 `QueryCache` 又是进程级全局单例、键不含环境，
+  四个真实部署在同一进程内查询同名对象（如 `init_status__c`）时会互相污染。现改为：
+  - token 缓存按 **`(base_url, username)`** 分键，载入时校验归属（`baseUrl`/`username` 双重比对），
+    按 JWT `exp` 提前判失效，改**原子写**（临时文件 + rename），`env_id` 退为文件内元数据；
+  - 缓存键加环境作用域 `{scope}|{kind}:{code}`，`scope` = 归一化 base_url；
+    按对象失效改为**跨全部环境**清（否则另一个环境会留旧值）；
+  - 顺带修：`get_or_set` 原先用 `None` 同时表示 miss 与「缓存了 None」，
+    导致平台合法返回空响应时每次重新发请求，现用哨兵区分。
+  - 验收：`tests/test_env_isolation.py` **19 项**。
+- **平台洞察：生命周期四列表两列同时出错（进入动作与用户动作混归类）**。`executeType=2`
+  （进入状态时自动执行）的动作若经动作栏解析出「修改状态」，会被塞进 `userActionEdges`
+  → 报告的「进入动作」列**缺项**、「用户动作」列**多项**。现按 `executeType` 归类，
+  并给每条边加 `mechanism`（`button` / `enterAction` / `lifecycleStatusIds`）。
+- **平台洞察：同名按钮跨状态错配**。`_consume_match` 的 docstring 写「同状态内」，代码却遍历
+  **全部状态**的动作栏行——实测 `sa` 的「提交」被配到 `sb` 的动作栏行。现只在「本状态自身的动作」
+  与「无法归属任何状态的动作」里按名称匹配，**明确属于别的状态的 id 一律排除**
+  （后者保留，因为 GetActionBar 返回的 id 有时确实不解析，这正是该兜底存在的理由）。
+- **平台洞察：有「发起工作流」的动作却不产出 drawio（键空间错配）**。`GetActionBar` 的 `targetId` 是
+  **workflowBasicId**，而 `workflows_by_row_id` 与 `workflow_graphs` 都按**工作流行 id** 建键——
+  原先直接拿 basicId 去查，既取不到工作流名也取不到流程图。现建一次反查索引修正。
+- **平台洞察：工作流触发状态未使用**。工作流行上的 `lifecycleStatusIds`（上游实测 195/707 条携带）
+  在移植版中完全没用，只靠按钮发现工作流、覆盖面窄于上游。现新增 `workflowTriggerEdges`
+  与按钮通道**取并集**，只认已知状态 id（不产出悬空触发），报告新增「工作流触发状态」章节。
+- **平台洞察：报告未标注进入条件为推断值**。四列表头改为 **`进入条件（描述推断）`** 并加固定注脚——
+  平台没有进入条件的读接口（上游六轮 48+ 路径探测均不存在），不能让使用者误以为是结构化事实。
+- **平台洞察：drawio 产物对任何输入都必须良构（三处缺陷）**。此前 `.drawio` 在特定输入下
+  **完全无法打开**，且标签显示错误：
+  - **双重转义**：`_label` 先转义、`_node_xml` 又转义一次 → 换行变成字面 `&lt;br&gt;`、`&` 变成 `&amp;`。
+    现改为**单层转义**，并以实证口径修正换行表示：draw.io 自身用 **`&#xa;` 字符引用**而非 `<br>`
+    （字面 `<` 在 XML 属性值里非法）；多行标签另补 `whiteSpace=wrap`。
+  - **非法 XML 字符未清除**：C0 控制字符在 XML 1.0 中即使写成字符引用也非法，
+    名字里出现一个（如 U+000B）即让整个文件报 `not well-formed`。现已统一清除。
+  - **节点 id 与根单元冲突**：平台步骤 id 若为 `"0"`/`"1"`，会与 `<mxCell id="0"/>`/`id="1"` 重复。
+    现 `cell_id()` 为**纯函数**（`n_<清洗名>_<短哈希>`），跨模块天然一致且永不撞根单元。
+- **平台洞察：spider 网络图产出悬空边引用（运算符优先级 bug）**。`build_network_model` 原写
+  `_find(...) or f"obj:{target}" if target else None`，实际解析为
+  `(_find(...) or f"obj:{target}") if target else None` —— 为「工作流名」这类目标造出
+  `obj:工作流「X」` 这种**永不存在的节点 id**（已用真实 spider 数据实测确认）。
+  现改为三级解析：状态节点 → 已爬对象节点 → 兜底挂到「来源状态所属对象」；两端都定不了位时
+  置 `unresolved: True`（产物里可见），drawio 侧不再画悬空边。
+- **平台洞察：对象 code 路径穿越（可写到产物目录之外）**。对象 code 由用户输入且此前只做 `strip()`
+  就拼进文件名，实测 `../../PWNED` 的产物 resolve 后落在 job 目录之外、`C:/Temp/pwn` 会写到 `C:\Temp\`。
+  现新增 `workbench/services/paths.py`：`safe_path_component()` 剥离路径分隔符/Windows 非法字符/
+  零宽与双向控制符/首尾点空格并处理保留设备名（**正常编码与中文恒等通过，不改名**），
+  `resolve_within()` 落盘前断言仍在目标根内。同时 `routes_insight.py` 的产物读取守卫由
+  **字符串前缀比较**改为 `Path.is_relative_to()`，并拒绝 `artifact_dir` 为空的行
+  （原先会退化为「CWD 下任意文件」）。
 - **全站权限切换后遗留的误导性诊断文案（0.3.5）**：`manifest` 早在 0.2.21 就改成声明式
   `host_permissions: ["<all_urls>"]`（装载即得、永不弹窗），但扩展内若干提示仍在暗示
   "浏览器未授权、需去站点页面点一次授权"，排障时会把人引向不存在的动作。本轮只改文案与
@@ -23,9 +73,38 @@
 
 ### Added
 
+- **新增 `tests/test_lifecycle_coverage.py`（13 项）**：L3 生命周期图的覆盖面与语义门禁——
+  同名按钮跨状态不得错配、进入动作必须归入「进入动作」、`lifecycleStatusIds` 与按钮通道取并集、
+  未知状态 id 不得产出悬空触发、进入条件仍取 `description`。
+- **新增 `tests/test_env_isolation.py`（19 项）**：环境与身份隔离门禁——token 跨环境/跨账号不泄漏、
+  归属校验、JWT `exp` 优先、原子写、缓存作用域、假值可缓存。
+- **新增 `tests/test_drawio.py`（57 项）**：drawio 良构门禁——对抗性标签（`&`/`<`/`"`/换行/C0 控制字符/
+  中文/emoji/空名）、id 为 `"0"`/`"1"` 的节点、重复步骤 id、并行同源边、成环分层、坐标重叠。
+  断言分两层：**先良构**（`ET.fromstring` 必须成功），**再语义**（解析回来的属性值等于期望文本）。
+- **新增 `tests/test_paths.py`（88 项）**：路径安全门禁——正常编码恒等性、逐条对抗性输入
+  （`../`、绝对路径、保留设备名、控制字符、双向覆盖字符、尾点空格、超长）与**真实落盘**端到端断言。
+  全量测试由 63 项增至 **208 项**。
+- **新增 `tools/verify_insight_drawio.py`（11 项真机验收）**：把对抗性产物交给 **draw.io 桌面版 CLI**
+  读一遍再回写，回写结果仍需良构——这是「标准 drawio」的最终判据。
+- **新增 `workbench/services/paths.py`**：`safe_path_component()` / `resolve_within()`，
+  作为外部输入进入路径成分的统一收口点（详见 Fixed 段的路径穿越条目）。
+- **新建 [`docs/INSIGHT-SPEC.md`](docs/INSIGHT-SPEC.md)**：平台洞察（insight）的**功能定位与产品能力规格**——
+  定位（只读配置理解引擎，与配置工厂共用同一套 API 知识体系）、5 项核心能力与非目标、
+  平台知识层的目标结构与端点表唯一化、产物与存储模型（可配工作区根目录 + `<对象code>/<时间戳>/` + `manifest.json`）、
+  6 条已知边界（含「进入条件为描述级」这一产品能力天花板）、验收标准与 4 项质量门禁、数据与重构纪律。
+  四项关键决策已拍板：进入条件接受描述级并显式标注 / 工作区可配 + 自动时间戳目录 /
+  抽取显式平台知识层供读写两路径共用 / 修原生 drawio 生成器并加 well-formed 校验。
+- **新建 [`docs/PITFALLS.md`](docs/PITFALLS.md)**：22 条真机环境坑，原 `AGENT.md` §5 的唯一留存处。
+  相对原文新增**复核列**（✅ 已对码核实 / ⚠️ 仍成立但有新变化 / — 本轮未复核）与「只增不改、编号追加」的
+  维护规则；其中 #9 网络代理补记 2026-09-13 实测（`build.ps1:71-75` 仍硬编码直连 push，与「直连会被重置」
+  的结论相反；`AKSO_PROXY` 到不了 egmp 的 Python 路径），#15 补记 `_next_seq()` 吞掉 DB 写异常会让
+  指令序号从 1 重来的残留风险。
+- **新建 [`docs/方向调研-平台洞察独立发展.md`](docs/方向调研-平台洞察独立发展.md)**：平台洞察（insight）
+  独立发展调研——现状诊断（真实库零运行记录、平台耦合面未验证、产物会「看起来完整」）、准备清单
+  （P0 可验证性 / P1 契约化 / P2 能力深化）与九类边缘规则验收清单。**调研文档，不含代码改动。**
 - **文档体系整体重构（v0.3.4 基准，本轮不动代码）**：把「一份自述版本的架构文档」拆成按
   **变更频率**分层的常驻文档，并新建四份此前缺失的文档。
-  - **新建** [`AGENT.md`](AGENT.md)：接手手册——项目快照、代码地图、**六条维护红线**、
+  - **新建** `AGENT.md`：接手手册——项目快照、代码地图、**六条维护红线**、
     **已知问题清单**（代码缺陷 13 / 安全与产品级 5 / 测试缺口 4 / 构建脚本债 14 / 文档债 3）、
     **22 条环境坑**（含实测出处）、验收基线（每轮必跑 / 改扩展必跑 / 改蓝图必跑 / 改更新必跑）、
     真机验收记录与待人工复验项。
@@ -50,6 +129,18 @@
 
 ### Changed
 
+- **全仓 `AGENT.md` 引用重指**：原 **59 处 / 21 个文件**（7 篇 ADR、`docs/API.md` 7 处、`docs/CONFIG.md`、
+  `docs/SCHEMA.md`、`docs/USER-MANUAL.md`、`docs/EXTENSION-PLANE.md`、`extensions/quick-login/README.md`、
+  `docs/archive/`）。重指后全仓指向 `AGENT.md` 的 markdown 链接为 **0**；`CHANGELOG.md` 内的两处历史记录
+  **保留原文不改写**，仅把链接语法降级为代码体，避免留下死链。
+- **订正两处随 `AGENT.md` 一起失效的事实**（源头均为其 B7 / §7.1）：扩展
+  `extensions/quick-login/package-lock.json` 的 version **实测已是 `0.3.5`**（原文与 `CONTRIBUTING.md`
+  均称停在 `0.2.20`；只有 `desktop/package-lock.json` 确实仍是 `0.2.1`）；
+  `CONTRIBUTING.md` 的 `uvx ruff check .` 一行补注「本机 `uv`/`ruff` 均不存在，该门禁当前无法执行」。
+- **[`docs/CODEBASE_OVERVIEW.md`](docs/CODEBASE_OVERVIEW.md) 复核重写**：原锚定 v0.2.2（落后 8 个版本，
+  其「11 个路由域 / 迁移 1-11 / Inno Setup / 50 测试函数 / 双写版本号」均已失效），本轮按代码实测重写并
+  锚定 `d0efa84`（v0.3.5）。行数口径改为**物理行数**；补齐验收基线实测（`pytest` **63 passed / 1 failed**、
+  `verify_packaging.py` **8/8**、`ruff` 无法执行）与完整风险台账；并加注 `AGENT.md` 承接说明。
 - **README.md 收敛为「产品定位 + 用户向快速开始 + 文档地图」**：删去开发/构建内容
   （全部移入 `CONTRIBUTING.md`），补上「它解决什么问题」对照表与四个来源项目的能力沉淀表。
 - **CONTRIBUTING.md 接管全部开发内容**：环境搭建（强调 `--extra build` 不能省、uv 不在 PATH 时的替代命令）、
@@ -66,6 +157,18 @@
 
 ### Removed
 
+- **`AGENT.md` 删除：内容按变更频率拆分承接（文档体系收敛）**。它把代码地图、六条红线、已知问题台账、
+  环境坑、验收基线、文档分工全部混在一份「接手手册」里，随代码演进多处失真。2026-09-13 复核确认的
+  具体错误：§8 的 `uv`/`uvx` 路径在本机**并不存在**（venv 已不再内置这两个 shim，`pyvenv.cfg` 记
+  `uv = 0.12.10`）、§1 的项目快照与实际库不符（实测 **环境 4 / 账号 5 / 洞察运行 0**，原文记
+  「环境 3 / 账号 4 / 洞察运行 4」）、B7 的扩展 `package-lock.json` 版本已过期、全篇行数为**漏算空行**
+  的偏低口径（`Get-Content | Measure-Object -Line` 会跳过空行；`workbench/**.py` 实为 10,172 行而非 8,167）。
+  删除后按变更频率重新落位：
+  - **§5 环境坑 22 条 → 新建 [`docs/PITFALLS.md`](docs/PITFALLS.md)**（只增不改，机构记忆）；
+  - **§2 代码地图 / §3 六条红线 / §4 已知问题台账 → [`docs/CODEBASE_OVERVIEW.md`](docs/CODEBASE_OVERVIEW.md)**
+    ——台账编号 **C/S/T/B/D 原样保留**，以免打断 `docs/API.md`、`docs/SCHEMA.md` 与 7 篇 ADR 中按编号的既有引用；
+  - §7 验收基线 → 同文件「验收基线实测」与 [`CONTRIBUTING.md`](CONTRIBUTING.md) §7；
+  - §6 数据与运行时目录 → [`docs/SCHEMA.md`](docs/SCHEMA.md) / [`docs/CONFIG.md`](docs/CONFIG.md)（原本已在那里）。
 - `docs/架构分析.md`、`docs/SESSION-DIGEST.md`、`docs/数据层决策.md` 移入 `docs/archive/`
   （分别改名 `ARCHITECTURE-2026-09-10.md` / `SESSION-DIGEST-2026-09-10.md` / `DATA-LAYER-DECISION.md`，
   加归档抬头并写明内容去向）。原因：前两份自述版本为 v0.2.2 且与现状有实质偏差
@@ -83,7 +186,7 @@
   修完已复跑：`pytest` **64 passed**、`verify_packaging.py` **8/8 PASS**、两个 `.ps1` 语法检查通过
   （`setup.ps1` 编辑后重补了 UTF-8 BOM）。
 - 盘点中发现的其余代码缺陷与安全风险一律以
-  [`AGENT.md`](AGENT.md) §4 的「已知问题清单」形式落盘（代码缺陷 10 条、安全与产品级 5 条、
+  已删除的 `AGENT.md` §4 的「已知问题清单」形式落盘（代码缺陷 10 条、安全与产品级 5 条、
   测试缺口 4 条、构建脚本债 11 条），修复另开一轮。
 
 ## [0.3.4]

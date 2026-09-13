@@ -67,7 +67,7 @@ GET /extension/snapshot
 
 ## 已知风险（已登记，未修）
 
-> 这两条属于**扩展侧的产品级隐患**，用户已知悉并暂挂；代码修复需另开一轮（见 [AGENT.md](../../AGENT.md) §4）。
+> 这两条属于**扩展侧的产品级隐患**，用户已知悉并暂挂；代码修复需另开一轮（见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 的风险台账）。
 
 ### R1 明文凭据 60s 投递窗口（`getPendingAutoLogin` 读后不删）
 
@@ -96,6 +96,6 @@ manifest `host_permissions: ["<all_urls>"]`（0.2.21 起）——权限面比功
 - **密钥轮换是本项目尚未实现的运维动作**：轮换需要重写全部 `password_enc` 并通知扩展重新同步。
   当前若手工改 `account_fernet_key`，表现是接口能读、扩展静默丢弃全部账号（有 `console.warn` 留痕）。
 - 审计与日志纪律：`agent_audit.args` 目前会原样存工具入参（截断 2,000 字符）。
-  **凡是把凭据作为工具入参的调用都会落库**——见 [AGENT.md](../../AGENT.md) §4 的待修项。
+  **凡是把凭据作为工具入参的调用都会落库**——见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 风险台账中的待修项。
 - 真机验证入口：`tools/diag_fernet_node.mjs`（跨语言 Fernet 一致性）、
   `tests/test_accounts.py::test_fernet_roundtrip` / `test_fernet_unique_ciphertexts`（同明文产生不同密文）。

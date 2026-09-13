@@ -8,7 +8,7 @@
 > ⑤ 前端硬编码常量。
 >
 > 相关文档：[API.md](API.md)（端口与端点）、[SCHEMA.md](SCHEMA.md)（表结构）、
-> [ADR-0008](adr/0008-update-channel-and-proxy.md)（代理与更新）、[AGENT.md](../AGENT.md)（排障速查）。
+> [ADR-0008](adr/0008-update-channel-and-proxy.md)（代理与更新）、[PITFALLS.md](PITFALLS.md)（环境坑清单）。
 
 ## 1. 端口与进程（先看这张表）
 
@@ -26,7 +26,7 @@
 
 > ⚠️ **18765 是扩展的编译期常量**（`sync.ts` 的 `DESKTOP`）。改动服务端口会让扩展失联，
 > 且**没有任何运行时兜底**——扩展只会静默离线回退。验证扩展相关行为时务必确认 18765 上是本项目服务
-> （常见陷阱：孤儿 uvicorn 占端口，见 [AGENT.md](../AGENT.md) 环境坑 #20）。
+> （常见陷阱：孤儿 uvicorn 占端口，见 [PITFALLS.md](PITFALLS.md) 环境坑 #20）。
 
 ## 2. 第一层：环境变量
 
@@ -71,7 +71,7 @@
 
 > ℹ️ `adapters/*.json` 的 `$schema` 字段原指向已删除的 `docs/模块契约.md#adapters`，
 > 已于本轮文档重构改为 `docs/SCHEMA.md`（只动这一个字段）。除此之外这些文件属于
-> 「原项目只读引用」区，改动需谨慎（见 [AGENT.md](../AGENT.md) §3 红线 1）。
+> 「原项目只读引用」区，改动需谨慎（见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的「原四仓库只读」约定）。
 
 ## 3. 第二层：`settings` 表键
 
@@ -134,7 +134,7 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | 平台异步鉴权复核 | `2.5` s | `online` 后稍候复核，避免 online → 自愈 的状态抖动 |
 | `page.goto` 超时 | `30000` ms | |
 | `monitor_start` 作业超时 | `90` s | **唯一**显式设超时的公共 API（因为可能触发开户） |
-| 其余作业超时 | **无** | 页面卡住时 HTTP 请求会一直挂着——见 [AGENT.md](../AGENT.md) §4 |
+| 其余作业超时 | **无** | 页面卡住时 HTTP 请求会一直挂着——见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账 |
 | 事件 drain 时机 | 每个作业结束后 | Monitor 的 `monitor.drain()`（[ADR-0006](adr/0006-browser-pool-single-thread.md)） |
 
 ### 4.3 `routes_extension`（执行面）

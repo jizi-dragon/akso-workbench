@@ -44,7 +44,7 @@
 - **chromium 随包**：`browser_pool` 的工作线程在 `sync_playwright()` **之前**把
   `PLAYWRIGHT_BROWSERS_PATH` 指向 `_MEIPASS/ms-playwright`（顺序错了就找不到）。
   ⚠️ `server.spec` 只有在 `%LOCALAPPDATA%\ms-playwright\chromium*` **存在时**才收集它——
-  构建机没装 chromium 会打出没有浏览器的包（见 [AGENT.md](../../AGENT.md) §4 待修项）。
+  构建机没装 chromium 会打出没有浏览器的包（见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 风险台账中的待修项）。
 
 ### 3. 扩展：随包 + 应用内引导（不追求「静默一键」）
 

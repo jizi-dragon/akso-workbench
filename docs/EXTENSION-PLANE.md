@@ -73,7 +73,7 @@
 ## 四、与桌面的协议（数据面 / 指令面 / 状态面）
 
 桌面地址是**编译期常量** `http://127.0.0.1:18765`（`sync.ts:20`）。这有一个运维后果：
-**验证扩展相关行为时必须确保 18765 上是本项目服务**（见 [AGENT.md](../AGENT.md) 的环境坑）。
+**验证扩展相关行为时必须确保 18765 上是本项目服务**（见 [PITFALLS.md](PITFALLS.md) 的环境坑）。
 
 ### 4.1 数据面（每 2s tick，`GET /extension/snapshot`）
 
@@ -197,7 +197,7 @@ npm run build      # esbuild → dist/（build.mjs 先 rmSync 清空 dist 再重
 > 安全边界声明：本扩展只保证**客户端呈现层**的账号分离。若平台服务端以某凭证返回他人数据，
 > 属平台越权缺陷。
 
-### 8.2 本项目侧（待排期，见 [AGENT.md](../AGENT.md) §4 已知问题）
+### 8.2 本项目侧（待排期，见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账）
 
 1. **明文凭据 60s 投递窗口**：`getPendingAutoLogin(tabId)` **读后不删**；
    窗口内任何能读 `chrome.storage.session` 的上下文都能拿到明文口令（上游 3.13.2 仍未修）。

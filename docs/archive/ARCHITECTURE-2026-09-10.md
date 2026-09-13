@@ -1,7 +1,7 @@
 > ⚠️ **已归档（2026-09-11）· 内容已失效，勿作为现状依据**
 >
 > 原文：`docs/架构分析.md`。归档原因见同目录 [`README.md`](README.md)。
-> 内容去向：docs/EXTENSION-PLANE.md 与 docs/adr/（端口分工见 docs/CONFIG.md §1，模块地图见 AGENT.md §2）。
+> 内容去向：docs/EXTENSION-PLANE.md 与 docs/adr/（端口分工见 docs/CONFIG.md §1，模块地图见 docs/CODEBASE_OVERVIEW.md）。
 >
 > 保留原文仅为追溯（其中的实测教训已搬入常驻文档，但原文记录了结论当初是在哪次事故里得出的）。
 

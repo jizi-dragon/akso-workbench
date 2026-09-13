@@ -10,27 +10,37 @@ from __future__ import annotations
 
 from typing import Any
 
-from .cache import default_cache
+from .cache import cache_key, default_cache
 
 
 class GaiaQueries:
-    """标准查询层（EgmpClient 的薄包装 + meta:{code} 缓存风格）。"""
+    """标准查询层（EgmpClient 的薄包装，键带**环境作用域**）。
 
-    def __init__(self, client: Any) -> None:
+    作用域取自客户端的 ``scope``（即归一化 base_url）；显式传入 ``scope`` 可覆盖（测试用）。
+    键格式 ``{scope}|{kind}:{code}`` —— 见 cache.py 的模块说明。
+    """
+
+    def __init__(self, client: Any, *, scope: str | None = None) -> None:
         self._client = client
+        self._scope = scope if scope is not None else str(getattr(client, "scope", "") or "")
+
+    def _key(self, kind: str, code: str) -> str:
+        return cache_key(self._scope, kind, code)
 
     def get_object_info(self, code: str) -> dict[str, Any]:
         """对象元数据（含 id/lifeCycleId/enableLifeCycle）。"""
-        return default_cache().get_or_set(f"meta:{code}", lambda: self._client.get_object(code) or {})
+        return default_cache().get_or_set(
+            self._key("meta", code), lambda: self._client.get_object(code) or {}
+        )
 
     def get_fields(self, code: str) -> list[dict[str, Any]]:
         return default_cache().get_or_set(
-            f"fields:{code}", lambda: self._client.get_object_fields(code) or []
+            self._key("fields", code), lambda: self._client.get_object_fields(code) or []
         )
 
     def get_statuses(self, code: str) -> list[dict[str, Any]]:
         return default_cache().get_or_set(
-            f"statuses:{code}", lambda: self._client.get_object_statuses(code) or []
+            self._key("statuses", code), lambda: self._client.get_object_statuses(code) or []
         )
 
     def get_picklist(self, code: str) -> dict[str, Any] | None:
@@ -50,10 +60,9 @@ class GaiaQueries:
 
 
 def invalidate_object_cache(code: str | None = None) -> None:
-    """创建/修改配置后失效缓存（全清或按对象）。"""
+    """创建/修改配置后失效缓存（全清，或按对象**跨全部环境**清）。"""
     cache = default_cache()
     if code is None:
         cache.clear()
     else:
-        for key in (f"meta:{code}", f"fields:{code}", f"statuses:{code}"):
-            cache._store.pop(key, None)  # noqa: SLF001 —— 同包内受控访问
+        cache.invalidate(codes={code})

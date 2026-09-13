@@ -3,7 +3,7 @@
 - **状态**：已采纳（0.3.3 更新状态机 / 0.3.4 出网通道自动选择）
 - **决策者**：用户定稿（「能直连就别配代理」）
 - **相关**：[ADR-0009](0009-nsis-distribution-and-update-channel.md)、[CONFIG.md](../CONFIG.md) §2/§5、
-  [API.md](../API.md) §14、[AGENT.md](../../AGENT.md) §5 环境坑
+  [API.md](../API.md) §14、[PITFALLS.md](../PITFALLS.md)（环境坑清单）
 
 ## 背景
 

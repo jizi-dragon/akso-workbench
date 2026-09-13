@@ -149,11 +149,26 @@ def build_network_model(objects: list[dict[str, Any]], attributions: list[dict[s
         source_status = attr.get("from")
         target = str(attr.get("to") or "")
         source_node = _find_status_node(nodes, source_status)
-        target_node = _find_status_node(nodes, target) or f"obj:{target}" if target else None
-        if not target_node:
-            target_node = source_node  # 目标未匹配：挂对象节点，绝不猜测
-        edges.append({"kind": f"attr:{attr.get('mechanism')}", "source": source_node,
-                      "target": target_node, "label": attr.get("carrier"), "evidence": attr.get("evidence")})
+        # 目标解析三级：状态节点 → 已爬对象节点 → 兜底挂到「来源状态所属对象」。
+        # 修复前的写法 `_find(...) or f"obj:{target}" if target else None` 因运算符优先级
+        # 解析为 `(_find(...) or f"obj:{target}") if target else None`，会为工作流类目标
+        # （`to` = 工作流名）造出 `obj:工作流「X」` 这种**永不存在的节点 id** → drawio 悬空引用。
+        target_node = _find_status_node(nodes, target) if target else None
+        if target_node is None and target:
+            candidate = f"obj:{target}"
+            if any(n["id"] == candidate for n in nodes):
+                target_node = candidate
+        if target_node is None:
+            target_node = _object_anchor_of(nodes, source_node)
+        edge: dict[str, Any] = {
+            "kind": f"attr:{attr.get('mechanism')}", "source": source_node,
+            "target": target_node, "label": attr.get("carrier"), "evidence": attr.get("evidence"),
+        }
+        if source_node is None or target_node is None:
+            # 两端都定不了位：显式标记 unresolved（产物里可见），drawio 侧不画悬空边
+            edge["unresolved"] = True
+            edge["rawTarget"] = target
+        edges.append(edge)
 
     stats = {
         "objectNodes": sum(1 for n in nodes if n["kind"] == "object"),
@@ -162,6 +177,16 @@ def build_network_model(objects: list[dict[str, Any]], attributions: list[dict[s
         "relationEdges": sum(1 for e in edges if e["kind"] == "relation"),
     }
     return {"nodes": nodes, "edges": edges, "stats": stats}
+
+
+def _object_anchor_of(nodes: list[dict[str, Any]], state_node_id: Any) -> str | None:
+    """状态节点 id（``st:<code>:<statusId>``）→ 其所属对象节点 id（若该对象在图中）。"""
+    text = str(state_node_id or "")
+    if not text.startswith("st:"):
+        return None
+    code = text[len("st:"):].rsplit(":", 1)[0]
+    candidate = f"obj:{code}"
+    return candidate if any(n["id"] == candidate for n in nodes) else None
 
 
 def _find_status_node(nodes: list[dict[str, Any]], status_name: Any) -> str | None:
@@ -287,24 +312,33 @@ def write_spider_artifacts(spider: dict[str, Any], output_dir: Path) -> list[Pat
     written.append(net_json)
 
     # spider-network.drawio：总览页 + 每对象状态机页
+    # id 一律经 drawio_mod.cell_id() 归一（纯函数，故节点与边的引用天然对得上），
+    # 且边只在**两端都在本页节点集内**时才画——否则会产生悬空引用（如 source=None、
+    # 或 target 指向不存在的 obj:工作流「X」）。
     pages: list[tuple[str, str]] = []
     overview_cells: list[str] = []
     obj_nodes = [n for n in model["nodes"] if n["kind"] == "object"]
+    overview_ids = {drawio_mod.cell_id(n["id"]) for n in obj_nodes}
     for idx, node in enumerate(obj_nodes):
         x, y = 40 + (idx % 3) * 290, 40 + (idx // 3) * 110
-        overview_cells.append(drawio_mod._node_xml(node["id"], node["label"],
-                                                   "rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;",
-                                                   x, y, 220, 70))
+        overview_cells.append(drawio_mod.node_cell(
+            drawio_mod.cell_id(node["id"]), [node["label"]],
+            "rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;", x, y, 220, 70))
     used: set[str] = set()
     for edge in model["edges"]:
-        if edge["kind"] == "relation":
-            overview_cells.append(drawio_mod._edge_xml(edge["source"], edge["target"], edge.get("label") or ""))
+        if edge["kind"] != "relation":
+            continue
+        src, tgt = drawio_mod.cell_id(edge.get("source")), drawio_mod.cell_id(edge.get("target"))
+        if src in overview_ids and tgt in overview_ids:
+            overview_cells.append(drawio_mod.edge_cell(src, tgt, edge.get("label") or ""))
     for node in obj_nodes:
         code = node["code"]
         cells: list[str] = []
         obj_anchor = f"obj:{code}"
-        cells.append(drawio_mod._node_xml(obj_anchor, node["label"],
-                                          "rounded=1;fillColor=#ffe6cc;strokeColor=#d79b00;", 40, 40, 180, 40))
+        anchors = {drawio_mod.cell_id(obj_anchor)}
+        cells.append(drawio_mod.node_cell(
+            drawio_mod.cell_id(obj_anchor), [node["label"]],
+            "rounded=1;fillColor=#ffe6cc;strokeColor=#d79b00;", 40, 40, 180, 40))
         states = [n for n in model["nodes"] if n.get("object") == code and n["kind"] != "object"]
         state_style = {
             "init": "ellipse;fillColor=#d5e8d4;strokeColor=#82b366;",
@@ -312,12 +346,16 @@ def write_spider_artifacts(spider: dict[str, Any], output_dir: Path) -> list[Pat
             "state": "rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;",
         }
         for idx, state in enumerate(states):
-            cells.append(drawio_mod._node_xml(state["id"], state["label"], state_style[state["kind"]],
-                                              320, 40 + idx * 92, 160, 36))
+            cell = drawio_mod.cell_id(state["id"])
+            anchors.add(cell)
+            cells.append(drawio_mod.node_cell(cell, [state["label"]],
+                                              state_style[state["kind"]], 320, 40 + idx * 92, 160, 36))
         for edge in model["edges"]:
-            if edge["kind"].startswith("attr:") and (edge["source"] == obj_anchor or
-                                                     any(s["id"] == edge["source"] for s in states)):
-                cells.append(drawio_mod._edge_xml(edge["source"], edge["target"], edge.get("label") or ""))
+            if not edge["kind"].startswith("attr:"):
+                continue
+            src, tgt = drawio_mod.cell_id(edge.get("source")), drawio_mod.cell_id(edge.get("target"))
+            if src in anchors and tgt in anchors:
+                cells.append(drawio_mod.edge_cell(src, tgt, edge.get("label") or ""))
         pages.append((drawio_mod.safe_page_name(f"{node['label']}·状态机", used), "".join(cells)))
     pages.insert(0, (drawio_mod.safe_page_name("总览·对象网络", used), "".join(overview_cells)))
     net_drawio = output_dir / "spider-network.drawio"

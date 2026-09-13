@@ -7,7 +7,7 @@
 > **表达不了** SSE 事件序列、长轮询挂起语义、`seq` 游标与产物下载路径守卫——这三类恰是最易踩坑处，见 §12。
 >
 > 相关文档：[SCHEMA.md](SCHEMA.md)（表与跨进程数据契约）、[CONFIG.md](CONFIG.md)（端口与环境变量）、
-> [AGENT.md](../AGENT.md)（已知问题清单）、[EXTENSION-PLANE.md](EXTENSION-PLANE.md)（扩展侧机制）。
+> [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md)（风险台账）、[EXTENSION-PLANE.md](EXTENSION-PLANE.md)（扩展侧机制）。
 
 ## 0. 拓扑与约定
 
@@ -60,7 +60,7 @@ Electron 内置 Chromium :18766（CDP）       ←──  playwright connect_ove
 | PUT | `/api/settings` | `{apiKey?, model?, temperature?}` | `{ok:true, settings:{...}}` |
 
 - `adoptRate`：`feedback==1 的比例 × 100` 取整；无任何评分时为 `null`。
-- `apiKey` 明文回传（本机信任边界内的既有契约）——**这是 web 版能力的遗留形态**，见 [AGENT.md](../AGENT.md) §4。
+- `apiKey` 明文回传（本机信任边界内的既有契约）——**这是 web 版能力的遗留形态**，见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账。
 - 设置读写唯一入口是 `services/settings.py`；DB 键固定为 `apiKey` / `model` / `temperature`。
 
 ## 3. SSE 流式对话 `POST /api/chat/stream`（`routes_chat.py`）
@@ -97,7 +97,7 @@ POST /api/chat/stream   Content-Type: application/json
 - **适配器模块**：读 `adapters/*.json`（`akso-cc` / `akso-auto`）。
   阶段 3 原生化后它们降级为**只读参考存档**：体检项为 Python 依赖 + `source-reference`（信息项，
   原仓库缺失不影响功能，`ok` 恒为 `true`）。
-- ⚠️ `status` 映射可读性存疑：`全过 → "ok"`、`全挂 → "degraded"`、`部分挂 → "missing"`（见 [AGENT.md](../AGENT.md) §4）。
+- ⚠️ `status` 映射可读性存疑：`全过 → "ok"`、`全挂 → "degraded"`、`部分挂 → "missing"`（见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账）。
 
 ## 6. 平台洞察 `/api/insight`（`routes_insight.py`）
 
@@ -218,7 +218,7 @@ autologin, has_token, monitoring, monitor_log}`；
 |---|---|---|---|
 | GET | `/api/agent/tools` | — | `{tools:[{name,description,args}]}` |
 | POST | `/api/agent/invoke` | `{tool, args:{}}` | `{tool, ok:true, result}`；未知工具 404；`ValueError`/`TypeError` → 400；其余 → 502 |
-| GET | `/api/agent/audit?limit=50` | — | `{audit:[行]}`（上限 500）——⚠️ 见 [AGENT.md](../AGENT.md) §4 |
+| GET | `/api/agent/audit?limit=50` | — | `{audit:[行]}`（上限 500）——⚠️ 见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账 |
 
 工具：`login_platform`（原生登录 + token 预热，回 `tokenHead` 前 8 字符）、`read_config`（egmp 只读元数据）、
 `run_insight`（跑 `understand`，**描述文字仍写「子进程封装」，实际已原生化**）、
@@ -303,7 +303,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - **路径守卫**：`artifact_dir` 与 `name` 都 `.resolve()`，再断言
   `str(target).startswith(str(artifact_dir))`。
   ⚠️ **这是纯字符串前缀比较，未补路径分隔符**——`.../insight/abc` 会「包含」`.../insight/abc_evil`。
-  本地单人场景风险低，但**新增类似端点时应改用 `Path.is_relative_to()`**。见 [AGENT.md](../AGENT.md) §4。
+  本地单人场景风险低，但**新增类似端点时应改用 `Path.is_relative_to()`**。见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账。
 
 ### 12.5 浏览器操作串行化（`/api/browser/*`、`/api/monitor/*`）
 
@@ -312,7 +312,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - **事件回调内禁止连接调用**（`response.text()` / `page.evaluate` 重入 = worker 死锁）——
   Monitor 的事件只入队，在 worker 作业间隙统一 `drain()`。
 - 超时：`monitor_start` 为 90s（可能触发开户），其余多数作业**无超时**——
-  页面操作卡住时 HTTP 请求会一直挂着（见 [AGENT.md](../AGENT.md) §4）。
+  页面操作卡住时 HTTP 请求会一直挂着（见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账）。
 - CDP 模式三律：`remote-debugging-port` 必须 app ready 前设置；**先 `:18767 /windows` 开户再 connect**；
   Playwright 实例由 `_CdpState` 单一持有（同线程第二个 sync 实例会死锁）。
 
@@ -327,7 +327,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - `monitor_start` 会**确保托管会话在线**（不存在则自动开户），因此耗时较长（`_submit(timeout=90)`）。
 - 产物落 `runtime/monitor/<account_id8>-<YYYYmmdd-HHMMSS>/`。录制引擎三级降噪：
   `dropped` / `trimmed` / `full`（真机验收：248 请求捕获 → 238/2/8）。
-- 会话关闭**不会自动停监听**（`_close_entry` 未清理 `entry.monitor`）——见 [AGENT.md](../AGENT.md) §4。
+- 会话关闭**不会自动停监听**（`_close_entry` 未清理 `entry.monitor`）——见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账。
 
 ## 14. 更新面 `/api/update`（`routes_update.py`）
 

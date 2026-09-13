@@ -14,11 +14,11 @@
 - **内容去向**：
   - 总体架构图与四条设计底线 → `docs/EXTENSION-PLANE.md`、`docs/adr/0002`（浏览器分配政策）
   - 端口与进程分工表 → `docs/API.md`（§0 拓扑）与 `docs/CONFIG.md`（§1 端口与进程）
-  - 模块地图 → `docs/AGENT.md`（§2 代码地图，按实际行数校正）
+  - 模块地图 → `docs/CODEBASE_OVERVIEW.md`（关键模块，按实际行数校正）
   - 三条关键数据流 → `docs/EXTENSION-PLANE.md`（快捷登录流）与 `docs/API.md`（托管/监听流）
   - 数据层与版本发布 → `docs/SCHEMA.md`、`docs/adr/0001`、`docs/adr/0009`
-  - 「已下线（源码已删，勿恢复）」清单 → `docs/AGENT.md`（§6 红线）
-  - 排障速查与环境坑 → `docs/AGENT.md`（§5 排障速查）
+  - 「已下线（源码已删，勿恢复）」清单 → `docs/CONFIG.md`（§3.2 已下线功能的残留键）
+  - 排障速查与环境坑 → `docs/PITFALLS.md`（环境坑清单）
 
 ### `SESSION-DIGEST-2026-09-10.md`
 
@@ -28,10 +28,10 @@
   四条验收基线、以及各版本的实锤断点记录（如 Fernet 键位写反、扩展游标不持久化）。
   这类内容应该沉淀进常驻文档，而不是留在一份会被不断覆盖的「速查」里。
 - **内容去向**：
-  - 20 条环境坑 + 验收基线 → `docs/AGENT.md`（§5 排障速查、§7 验收基线）
+  - 20 条环境坑 + 验收基线 → `docs/PITFALLS.md`（环境坑清单）与 `CONTRIBUTING.md`（§7 验收基线）
   - 各版本实锤断点（0.2.4 游标 / 0.2.6 Fernet 键位 / 0.2.21 权限声明式 / 0.2.24 长轮询等）
     → 根 `CHANGELOG.md` 与 `docs/EXTENSION-PLANE.md`（§5 私有改造史）
-  - 已下线清单 → `docs/AGENT.md`（§6 红线）
+  - 已下线清单 → `docs/CONFIG.md`（§3.2 已下线功能的残留键）
   - 打包分发链路 → `docs/adr/0009` 与 `CONTRIBUTING.md`
 
 ## 为何保留而不是删除

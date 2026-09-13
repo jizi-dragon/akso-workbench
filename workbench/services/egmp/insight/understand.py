@@ -18,6 +18,7 @@ from .flowgraph import build_lifecycle_graph, build_workflow_graph
 from .lifecycle import LifecycleApi
 from .relations import build_relation_graph
 from .render import to_markdown
+from ...paths import resolve_within, safe_path_component
 
 
 def understand_object(client: Any, code: str, *, llm_summary_fn=None) -> dict[str, Any]:
@@ -93,7 +94,8 @@ def understand_object(client: Any, code: str, *, llm_summary_fn=None) -> dict[st
         if not wf.get("launchedByActions"):
             continue
         graph = wf.get("graph") or {"nodes": [], "edges": []}
-        file_name = f"{code}-wf{len(involved) + 1}-{_safe_name(wf.get('name'))}.drawio"
+        file_name = (f"{safe_path_component(code)}-wf{len(involved) + 1}"
+                     f"-{_safe_name(wf.get('name'))}.drawio")
         involved.append({**wf, "drawioFile": file_name,
                          "drawioXml": drawio_mod.workflow_to_drawio(graph)})
 
@@ -112,23 +114,27 @@ def understand_object(client: Any, code: str, *, llm_summary_fn=None) -> dict[st
 
 
 def _safe_name(name: Any) -> str:
-    text = str(name or "workflow")
-    return "".join(ch for ch in text if ch not in '\\/:*?"<>|')[:40]
+    """工作流名 → 安全文件名成分（含中文原样保留，仅剥离危险成分）。"""
+    return safe_path_component(name, fallback="workflow", max_len=40)
 
 
 def write_understanding_artifacts(understanding: dict[str, Any], output_dir: Path) -> list[Path]:
-    """落盘：{code}.json / {code}.md / {code}-wfN-*.drawio。返回写入文件。"""
+    """落盘：{code}.json / {code}.md / {code}-wfN-*.drawio。返回写入文件。
+
+    对象 code 来自用户输入，**必须**经 `safe_path_component` 归一，且每个落点都走
+    `resolve_within` 断言仍在 `output_dir` 内——实测未做此保护时 `../../x` 会写到目录之外。
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
-    code = understanding["meta"]["objectCode"]
+    code = safe_path_component(understanding["meta"]["objectCode"])
     written = []
-    json_path = output_dir / f"{code}.json"
+    json_path = resolve_within(output_dir, f"{code}.json")
     json_path.write_text(_json_dumps(understanding), encoding="utf-8")
     written.append(json_path)
-    md_path = output_dir / f"{code}.md"
+    md_path = resolve_within(output_dir, f"{code}.md")
     md_path.write_text(understanding["markdown"], encoding="utf-8")
     written.append(md_path)
     for wf in understanding["lifecycle"]["involvedWorkflows"]:
-        wf_path = output_dir / wf["drawioFile"]
+        wf_path = resolve_within(output_dir, wf["drawioFile"])
         wf_path.write_text(wf["drawioXml"], encoding="utf-8")
         written.append(wf_path)
     return written

@@ -4,7 +4,8 @@
 > 原则先于工具——**先契约后实现，先复现后修复**。
 >
 > 使用者请看 [README.md](README.md) 与 [docs/USER-MANUAL.md](docs/USER-MANUAL.md)；
-> 接手维护请先读 [AGENT.md](AGENT.md)（代码地图 / 红线 / 排障速查 / 已知问题）。
+> 接手维护请先读 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md)（代码地图 / 红线 / 风险台账）
+> 与 [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑 / 排障速查）。
 
 ## 1. 环境搭建（新同事 5 分钟）
 
@@ -59,9 +60,9 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 - **五写同步**：`pyproject.toml` + `workbench/__init__.py` + `desktop/package.json`
   + 扩展 `packages/extension/manifest.json` + 扩展工作区 `package.json`（+ `.version.json` 缓存）。
 - 桌面端与扩展**同号发布**：`extStale` 判定（「扩展是否需要重新加载」）建立在此约定上。
-- ⚠️ **`desktop/package-lock.json` 与 `extensions/quick-login/package-lock.json` 的 version 字段是陈旧的**
-  （0.2.1 / 0.2.20），`bump.py` 不写它们。**已知问题，见 §6**——`npm install` 会静默改写它们，
-  让发布 commit 后工作区立刻变脏。
+- ⚠️ **`desktop/package-lock.json` 的 version 字段是陈旧的**（实测 `0.2.1`，而 `package.json` 已是
+  `0.3.5`），`bump.py` 不写它。**已知问题**——`npm install` 会静默改写它，让发布 commit 后工作区立刻变脏。
+  （扩展工作区 `package-lock.json` 曾被记为陈旧，**2026-09-13 实测已是 `0.3.5`，该说法不再成立**。）
 
 ### 3.3 发布到 GitHub Releases
 
@@ -110,7 +111,8 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 
 ## 5. 开发流程与分工边界
 
-1. **动代码前**先读 [AGENT.md](AGENT.md)（红线与环境坑）与 [docs/SCHEMA.md](docs/SCHEMA.md)（数据契约）；
+1. **动代码前**先读 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md)（红线与约定）与
+   [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑）、[docs/SCHEMA.md](docs/SCHEMA.md)（数据契约）；
 2. 新路由挂到 `workbench/api/__init__.py::_optional_routers`（可选路由）或同级注册；
 3. 新增/修改端点 → 同步 [docs/API.md](docs/API.md)；新增配置项 → 同步 [docs/CONFIG.md](docs/CONFIG.md)；
    架构级决策 → 新增 [docs/adr/](docs/adr/) 一篇；
@@ -129,15 +131,15 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 
 | 项 | 现状 | 影响 |
 |---|---|---|
-| `uvx ruff check .` | **9 条违规**：`tools/diag_electron_typing.py`（F401/E402）、`tools/publish_release.py:360`（B007）、`tools/verify_accounts_ui.py`（F401/E402）、`tools/verify_box_ops.py:24`（E402）、`tools/verify_wheel_page.py`（I001/E402）、`workbench/api/routes_update.py:13`（I001） | lint 门禁不成立；其中 4 条可 `--fix` 自动修 |
+| `uvx ruff check .` | **9 条违规**：`tools/diag_electron_typing.py`（F401/E402）、`tools/publish_release.py:360`（B007）、`tools/verify_accounts_ui.py`（F401/E402）、`tools/verify_box_ops.py:24`（E402）、`tools/verify_wheel_page.py`（I001/E402）、`workbench/api/routes_update.py:13`（I001）<br>**⚠️ 2026-09-13 实测：本机 `uv`/`uvx` 与 `ruff` 均不存在，该门禁当前无法执行**（详见 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) 验收基线实测） | lint 门禁不成立；其中 4 条可 `--fix` 自动修 |
 | `tools/verify_packaging.py` | 8/8 PASS，但**未被 `build.ps1` 调用**、无 CI | 断点仍可能在构建数分钟后才暴露 |
-| `desktop/package-lock.json` | version `0.2.1`（package.json 已 `0.3.4`） | `npm install` 会改写它，发布后工作区变脏 |
-| `extensions/quick-login/package-lock.json` | version `0.2.20` | 同上 |
+| `desktop/package-lock.json` | version `0.2.1`（package.json 已 `0.3.5`） | `npm install` 会改写它，发布后工作区变脏 |
+| ~~`extensions/quick-login/package-lock.json`~~ | ~~version `0.2.20`~~ → **2026-09-13 实测已是 `0.3.5`，本条已失效** | 同上 |
 | `tools/setup.ps1` §5 | 仍把 **Node** 当必检项并说「洞察/工厂功能不可用」 | 口径已过时（能力已原生化，Node 只影响遗留 `proc.py` 与它们的测试） |
 | `tests/test_proc.py`（7 项） | 仍在测 Node 子进程封装 | 它测的是**遗留封装本身**，不代表运行时链路 |
 | `adapters/*.json` 的 `$schema` | 原指向已删除的 `docs/模块契约.md#adapters` | ✅ 本轮已改为 `docs/SCHEMA.md`（仅此字段） |
 
-> 完整清单（含代码级缺陷与安全风险）见 [AGENT.md](AGENT.md) §4。
+> 完整清单（含代码级缺陷与安全风险）见 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) 的风险台账。
 
 ## 7. 验收纪律
 
@@ -156,7 +158,7 @@ node tools\verify_host_logic.mjs                                 # host/端口�
 ```
 
 改动 `/extension/*` 蓝图后必跑 `node tools\verify_extension_sync.mjs`（**该蓝图无 pytest 覆盖**）。
-完整验收基线（含真机项与 E2E）见 [AGENT.md](AGENT.md) §7。
+完整验收基线（含真机项与 E2E）见本文 §7 与 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) 的「验收基线实测」。
 
 - 阶段验收以 `tests/` 机器验收为准，不靠肉眼；
 - 真机验收（真实 eGMP 平台）只在测试环境账号上做；

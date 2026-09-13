@@ -5,7 +5,7 @@
 >
 > 相关文档：[ADR-0001](adr/0001-sqlite-over-mysql-redis.md)（为何是 SQLite）、
 > [CONFIG.md](CONFIG.md)（settings 表键清单）、[API.md](API.md)（表 → 接口的映射）、
-> [AGENT.md](../AGENT.md)（数据目录与维护工具）。
+> [CONFIG.md](CONFIG.md)（数据目录与维护工具）。
 
 ## 一、载体与位置
 
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 > `faq_cards` 已在迁移 6 删除。**勿因「表还在」就恢复业务代码。**
 >
 > 实测现状（2026-09-11）：13 条迁移全在册；`documents` 129 行、`doc_chunks` 3,420 行仍占空间
-> （其中 `doc_chunks.embedding` 是主要体积来源），`qa_metrics` 1 行。回收见 [AGENT.md](../AGENT.md) §3。
+> （其中 `doc_chunks.embedding` 是主要体积来源），`qa_metrics` 1 行。回收见 [CONFIG.md](CONFIG.md) §6。
 
 ## 三、表结构（现行读写）
 
@@ -190,7 +190,7 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 索引：`idx_agent_audit_tool(tool)`、`idx_agent_audit_created_at(created_at)`。
 
 > ⚠️ `GET /api/agent/audit` 目前 `SELECT *` 全列回吐（含 `args` 原始 JSON）。
-> 表当前 0 行，但**与「凭据不落明文」口径不一致**——见 [AGENT.md](../AGENT.md) §4 已知问题。
+> 表当前 0 行，但**与「凭据不落明文」口径不一致**——见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账。
 
 ### 3.10 已下线但表仍在（勿恢复业务代码）
 

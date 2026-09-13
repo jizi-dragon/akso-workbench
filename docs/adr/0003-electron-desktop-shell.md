@@ -56,7 +56,7 @@ FastAPI 服务（workbench/，约 8.2k 行 Python）
 | 包体巨大 | 安装包 349.7 MB（Electron 运行时 + PyInstaller sidecar + 内置 chromium + 扩展） |
 | 双进程复杂度 | sidecar 必须显式管理生命周期；退出顺序关键（先 kill sidecar 释放文件句柄，再让 updater 拉安装器覆盖文件——**顺序反了安装器会因文件被占用而失败**） |
 | 单实例限制 | 只支持单实例；第二实例端口冲突，只出窗口不连服务 |
-| 孤儿进程风险 | 壳被强杀（任务管理器）时 sidecar 可能残留并占住 18765——见 [AGENT.md](../../AGENT.md) 环境坑 #20 |
+| 孤儿进程风险 | 壳被强杀（任务管理器）时 sidecar 可能残留并占住 18765——见 [PITFALLS.md](../PITFALLS.md) 环境坑 #20 |
 | 开发态两套入口 | 打包态 `AksoServer.exe --server`（不开浏览器、日志落 `server.log`）；开发态 venv + uvicorn（自动开浏览器）。`server_entry.py` 与 `main.py` 是两个入口 |
 
 ## 后果

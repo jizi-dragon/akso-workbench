@@ -39,4 +39,4 @@ npm run watch      # 开发态增量构建
 | 上游文档归档 | [`docs/archive/`](docs/archive/README.md) | 上游 7 份文档 + 490 行上游 CHANGELOG 原文（只作追溯） |
 | 桌面侧配置项 | [`docs/CONFIG.md`](../../docs/CONFIG.md) | 含扩展相关端口、`proxy.txt`、`ext_*` settings 键 |
 | 桌面侧接口 | [`docs/API.md`](../../docs/API.md) | `/extension/*` 全部端点的权威契约（长轮询与 seq 游标语义） |
-| 维护者手册 | [`AGENT.md`](../../AGENT.md) | 环境坑（扩展相关 8 条）、已知问题、验收基线 |
+| 维护者手册 | [`docs/PITFALLS.md`](../../docs/PITFALLS.md)、[`docs/CODEBASE_OVERVIEW.md`](../../docs/CODEBASE_OVERVIEW.md)、[`CONTRIBUTING.md`](../../CONTRIBUTING.md) | 环境坑（扩展相关 8 条）、已知问题、验收基线 |

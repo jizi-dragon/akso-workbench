@@ -61,8 +61,10 @@
 | [docs/adr/](docs/adr/) | 想知道「为什么这么设计」的人 | 10 篇架构决策记录（含被放弃的方案与重新评估的触发器） |
 | [docs/EXTENSION-PLANE.md](docs/EXTENSION-PLANE.md) | 要改浏览器扩展的人 | 六平面隔离原理、桌面↔扩展协议、私有改造史、安全边界 |
 | [docs/EXTENSION-INSTALL.md](docs/EXTENSION-INSTALL.md) | 首次装载扩展的人 | 逐步图文 + **为什么不能静默一键装**的实证 |
-| [AGENT.md](AGENT.md) | 接手维护的人（含 AI 助手） | 代码地图、红线、排障速查、20 条环境坑、验收基线、已知问题清单 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 开发者 | 环境搭建、依赖变更、构建发布、代码规约 |
+| [docs/INSIGHT-SPEC.md](docs/INSIGHT-SPEC.md) | 要发展/扩展平台洞察的人 | **洞察的功能定位与产品能力契约**：能力范围与非目标、平台知识层、产物与存储、已知边界、验收标准 |
+| [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) | 接手维护的人（含 AI 助手） | 代码地图、架构与数据流、红线与约定、风险台账、验收基线实测 |
+| [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **22 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改） |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 开发者 | 环境搭建、依赖变更、构建发布、代码规约、验收纪律 |
 | [CHANGELOG.md](CHANGELOG.md) | 所有人 | 版本变更明细（含每次事故的根因） |
 | [docs/archive/](docs/archive/) | 追溯用 | 已失效的历史文档（勿作现状依据） |
 

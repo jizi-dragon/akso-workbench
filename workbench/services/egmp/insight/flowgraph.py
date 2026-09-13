@@ -159,48 +159,79 @@ def build_lifecycle_graph(
 
     status_names = {str(s.get("id")): s.get("name") for s in statuses}
 
+    # `GetActionBar` 的 targetId 是 **workflowBasicId**，而 workflows_by_row_id / workflow_graphs
+    # 都按**工作流行 id** 建键。不建这张反查表就会既取不到工作流名、也取不到流程图（→ 不产出 drawio）。
+    row_id_by_basic: dict[str, str] = {}
+    for row_id, row in workflows_by_row_id.items():
+        basic = str(row.get("workflowBasicId") or "")
+        if basic:
+            row_id_by_basic.setdefault(basic, row_id)
+
+    # 全部状态下已知的动作 id —— 用于判定某行动作栏是否**明确属于别的状态**
+    all_known_action_ids = {
+        str(a.get("id")) for rows in user_actions_by_status.values()
+        for a in rows if a.get("id")
+    }
+
     for status in statuses:
         status_id = str(status.get("id"))
         state: dict[str, Any] = {"id": status_id, "name": status.get("name"),
                                  "code": status.get("code"), "actions": []}
         actions = user_actions_by_status.get(status_id, [])
+        # 本状态**自身**的动作 id 集合：消耗式名称匹配只允许在这里面找（见 _consume_match）
+        own_action_ids = [str(a.get("id")) for a in actions if a.get("id")]
 
         for action in actions:
             action_id = str(action.get("id"))
+            action_label = action.get("actions") or action.get("name")
             state["actions"].append({
-                "id": action_id, "name": action.get("actions") or action.get("name"),
+                "id": action_id, "name": action_label,
                 "executeType": action.get("executeType"),
                 "description": action.get("description"),
             })
             execute_type = action.get("executeType")
+            is_enter = execute_type == 2  # 2 = 进入状态时自动执行
             target_from_desc = extract_target_status_from_description(action.get("description") or "")
 
-            # GetActionBar 匹配（消耗式：同状态内按名称匹配一次）
+            # GetActionBar 匹配（先按 id 精确命中；否则同状态内消耗式名称匹配）
             bar_row = action_bar_rows.get(action_id)
             if bar_row is None:
-                bar_row = _consume_match(action_bar_rows, action, status_id)
+                bar_row = _consume_match(
+                    action_bar_rows, action, set(own_action_ids),
+                    all_known_action_ids - set(own_action_ids),
+                )
 
             if bar_row:
                 decoded = decode_action_bar_row(bar_row)
                 if decoded and decoded["kind"] == "update_status":
-                    user_action_edges.append({
+                    # 归类按 executeType 走：进入动作不能混进「用户动作」列（否则四列表两列都错）
+                    edge: dict[str, Any] = {
                         "source": status_id, "target": decoded.get("targetStatusId"),
-                        "button": decoded.get("button"),
                         "targetName": decoded.get("targetStatusName"),
-                    })
+                        "mechanism": "enterAction" if is_enter else "button",
+                    }
+                    if is_enter:
+                        edge["action"] = action_label
+                        enter_action_edges.append(edge)
+                    else:
+                        edge["button"] = decoded.get("button")
+                        user_action_edges.append(edge)
                 elif decoded and decoded["kind"] == "launch_workflow":
-                    workflow = workflows_by_row_id.get(str(decoded.get("workflowBasicId"))) or {}
+                    basic_id = str(decoded.get("workflowBasicId") or "")
+                    row_id = row_id_by_basic.get(basic_id, basic_id)
+                    workflow = workflows_by_row_id.get(row_id) or {}
                     launch_edges.append({
                         "source": status_id, "workflowBasicId": decoded.get("workflowBasicId"),
                         "workflowName": workflow.get("name") or decoded.get("button"),
                         "button": decoded.get("button"),
+                        "mechanism": "enterAction" if is_enter else "button",
                     })
-                    if decoded.get("workflowBasicId"):
-                        involved_workflows[str(decoded["workflowBasicId"])] = {
+                    if basic_id:
+                        involved_workflows[basic_id] = {
                             "workflowBasicId": decoded["workflowBasicId"],
                             "name": workflow.get("name"),
                             "launchedByActions": decoded.get("button"),
-                            "graph": workflow_graphs.get(str(decoded["workflowBasicId"])),
+                            "graph": workflow_graphs.get(row_id),
                         }
             else:
                 # 无 bar 行：executeType=2 → 进入动作；target 取 description 正则
@@ -210,12 +241,13 @@ def build_lifecycle_graph(
                         enter_action_edges.append({
                             "source": status_id, "target": target_id,
                             "targetName": target_from_desc,
-                            "action": action.get("actions") or action.get("name"),
+                            "action": action_label,
                             "evidence": "description",
+                            "mechanism": "enterAction",
                         })
                     else:
                         trigger_edges.append({
-                            "source": status_id, "action": action.get("actions") or action.get("name"),
+                            "source": status_id, "action": action_label,
                             "description": action.get("description"),
                         })
                 elif action.get("actionList"):
@@ -225,11 +257,28 @@ def build_lifecycle_graph(
                             user_action_edges.append({
                                 "source": status_id, "target": item.get("targetId"),
                                 "button": item.get("name"), "targetName": item.get("targetName"),
+                                "mechanism": "button",
                             })
                 else:
-                    unmatched_buttons.append({"status": status_id, "action": action.get("name") or action.get("actions"),
+                    unmatched_buttons.append({"status": status_id, "action": action_label,
                                               "reason": "no-bar-row"})
         states.append(state)
+
+    # 工作流触发状态：来自工作流行的 lifecycleStatusIds（上游口径，与按钮通道**取并集**）。
+    # 只认已知状态 id——已删除/不可见的状态不得产出悬空触发。
+    workflow_trigger_edges: list[dict[str, Any]] = []
+    for row_id, row in workflows_by_row_id.items():
+        for raw_status_id in row.get("lifecycleStatusIds") or []:
+            sid = str(raw_status_id)
+            if sid not in status_names:
+                continue
+            workflow_trigger_edges.append({
+                "statusId": sid, "statusName": status_names.get(sid),
+                "workflowRowId": row_id,
+                "workflowBasicId": row.get("workflowBasicId"),
+                "workflowName": row.get("name"),
+                "mechanism": "lifecycleStatusIds",
+            })
 
     flow_edges: list[dict[str, Any]] = []
     for row_id, graph in workflow_graphs.items():
@@ -243,19 +292,32 @@ def build_lifecycle_graph(
         "userActionEdges": user_action_edges,
         "enterActionEdges": enter_action_edges,
         "launchEdges": launch_edges,
+        "workflowTriggerEdges": workflow_trigger_edges,
         "flowEdges": flow_edges,
         "unmatchedButtons": unmatched_buttons,
         "involvedWorkflows": list(involved_workflows.values()),
     }
 
 
-def _consume_match(action_bar_rows: dict[str, list[dict[str, Any]]],
-                   action: dict[str, Any], status_id: str) -> dict[str, Any] | None:
-    """同状态内消耗式名称匹配（GetList 与 GetActionBar id 不一致时的上游口径）。"""
+def _consume_match(action_bar_rows: dict[str, dict[str, Any]],
+                   action: dict[str, Any], own_action_ids: set[str],
+                   foreign_action_ids: set[str]) -> dict[str, Any] | None:
+    """同状态内消耗式名称匹配（GetList 与 GetActionBar id 不一致时的上游口径）。
+
+    历史缺陷：函数接受 status_id 却从未使用，实际遍历 `action_bar_rows.values()`（**全部状态**），
+    导致不同状态间的同名按钮互相错配（实测：`sa` 的「提交」被配到 `sb` 的动作栏行）。
+
+    现行规则——只在「本状态自身的动作」与「无法归属任何状态的动作」里按名称找：
+    - 本状态自己的 id：允许（正常路径）；
+    - 已知属于**别的状态**的 id：**排除**，不得借用；
+    - 谁的 id 都不是（GetActionBar 返回的 id 不解析）：允许按名称匹配——这正是该兜底存在的理由。
+    """
     name = str(action.get("actions") or action.get("name") or "").strip()
     if not name:
         return None
-    for row in action_bar_rows.values():
+    for row_id, row in action_bar_rows.items():
+        if row_id not in own_action_ids and row_id in foreign_action_ids:
+            continue
         if str(row.get("name") or "").strip() == name and not row.get("_consumed"):
             row["_consumed"] = True
             return row

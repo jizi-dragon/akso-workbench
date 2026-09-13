@@ -1,7 +1,7 @@
 > ⚠️ **已归档（2026-09-11）· 内容已失效，勿作为现状依据**
 >
 > 原文：`docs/SESSION-DIGEST.md`。归档原因见同目录 [`README.md`](README.md)。
-> 内容去向：AGENT.md（§5 排障速查、§7 验收基线）与根 CHANGELOG.md。
+> 内容去向：docs/PITFALLS.md（环境坑清单）、CONTRIBUTING.md §7（验收基线）与根 CHANGELOG.md。
 >
 > 保留原文仅为追溯（其中的实测教训已搬入常驻文档，但原文记录了结论当初是在哪次事故里得出的）。
 

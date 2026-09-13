@@ -2,7 +2,7 @@
 
 - **状态**：已采纳（阶段 2B）
 - **相关**：[ADR-0002](0002-browser-allocation-policy.md)、[API.md](../API.md) §12.5、
-  [AGENT.md](../../AGENT.md) §5 环境坑
+  [PITFALLS.md](../PITFALLS.md)（环境坑清单）
 
 ## 背景
 
@@ -73,7 +73,7 @@ def _worker(self):
 | 代价 | 表现与处置 |
 |---|---|
 | **全局串行**：一个慢操作阻塞所有账号的操作 | 这是有意换取正确性。缓解：多数作业无超时（见下）反而是隐患的另一面 |
-| **无超时会挂死 HTTP 请求** | 只有 `monitor_start` 显式给了 `timeout=90`（因为可能要开户 + 等 CDP 定位）；`open_account` / `session` / `navigate` 等**无超时**——页面卡住时请求会一直挂着。见 [AGENT.md](../../AGENT.md) §4 |
+| **无超时会挂死 HTTP 请求** | 只有 `monitor_start` 显式给了 `timeout=90`（因为可能要开户 + 等 CDP 定位）；`open_account` / `session` / `navigate` 等**无超时**——页面卡住时请求会一直挂着。见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 的风险台账 |
 | 事件回调纪律容易被违反 | 新增录制/监听能力时必须走「入队 + drain」，且**没有测试能拦住违规**（表现为运行期死锁，不是断言失败） |
 | 测试必须复用该池 | **测试不得另起 chromium 夹具**（`tests/conftest.py` 只隔离数据目录；`test_browser_parallel.py` 用本地 `http.server` 模拟平台 + 池本身）。生命周期收尾靠 `pool.close_all()` |
 
@@ -82,9 +82,9 @@ def _worker(self):
 - **`browser_pool` 是进程级单例**（`get_pool()` 持 `_pool_lock` 惰性创建），
   其工作线程随进程存活（daemon 线程）。
 - **关窗 ≠ 停监听**：`_close_entry()` 落盘登录态、关 context、置 `stopped`，但**不清 `entry.monitor`**
-  ——监听会话对象仍留在 `SessionEntry` 上直到 `sessions.clear()`。见 [AGENT.md](../../AGENT.md) §4。
+  ——监听会话对象仍留在 `SessionEntry` 上直到 `sessions.clear()`。见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 的风险台账。
 - **`_close_entry` 的 finish 判定存在缺陷**：它在判定前就把 `entry.status` 置为 `"stopped"`，
   导致 `detail` 里的 `entry.status == "online"` 恒为假，首次登录的会话关窗会误报「已关闭」
-  （应为「已关闭（登录态已保存）」）。见 [AGENT.md](../../AGENT.md) §4。
+  （应为「已关闭（登录态已保存）」）。见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 的风险台账。
 - **真机验收入口固定**：`GET /api/browser/check`（chromium 可执行文件体检）、
   `tests/test_browser_state.py`（storage_state 5 项）、`tests/test_browser_parallel.py`（双账号并行/免密/自愈 4 项）。
