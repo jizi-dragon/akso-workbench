@@ -19,7 +19,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from .. import __version__
+from .. import __version__, config
 from ..services import accounts as accounts_svc
 from ..services.storage import get_setting, now_ms, set_setting
 
@@ -288,8 +288,11 @@ def get_state() -> dict[str, Any]:
     return {"items": items}
 
 
-# 桌面壳的会话控制服务（Electron 主进程内）：扩展安装引导走它执行
-CONTROL_BASE = "http://127.0.0.1:18767"
+# 桌面壳的会话控制服务（Electron 主进程内）：扩展安装引导走它执行。
+# 端口经 config 单点声明（ADR-0011 §D-2）——壳会把实际选中的端口下发到
+# WORKBENCH_CONTROL_PORT，故此处在调用时读，**不做模块级常量快照**。
+def control_base() -> str:
+    return f"http://127.0.0.1:{config.CONTROL_PORT}"
 
 # 「曾成功连接过一次」的一次性闩锁（安装引导提示条据此永久静默）。
 # 为什么必须落库：早期实现把它放在浏览器内存里，刷新页面/重启应用即复位 →
@@ -386,7 +389,7 @@ def setup_helper(body: dict[str, Any] | None = None) -> dict[str, Any]:
     mode = str((body or {}).get("mode") or "install")
     try:
         req = urllib.request.Request(
-            f"{CONTROL_BASE}/extension-setup",
+            f"{control_base()}/extension-setup",
             data=json.dumps({"mode": mode}).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",

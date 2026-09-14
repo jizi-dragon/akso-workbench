@@ -12,17 +12,23 @@ const fs = require('fs');
 
 const updater = require('./updater');
 const shellState = require('./shell-state');
+const portBroker = require('./ports');
 const proxy = require('./proxy');
 
-const SERVER_PORT = 18765;
-const CONTROL_PORT = 18767;
-const DEBUG_PORT = 18766;
+// 端口**不再各写一份**：壳是仲裁者，运行时协商（优先固定基准、被占则顺延），
+// 实际值经环境变量下发给服务端并公布到 runtime/desktop-ports.json。
+// 完整决策与"旧实例占端口"事故复盘见 docs/adr/0011。
+let SERVER_PORT = portBroker.BASE.server;
+let CONTROL_PORT = portBroker.BASE.control;
+let DEBUG_PORT = portBroker.BASE.cdp;
 
 let serverChild = null;
 let mainWindow = null;
 let wheelWindow = null;
 let tray = null;
 let quitting = false;
+/** 协商结果（端口 + 是否顺延），供 /whoami、shell-state 与排障使用 */
+let portInfo = { ports: { ...portBroker.BASE }, drifted: [] };
 /** updater 状态最后一次快照：供控制服务 /update-state 与渲染层 IPC 读取 */
 let updateState = null;
 /** 代理解析结果（写入壳状态，便于排障："更新下载不动"时先看这里） */
@@ -33,19 +39,35 @@ const sessionWindows = new Map();
 
 const serverUrl = (p) => `http://127.0.0.1:${SERVER_PORT}${p}`;
 
-// —— CDP 调试端口（browser_pool connect_over_cdp 用；必须 ready 前设置） ——
-app.commandLine.appendSwitch('remote-debugging-port', String(DEBUG_PORT));
-app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
+// —— CDP 调试端口：必须在 app ready **之前**设置，故在协商完成后立即调用 ——
+// 参数不能放模块顶层：协商是异步的（要探测端口是否可绑），而这里原先写死常量才能提前设置。
+function applyCdpSwitch() {
+  app.commandLine.appendSwitch('remote-debugging-port', String(DEBUG_PORT));
+  app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
+}
 
 // ------------------------------------------------------------ 服务 sidecar
 
 function spawnServer() {
+  // 端口下发的两条路一起走（ADR-0011 §D-2）：
+  //  - 环境变量：Python 侧 config.PORT/CDP_PORT/CONTROL_PORT 是唯一读数点；
+  //  - 命令行 --port：打包态入口 server_entry.main() 已支持解析，两者必须一致。
+  // `WORKBENCH_SESSION_MODE=cdp` 也在这里下发——它此前**从没被壳设置过**，导致
+  // browser_pool 永远跑 local 模式（托管会话用的是原生 Chromium 而不是壳的 Chromium）。
+  const env = {
+    ...process.env,
+    WORKBENCH_PORT: String(SERVER_PORT),
+    WORKBENCH_CDP_PORT: String(DEBUG_PORT),
+    WORKBENCH_CONTROL_PORT: String(CONTROL_PORT),
+    WORKBENCH_SESSION_MODE: 'cdp',
+  };
   const packaged = process.resourcesPath
     ? path.join(process.resourcesPath, 'server', 'AksoServer.exe')
     : null;
   if (packaged && fs.existsSync(packaged)) {
-    serverChild = spawn(packaged, ['--server'], {
+    serverChild = spawn(packaged, ['--server', '--port', String(SERVER_PORT)], {
       cwd: path.dirname(packaged),
+      env,
       stdio: 'ignore',
       windowsHide: true,
     });
@@ -57,7 +79,7 @@ function spawnServer() {
   if (fs.existsSync(py)) {
     serverChild = spawn(py,
       ['-m', 'uvicorn', 'workbench.api:app', '--host', '127.0.0.1', '--port', String(SERVER_PORT)],
-      { cwd: repoRoot, stdio: 'ignore', windowsHide: true });
+      { cwd: repoRoot, env, stdio: 'ignore', windowsHide: true });
     return;
   }
   console.error('未找到服务端（打包资源与 venv 均缺失）');
@@ -72,20 +94,63 @@ function killServer() {
   serverChild = null;
 }
 
+/**
+ * 等服务端就绪——**并且核对身份**。
+ *
+ * 改造前这里是 `http.get('/')` 只看 `statusCode === 200`，判据是"这个端口上有人应答"。
+ * 于是一个**旧实例**（或任何别的程序）占着 18765 时，新壳会认为自己的服务已经起来了，
+ * 主窗打开的是别人的页面——那次事故表现成"代码改了但 UI 没变"（ADR-0011 §1）。
+ *
+ * 现在改成打 `GET /api/health` 并核对 `app === 'AksoWorkbench'`：
+ * 从"有人应答"升级为"是我们的服务在应答"。探测端点必须**无副作用**——
+ * 别用 `/extension/health`，它会写 `everConnected` 闩锁（ADR-0011 §D-4）。
+ *
+ * @returns {Promise<{ok: boolean, reason: string, seen: object|null}>}
+ */
 function waitReady(timeoutMs = 40000) {
-  const deadline = Date.now() + timeoutMs;
   return new Promise((resolve) => {
-    const tick = () => {
-      const req = http.get(serverUrl('/'), { timeout: 2000 }, (res) => {
-        res.resume();
-        resolve(res.statusCode === 200);
-      });
-      req.on('error', () => {});
-      req.on('timeout', () => { req.destroy(); });
-      if (Date.now() < deadline) setTimeout(tick, 300);
-      else resolve(false);
+    const deadline = Date.now() + timeoutMs;
+    let lastSeen = null;
+    let lastReason = 'no-response';
+    let settled = false;
+
+    const finish = (ok, reason) => {
+      if (settled) return;
+      settled = true;
+      resolve({ ok, reason, seen: lastSeen });
     };
-    tick();
+
+    const probeOnce = () => new Promise((done) => {
+      const req = http.get(`http://127.0.0.1:${SERVER_PORT}/api/health`, { timeout: 2000 }, (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (c) => { body += c; });
+        res.on('end', () => {
+          let data = null;
+          try { data = JSON.parse(body); } catch { data = null; }
+          if (data && data.app === 'AksoWorkbench') {
+            lastSeen = data;
+            lastReason = 'ok';
+          } else {
+            lastReason = data ? `wrong-app:${data.app || 'unknown'}` : 'non-json';
+          }
+          done();
+        });
+      });
+      req.on('error', () => { lastReason = 'no-response'; done(); });
+      req.on('timeout', () => { lastReason = 'timeout'; req.destroy(); });
+    });
+
+    const loop = async () => {
+      while (!settled) {
+        // 就绪探测本就串行：一次一个请求
+        await probeOnce();
+        if (lastReason === 'ok') return finish(true, 'ok');
+        if (Date.now() >= deadline) return finish(false, lastReason);
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    };
+    void loop();
   });
 }
 
@@ -234,11 +299,31 @@ async function openExtensionSetup(mode = 'install') {
   return { dir, chrome, mode };
 }
 
-// ------------------------------------------------- 会话控制服务（18767）
+// ------------------------------------------------- 会话控制服务（壳内 HTTP）
+
+/** 本壳的身份与端口——`/whoami` 与 desktop-ports.json 用**同一份**口径 */
+function selfDescription() {
+  return {
+    app: 'AksoWorkbench',
+    service: 'workbench-shell',
+    controlPort: CONTROL_PORT,
+    serverPort: SERVER_PORT,
+    cdpPort: DEBUG_PORT,
+    pid: process.pid,
+    version: app.getVersion(),
+    startedAt: portInfo.startedAt || null,
+    base: { ...portBroker.BASE },
+    drifted: portInfo.drifted || [],
+  };
+}
 
 function createControlServer() {
   const json = (res, code, body) => {
-    res.writeHead(code, { 'Content-Type': 'application/json' });
+    // 扩展从任意页面发起的发现请求会带 Origin；这几个端点无凭据、只读，故允许跨源
+    res.writeHead(code, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
     res.end(JSON.stringify(body));
   };
   const server = http.createServer((req, res) => {
@@ -249,6 +334,10 @@ function createControlServer() {
       try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
       const url = new URL(req.url, 'http://127.0.0.1');
       if (url.pathname === '/health') return json(res, 200, { ok: true });
+
+      // 端口发现（ADR-0011 §D-5）：扩展靠它拿到**服务端实际端口**，而不是猜 18765。
+      // 控制服务是壳自己的，所以它的回答天然比"18765 上是谁"可信。
+      if (url.pathname === '/whoami') return json(res, 200, selfDescription());
 
       // 安装扩展引导（供桌面 UI 的「扩展未连接」提示条调用；也可由托盘菜单直接触发）
       if (req.method === 'POST' && url.pathname === '/extension-setup') {
@@ -314,6 +403,10 @@ function createControlServer() {
 
       json(res, 404, { error: 'not found' });
     });
+  });
+  server.on('error', (e) => {
+    // 端口已在协商阶段探过，这里的失败属于"抢跑被别人拿走了"——出声，别静默
+    console.error(`[akso-shell] 控制服务监听失败（${CONTROL_PORT}）：${e && e.message}`);
   });
   server.listen(CONTROL_PORT, '127.0.0.1');
 }
@@ -408,7 +501,65 @@ async function checkUpdateFromTray() {
 
 // ------------------------------------------------------------ 启动流程
 
+/**
+ * 端口协商 + 旧实例自检（ADR-0011 §D-1/D-3）。
+ * 顺序关键：**先协商端口 → 再设 CDP 开关 → 再 spawn 服务端 → 再起控制服务**。
+ * 协商失败（三个端口的整个顺延窗口都被占）时不让应用"半死不活"地起来，
+ * 而是给出可执行的提示后退出。
+ */
+async function bootstrapPorts() {
+  const prev = portBroker.detectRunningInstance();
+  if (prev) {
+    const ports = prev.ports || {};
+    const choice = dialog.showMessageBoxSync({
+      type: 'warning',
+      title: 'Akso Workbench 已在运行',
+      message: '检测到另一个 Akso Workbench 实例正在运行。',
+      detail: portBroker.describeOccupant('server', prev) +
+        `\n\n继续启动会另占一组端口（server=${ports.server || '?'} 附近），` +
+        '两个实例会共用同一份数据目录。建议先退出那个实例。',
+      buttons: ['仍然启动', '退出'],
+      defaultId: 1,
+      cancelId: 1,
+    });
+    if (choice === 1) {
+      app.exit(0);
+      return false;
+    }
+  }
+
+  const res = await portBroker.negotiate();
+  if (!res.ok) {
+    dialog.showMessageBoxSync({
+      type: 'error',
+      title: '端口不可用',
+      message: `端口 ${portBroker.BASE[res.failedAt]} 及其后 ${portBroker.MAX_DRIFT} 个号都被占用，无法启动。`,
+      detail: portBroker.describeOccupant(res.failedAt, prev) +
+        '\n\n也可以设 WORKBENCH_PORT / WORKBENCH_CDP_PORT / WORKBENCH_CONTROL_PORT 指定其它端口后重试。',
+      buttons: ['退出'],
+    });
+    app.exit(1);
+    return false;
+  }
+
+  SERVER_PORT = res.ports.server;
+  DEBUG_PORT = res.ports.cdp;
+  CONTROL_PORT = res.ports.control;
+  portInfo = {
+    ports: { ...res.ports },
+    drifted: res.drifted,
+    startedAt: new Date().toISOString(),
+  };
+  if (res.drifted.length) {
+    console.warn(`[akso-shell] 端口顺延：${res.drifted.join('，')}`);
+  }
+  applyCdpSwitch();
+  portBroker.publish(res.ports, app.getVersion());
+  return true;
+}
+
 app.whenReady().then(async () => {
+  if (!(await bootstrapPorts())) return;
   spawnServer();
   createControlServer();
   createTray();
@@ -430,10 +581,13 @@ app.whenReady().then(async () => {
 
   const ready = await waitReady();
   createMain();
-  if (ready) {
+  if (ready.ok) {
     mainWindow.show();
   } else {
-    mainWindow.loadURL(serverUrl('/static/blank.html?error=timeout'));
+    // 把「我探到了什么」一并带进错误页：光说 timeout 无法区分
+    // "服务还没起来" 和 "端口上坐着别人的服务"（后者正是 ADR-0011 要治的病）
+    const detail = encodeURIComponent(`${ready.reason}|${ready.seen ? JSON.stringify(ready.seen) : ''}`);
+    mainWindow.loadURL(serverUrl(`/static/blank.html?error=timeout&detail=${detail}`));
     mainWindow.show();
   }
 
@@ -457,4 +611,11 @@ app.on('before-quit', () => {
   // 再让 updater 拉起安装器覆盖文件；否则安装器会因文件被占用而失败。
   killServer();
   updater.installOnExit();
+});
+
+// 端口公布的撤下放在 will-quit：`before-quit` 在 `app.exit()` 路径上**不会触发**
+// （实测：启动失败分支调用 app.exit(0) 后，desktop-ports.json 留在盘上成为陈旧文件）。
+// 会核对 pid，因此"新实例已写、旧实例才退出"时不会误删新实例的文件。
+app.on('will-quit', () => {
+  portBroker.unpublish();
 });

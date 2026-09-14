@@ -12,12 +12,19 @@
 ## 0. 拓扑与约定
 
 ```
-Electron 壳 :18767（控制服务，无认证）        FastAPI 服务 :18765（本文档主体）
+                                基准端口        被占时
+Electron 壳 控制服务（无认证）      18767   →  顺延（最多 +8）
   /windows /windows/focus /windows/close  ←──  browser_pool（CDP 模式先开户后连接）
   /update-state /update-check /update-install
-  /extension-setup /health                 ←──  routes_extension / routes_update 代理
-Electron 内置 Chromium :18766（CDP）       ←──  playwright connect_over_cdp
+  /extension-setup /health /whoami        ←──  routes_extension / routes_update 代理、扩展端口发现
+FastAPI 服务（本文档主体）          18765   →  顺延
+Electron 内置 Chromium CDP          18766   →  顺延   ←── playwright connect_over_cdp
 ```
+
+> **端口不是常量，是壳协商出来的**（[ADR-0011](adr/0011-port-and-session-negotiation.md)）。
+> 本文档里写的端口都是**基准值**；实际值以壳公布的
+> `<数据目录>/runtime/desktop-ports.json` 为准，或打 `GET /api/health` 看 `ports` 字段。
+> 壳会把实际值经 `WORKBENCH_PORT` / `WORKBENCH_CDP_PORT` / `WORKBENCH_CONTROL_PORT` 下发给服务端。
 
 **全局约定**
 
@@ -255,7 +262,7 @@ autologin, has_token, monitoring, monitor_log}`；
 | POST | `/extension/state` | `{items:[{desktopId,tabs,hasToken}], extVersion, desktopVersion}` | `{accepted:n}`；`_STATE` TTL 60s |
 | GET | `/extension/health` | — | `{connected, reportedAccounts, everConnected, desktopVersion, extVersion, extStale}` |
 | POST | `/extension/update-state` | —（无请求体） | `{version, shell:{...}}`；与 `GET /api/update` **同源同结构**（`read_shell_state()`），放在扩展蓝图内是为了让「壳 ↔ 扩展 ↔ UI」三者运行态信息集中一处 |
-| POST | `/extension/setup-helper` | `{mode:"install"\|"reload"}` | 代理到壳 `:18767 /extension-setup`（打开扩展目录 + `chrome://extensions` + 步骤弹窗） |
+| POST | `/extension/setup-helper` | `{mode:"install"\|"reload"}` | 代理到壳控制服务 `/extension-setup`（基准 `:18767`，实际端口读 `config.CONTROL_PORT`；打开扩展目录 + `chrome://extensions` + 步骤弹窗） |
 
 **`/extension/health` 判定链**（账号中心提示条数据源）：
 `connected` = 60s 内收到过状态上报；`everConnected` = `settings.ext_connected_once` 闩锁
@@ -329,7 +336,7 @@ autologin, has_token, monitoring, monitor_log}`；
   Monitor 的事件只入队，在 worker 作业间隙统一 `drain()`。
 - 超时：`monitor_start` 为 90s（可能触发开户），其余多数作业**无超时**——
   页面操作卡住时 HTTP 请求会一直挂着（见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账）。
-- CDP 模式三律：`remote-debugging-port` 必须 app ready 前设置；**先 `:18767 /windows` 开户再 connect**；
+- CDP 模式三律：`remote-debugging-port` 必须 app ready 前设置（**故端口在 `app.whenReady` 里协商完立即设**）；**先到壳控制服务 `/windows` 开户再 connect**；
   Playwright 实例由 `_CdpState` 单一持有（同线程第二个 sync 实例会死锁）。
 
 ## 13. 监听录制 `/api/monitor`（`routes_monitor.py`）
@@ -356,7 +363,7 @@ autologin, has_token, monitoring, monitor_log}`；
   读本地文件更便宜，且壳不在时能优雅降级。
 - `shell` 结构固定不缺键；**TTL 60s**（壳每 15s 心跳）：超过即 `live:false` + `phase:"inactive"` +
   `label:"桌面壳未运行"`（损坏/缺失文件走同一条降级路径）。
-- `POST` 代理到壳控制服务 `:18767`（`check` 超时 60s、`install` 8s）；
+- `POST` 代理到壳控制服务（基准 `:18767`，实际端口读 `config.CONTROL_PORT`；`check` 超时 60s、`install` 8s）；
   **壳不可用时返回 `ok:false` 而非报错**（UI 退化为文字提示，与 `/extension/setup-helper` 同一套降级哲学）。
 - 未知 action 返回 `{ok:false, error:"未知动作：..."}`——**HTTP 200，不是 4xx**（前端据此判 `ok`）。
 - `updateAvailable` 用 `version_tuple()` 比较（非数字段按 0 处理）。
@@ -372,11 +379,14 @@ autologin, has_token, monitoring, monitor_log}`；
 `pages/accounts.html`、`pages/wheel-picker.html`（轮盘，`?transparent=1` 供壳的透明窗加载）、
 `blank.html`（壳的会话窗标记页，`?w=<windowId>`）。
 
-## 16. 壳控制服务 `:18767`（Electron 主进程内，非 FastAPI）
+## 16. 壳控制服务（Electron 主进程内，非 FastAPI；基准端口 `18767`，可顺延）
+
+> 下表里的 `:18767` 全按**基准端口**理解；实际端口见 §0 的说明与 `GET /whoami`。
 
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
 | GET | `/health` | — | `{ok:true}` |
+| GET | `/whoami` | — | **端口发现**（[ADR-0011](adr/0011-port-and-session-negotiation.md) §D-5）：`{app, service:"workbench-shell", controlPort, serverPort, cdpPort, pid, version, startedAt, base, drifted}`。浏览器扩展靠它拿到**服务端实际端口**，而不是猜 18765；控制服务是壳自己的，所以它的回答天然比"18765 上是谁"可信。带 `Access-Control-Allow-Origin: *`（无凭据、只读） |
 | POST | `/windows` | `{windowId}` | 开户（`partition: persist:<windowId>` 独立持久分区）；已存在且未销毁 → `{ok:true, reused:true}`；缺 windowId → 400 |
 | POST | `/windows/focus` | `{windowId}` | 还原 + 显示 + 聚焦；不存在 → 404 |
 | POST | `/windows/close` | `{windowId}` | 关窗（幂等） |
@@ -386,3 +396,33 @@ autologin, has_token, monitoring, monitor_log}`；
 | POST | `/extension-setup` | `{mode}` | 打开扩展目录 + `chrome://extensions` + 步骤弹窗 |
 
 无认证；仅监听 `127.0.0.1`。`browser_pool` 的 CDP 模式依赖它「先开户后连接」。
+
+## 17. 服务端身份 `GET /api/health`（`api/__init__.py`）
+
+```jsonc
+{
+  "app": "AksoWorkbench",          // ★ 壳的就绪探测核对这个字段
+  "service": "workbench-server",
+  "version": "0.3.5",
+  "pid": 21564,
+  "frozen": false,
+  "ports": { "server": 18765, "cdp": 18766, "control": 18767 },
+  "portsSource": "env",            // env | desktop-ports.json | default
+  "shell": { "pid": 12108, "version": "0.3.5", "startedAt": "…" }
+}
+```
+
+**为什么存在**：壳的 `waitReady()` 改造前只看"18765 上有人回 200"，于是**旧实例占着端口**时
+新壳会认为自己的服务已就绪、主窗打开别人的页面——一次表现成"代码改了但 UI 没变"的事故
+（[ADR-0011](adr/0011-port-and-session-negotiation.md) §1）。现在探测打本端点并核对 `app`。
+
+**与 `/extension/health` 的分工（重要）**：
+
+| | `GET /api/health` | `GET /extension/health` |
+|---|---|---|
+| 回答 | **进程身份**（我是谁、在哪个口） | **执行面健康**（扩展活着吗、版本是否过期） |
+| 副作用 | **无**（可反复探测） | **有**：会写 `everConnected` 闩锁 |
+| 消费者 | 壳的就绪探测 | 账号中心 UI |
+
+> 不要把探测打到有副作用的端点上——壳每 300ms 探一次，若写库会把"扩展开没开过"的判定污染掉
+> （`tests/test_ports_contract.py` 有一条专门断言本端点无副作用）。

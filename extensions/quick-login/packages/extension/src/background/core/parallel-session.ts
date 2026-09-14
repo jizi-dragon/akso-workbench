@@ -70,8 +70,20 @@ const ENFORCEMENT_TTL_MS = 20_000;
 const urlAccountHint = new Map<string, { accountId: string; at: number }>();
 const URL_HINT_TTL_MS = 120_000;
 const URL_HINT_MAX = 400;
-/** 桌面同步端点：其响应属于桌面轮询，不归属任何绑定账号（否则每 2s 刷屏淹没真日志） */
-const DESKTOP_SYNC_HOSTS = new Set(['127.0.0.1:18765', 'localhost:18765']);
+/**
+ * 桌面同步端点：其响应属于桌面轮询，不归属任何绑定账号（否则每 2s 刷屏淹没真日志）。
+ *
+ * **不再绑死 18765**（ADR-0011 §D-5）：桌面端现在会顺延端口，故白名单是"已知端口集合"，
+ * 由 `refreshDesktopSyncHost()` 在发现后登记。同步判定（`isDesktopSyncUrl`）必须是**同步**的
+ * ——它在 webRequest 监听里被调用，不能 await——所以这里缓存端口号而不是每次去问。
+ * 集合永远含默认 18765：发现尚未完成时行为与改造前一致。
+ */
+const DESKTOP_SYNC_PORTS = new Set<number>([18765]);
+
+/** 由桌面端点发现模块在确定端口后调用（sync.ts 启动时登记一次） */
+export function registerDesktopSyncPort(port: number): void {
+  if (Number.isInteger(port) && port > 0 && port <= 65535) DESKTOP_SYNC_PORTS.add(port);
+}
 
 /** 诊断埋点：写入 storage.local['ql:diag']（环形 60 条），供 E2E 台架经扩展页读取 */
 async function diag(msg: string): Promise<void> {
@@ -189,7 +201,12 @@ function isDesktopSyncUrl(url: string | undefined): boolean {
     return false;
   }
   try {
-    return DESKTOP_SYNC_HOSTS.has(new URL(url).host);
+    const u = new URL(url);
+    if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') return false;
+    const port = u.port ? Number(u.port) : 80;
+    // 语义未变（只信本机回环的桌面同步口），只是端口从"一个数字"变成"已知集合"：
+    // 桌面端换端口后登记进来即可，不必改这里。
+    return DESKTOP_SYNC_PORTS.has(port);
   } catch {
     return false;
   }

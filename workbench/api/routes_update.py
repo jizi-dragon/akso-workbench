@@ -23,8 +23,10 @@ from .. import __version__, config
 
 router = APIRouter(prefix="/api/update", tags=["update"])
 
-# 壳的控制服务（Electron 主进程内）：更新动作的实际执行者
-CONTROL_BASE = "http://127.0.0.1:18767"
+# 壳的控制服务（Electron 主进程内）：更新动作的实际执行者。
+# 端口经 config 单点声明（ADR-0011 §D-2）；壳会下发实际选中的值，故调用时读、不快照。
+def control_base() -> str:
+    return f"http://127.0.0.1:{config.CONTROL_PORT}"
 
 # 壳状态新鲜度：壳每 15s 心跳一次（见 desktop/main.js 的 updater 心跳），
 # 超过 60s 视为陈旧（壳已退出或崩溃）→ UI 不应该再沿用旧结论。
@@ -120,7 +122,7 @@ def update_action(action: str) -> dict[str, Any]:
     timeout = 60 if action == "check" else 8  # 检查要等下载元数据往返，安装是即时的
     try:
         req = urllib.request.Request(
-            f"{CONTROL_BASE}/update-{'check' if action == 'check' else 'install'}",
+            f"{control_base()}/update-{'check' if action == 'check' else 'install'}",
             data=b"{}",
             headers={"Content-Type": "application/json"},
             method="POST",

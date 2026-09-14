@@ -12,11 +12,21 @@
 
 ## 1. 端口与进程（先看这张表）
 
-| 端口 | 归属 | 用途 | 谁在监听 |
+**端口的唯一权威来源是桌面壳**（决策与事故复盘见 [ADR-0011](adr/0011-port-and-session-negotiation.md)）：
+壳启动时按下面的**基准值**取端口，**被占则顺延**（每端口最多 +8），然后把实际值
+①经环境变量下发给服务端、②公布到 `<数据目录>/runtime/desktop-ports.json`、③由控制服务的
+`GET /whoami` 答给浏览器扩展。**别处不要再写这些数字**——`tests/test_ports_contract.py` 会扫描源码钉住这点。
+
+| 端口（基准） | 归属 | 用途 | 谁在监听 |
 |---|---|---|---|
-| **18765** | FastAPI 服务（uvicorn / `AksoServer.exe`） | 全部业务 HTTP + 静态页 + `/extension/*` | sidecar 进程 |
+| **18765** | FastAPI 服务（uvicorn / `AksoServer.exe`） | 全部业务 HTTP + 静态页 + `/extension/*` + `/api/health` | sidecar 进程 |
 | **18766** | Electron 内置 Chromium | CDP 调试端口，`browser_pool` `connect_over_cdp` 用 | Electron 主进程 |
-| **18767** | Electron 控制服务（Node `http`） | 会话窗开户/聚焦/关窗、更新动作、扩展安装引导 | Electron 主进程 |
+| **18767** | Electron 控制服务（Node `http`） | 会话窗开户/聚焦/关窗、更新动作、扩展安装引导、`/whoami` | Electron 主进程 |
+
+> **顺延是常态而非异常**：端口被占时应用会**换号继续跑**，并把实际值公布出去。
+> 因此"18765 上是不是本项目服务"不能靠猜——要读 `desktop-ports.json`，或打
+> `GET /api/health` 看 `app` 字段（`AksoWorkbench` 才是我们）。
+> 壳的就绪探测本身就会核对这个字段；对不上会明确报错并告诉你占用者是谁，而不是静默连上去。
 
 | 进程 | 开发态 | 打包态 |
 |---|---|---|
@@ -24,9 +34,10 @@
 | 壳 | `cd desktop && npm start` | `AksoWorkbench.exe` |
 | 数据库 | 同左（默认 `%APPDATA%`） | 同左 |
 
-> ⚠️ **18765 是扩展的编译期常量**（`sync.ts` 的 `DESKTOP`）。改动服务端口会让扩展失联，
-> 且**没有任何运行时兜底**——扩展只会静默离线回退。验证扩展相关行为时务必确认 18765 上是本项目服务
-> （常见陷阱：孤儿 uvicorn 占端口，见 [PITFALLS.md](PITFALLS.md) 环境坑 #20）。
+> ⚠️ **扩展不再是编译期常量**（2026-09-14 起）：它会先读缓存、再问壳的 `/whoami`、
+> 最后才回退固定 18765。所以服务端顺延端口时扩展仍能自愈——但**旧版扩展**（≤0.3.5 之前的
+> 那套写死 18765 的代码）不会，换端口即静默离线。验证扩展行为时先确认 `desktop-ports.json` 里的 `server`。
+> 常见陷阱：孤儿 uvicorn 占端口，见 [PITFALLS.md](PITFALLS.md) 环境坑 #20。
 
 ## 2. 第一层：环境变量
 
@@ -39,12 +50,12 @@
 | `WORKBENCH_DB` | `<数据目录>/workbench.db` | 单文件指向。测试用（`conftest.py` 指向临时目录）。**指向不存在的路径会新建空库**，表现为「账号全没了」 |
 | `MOGUL_DB` | — | `WORKBENCH_DB` 的兼容别名 |
 | `WORKBENCH_HOST` | `127.0.0.1` | 改成 `0.0.0.0` 会把**无认证**的业务面暴露到局域网——**不要这么做** |
-| `WORKBENCH_PORT` | `18765` | 改端口后扩展失联（见 §1）；壳也硬编码 18765（`desktop/main.js` 的 `SERVER_PORT`），须同步改 |
+| `WORKBENCH_PORT` | `18765` | 服务端业务面 + 静态页。**壳会把它实际选中的值下发到这里**（ADR-0011）：正常情况就是基准值，被占则顺延。手工改它只影响自己起的进程；桌面壳运行时以 `runtime/desktop-ports.json` 为准 |
 | `MOGUL_HOST` / `MOGUL_PORT` | — | 上一对的兼容别名 |
 | `WORKBENCH_ADAPTERS` | `<项目根>/adapters` | 模块体检读取的适配器目录。测试用（指向仓库 `adapters/`，因为测试数据目录里没有） |
-| `WORKBENCH_SESSION_MODE` | `local` | `cdp` = 托管会话复用 Electron 壳的 Chromium（先 `:18767` 开户再 `connect_over_cdp(:18766)`）；`local` = 原生 Playwright chromium。⚠️ **壳目前并不设置它**：全仓库只有 `browser_pool.py` 读这个变量，`desktop/main.js` 里没有它——所以托管会话实际跑的是**原生 Chromium，而不是壳的 Chromium**（本轮复核纠正了此前「壳会设置它」的写法）。要切 `cdp` 得手工设环境变量。见 [ADR-0002](adr/0002-browser-allocation-policy.md) |
-| `WORKBENCH_CONTROL_PORT` | `18767` | 壳控制服务端口；改了要与 `desktop/main.js` 的 `CONTROL_PORT` 同步，否则托管会话开户失败（报「壳控制服务不可达」） |
-| `WORKBENCH_CDP_PORT` | `18766` | 同上，与 `main.js` 的 `DEBUG_PORT` 同步 |
+| `WORKBENCH_SESSION_MODE` | `local` | `cdp` = 托管会话复用 Electron 壳的 Chromium（先壳控制服务开户再 `connect_over_cdp`）；`local` = 原生 Playwright chromium。**桌面壳运行时会下发 `cdp`**（2026-09-14 修：此前壳从不设置它，导致永远跑 `local`，与 [ADR-0002](adr/0002-browser-allocation-policy.md) 的意图相反）。开发者手起服务端时留空即 `local` |
+| `WORKBENCH_CONTROL_PORT` | `18767` | 壳控制服务端口。由壳下发（被占则顺延）；服务端侧的 `routes_update` / `routes_extension` 与 `browser_pool` 都读 `config.CONTROL_PORT`，**不得再写常量** |
+| `WORKBENCH_CDP_PORT` | `18766` | 同上，壳的 Chromium 调试口；与 `desktop/ports.js` 的 `BASE.cdp` 对应 |
 | `PLAYWRIGHT_BROWSERS_PATH` | （仅打包态自动设置） | 打包态由 `browser_pool` 工作线程指向 `_MEIPASS/ms-playwright`，**必须在 `sync_playwright()` 之前**。手工覆盖会导致找不到 chromium |
 | `AKSO_CC_REPO` / `AKSO_AUTO_REPO` | 见 `adapters/*.json` 的 `repoPath` | **只影响两件事**：模块体检的 `source-reference` 提示、「原项目 env 导入」去哪里扫 `env.json`。**不影响任何业务功能**（能力已原生化，见 [ADR-0005](adr/0005-native-internalization-of-four-projects.md)） |
 | `NODE_COMMAND` | `node` | 遗留（`services/proc.py` 的 Node 子进程封装，仅被 `tests/test_proc.py` 使用）。**运行时链路不再依赖 Node** |
@@ -58,7 +69,7 @@
 | `AKSO_UPDATE_OVERRIDE` | — | 把 `electron-updater` 的 feed 换成 `generic` provider 指向的 URL（本地静态目录）。**只影响更新源，不改判定逻辑**；用于离线跑通整条更新链（`tools/verify_update_flow.py`） |
 | `ELECTRON_MIRROR` | `https://npmmirror.com/mirrors/electron/`（`build.ps1` 设） | 只影响 electron 二进制下载源 |
 | `GH_TOKEN` | — | 发布到 GitHub Releases 时注入（`--publish always`）；不设则只能手工上传 |
-| `APPDATA` | 系统 | 壳的 `shell-state.js` 用它解析数据目录，与 Python 侧 `config.DATA_DIR` 必须一致 |
+| `APPDATA` | 系统 | 壳的 `shell-state.js` / `ports.js` 用它解析数据目录，与 Python 侧 `config.DATA_DIR` 必须一致（`desktop-ports.json` 就落在这里的 `runtime/` 下） |
 
 ### 2.3 适配器声明的变量（`adapters/*.json`）
 
@@ -190,6 +201,7 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 |---|---|---|---|
 | `workbench.db` (+ `-wal` / `-shm`) | 服务端 | 服务端 | ⚠️ 手改需关闭应用；WAL 模式下直接拷 `.db` 可能不含最新事务 |
 | `shell-state.json` | **壳**（每 15s 原子写） | 服务端 `GET /api/update` | 只读更好：手改会污染 UI 判定；删除 → UI 显示「桌面壳未运行」 |
+| `runtime/desktop-ports.json` | **壳**（启动时原子写，退出时删） | 服务端 `/api/health`、人排障、工具 | 只读。**这是「当前端口是多少」的权威答案**（[ADR-0011](adr/0011-port-and-session-negotiation.md)）；手改会让排障信息失真。壳异常退出时可能残留，下次启动会按其中的 `pid` 判断它是否还有效 |
 | **`proxy.txt`** | **用户** | 壳（`proxy.apply`） | ✅ **这是给用户的开关**：一行代理串 = 强制代理；**存在但为空 = 强制直连**（终极兜底） |
 | `server.log` | 服务端（**仅打包态**） | 人 | 只读。壳以 `stdio:'ignore'` 启动 sidecar，这是唯一现场输出 |
 | `.updaterId` | electron-updater | 同上 | 勿删（更新通道标识） |

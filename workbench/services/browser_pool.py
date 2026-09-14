@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .. import config
 from . import accounts, autologin
 from .storage import now_ms
 
@@ -35,8 +36,16 @@ from .storage import now_ms
 # Playwright 经 CDP(18766) 反向接管页面；开户窗/聚焦/关窗走壳的控制服务(18767)。
 # local 模式 = 原生 playwright chromium（开发/无壳环境）。
 SESSION_MODE = os.environ.get("WORKBENCH_SESSION_MODE", "local")
-_CONTROL_PORT = int(os.environ.get("WORKBENCH_CONTROL_PORT", "18767"))
-_CDP_PORT = int(os.environ.get("WORKBENCH_CDP_PORT", "18766"))
+
+
+def _shell_port(which: str) -> int:
+    """读壳的 control/cdp 端口。
+
+    每次调用都读 `config`，**不缓存到模块级常量**：壳会把实际选中的端口经环境变量下发
+    （ADR-0011 §D-2），而测试与工具可能在建进程之后才改环境——缓存下来就会出现
+    "常量是 18767、实际壳在 18768"这种与 ADR-0011 要消灭的同一类错位。
+    """
+    return config.CONTROL_PORT if which == "control" else config.CDP_PORT
 
 
 def _control_post(path: str, payload: dict[str, Any], timeout: float = 10.0) -> dict[str, Any] | None:
@@ -45,7 +54,7 @@ def _control_post(path: str, payload: dict[str, Any], timeout: float = 10.0) -> 
     import urllib.request
 
     req = urllib.request.Request(
-        f"http://127.0.0.1:{_CONTROL_PORT}{path}",
+        f"http://127.0.0.1:{_shell_port('control')}{path}",
         data=_json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -321,7 +330,8 @@ class BrowserPool:
         window_id = f"acc-{account_id}"
         resp = _control_post("/windows", {"windowId": window_id})
         if not resp or not resp.get("ok"):
-            raise BrowserError("会话窗口创建失败（Electron 壳控制服务 18767 不可达）")
+            raise BrowserError(
+                f"会话窗口创建失败（Electron 壳控制服务 {_shell_port('control')} 不可达）")
         time.sleep(0.5)  # 等 BrowserWindow 完成创建与首次 loadURL
 
         if state.pw is None:
@@ -331,10 +341,10 @@ class BrowserPool:
                 raise BrowserError("playwright 未安装：pip install playwright") from exc
             state.pw = sync_playwright().start()
         try:
-            conn = state.pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
+            conn = state.pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_shell_port('cdp')}")
         except Exception as exc:  # noqa: BLE001
             raise BrowserError(
-                f"CDP 连接失败（Electron 壳未运行或调试端口 {_CDP_PORT} 未开）：{exc}"
+                f"CDP 连接失败（Electron 壳未运行或调试端口 {_shell_port('cdp')} 未开）：{exc}"
             ) from exc
         state.connections.append(conn)
 

@@ -27,6 +27,7 @@
       "main.js",
       "updater.js",
       "shell-state.js",
+      "ports.js",
       "proxy.js",
       "package.json"
     ],

@@ -64,6 +64,16 @@ def bootstrap_database() -> Path:
 
 HOST = os.environ.get("WORKBENCH_HOST") or os.environ.get("MOGUL_HOST", "127.0.0.1")
 PORT = int(os.environ.get("WORKBENCH_PORT") or os.environ.get("MOGUL_PORT", "18765"))
+# 壳的另一半端口（见 docs/adr/0011）：browser_pool 也要用，故在此单点声明，
+# 免得再出现「同一个数字在两个模块各写一遍」——这正是 ADR-0011 要消灭的东西。
+CDP_PORT = int(os.environ.get("WORKBENCH_CDP_PORT", "18766"))
+CONTROL_PORT = int(os.environ.get("WORKBENCH_CONTROL_PORT", "18767"))
+
+# 壳公布的端口文件（ADR-0011 §D-3）。壳是仲裁者，它把**实际选中**的端口写在这里；
+# 服务端只读它用于自证身份（/api/health），不拿它当监听依据（监听端口由壳下发）。
+# 路径规则必须与 desktop/shell-state.js 的 DATA_DIR 完全一致，否则会读到另一个目录。
+# 注意：具体的 DESKTOP_PORTS_PATH 在下方 RUNTIME_DIR 定义之后才算出来。
+DESKTOP_PORTS_NAME = "desktop-ports.json"
 
 # 打包态（PyInstaller）：资源解包到 sys._MEIPASS
 FROZEN = getattr(sys, "frozen", False)
@@ -74,5 +84,55 @@ _BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.pare
 PROJECT_ROOT = _BUNDLE_DIR if FROZEN else Path(__file__).resolve().parent.parent
 ADAPTERS_DIR = Path(os.environ.get("WORKBENCH_ADAPTERS") or (PROJECT_ROOT / "adapters"))
 RUNTIME_DIR = DATA_DIR / "runtime"  # 子进程日志 / 蓝图暂存 / env 导出
+DESKTOP_PORTS_PATH = RUNTIME_DIR / DESKTOP_PORTS_NAME  # 壳公布的实际端口（ADR-0011 §D-3）
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+# ---------------------------------------------------------------- 端口公布文件
+
+
+def read_desktop_ports() -> dict | None:
+    """读壳公布的端口文件；不存在或不可解析返回 None。
+
+    为什么服务端也要读它：`/api/health` 要回答「我是谁、我在哪个口、同一批的另两个口在哪」，
+    这样壳的就绪探测才能从「有人应答」升级为「是我们的服务在应答」（ADR-0011 §D-4）。
+    读不到不算错误——开发者手起 `python -m workbench.main` 时本来就没有壳。
+    """
+    import json
+
+    try:
+        data = json.loads(DESKTOP_PORTS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def describe_service() -> dict:
+    """本服务端的身份描述（`/api/health` 与 `/whoami` 共用的同一份口径）。
+
+    `ports` 以壳公布的**实际值**为准、缺失时回落到本进程的环境变量/默认值——
+    两者不一致本身就是个 bug（壳必须下发端口，见 ADR-0011 §D-2），故把出处一并报出来。
+    """
+    ports = {"server": PORT, "cdp": CDP_PORT, "control": CONTROL_PORT}
+    published = read_desktop_ports() or {}
+    published_ports = published.get("ports") or {}
+    source = "default"
+    if isinstance(published_ports, dict) and published_ports:
+        source = "desktop-ports.json"
+        for key in ports:
+            value = published_ports.get(key)
+            if isinstance(value, int) and value > 0:
+                ports[key] = value
+    if os.environ.get("WORKBENCH_PORT"):
+        source = "env"
+        ports["server"] = PORT
+    return {
+        "ports": ports,
+        "portsSource": source,
+        "shell": {
+            "pid": published.get("pid"),
+            "version": published.get("version"),
+            "startedAt": published.get("startedAt"),
+        } if published else None,
+    }

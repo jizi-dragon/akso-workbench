@@ -5,6 +5,49 @@
 
 ## [未发布]
 
+### Added
+
+- **端口协商与公布（[ADR-0011](docs/adr/0011-port-and-session-negotiation.md)，用户提出的"端口好几个，是不是该控制平衡一下"）**。
+  改造前 18765/18766/18767 被**壳、Python 服务端、浏览器扩展三方各自硬编码**，且没有任何一方
+  负责裁决"谁在用这个口"。**壳现在是唯一仲裁者**：优先取基准端口，被占则顺延（每端口最多 +8，
+  不做全局随机——固定端口对书签/扩展更友好），然后把实际值
+  ①经 `WORKBENCH_PORT`/`_CDP_PORT`/`_CONTROL_PORT`/`_SESSION_MODE` **下发**给服务端、
+  ②**公布**到 `<数据目录>/runtime/desktop-ports.json`（原子写、退出时清理）、
+  ③由壳控制服务新增的 `GET /whoami` **答给扩展**（`desktop/ports.js`）。
+  - **服务端新增 `GET /api/health`**：`{app:"AksoWorkbench", version, pid, ports, portsSource, shell}`，
+    无副作用（与会写 `everConnected` 闩锁的 `/extension/health` 明确分工）。
+  - **扩展不再把桌面地址当编译期常量**：新增 `background/core/desktop-endpoint.ts`
+    （缓存 → 问 `/whoami` → 回退固定 18765），`parallel-session` 的"桌面同步口"白名单也随之
+    从"一个数字"变成"已知端口集合"。扩展已有 `host_permissions: ["<all_urls>"]`，发现无需新增权限。
+  - **顺带修掉 ADR-0002 的一半没生效**：`WORKBENCH_SESSION_MODE` 此前**从没被壳设置过**，
+    托管会话实际一直跑原生 Chromium 而不是壳的 Chromium；现在随端口一起下发。
+  - 端口值单点声明进 `config.py`（`PORT`/`CDP_PORT`/`CONTROL_PORT`），
+    `routes_update` / `routes_extension` / `browser_pool` 一律读它，不再各自持常量。
+  - 测试：`tests/test_ports_contract.py`（13 项，含"源码里除 config 外不得再出现这两个端口字面量"
+    的扫描门禁）+ `tools/verify_port_broker.mjs`（23 项，真占用端口来验顺延与旧实例判定）。
+
+### Fixed
+
+- **"改了代码但 UI 没变"（用户实测，一次极难排查的事故）**。桌面壳跑的是 9/9 的旧打包副本、
+  占着 18765；**新的壳因为 `waitReady()` 只看"这个端口上有人回了 200"就判定自己的服务已就绪**，
+  于是主窗打开的是**旧实例**的页面——菜单里那两个明明已删除的命令又出现了。
+  - `waitReady()` 改为打 `GET /api/health` 并**核对 `app === "AksoWorkbench"`**：
+    从"有人应答"升级为"是我们的服务在应答"。
+  - 启动时先读上一次的 `desktop-ports.json`：若其中的 `pid` 仍活着（且不是自己），
+    弹**可执行**的对话框（PID / 版本 / 启动时间 / 它占了哪些端口 + "仍然启动 / 退出"），
+    而不是静默等 40 秒后白屏。
+  - 就绪失败的错误页不再只说"超时"：把"探到了什么"（`wrong-app` / `no-response` / `timeout` +
+    对方身份）一并显示，并对"端口上是别的程序"给出针对性文案。
+  - 端口顺延窗口全部被占时**明确报错退出**，并提示可用 `WORKBENCH_*_PORT` 指定端口。
+- **端口协商的互斥顺序错误（本轮自测抓出）**：`pickPort` 原写"先看 `taken` 就跳过、否则再探"，
+  于是一个端口被占会导致**三级连带顺延**（server 让给 18766 → cdp 因 18766 被预留而跳到 18767 →
+  control 再跳到 18768）。改成"先探可绑、再看预留"后，只有真正首选端口不可用时才移动。
+- **`desktop/ports.js` 未加入 electron-builder 的 `files` 白名单**（被 `verify_packaging.py` P6 当场拦下）——
+  否则打包态会以 `require('ports.js')` 失败的形式崩，而开发态完全正常。
+- **端口公布文件的清理时机**：原先挂在 `before-quit`，而启动失败分支走 `app.exit(0)`
+  并**不触发** `before-quit` → 文件残留成陈旧数据（实测复现）。改挂 `will-quit`（对所有退出路径都触发），
+  且删之前核对文件里的 `pid`，避免"新实例已写、旧实例才退出"时误删新实例的文件。
+
 ### Removed
 
 - **平台洞察下线两个命令：`inventory`（全量盘点）与 `understand`（三层理解报告）**。

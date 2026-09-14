@@ -82,6 +82,29 @@ def create_app() -> FastAPI:
     def index() -> FileResponse:
         return FileResponse(config.STATIC_DIR / "index.html")
 
+    @app.get("/api/health")
+    def service_health() -> dict:
+        """服务端**身份**（进程级、无副作用）——供壳的就绪探测校验。
+
+        与 `GET /extension/health` 的分工（ADR-0011 §D-4）：
+        本端点只回答"你是哪个进程、在哪个端口"，**不写任何状态**，因此可以被反复探测；
+        `/extension/health` 回答"执行面（浏览器扩展）活着吗"，它会写 `everConnected` 闩锁，
+        是给 UI 的。**不要把探测打到有副作用的端点上。**
+
+        存在理由：改造前壳的 `waitReady()` 只看"18765 上有人回了 200"，于是
+        "旧实例占着端口 + 新壳起不来" 会表现成"代码改动没生效"（ADR-0011 §1）。
+        """
+        import os
+
+        return {
+            "app": "AksoWorkbench",
+            "service": "workbench-server",
+            "version": __version__,
+            "pid": os.getpid(),
+            "frozen": config.FROZEN,
+            **config.describe_service(),
+        }
+
     app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
     return app
 

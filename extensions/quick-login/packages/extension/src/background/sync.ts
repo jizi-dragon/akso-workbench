@@ -13,11 +13,11 @@
 
 import { LOCAL_KEYS, extVersion } from '../shared/constants';
 import { credentials } from './core/credentials';
-import { parallelSession } from './core/parallel-session';
+import { desktopBase, desktopServerPort, invalidateDesktopEndpoint } from './core/desktop-endpoint';
+import { parallelSession, registerDesktopSyncPort } from './core/parallel-session';
 import { parallelStore } from './core/parallel-store';
 import { toggleAccountWheel } from './account-wheel';
 
-const DESKTOP = 'http://127.0.0.1:18765';
 const SYNC_INTERVAL_MS = 2000;
 const ACCT_MAP_KEY = 'akso:acctMap'; // desktopId → extension accountId
 const SNAPSHOT_ID_KEY = 'akso:snapshotId';
@@ -74,10 +74,16 @@ async function fernetDecrypt(tokenB64: string, keyB64: string): Promise<string> 
 
 async function getJson(path: string): Promise<any | null> {
   try {
-    const resp = await fetch(`${DESKTOP}${path}`, { cache: 'no-store' });
-    if (!resp.ok) return null;
+    const resp = await fetch(`${await desktopBase()}${path}`, { cache: 'no-store' });
+    if (!resp.ok) {
+      // 404/502 = 端口上可能不是我们的服务（或桌面端刚重启换了端口）→ 让发现缓存失效，
+      // 下一次调用重新问壳的 /whoami（ADR-0011 §D-5）。
+      if (resp.status === 404 || resp.status === 502) invalidateDesktopEndpoint();
+      return null;
+    }
     return await resp.json();
   } catch {
+    invalidateDesktopEndpoint(); // 连接失败同因：下次重新发现
     return null; // 桌面不可达 → 离线回退
   }
 }
@@ -228,7 +234,7 @@ async function applyCommands(commands: any[], after: number): Promise<void> {
   }
   if (cursor !== after) {
     await chrome.storage.local.set({ [CMD_CURSOR_KEY]: cursor });
-    await fetch(`${DESKTOP}/extension/ack`, {
+    await fetch(`${await desktopBase()}/extension/ack`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ seqs: [cursor] }),
     }).catch(() => undefined);
@@ -345,7 +351,7 @@ async function reportState(): Promise<void> {
       });
     }
   }
-  await fetch(`${DESKTOP}/extension/state`, {
+  await fetch(`${await desktopBase()}/extension/state`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ items, extVersion: extVersion(), desktopVersion }),
@@ -362,7 +368,19 @@ export function startDesktopSync(): void {
       void commandStream(); // SW 被回收后重连长轮询（幂等：流已在跑时直接返回）
     }
   });
+  // 进程级共享句柄：先让 parallel-session 的"桌面同步口"白名单登记一次
+  // （同步判定在 webRequest 里，不能 await，故端口要提前缓存好）
+  void adoptDesktopPort();
   void tick();
   void commandStream();
   setInterval(tick, SYNC_INTERVAL_MS);
+}
+
+/** 把发现到的桌面端口登记进并行会话的白名单（换了端口也能被正确识别为"非账号流量"） */
+async function adoptDesktopPort(): Promise<void> {
+  try {
+    registerDesktopSyncPort(await desktopServerPort());
+  } catch {
+    // 发现失败 → 白名单保留默认 18765，行为与改造前一致
+  }
 }

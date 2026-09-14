@@ -30,17 +30,18 @@ _由 learn-codebase 技能生成，本轮复核重写于 **2026-09-13**，锚定
 - **框架 / 运行时：** FastAPI + uvicorn[standard]（REST + SSE + 静态托管）；pydantic v2；**Electron 33** 桌面壳（窗口 / 托盘 / 全局热键 / 更新器 / 出网通道 / sidecar 生命周期）
 - **构建 / 包管理：** uv（`uv.lock`，默认清华镜像 `pyproject.toml:37-39`）；hatchling；ruff（`E4/E7/E9/F/I/B`，line-length 110）；**PyInstaller**（`build` extra，`workbench/server.spec` → `dist/AksoServer/` onedir）；**electron-builder → NSIS**（`tools/build.ps1` 一键出安装包）；esbuild 0.24（扩展打包）；版本真源 `pyproject.toml`
 - **存储 / 外部服务：** SQLite（WAL，**迁移 1–13**）；Playwright chromium；cryptography Fernet；DeepSeek API；networkx；GitHub Releases（electron-updater）
-- **端口：** 18765 服务 · 18766 CDP · 18767 壳会话控制服务
+- **端口：** 基准 18765 服务 · 18766 CDP · 18767 壳控制服务。**实际值是壳协商出来的**（被占则顺延，最多 +8），
+  经环境变量下发 + 公布到 `runtime/desktop-ports.json` + 由 `/whoami` 答给扩展 —— 见 [ADR-0011](adr/0011-port-and-session-negotiation.md)
 - **已应用技能：** `learn-codebase`（本文件）；分析期另派两个子代理分别深挖**扩展执行面**与**构建/发布链**，其结论已并入下文并逐条对码核验。
 
 ## Architecture（架构）
 
 ```
-Electron 壳 desktop/（只做壳：sidecar 生命周期 / 窗口 / 托盘 / 热键 / 更新 / 出网通道）
-  │  main.js 461 行 · updater.js 350 · proxy.js 151 · shell-state.js 44
-  ├─ spawn → FastAPI workbench/（全部业务，:18765）
-  ├─ :18767 会话控制服务（按账号 persist: 分区开户/聚焦/关窗）
-  └─ :18766 CDP（必须在 app ready 前设置）→ browser_pool.connect_over_cdp
+Electron 壳 desktop/（只做壳：sidecar 生命周期 / 窗口 / 托盘 / 热键 / 更新 / 出网通道 / 端口协商）
+  │  main.js · ports.js（端口协商与公布）· updater.js · proxy.js · shell-state.js
+  ├─ spawn → FastAPI workbench/（全部业务，基准 :18765）——端口经 env + --port 下发
+  ├─ 壳控制服务（基准 :18767；按账号 persist: 分区开户/聚焦/关窗 + /whoami 端口发现）
+  └─ CDP（基准 :18766；必须在 app ready 前设置，故端口在 whenReady 里先协商完再设）→ browser_pool.connect_over_cdp
         ├─ 用户 Chrome 扩展 = 执行面：六平面隔离 + 会话切换 + 自动填表
         └─ 内置 Chromium   = 监听/自动化：Monitor 录制 / 自动登录 / 免密持久化
 ```
@@ -198,7 +199,7 @@ powershell -File tools\build.ps1
 | **B-d** | `bump.py` 退出码未检查（`build.ps1:36,39`）→ 失败时 `$version` 为空或混入错误文本，一路流到产物命名 | `build.ps1:35-41`（未校验 `$LASTEXITCODE` 与版本号格式） |
 | **B-e** | `bump.py` 的扩展侧写盘是**非锚定**正则 `("version"\s*:\s*")` `count=1`（首个命中即改）；pyproject 用无 `count` 的 `re.sub` 而 `_read` 只取首个匹配 → 存在改错键/读写分歧的余地；文件缺失时**静默跳过**（B8）；递增**不幂等**（B9：手工 `bump push` 后再 `build.ps1 -Bump push` 连跳两版） | `bump.py:45,52,63,66,72,83-85` |
 | **B-f** | `desktop/package-lock.json` 版本仍是 **0.2.1**（`package.json` = 0.3.5），`bump.py` 不写它 → 发布提交后 `npm install` 立刻把工作区弄脏。（注：已删除的原 `AGENT.md` B7 与 `CONTRIBUTING.md` 均称扩展 `package-lock.json` 停在 0.2.20 —— **该说法已过期**，实测已是 0.3.5） | `desktop/package-lock.json`、`extensions/quick-login/package-lock.json` |
-| **B-g** | 桌面壳 `files` 白名单只列 4 个 `.js` + `package.json`，**不含 `desktop/icon.ico`**，而托盘要读它、失败被 `catch` 吞掉 → 打包态很可能**没有托盘图标**；`verify_packaging.py` P6 只 glob `*.js`，非 JS 资源无人守。（本机无 `desktop/dist`，未实机复验） | `desktop/package.json:26-32`、`main.js:325-328`、`verify_packaging.py:108-110` |
+| **B-g** | 桌面壳 `files` 白名单**不含 `desktop/icon.ico`**，而托盘要读它、失败被 `catch` 吞掉 → 打包态很可能**没有托盘图标**；`verify_packaging.py` P6 只 glob `*.js`，**非 JS 资源无人守**。（本机无 `desktop/dist`，未实机复验）<br>**2026-09-14 印证**：P6 对 `.js` 是有效的——本轮新增 `desktop/ports.js` 时忘了加白名单，P6 立刻报红（否则会在打包态以 `require` 失败的形式炸）。但它确实管不到 `icon.ico` 这类资源 | `desktop/package.json` 的 `files`、`main.js` 托盘图标读取、`verify_packaging.py` P6 |
 | **B-h** | `verify_update_flow.py:40` 硬编码 `%APPDATA%\AksoWorkbench\shell-state.json` 且忽略 `WORKBENCH_DATA`，而 `shell-state.js:16` 是认这个变量的 → 设了该变量时该流程**必然超时**，且会写进真实用户数据目录 | 两处 |
 | **B-i** | **仓库无 CI**：无 `.github` 目录、无任何 pipeline YAML、**无 git hook**（`bump.py:13` 提到的 pre-push hook 是空想）。验收全靠本地手工纪律 | 全仓库搜索确认 |
 
