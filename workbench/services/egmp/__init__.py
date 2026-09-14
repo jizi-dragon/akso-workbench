@@ -6,7 +6,7 @@ adapters/*.json 降级为只读参考存档。
 
 模块地图：
 - client.py / auth.py / cache.py / queries.py   HTTP 内核（信封/分页/token 缓存/查询层）
-- insight/                                       读路径（盘点/理解/蜘蛛/networkx）
+- insight/                                       读路径（登录 / 蜘蛛五步织网 + networkx）
 - writers/                                       写路径（蓝图两层校验/幂等/全部创建器）
 - orchestrate.py / complexity.py / generate.py   编排闭环 + LLM 蓝图生成（mogul DeepSeek 融合）
 - monitor/                                       Monitor 录制/查询/解读/复现（Playwright 载体）
