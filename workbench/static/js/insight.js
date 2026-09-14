@@ -53,20 +53,18 @@ async function run() {
   const command = el('ins-command').value;
   const account_id = el('ins-account').value;
   if (!account_id) { logLine(log, '✗ 请先在统一账号库添加账号', 'err'); return; }
-  if (command in { understand: 1, spider: 1 } && !el('ins-objects').value.trim()) {
-    logLine(log, `✗ ${command} 需要填写对象编码`, 'err');
+  if (command === 'spider' && !el('ins-objects').value.trim()) {
+    logLine(log, '✗ spider 需要填写对象编码', 'err');
     return;
   }
   log.innerHTML = '';
-  logLine(log, `$ akso-cc ${command}${command === 'understand' || command === 'spider' ? ` --objects=${el('ins-objects').value}` : ''}`, 'sys');
+  logLine(log, `$ akso-cc ${command}${command === 'spider' ? ` --objects=${el('ins-objects').value}` : ''}`, 'sys');
   setRunning(true);
   try {
     await postSSE('/api/insight/run-sse', {
       command,
       account_id,
       objects: el('ins-objects').value.trim(),
-      known_objects: el('ins-known').value.trim(),
-      llm: el('ins-llm').checked,
     }, {
       onLog: (line) => logLine(log, line, line.includes('失败') || line.includes('错误') ? 'err' : ''),
       onDone: (evt) => {
@@ -135,10 +133,9 @@ async function loadRuns() {
 }
 
 el('btn-insight-run').onclick = run;
+// 对象编码只在 spider 下需要；login 时整格隐藏，避免误以为必填
 el('ins-command').onchange = () => {
-  const need = ['understand', 'spider'].includes(el('ins-command').value);
-  el('ins-objects').disabled = !need;
-  el('ins-llm').disabled = el('ins-command').value !== 'understand';
+  el('ins-objects-field').hidden = el('ins-command').value !== 'spider';
 };
 el('ins-command').onchange();
 

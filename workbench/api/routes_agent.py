@@ -7,7 +7,7 @@ routes_chat 的 SSE 流（工具结果作为上下文块注入）。
 工具清单（接口契约见 docs/API.md §10）：
 - login_platform     平台登录验证（egmp client 原生，预热 token）
 - read_config        eGMP 对象元数据只读（egmp.client）
-- run_insight        egmp.insight understand 三层理解报告
+- run_insight        egmp.insight 蜘蛛计划（五步织网 + networkx 图分析）
 - browser_status     托管浏览器会话状态墙
 """
 
@@ -67,23 +67,19 @@ def _tool_read_config(args: dict[str, Any]) -> dict:
 
 
 def _tool_run_insight(args: dict[str, Any]) -> dict:
-    """原生 understand 报告（egmp.insight）。"""
+    """蜘蛛计划（egmp.insight）：与页面同一入口，故任务台账、工作区回填走同一条路。
+
+    直接调 `routes_insight.run` 而不是内部函数：绕过去就会漏掉 `workspace_dir` /
+    `coverage_status` 的回填（2026-09-14 修）。
+    """
     from . import routes_insight
 
     account_id = str(args.get("account_id") or "")
     objects = str(args.get("objects") or "")
     if not account_id or not objects:
         raise ValueError("account_id 与 objects 不能为空")
-    req = routes_insight.InsightRequest(command="understand", account_id=account_id, objects=objects)
-    job_id, workdir = routes_insight._start_job(req)
-    outcome: dict[str, Any] = {}
-    try:
-        outcome = routes_insight._run_job(req, workdir)
-    except Exception as exc:  # noqa: BLE001 —— 工具层转译为 ValueError 语义
-        raise ValueError(f"洞察执行失败：{exc}") from exc
-    finally:
-        routes_insight._finish_job(job_id, outcome.get("status", "failed"))
-    return {"job_id": job_id, **outcome}
+    req = routes_insight.InsightRequest(command="spider", account_id=account_id, objects=objects)
+    return routes_insight.run(req)
 
 
 def _tool_browser_status(args: dict[str, Any]) -> dict:
@@ -109,7 +105,7 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "run_insight": {
         "fn": _tool_run_insight,
-        "description": "跑对象三层理解报告（egmp.insight 原生实现）",
+        "description": "跑蜘蛛计划：五步织网 + networkx 图分析（egmp.insight 原生实现）",
         "args": {"account_id": "string（必填）", "objects": "逗号分隔对象编码"},
     },
     "browser_status": {

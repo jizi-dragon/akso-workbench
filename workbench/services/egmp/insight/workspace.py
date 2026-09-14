@@ -1,13 +1,17 @@
 """洞察产物工作区：用户可配的根目录 + 每次运行一格的落盘布局 + 自证覆盖度的 manifest。
 
+> 2026-09-14：`inventory`/`understand` 下线后，`coverage_for_understand()` 一并删除；
+> 本模块的 `run_dir()` / `coverage_status()` 等保留为**通用产物契约**（spider 已在用
+> `build_coverage`/`build_manifest`/`write_manifest`）。
+
 对应 docs/INSIGHT-SPEC.md §4：
 
     <工作区根目录>/            ← 用户可配（设置键 insight_workspace_root）
-    └── <对象code>/            ← 按对象归集，同一对象的历次理解可比对
+    └── <对象code>/            ← 按对象归集，同一对象的历次产物可比对
         └── 20260913-153000/   ← 每次运行一格（Windows 合法字符，可排序）
             ├── manifest.json
-            ├── understanding.md / understanding.json
-            └── workflow-*.drawio
+            ├── spider-network.json / spider-network.md / spider-network.drawio
+            └── step3-attribution.md
 
 两条硬要求（规格 §4.2/§4.3）：
 
@@ -140,28 +144,6 @@ def build_coverage(*, total: int, succeeded: int, failures: list | None = None,
     }
     coverage.update({k: v for k, v in counters.items() if v is not None})
     return coverage
-
-
-def coverage_for_understand(understanding: dict[str, Any]) -> dict[str, Any]:
-    """单对象理解报告的覆盖度。"""
-    lifecycle = understanding.get("lifecycle") or {}
-    involved = lifecycle.get("involvedWorkflows") or []
-    with_graph = [w for w in involved if (w.get("graph") or {}).get("nodes")]
-    failures = understanding.get("failures") or []
-    return build_coverage(
-        total=1,
-        succeeded=1 if understanding.get("object") else 0,
-        failures=failures,
-        fieldsRead=len(understanding.get("fields") or []),
-        statesRead=len(lifecycle.get("states") or []),
-        userActionEdges=len(lifecycle.get("userActionEdges") or []),
-        enterActionEdges=len(lifecycle.get("enterActionEdges") or []),
-        launchEdges=len(lifecycle.get("launchEdges") or []),
-        workflowTriggerEdges=len(lifecycle.get("workflowTriggerEdges") or []),
-        workflowsFound=len(involved),
-        workflowsWithGraph=len(with_graph),
-        entryConditionSource="description",
-    )
 
 
 # ---------------------------------------------------------------- manifest

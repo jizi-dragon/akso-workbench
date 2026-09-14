@@ -1,7 +1,10 @@
-"""平台洞察路由（阶段 3 原生化）：egmp.insight 直接实现四命令，不再调 node。
+"""平台洞察路由（阶段 3 原生化）：egmp.insight 直接实现 login / spider，不再调 node。
 
 凭证链：统一账号库 → Fernet 解密（仅内存）→ egmp client 登录（55min token 缓存）。
-产物统一落 `数据目录/runtime/insight/<job_id>/`，原仓库 output/ 与 node 均不再涉及。
+
+产物落点（规格 §4）：spider 写进**用户可配的工作区根** `<root>/<对象code>/<时间戳>/`
+（`insight_runs.workspace_dir` 回填该目录，产物面板据此列出日志与产物）；工作区不可写时
+退回兜底目录 `数据目录/runtime/insight/<job_id>/`。原仓库 output/ 与 node 均不再涉及。
 """
 
 from __future__ import annotations
@@ -26,42 +29,14 @@ router = APIRouter(prefix="/api/insight", tags=["insight"])
 
 
 class InsightRequest(BaseModel):
-    command: str = Field(..., description="login | inventory | understand | spider")
+    command: str = Field(..., description="login | spider")
     account_id: str = Field(..., description="统一账号库账号 id（凭证来源）")
-    objects: str = Field("", description="understand/spider：逗号分隔对象编码")
-    known_objects: str = Field("", description="inventory 兜底白名单（逗号分隔）")
-    llm: bool = Field(False, description="understand 是否附加 LLM 职责摘要")
+    objects: str = Field("", description="spider：逗号分隔对象编码")
     env_id: str = Field("", description="token 缓存文件名后缀（可选）")
 
 
 def _split_codes(raw: str) -> list[str]:
     return [c.strip() for c in (raw or "").split(",") if c.strip()]
-
-
-def _llm_summary_fn():
-    """LLM 职责摘要（mogul DeepSeek 客户端；未配置 Key 时返回 None → 确定性标注）。"""
-    from ..services.settings import load_deepseek
-
-    settings = load_deepseek()
-    if not settings.api_key:
-        return None
-
-    def _summarize(meta: dict, fields: list, lifecycle: dict) -> str:
-        import asyncio
-
-        from ..services.deepseek import DeepSeekClient
-
-        prompt = (
-            f"用 2-3 句中文概括该 eGMP 业务对象的职责与流转特征。\n"
-            f"对象：{meta.get('name')}（{meta.get('code')}）\n"
-            f"字段示例：{[f.get('name') for f in fields[:15]]}\n"
-            f"状态数：{len(lifecycle.get('states', []))}；"
-            f"发起工作流数：{len(lifecycle.get('launchEdges', []))}"
-        )
-        client = DeepSeekClient(api_key=settings.api_key, model=settings.model)
-        return asyncio.run(client.chat([{"role": "user", "content": prompt}], temperature=0.3))
-
-    return _summarize
 
 
 def _credentials(account_id: str) -> tuple[dict, str, str, str]:
@@ -98,7 +73,6 @@ def _status_from_coverage(result: dict) -> str:
 def _run_job(req: InsightRequest, workdir: Path) -> dict:
     """同步执行（原生 Python，无子进程）。"""
     from ..services.egmp.client import login
-    from ..services.egmp.insight import workspace as workspace_mod
 
     account, base_url, username, password = _credentials(req.account_id)
     environment = _environment_of(account, base_url)
@@ -109,33 +83,42 @@ def _run_job(req: InsightRequest, workdir: Path) -> dict:
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
 
+    def run_spider_into(codes: list[str]) -> dict:
+        """spider 落点：用户可配工作区根优先，不可用则退回任务目录。
+
+        先定落点再爬——不做事后重试，否则平台调用会被重放一遍。
+        """
+        from ..services.egmp.insight import workspace as workspace_mod
+
+        try:
+            target = workspace_mod.run_dir(",".join(codes))
+            on_log(f"产物落点：{target}")
+        except OSError as exc:
+            on_log(f"工作区不可写（{exc}），产物改落任务目录")
+            target = workdir
+        outcome = native_insight.run_spider(client, codes, output_dir=target,
+                                            on_log=on_log, environment=environment)
+        # 任务日志留在任务目录（同一 job 的既有位置不变），另在工作区留一份副本，
+        # 好让产物面板能在同一处列出「日志 + 产物」。
+        if target != workdir and log_path.is_file():
+            try:
+                (target / "proc.log").write_bytes(log_path.read_bytes())
+            except OSError:
+                pass
+        return outcome
+
     started = now_ms()
     with EgmpClient(base_url, token) as client:
         if req.command == "login":
             result = native_insight.run_login(client, base_url, username, password, req.env_id)
             on_log(f"登录成功：{base_url}")
-        elif req.command == "inventory":
-            result = native_insight.run_inventory(
-                client, base_url=base_url, env_id=req.env_id,
-                known_objects=_split_codes(req.known_objects),
-                output_dir=workdir, on_log=on_log, environment=environment)
-        elif req.command == "understand":
-            codes = _split_codes(req.objects)
-            if not codes:
-                raise HTTPException(400, "understand 需要 objects（对象编码，逗号分隔）")
-            # 不给 output_dir → 走工作区模型：<用户可配根>/<对象code>/<时间戳>/
-            result = native_insight.run_understand(
-                client, codes, llm_summary_fn=_llm_summary_fn() if req.llm else None,
-                on_log=on_log, environment=environment,
-                workspace_root=workspace_mod.workspace_root())
         elif req.command == "spider":
             codes = _split_codes(req.objects)
             if not codes:
                 raise HTTPException(400, "spider 需要 objects（对象编码，逗号分隔）")
-            result = native_insight.run_spider(client, codes, output_dir=workdir,
-                                               on_log=on_log, environment=environment)
+            result = run_spider_into(codes)
         else:
-            raise HTTPException(400, f"未知命令：{req.command}（login/inventory/understand/spider）")
+            raise HTTPException(400, f"未知命令：{req.command}（login/spider）")
 
     status = _status_from_coverage(result)
     coverage = result.get("coverage") or {}
@@ -244,7 +227,8 @@ def list_artifacts(job_id: str) -> dict:
     row = db.query_one("SELECT * FROM insight_runs WHERE id = ?", (job_id,))
     if not row:
         raise HTTPException(404, f"任务不存在：{job_id}")
-    # understand 走工作区模型（每对象一格），其余命令产物在 runtime 的 artifact_dir
+    # 产物目录：优先取工作区列（历史任务可能有，understand 时代写入），
+    # 否则回落到 runtime 的 artifact_dir（现存命令 login/spider 都走这条）
     dirs = _workspace_dirs(row)
     if not dirs and row["artifact_dir"]:
         dirs = [Path(row["artifact_dir"])]

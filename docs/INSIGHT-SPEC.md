@@ -2,6 +2,22 @@
 
 _2026-09-13 定稿 · 基于 `d0efa84`（v0.3.5）代码实测 + 上游 [akso-cc](https://github.com/example-org/akso-cc)（`gaia-inventory`）README 权威口径 · 四项决策已拍板_
 
+> ## ⚠️ 命令范围变更（2026-09-14，读本文前先看这条）
+>
+> 用户定稿：**`inventory`（全量盘点）与 `understand`（三层理解报告）已下线**——应用场景模糊、
+> 实际使用效果不理想。现存命令只有两个：**`login`**（连通性验证 + token 预热）与
+> **`spider`**（五步织网 + networkx 图分析）。
+>
+> 随之删除的代码：`insight/assemble.py`、`annotate.py`、`flowgraph.py`、`relations.py`、
+> `render.py`、`understand.py`、`crawler.py`（`SIGNATURE_RE` 已内联进 `spider.py`），
+> 以及 `workspace.coverage_for_understand()`。
+>
+> **保留下来的不是「理解报告」那套，而是通用产物契约**：`workspace.py`（工作区根 + 三态覆盖度 +
+> manifest）、`kernel/`、`replay.py`、`drawio.py`、`report.py`、`lifecycle.py` —— spider 正在用它们。
+>
+> 本文 §2/§3/§5 中凡以 `understand` 为主语的描述、§6.2 里点名 `run_understand` 的验收项，
+> **属于当时的设计记录，不再是当前契约**；当前实现的权威口径见 `docs/API.md` §6。
+
 > **本文档的地位**：定义「平台洞察是什么、能做什么、不能做什么」。属**中变更频率**文档——
 > 能力范围变化时更新；实现细节走 `docs/API.md` / `docs/SCHEMA.md` / `docs/CONFIG.md`；踩坑走 `docs/PITFALLS.md`。
 > 与 [docs/adr/0005](adr/0005-native-internalization-of-four-projects.md)（原生化决策）配套阅读。
@@ -149,14 +165,17 @@ insight 与 egmp 顶层的**硬编码字面量归零**（36 处全部改为引�
 
 ```
 <工作区根目录>/                       ← 用户可配（设置页），默认建议 我的文档\AksoWorkbench\洞察
-└── <对象code>/                       ← 按对象归集，同一对象的历次理解可比对
+└── <对象code>/                       ← 按对象归集，同一对象的历次运行可比对
     └── 20260913-153000/              ← 每次运行一个时间戳目录（Windows 合法字符，可排序）
-        ├── manifest.json             ← 【新增】清单：见 §4.3
-        ├── understanding.md          ← 人读报告（三层 + 状态明细表 + Mermaid）
-        ├── understanding.json        ← 机器读模型
-        ├── object-lifecycle.drawio   ← 【新增】状态机 drawio（可选）
-        └── workflow-<N>-<名称>.drawio ← 每条被发起的工作流一张
+        ├── manifest.json             ← 清单：见 §4.3
+        ├── spider-network.md         ← 人读报告（步骤索引 + 归因边统计 + networkx 分析）
+        ├── spider-network.json       ← 机器读模型（节点/边/分析）
+        ├── spider-network.drawio     ← 总览页 + 每对象状态机页（多页）
+        └── step3-attribution.md      ← 第 3 步归因明细
 ```
+
+> `inventory` / `understand` 下线前的产物名（`inventory.json/md`、`understanding.json/md`、
+> `<code>.json/md`、`workflow-<N>-<名称>.drawio`）只出现在历史目录里，新运行不再产生。
 
 **与内部运行区的关系**（重要，避免双份产物与路径失控）：
 
@@ -167,9 +186,11 @@ insight 与 egmp 顶层的**硬编码字面量归零**（36 处全部改为引�
 
 `insight_runs` 增列记录工作区路径（**新增迁移 14，不改动 1–13**，见 §7）。
 
-**实现落点**：新模块 `workbench/services/egmp/insight/workspace.py`（根目录解析与校验、`run_dir()`、
-三态覆盖度、manifest 读写）；`run_understand` 在不给 `output_dir` 时走工作区模型，
-**每个对象一格**（`<root>/<code>/<时间戳>/`），`insight_runs.workspace_dir` 用换行分隔存多个目录；
+**实现落点**：模块 `workbench/services/egmp/insight/workspace.py`（根目录解析与校验、`run_dir()`、
+三态覆盖度、manifest 读写）；`run_spider` 在不给 `output_dir` 而给 `workspace_root` 时走工作区模型
+（`<root>/<code>/<时间戳>/`），路由默认即走这条：先 `workspace.run_dir()` 定落点，再把落点当
+`output_dir` 交给 spider，并把 `workspaces` 回填 `insight_runs.workspace_dir`；工作区不可写时退回
+`runtime/insight/<job_id>/`（此时 `workspaces` 为空，不谎报）。
 产物读取接口（`/artifacts/*`）优先从工作区取，历史行仍回落到 `artifact_dir`。
 工作区根由设置键 `insight_workspace_root` 决定，接口 `GET/PUT /api/insight/workspace`。
 
@@ -189,7 +210,12 @@ insight 与 egmp 顶层的**硬编码字面量归零**（36 处全部改为引�
 - `routes_insight.py` 的产物读取守卫由**字符串前缀比较**改为 `Path.is_relative_to()`；
   并拒绝 `artifact_dir` 为空的行（原先会退化成「CWD 下任意文件」）。
 
-验收：`tests/test_paths.py` **88 项**（恒等性 + 对抗性输入 + 真实落盘端到端）。
+验收：`tests/test_paths.py`（恒等性 + 对抗性输入）+ `tests/test_workspace.py`（真实落盘端到端，
+含恶意 code 走完一次 spider 后**失败路径也不越界**）。
+
+> **2026-09-14 起范围的收窄（好消息）**：现存命令不再以对象 code 命名**文件**（产物是固定的
+> `spider-network.*` / `step3-attribution.md`），code 只进**目录**名。攻击面因此只剩一条，
+> 而且被 `run_dir()` 的 `resolve_within` 与上述端到端用例双重钉住。
 
 ### 4.3 产物契约（✅ `manifest.json` 已落地，2026-09-13）
 
@@ -198,24 +224,27 @@ insight 与 egmp 顶层的**硬编码字面量归零**（36 处全部改为引�
 ```jsonc
 {
   "schemaVersion": 1,
-  "command": "understand",
-  "objectCode": "capa_plan__c",
+  "command": "spider",
+  "objectCode": "training_mgr__c",       // 多对象时逗号分隔
   "generatedAt": "2026-09-13T15:30:00+08:00",
   "environment": { "envName": "测试环境", "baseUrl": "https://demo-val.example.com" },
   "platformVersion": null,            // capability 探测结果，未探测则 null
   "coverage": {                       // ★ 关键：三态而非布尔
     "status": "complete",             // complete | partial | degraded
-    "statesRead": 8, "statesTotal": 8,
-    "fieldsRead": 42, "fieldsDenied": 0,
-    "workflowsFound": 3, "workflowsWithGraph": 3
+    "total": 1, "succeeded": 1,
+    "objectNodes": 1, "stateNodes": 3,   // spider 的图规模计数，让产物自证「这次织出多大的网」
+    "attrEdges": 1, "relationEdges": 0
   },
-  "artifacts": [ { "name": "understanding.md", "bytes": 12345, "sha256": "…" } ],
-  "failures": [ { "stage": "fields", "item": "capa_plan__c", "error": "403 …" } ]
+  "artifacts": [ { "name": "spider-network.json", "bytes": 1778, "sha256": "…" } ],
+  "failures": [ { "code": "ghost__c", "stage": "step1", "error": "对象实体未读到" } ]
 }
 ```
 
-**`coverage.status` 取代当前的布尔谎报**：现状 `run_inventory` **无条件**返回 `ok:True`（哪怕 0 个对象），
-`run_understand` 只要 `succeeded > 0` 就 `ok:True` —— 这些会直接污染 `insight_runs.status`，必须一并改掉。
+**`coverage.status` 取代布尔谎报**：改造前 `run_inventory` **无条件**返回 `ok:True`（哪怕 0 个对象），
+`run_understand` 只要 `succeeded > 0` 就 `ok:True` —— 这些会直接污染 `insight_runs.status`。
+两个命令都已下线，但这条纪律在 spider 上继续成立，并且**又抓到一个同类缺陷**（2026-09-14）：
+`get_object` 拿到空实体时流程会一路走完，产出「1 个对象节点 + 0 状态」的空网，manifest 还写
+`complete`。现在目标对象读不到即抛 `SpiderReadErrors`（`tests/test_workspace.py` 有回归）。
 
 ---
 
@@ -280,7 +309,10 @@ insight 与 egmp 顶层的**硬编码字面量归零**（36 处全部改为引�
 | C3 | 凡有「发起工作流」动作，必有对应 `.drawio`；且 `drawio` **可被 XML 解析器解析** | 自动断言 |
 | C3 | 工作流触发状态 = 按钮发现 ∪ `lifecycleStatusIds` | 对拍真实环境 |
 | C4 | 关联对象被列出，且悬空目标计入 unresolved | 产物断言 |
-| C5 | 用户可改工作区根目录；产物出现在 `<root>/<code>/<ts>/` | ✅ 端到端（`run_understand` + 真实夹具） |
+| C5 | 用户可改工作区根目录；产物出现在 `<root>/<code>/<ts>/` | ✅ 端到端（`run_spider` + 真实形态夹具，2026-09-14 重挂） |
+
+> C1–C4 的主语是 `understand` 的状态表与工作流图，随该命令下线已不适用；spider 的对应口径见
+> `docs/USER-MANUAL.md` 与 `tests/test_replay.py`（图规模计数、drawio 良构、覆盖度自证）。
 
 ### 6.2 质量门禁
 
@@ -294,20 +326,24 @@ insight 与 egmp 顶层的**硬编码字面量归零**（36 处全部改为引�
   > （把 `A & B` 写进标签，draw.io 自身产出 `value="A &amp; B"`）；换行用 **`&#xa;` 字符引用**，
   > **不是** `<br>`——字面 `<` 在 XML 属性值里非法，必须转义；`&#xa;` 在 `html=0/1` 下都能换行，
   > 且这正是 draw.io 自身导出的写法。多行标签另需 `whiteSpace=wrap`。
-- ✅ **路径安全夹具（已建立，2026-09-13）**：`tests/test_paths.py` **88 项**——正常编码恒等性、
-  逐条对抗性输入（`../`、绝对路径、`:`、保留设备名、控制字符、双向覆盖字符、尾点空格、超长）、
-  以及**真实落盘**的端到端断言（恶意 code 的产物必须仍在 `output_dir` 内）。
+- ✅ **路径安全夹具（已建立，2026-09-13）**：`tests/test_paths.py` **63 项**——正常编码恒等性、
+  逐条对抗性输入（`../`、绝对路径、`:`、保留设备名、控制字符、双向覆盖字符、尾点空格、超长）；
+  真实落盘端到端挪到了 `tests/test_workspace.py`（见下，`understand` 下线时一并搬过去）。
 - ✅ **环境隔离夹具（已建立，2026-09-13）**：`tests/test_env_isolation.py` **19 项**——token 跨环境/
   跨账号不泄漏、归属校验、JWT `exp` 优先于本地 TTL、原子写、缓存作用域隔离、假值可缓存。
-- ✅ **离线回放夹具（已建立，2026-09-13）**：`workbench/services/egmp/replay.py`（夹具格式 +
-  `Recorder` + `ReplayClient`）、`tests/fixtures/egmp/understand-capa-plan.json`（手写的真实形态夹具）、
-  `tests/test_replay.py` **23 项**、`tools/record_insight_fixture.py`（对着真实环境录一次即可复用）。
+- ✅ **离线回放夹具（2026-09-14 换轨）**：`workbench/services/egmp/replay.py`（夹具格式 +
+  `Recorder` + `ReplayClient`）、`tests/fixtures/egmp/spider-training-mgr.json`（**真实形态**夹具：
+  结构取自 `Recorder` 对假平台的实跑录制 11 条交互，ID 与业务命名换成确定性占位值，不含真实平台数据）、
+  `tests/test_replay.py` **17 项**、`tools/record_insight_fixture.py`（`--command spider` 可重录）。
   两条覆盖度保证：回放时**既不能有请求缺失**（`ReplayMiss` 会列出可用键），
   **也不能有夹具条目从未被用到**（后者能抓住夹具腐化）。
+  > 原名 `understand-capa-plan.json` 的夹具随 `understand` 下线删除。
   > **记录粒度**：录制发生在 `get`/`post`/`paged_post` 这一层（逻辑调用），`paged_post` 内部的翻页
   > 循环看不到——分页正确性由 client 层测试负责，本台架不重复覆盖。
-- ✅ **工作区与 manifest 门禁（已建立，2026-09-13）**：`tests/test_workspace.py` **32 项**——
-  根目录校验、运行目录布局与越界防护、三态覆盖度、manifest 原子写与 sha256、迁移 14 在册。
+- ✅ **工作区与 manifest 门禁（已建立，2026-09-13）**：`tests/test_workspace.py` **34 项**——
+  根目录校验、运行目录布局与越界防护、三态覆盖度、manifest 原子写与 sha256、迁移 14 在册，
+  以及 `run_spider` 的端到端：落点归集、`workspaces` 回填、恶意 code 不越界、
+  **对象读不到必须失败而不是产空网**。
 
 ---
 
@@ -318,7 +354,8 @@ insight 与 egmp 顶层的**硬编码字面量归零**（36 处全部改为引�
 1. **DB 迁移只增不改**：迁移 **1–13 不可变**（仓库红线）。本轮所需的新列一律**追加迁移 14**
    （`insight_runs` 增 `workspace_dir`、`coverage_status` 等），**不得修改历史迁移**。
 2. **产物格式变更必须有 `schemaVersion` 与兼容策略**：本次加的 `manifest.json` 从 `schemaVersion: 1` 起；
-   已有 `understanding.json` / `spider-network.json` 的键被重命名或移除时，必须升版本号并在 `CHANGELOG.md` 记明。
+   已有 `spider-network.json` 的键被重命名或移除时，必须升版本号并在 `CHANGELOG.md` 记明。
+   （`understanding.json` 已随命令下线删除，不再是兼容对象。）
 3. **重构不得打断既有引用**：`insight_runs` 的既有行、`runtime/insight/` 的历史目录在重构后仍应可读
    （允许降级展示，不允许报错）；`adapter`/`endpoints` 搬家时留转发垫片。
 
@@ -332,15 +369,15 @@ insight 与 egmp 顶层的**硬编码字面量归零**（36 处全部改为引�
 
 | 上游 | 本项目 | 状态 |
 |---|---|---|
-| `understand/lifecycle.ts` | `insight/lifecycle.py` | ✅ 已移植 |
-| `understand/flowgraph.ts` | `insight/flowgraph.py` | ⚠️ 有移植偏差（§2.3、§5） |
-| `understand/relations.ts` | `insight/relations.py` | ✅ |
-| `understand/drawio.ts` | `insight/drawio.py` | ⚠️ 引入 3 处缺陷（§6.2） |
-| `understand/semantics.ts` | `egmp/auth.py`（散落） | ⚠️ 需提升为 `kernel/semantics.py`（§3.1） |
-| `understand/render.ts` | `insight/render.py` | ✅ |
-| `crawler/object-discovery.ts` 第 3 步探针 | `crawler.py` 未实现 | ❌ 本轮补（§3.2） |
-| `tools/find-object.mjs`（显示名 → code 反查） | 无 | ❌ 本轮补 |
-| `tests/understand/`（离线单测） | `tests/test_native.py`（仅断言产物存在与子串） | ❌ 本轮补（§6.2） |
+| `understand/lifecycle.ts` | `insight/lifecycle.py` | ✅ 已移植（**保留**，spider 在用） |
+| `understand/flowgraph.ts` | `insight/flowgraph.py` | 🗑️ 已删除（2026-09-14，随 `understand` 下线） |
+| `understand/relations.ts` | `insight/relations.py` | 🗑️ 已删除（同上；关系推导现由 `spider.collect_relations` 承担） |
+| `understand/drawio.ts` | `insight/drawio.py` | ✅ 保留（spider 的总览页 / 状态机页在用它） |
+| `understand/semantics.ts` | `egmp/auth.py`（散落） | ⚠️ 仍在散落；提升为 `kernel/semantics.py` 的事未做（§3.1） |
+| `understand/render.ts` | `insight/render.py` | 🗑️ 已删除（同上） |
+| `crawler/object-discovery.ts` 第 3 步探针 | `crawler.py` 未实现 | 🗑️ 随 `crawler.py` 删除；spider 自带 `SIGNATURE_RE` |
+| `tools/find-object.mjs`（显示名 → code 反查） | 无 | ❌ 未做（`inventory` 下线后优先级进一步降低） |
+| `tests/understand/`（离线单测） | `tests/test_replay.py` + 真实形态夹具（2026-09-14 落地） | ✅ 达成，但覆盖的是 spider 而非 understand |
 | 产物落 `output/`（单一固定目录） | 用户可选工作区 | ⬆️ **本项目增强**（§4） |
 
 **上游权威口径中值得保留的实证结论**（`adapters/akso-cc.json` 与本文档共同承载）：

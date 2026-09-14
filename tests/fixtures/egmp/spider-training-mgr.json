@@ -1,0 +1,209 @@
+{
+  "formatVersion": 1,
+  "name": "spider-training-mgr",
+  "baseUrl": "https://demo-val.example.com",
+  "envName": "示例环境",
+  "note": "spider 链路的真实形态夹具。结构取自 Recorder 对假平台的实跑录制（11 条交互），ID 与业务命名为确定性占位值，不含任何真实平台数据。覆盖：对象元数据 → 字段页（含 dataType 15 引用字段 → 归因边）→ 生命周期状态 → 工作流清单 → 每个状态的用户动作/动作栏/状态详情。",
+  "interactions": [
+    {
+      "method": "GET",
+      "path": "/api/openapi/v1.0/BasicObject/training_mgr__c",
+      "ok": true,
+      "response": {
+        "id": "obj-training-mgr",
+        "name": "培训管理",
+        "code": "training_mgr__c",
+        "enableLifeCycle": true,
+        "lifeCycleId": "lc-training-mgr"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/platform/BasicObject/FieldPage",
+      "body": {
+        "objectId": "obj-training-mgr"
+      },
+      "ok": true,
+      "response": [
+        {
+          "id": "fld-title",
+          "code": "title",
+          "name": "名称",
+          "dataType": 1,
+          "invisible": false,
+          "disabled": false,
+          "isRequired": true,
+          "statisticsArrange": {
+            "id": 1
+          }
+        },
+        {
+          "id": "fld-type",
+          "code": "type",
+          "name": "类型",
+          "dataType": 4,
+          "invisible": false,
+          "disabled": false,
+          "isRequired": false,
+          "statisticsArrange": {
+            "id": 1
+          },
+          "picklistId": "plk-type"
+        },
+        {
+          "id": "fld-start",
+          "code": "start_date",
+          "name": "开始日期",
+          "dataType": 5,
+          "invisible": false,
+          "disabled": false,
+          "isRequired": false,
+          "statisticsArrange": {
+            "id": 1
+          }
+        },
+        {
+          "id": "fld-owner",
+          "code": "owner_obj",
+          "name": "负责对象",
+          "dataType": 15,
+          "invisible": false,
+          "disabled": false,
+          "isRequired": false,
+          "statisticsArrange": {
+            "id": 1
+          },
+          "referenceObjectId": "obj-training-mgr"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/openapi/v1.0/BasicObject/lifecycleStatus/training_mgr__c",
+      "ok": true,
+      "response": [
+        {
+          "id": "st-init",
+          "code": "init_status__c",
+          "name": "开启"
+        },
+        {
+          "id": "st-complete",
+          "code": "complete_status__c",
+          "name": "关闭"
+        },
+        {
+          "id": "st-doing",
+          "code": "status_doing__c",
+          "name": "进行中"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/platform/Workflow/GetWorkflowBasicPageViewList",
+      "body": {
+        "filters": []
+      },
+      "ok": true,
+      "response": [
+        {
+          "id": "wfview-training",
+          "workflowBasicId": "wf-training-approval",
+          "name": "培训审批流",
+          "code": "training_flow__c",
+          "status": 10,
+          "objectId": "obj-training-mgr",
+          "lifecycleId": "lc-training-mgr",
+          "workflowType": 10,
+          "isSingleRecord": true
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/UserAction/GetList",
+      "params": {
+        "statusId": "st-init"
+      },
+      "ok": true,
+      "response": [
+        {
+          "id": "ua-submit",
+          "actions": "提交",
+          "executeType": 1,
+          "description": "提交"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/config/lifecycle/UserAction/GetActionBar",
+      "body": {
+        "ids": [
+          "ua-submit"
+        ]
+      },
+      "ok": true,
+      "response": [
+        {
+          "id": "ua-submit",
+          "name": "提交",
+          "behaviorType": 7,
+          "targetId": "wf-training-approval"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/Status/Detail",
+      "params": {
+        "id": "st-init"
+      },
+      "ok": true,
+      "response": {
+        "isEnabled": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/UserAction/GetList",
+      "params": {
+        "statusId": "st-complete"
+      },
+      "ok": true,
+      "response": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/Status/Detail",
+      "params": {
+        "id": "st-complete"
+      },
+      "ok": true,
+      "response": {
+        "isEnabled": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/UserAction/GetList",
+      "params": {
+        "statusId": "st-doing"
+      },
+      "ok": true,
+      "response": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/Status/Detail",
+      "params": {
+        "id": "st-doing"
+      },
+      "ok": true,
+      "response": {
+        "isEnabled": true
+      }
+    }
+  ]
+}

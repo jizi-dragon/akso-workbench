@@ -8,7 +8,7 @@ from pathlib import Path
 from fakes import FakeEgmpClient
 
 from workbench.services.egmp import complexity, orchestrate
-from workbench.services.egmp.insight import run_inventory, run_spider, run_understand
+from workbench.services.egmp.insight import run_spider
 from workbench.services.egmp.monitor import (
     classify_api,
     compare_recordings,
@@ -155,22 +155,6 @@ def test_run_full_workflow_rejects_invalid_and_unconfirmed(tmp_path: Path) -> No
 
 
 # ---------------------------------------------------------------- 洞察命令
-
-
-def test_insight_inventory_and_understand(tmp_path: Path) -> None:
-    client = FakeEgmpClient()
-    orchestrate.run_full_workflow(client, _sample_blueprint())  # 造平台数据
-
-    inv = run_inventory(client, base_url="https://fake", env_id="t", output_dir=tmp_path / "inv")
-    assert inv["ok"] and inv["summary"]["objectCount"] == 1
-    assert (tmp_path / "inv" / "inventory.json").exists()
-    assert "对象清单" in (tmp_path / "inv" / "inventory.md").read_text(encoding="utf-8")
-
-    und = run_understand(client, ["training_mgr__c"], output_dir=tmp_path / "und")
-    assert und["ok"] and und["succeeded"] == 1
-    md = (tmp_path / "und" / "training_mgr__c.md").read_text(encoding="utf-8")
-    assert "对象理解报告" in md and "mermaid" in md
-    assert (tmp_path / "und" / "training_mgr__c.json").exists()
 
 
 def test_insight_spider_networkx(tmp_path: Path) -> None:

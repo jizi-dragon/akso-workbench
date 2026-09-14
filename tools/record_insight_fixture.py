@@ -6,8 +6,8 @@
 用法：
     # 按统一账号库的账号录制（口令从 Fernet 库解密，不落盘）
     .\\.venv\\Scripts\\python.exe tools\\record_insight_fixture.py ^
-        --account <account_id> --objects capa_plan__c --command understand ^
-        --out tests/fixtures/egmp/real-capa-plan.json
+        --account <account_id> --objects training_mgr__c --command spider ^
+        --out tests/fixtures/egmp/spider-training-mgr.json
 
     # 列出可用账号
     .\\.venv\\Scripts\\python.exe tools\\record_insight_fixture.py --list-accounts
@@ -15,6 +15,8 @@
 安全边界：
 - 只调用洞察的**只读**链路；脚本自身不含任何写端点。
 - 录到的是平台响应，**可能含业务元数据**（字段名/状态名/工作流名），提交前请自行确认可否入库。
+  仓库里现行的 `tests/fixtures/egmp/spider-training-mgr.json` 是「真实形态但换过名」的版本：
+  结构照录，ID 与业务命名替换为确定性占位值——**照录的原始夹具不要直接提交**。
 - 口令只在内存中解密使用，不写入夹具。
 """
 
@@ -47,9 +49,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="录制洞察只读链路的回放夹具")
     parser.add_argument("--account", help="统一账号库的账号 id")
     parser.add_argument("--objects", default="", help="对象编码，逗号分隔")
-    parser.add_argument("--command", default="understand",
-                        choices=["understand", "inventory", "spider"], help="录哪条链路")
-    parser.add_argument("--known-objects", default="", help="inventory 兜底白名单")
+    parser.add_argument("--command", default="spider", choices=["spider"],
+                        help="录哪条链路（inventory/understand 已下线，现存 spider）")
     parser.add_argument("--out", help="夹具输出路径（.json）")
     parser.add_argument("--name", default="", help="夹具名称（默认取对象编码）")
     parser.add_argument("--list-accounts", action="store_true", help="列出账号后退出")
@@ -77,7 +78,7 @@ def main() -> int:
         return 1
 
     codes = [c.strip() for c in args.objects.split(",") if c.strip()]
-    if args.command in {"understand", "spider"} and not codes:
+    if not codes:
         print(f"FAIL  {args.command} 需要 --objects")
         return 1
 
@@ -97,16 +98,7 @@ def main() -> int:
     with EgmpClient(base_url, token) as http:
         recorder = replay.Recorder(http, fixture)
         try:
-            if args.command == "understand":
-                insight.run_understand(recorder, codes, on_log=logs.append)
-            elif args.command == "spider":
-                insight.run_spider(recorder, codes, on_log=logs.append)
-            else:
-                insight.run_inventory(
-                    recorder, base_url=base_url, env_id=str(account.get("env_id") or ""),
-                    known_objects=[c.strip() for c in args.known_objects.split(",") if c.strip()],
-                    on_log=logs.append,
-                )
+            insight.run_spider(recorder, codes, on_log=logs.append)
         except Exception as exc:  # noqa: BLE001 —— 录制失败也要把已录部分落盘
             print(f"WARN  链路中途失败：{type(exc).__name__}: {exc}")
             print("      已录到的交互仍会保存，便于定位缺哪一步。")

@@ -18,7 +18,7 @@
 
 | 来源 | 沉淀下来的能力 | 现在是什么 |
 |---|---|---|
-| **akso-cc** | 平台洞察：登录 / 全量盘点 / 对象三层理解 / 蜘蛛五步织网（networkx 图分析） | Python 原生（`services/egmp/insight/`） |
+| **akso-cc** | 平台洞察：登录验证 / 蜘蛛五步织网（networkx 图分析）<br>~~全量盘点~~ ~~对象三层理解~~（2026-09-14 下线，场景模糊、效果不佳） | Python 原生（`services/egmp/insight/`） |
 | **mogul_simulator** | 对话工作台、会话历史、设置 | Python 原生（fork 基线） |
 | **akso-auto** | 配置工厂：蓝图两层校验 / 幂等创建 / 拓扑编排 / Monitor 录制解读 | Python 原生（`services/egmp/writers` + `orchestrate` + `monitor`） |
 | **quick-login** | 统一账号库 + 自动登录节奏门控 + 六平面隔离 | 混合：桌面数据面（Python）+ 浏览器扩展执行面 |
@@ -45,10 +45,11 @@
 1. **配一个平台环境**：账号中心 → 新增环境，填平台地址（如 `https://demo-val.example.com`）。
 2. **加账号**：同一账号 + 用户名口令。口令加密存本机，界面永不回显。
 3. **试用三个能力**：
-   - **平台洞察**：填对象编码（如 `capa_plan__c`）→ 跑「理解」→ 看三层报告与 drawio 流转图；
+   - **平台洞察**：填对象编码（如 `capa_plan__c`）→ 跑「蜘蛛织网」→ 看关系网络、
+     `spider-network.drawio` 与 networkx 分析结论；
    - **配置工厂**：上传或让 AI 生成蓝图 → 先校验 → **勾选环境确认** → 创建；
    - **快捷登录**：按 `Alt+Q` 呼出轮盘选账号 → 用户 Chrome 里以该身份打开（或卡片上的「打开」用内置浏览器 + 免密直达）。
-4. **可选**：设置页填 DeepSeek API Key，解锁 AI 对话、蓝图生成、洞察职责摘要。
+4. **可选**：设置页填 DeepSeek API Key，解锁 AI 对话与蓝图生成。
 
 ## 文档地图
 

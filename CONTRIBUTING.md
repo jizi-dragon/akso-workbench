@@ -14,7 +14,7 @@
 uv sync --extra dev --extra build   # 严格按 uv.lock 拉齐依赖（含国内镜像，无需自己配源）
 uv run playwright install chromium  # 托管浏览器内核（账号库/自动登录/监听需要）
 powershell -ExecutionPolicy Bypass -File tools\setup.ps1   # 环境自检（兼容 PS 5.1/7）
-uv run pytest                       # 330 项全绿即环境就绪
+uv run pytest                       # 281 项全绿即环境就绪
 cd desktop; npm install; cd ..       # 桌面壳（Electron）依赖
 cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建产物 dist/
 ```
@@ -56,7 +56,7 @@ cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建
 
 >
 > **ruff 现已全绿**（`uvx ruff check .` → All checks passed；`tools/*.py` 的 E402 是刻意豁免的引导式导入，
-> 见 `pyproject.toml` 的 `per-file-ignores`）。**验收基线是 330 项 pytest**，不是下面模板里的旧数字。
+> 见 `pyproject.toml` 的 `per-file-ignores`）。**验收基线是 281 项 pytest**，不是下面模板里的旧数字。
 
 ## 2. 依赖变更流程
 
@@ -171,7 +171,8 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 ## 7. 验收纪律
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest          # 330 项（原生链路 12 / 更新 14 / kernel 35 / 回放 23 / 工作区 31 / 路径 88 等）
+.\.venv\Scripts\python.exe -m pytest          # 281 项（原生链路 11 / 更新 14 / kernel 28 / 回放 17 / 工作区 34 / 路径 63 / drawio 57 等）
+# 2026-09-14：inventory/understand 下线后由 330 项降到 281 项（删掉的都是那两个命令的专属门禁）
 .\.venv\Scripts\uvx.exe ruff check .          # All checks passed（`uvx` 不在 PATH，须走 .venv 副本）
 .\.venv\Scripts\python.exe tools\verify_packaging.py
 ```

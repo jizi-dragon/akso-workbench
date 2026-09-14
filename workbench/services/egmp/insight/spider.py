@@ -14,9 +14,29 @@ from typing import Any
 from ..auth import is_complete_status, is_init_status, is_reference_field
 from ..kernel import endpoints
 from . import drawio as drawio_mod
-from .crawler import SIGNATURE_RE
 from .lifecycle import LifecycleApi
 from .report import _table  # noqa: PLC2701 —— 同包渲染工具
+
+# 签名语义对象（电子签名类对象不参与织网的关系推导）。
+# 原定义在 crawler.py，随 inventory/understand 下线一并迁到这里——它现在的唯一使用者是本模块。
+SIGNATURE_RE = re.compile(r"签名|sign|esign", re.IGNORECASE)
+
+
+class SpiderReadErrors(RuntimeError):
+    """有**目标对象**读不到。
+
+    不能吞掉：`get_object` 拿到空账（对象不存在、无权限、令牌失效）时，流程会一路走完并产出
+    一个「对象节点 + 0 状态」的空网，落到 manifest 里还是 `complete` —— 那是谎报。
+    用异常把「这次没读到」顶到调用方，任务状态与产物才不会互相矛盾。
+
+    只对**目标对象**（用户点名要看的那些）生效：相关对象读不到是正常的（部分对象本就在
+    织网范围外），那种失败记进 ``failures`` 即可，不该炸掉整次运行。
+    """
+
+    def __init__(self, codes: list[str]) -> None:
+        self.codes = codes
+        super().__init__(f"目标对象读不到实体：{', '.join(codes)}")
+
 
 # ---------------------------------------------------------------- 第 1 步
 
@@ -223,14 +243,23 @@ def analyze_network(model: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------- 编排
 
 def run_spider(client: Any, codes: list[str]) -> dict[str, Any]:
-    """五步织网（单次调用跑完 codes 的 step1-5 模型，产物由调用方渲染落盘）。"""
+    """五步织网（单次调用跑完 codes 的 step1-5 模型，产物由调用方渲染落盘）。
+
+    目标对象读不到实体即抛 :class:`SpiderReadErrors`——宁可这次没有产物，也不要一张假网
+    （详见该类文档）。
+    """
     api = LifecycleApi(client)
-    result: dict[str, Any] = {"objects": [], "perObject": {}}
+    result: dict[str, Any] = {"objects": [], "perObject": {}, "failures": []}
     crawled: list[dict[str, Any]] = []
     all_attrs: list[dict[str, Any]] = []
+    unreadable: list[str] = []
 
     for code in codes:
         meta = client.get_object(code) or {}
+        if not meta.get("id"):
+            unreadable.append(code)
+            result["failures"].append({"code": code, "stage": "step1", "error": "对象实体未读到"})
+            continue
         fields = client.paged_post(endpoints.FIELD_PAGE,
                                    {"objectId": str(meta.get("id") or "")})
         relations = collect_relations(fields, code)
@@ -242,15 +271,24 @@ def run_spider(client: Any, codes: list[str]) -> dict[str, Any]:
         for related_code in related_codes:
             try:
                 rmeta = client.get_object(related_code) or {}
-            except Exception:  # noqa: BLE001
+                if not rmeta.get("id"):
+                    raise ValueError("对象实体未读到")
+                rfields = client.paged_post(endpoints.FIELD_PAGE,
+                                            {"objectId": str(rmeta.get("id") or "")})
+                rstatuses = (client.get_object_statuses(related_code)
+                             if rmeta.get("enableLifeCycle") else [])
+            except Exception as exc:  # noqa: BLE001 —— 相关对象读不到不应炸整次织网
+                result["failures"].append(
+                    {"code": related_code, "stage": "step1-related", "error": str(exc)})
                 continue
             scoped.append({"code": related_code, "name": rmeta.get("name"), "meta": rmeta,
-                           "fields": client.paged_post(
-                               endpoints.FIELD_PAGE,
-                               {"objectId": str(rmeta.get("id") or "")}),
-                           "statuses": (client.get_object_statuses(related_code) if rmeta.get("enableLifeCycle") else [])})
+                           "fields": rfields, "statuses": rstatuses})
         if meta.get("enableLifeCycle"):
-            scoped[0]["statuses"] = client.get_object_statuses(code) or []
+            try:
+                scoped[0]["statuses"] = client.get_object_statuses(code) or []
+            except Exception as exc:  # noqa: BLE001 —— 状态表读不到：仍然出网，但要记下来
+                result["failures"].append(
+                    {"code": code, "stage": "step1-statuses", "error": str(exc)})
 
         # step2/3：目标+相关对象状态表与归因
         workflows = client.list_workflows() or []
@@ -293,6 +331,8 @@ def run_spider(client: Any, codes: list[str]) -> dict[str, Any]:
     model = build_network_model(crawled, all_attrs, relations_map)
     model["analysis"] = analyze_network(model)
     result["model"] = model
+    if unreadable:
+        raise SpiderReadErrors(unreadable)
     return result
 
 

@@ -5,6 +5,9 @@
 
 - **不越界**：任何恶意 code 的产物都必须留在目标目录内；
 - **不误伤**：正常平台编码（`capa_plan__c` 等）必须**原样**通过，否则会打断既有产物命名。
+
+> 落盘级的端到端验证在 test_workspace.py（`run_spider` + 恶意 code）：`inventory`/`understand`
+> 下线后，不再有「以对象 code 命名单个产物文件」的路径，code 只进**目录**名。
 """
 
 from __future__ import annotations
@@ -14,7 +17,6 @@ from pathlib import Path
 import pytest
 
 from workbench.services import paths
-from workbench.services.egmp.insight import understand
 
 # 正常编码必须恒等通过——列错一个都会改变既有产物文件名
 NORMAL_CODES = [
@@ -140,48 +142,3 @@ def test_resolve_within_allows_absolute_inside(tmp_path: Path) -> None:
     """绝对路径若本来就在 base 内，应被接受（不是越界）。"""
     inside = tmp_path / "sibling" / "x.json"
     assert paths.resolve_within(tmp_path, str(inside)) == inside.resolve()
-
-
-# ---------------------------------------------------------------- 端到端：真实落盘
-
-
-def _understanding(code: str) -> dict:
-    return {
-        "meta": {"objectCode": code, "generatedFrom": "test"},
-        "object": {}, "fields": [], "purpose": {},
-        "relations": {"nodes": [], "edges": []},
-        "lifecycle": {"states": [], "involvedWorkflows": []},
-        "llmSummary": None, "failures": [], "markdown": "# 报告",
-    }
-
-
-@pytest.mark.parametrize("code", DANGEROUS, ids=lambda s: repr(s)[:26])
-def test_write_artifacts_cannot_escape_output_dir(tmp_path: Path, code: str) -> None:
-    """端到端：恶意 code 落盘后，所有产物仍必须在 output_dir 内（真实写文件）。"""
-    out = tmp_path / "job"
-    written = understand.write_understanding_artifacts(_understanding(code), out)
-    assert written, "应当至少产出 json + md"
-    root = out.resolve()
-    for path in written:
-        assert path.resolve().is_relative_to(root), f"{code!r} 越界写出：{path}"
-
-
-def test_write_artifacts_normal_code_keeps_filename(tmp_path: Path) -> None:
-    """回归保护：正常 code 的文件名必须保持既有形态（不因安全处理而改名）。"""
-    out = tmp_path / "job"
-    written = understand.write_understanding_artifacts(_understanding("capa_plan__c"), out)
-    names = sorted(p.name for p in written)
-    assert names == ["capa_plan__c.json", "capa_plan__c.md"]
-
-
-def test_write_artifacts_drawio_name_cannot_escape(tmp_path: Path) -> None:
-    """工作流 drawio 的文件名同样不得越界。"""
-    und = _understanding("ok__c")
-    und["lifecycle"]["involvedWorkflows"] = [
-        {"launchedByActions": "提交", "name": "../../evil",
-         "drawioFile": "ok__c-wf1-.._.._evil.drawio", "drawioXml": "<mxfile/>"}
-    ]
-    out = tmp_path / "job"
-    written = understand.write_understanding_artifacts(und, out)
-    for path in written:
-        assert path.resolve().is_relative_to(out.resolve())

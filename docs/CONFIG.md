@@ -42,7 +42,7 @@
 | `WORKBENCH_PORT` | `18765` | 改端口后扩展失联（见 §1）；壳也硬编码 18765（`desktop/main.js` 的 `SERVER_PORT`），须同步改 |
 | `MOGUL_HOST` / `MOGUL_PORT` | — | 上一对的兼容别名 |
 | `WORKBENCH_ADAPTERS` | `<项目根>/adapters` | 模块体检读取的适配器目录。测试用（指向仓库 `adapters/`，因为测试数据目录里没有） |
-| `WORKBENCH_SESSION_MODE` | `local` | `cdp` = 托管会话复用 Electron 壳的 Chromium（先 `:18767` 开户再 `connect_over_cdp(:18766)`）；`local` = 原生 Playwright chromium。**壳运行时应为 `cdp`**（壳会设置它）。见 [ADR-0002](adr/0002-browser-allocation-policy.md) |
+| `WORKBENCH_SESSION_MODE` | `local` | `cdp` = 托管会话复用 Electron 壳的 Chromium（先 `:18767` 开户再 `connect_over_cdp(:18766)`）；`local` = 原生 Playwright chromium。⚠️ **壳目前并不设置它**：全仓库只有 `browser_pool.py` 读这个变量，`desktop/main.js` 里没有它——所以托管会话实际跑的是**原生 Chromium，而不是壳的 Chromium**（本轮复核纠正了此前「壳会设置它」的写法）。要切 `cdp` 得手工设环境变量。见 [ADR-0002](adr/0002-browser-allocation-policy.md) |
 | `WORKBENCH_CONTROL_PORT` | `18767` | 壳控制服务端口；改了要与 `desktop/main.js` 的 `CONTROL_PORT` 同步，否则托管会话开户失败（报「壳控制服务不可达」） |
 | `WORKBENCH_CDP_PORT` | `18766` | 同上，与 `main.js` 的 `DEBUG_PORT` 同步 |
 | `PLAYWRIGHT_BROWSERS_PATH` | （仅打包态自动设置） | 打包态由 `browser_pool` 工作线程指向 `_MEIPASS/ms-playwright`，**必须在 `sync_playwright()` 之前**。手工覆盖会导致找不到 chromium |

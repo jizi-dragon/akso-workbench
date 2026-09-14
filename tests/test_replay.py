@@ -1,10 +1,14 @@
-"""离线回放门禁：用夹具跑通洞察全链路，取代只在内存假平台上的验证。
+"""离线回放门禁：用夹具跑通 spider 全链路，取代只在内存假平台上的验证。
 
 对应 docs/INSIGHT-SPEC.md §6.2「离线回放夹具」。两条核心保证：
 
 1. **覆盖度可证**：回放结束时既不得有请求缺失（`misses`），也不得有夹具条目从未被用到
    —— 后者能抓住「夹具腐化」（平台/代码变了但夹具没跟着变）。
-2. **全链路语义**：成果表格、工作流触发状态、drawio 都从夹具推导出来，且**可复现**（两次跑逐字节一致）。
+2. **全链路语义**：图模型、networkx 分析、drawio、manifest 都从夹具推导出来，且**可复现**（两次跑逐字节一致）。
+
+> **2026-09-14 换轨**：原夹具 `understand-capa-plan.json` 随 `understand` 命令下线一并删除；
+> 本文件改挂 `spider-training-mgr.json`。该夹具是**真实形态**夹具：结构取自 `Recorder`
+> 对假平台的实跑录制（11 条交互），ID 与业务命名替换为确定性占位值，**不含真实平台数据**。
 """
 
 from __future__ import annotations
@@ -14,20 +18,19 @@ from pathlib import Path
 
 import pytest
 
-from workbench.services.egmp import replay
-from workbench.services.egmp.insight import drawio
-from workbench.services.egmp.insight import understand as understand_mod
+from workbench.services.egmp import insight, replay
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "egmp"
-GOLDEN = FIXTURE_DIR / "understand-capa-plan.json"
+GOLDEN = FIXTURE_DIR / "spider-training-mgr.json"
+OBJECT = "training_mgr__c"
 
 
 def _client() -> replay.ReplayClient:
     return replay.ReplayClient(replay.load_fixture(GOLDEN))
 
 
-def _understand(client: replay.ReplayClient) -> dict:
-    return understand_mod.understand_object(client, "capa_plan__c")
+def _spider(client: replay.ReplayClient, output_dir: Path) -> dict:
+    return insight.run_spider(client, [OBJECT], output_dir=output_dir)
 
 
 # ---------------------------------------------------------------- 覆盖度
@@ -53,34 +56,37 @@ def test_rejects_fixture_without_interactions(tmp_path: Path) -> None:
         replay.load_fixture(bad)
 
 
-def test_full_chain_leaves_no_missing_request() -> None:
-    """跑完 understand 不得有夹具未覆盖的请求——这是「夹具够用」的硬证据。"""
+def test_full_chain_leaves_no_missing_request(tmp_path: Path) -> None:
+    """跑完 spider 不得有夹具未覆盖的请求——这是「夹具够用」的硬证据。"""
     client = _client()
-    understanding = _understand(client)
+    _spider(client, tmp_path)
     assert client.misses == [], f"夹具缺这些交互：{client.misses}"
-    assert understanding["meta"]["objectCode"] == "capa_plan__c"
 
 
-def test_fixture_has_no_unused_interaction() -> None:
+def test_fixture_has_no_unused_interaction(tmp_path: Path) -> None:
     """反向覆盖：夹具里每一条都必须被真实调用到，否则夹具已经腐化。"""
     client = _client()
-    _understand(client)
+    _spider(client, tmp_path)
     used = set(client.calls)
     declared = set(replay._index(replay.load_fixture(GOLDEN)))
     assert declared - used == set(), f"夹具里这些条目从未被用到（已腐化）：{declared - used}"
 
 
 def test_missing_interaction_raises_with_actionable_message(tmp_path: Path) -> None:
+    """夹具缺一条**爬取途中**的交互时，报错必须点名缺哪条、并列出可用键。
+
+    挑 `FieldPage`：它不在任何 `try/except` 保护里——缺了就直接炸穿（缺对象实体、缺相关对象
+    会被 spider 转成带 code 的 ReadErrors，那是另一条路径，见 test_workspace）。
+    """
     fixture = replay.load_fixture(GOLDEN)
     fixture["interactions"] = [
-        i for i in fixture["interactions"]
-        if i["path"] != "/api/openapi/v1.0/BasicObject/lifecycleStatus/capa_plan__c"
+        i for i in fixture["interactions"] if "FieldPage" not in i["path"]
     ]
     client = replay.ReplayClient(fixture)
     with pytest.raises(replay.ReplayMiss) as exc:
-        _understand(client)
+        _spider(client, tmp_path)
     message = str(exc.value)
-    assert "lifecycleStatus" in message
+    assert "FieldPage" in message
     assert "夹具内已有" in message, "报错必须列出可用键，便于定位"
 
 
@@ -93,129 +99,86 @@ def test_non_strict_mode_records_misses_instead_of_raising() -> None:
 # ---------------------------------------------------------------- 全链路语义
 
 
-def test_lifecycle_table_columns_are_derived_from_fixture() -> None:
-    """四列表的三列内容必须与夹具一致（进入动作 / 用户动作 / 进入条件）。"""
-    lifecycle = _understand(_client())["lifecycle"]
-    md = _understand(_client())["markdown"]
-
-    assert "| 生命周期状态名称 | 进入动作 | 用户动作 | 进入条件（描述推断） |" in md
-
-    # st-1（开启）：用户动作里有「驳回」（behaviorType=9 改状态），不含任何进入动作
-    st1_user = [e["button"] for e in lifecycle["userActionEdges"] if e["source"] == "st-1"]
-    assert st1_user == ["驳回"], f"st-1 的用户动作应为驳回，实际 {st1_user}"
-    assert [e for e in lifecycle["enterActionEdges"] if e["source"] == "st-1"] == []
-    reject = next(e for e in lifecycle["userActionEdges"] if e["button"] == "驳回")
-    assert reject["targetName"] == "关闭" and reject["mechanism"] == "button"
-
-    # st-2（待审批）：进入动作里唯一「改状态」的是「自动完成」（经描述正则 → 关闭）。
-    # 「自动送审」虽然也是 executeType=2，但它的行为是**发起工作流**，因此进 launchEdges 而非本列。
-    st2_enter = {e.get("action") for e in lifecycle["enterActionEdges"] if e["source"] == "st-2"}
-    assert st2_enter == {"自动完成"}, f"st-2 的进入动作（改状态类）应只有「自动完成」，实际 {st2_enter}"
-    st2_user = [e["button"] for e in lifecycle["userActionEdges"] if e["source"] == "st-2"]
-    assert st2_user == [], "进入动作混进了用户动作列"
-
-    auto_done = next(e for e in lifecycle["enterActionEdges"] if e.get("action") == "自动完成")
-    assert auto_done["targetName"] == "关闭" and auto_done["evidence"] == "description"
-    assert auto_done["mechanism"] == "enterAction"
-
-
-def test_enter_condition_is_description_and_marked_as_inferred() -> None:
-    md = _understand(_client())["markdown"]
-    assert "描述推断" in md
-    assert "修改状态为[关闭]" in md, "进入条件应取 description 原文"
-
-
-def test_workflow_trigger_edges_from_lifecycle_status_ids() -> None:
-    lifecycle = _understand(_client())["lifecycle"]
-    triggers = {(t["statusName"], t["workflowName"]) for t in lifecycle["workflowTriggerEdges"]}
-    assert triggers == {("开启", "CAPA审批流"), ("待审批", "CAPA审批流")}
-    # 夹具里刻意放了一个不存在状态 id，必须被丢弃
-    assert all(t["statusId"] != "st-ghost" for t in lifecycle["workflowTriggerEdges"])
-
-
-def test_launch_edges_cover_button_and_enter_action_channels() -> None:
-    lifecycle = _understand(_client())["lifecycle"]
-    by_mech = {e["mechanism"] for e in lifecycle["launchEdges"]}
-    assert by_mech == {"button", "enterAction"}, f"发起工作流的两条通道未覆盖：{by_mech}"
-    button_launch = next(e for e in lifecycle["launchEdges"] if e["mechanism"] == "button")
-    assert button_launch["source"] == "st-1" and button_launch["button"] == "提交"
-    enter_launch = next(e for e in lifecycle["launchEdges"] if e["mechanism"] == "enterAction")
-    assert enter_launch["source"] == "st-2"
-
-
-def test_involved_workflow_gets_a_graph_and_drawio() -> None:
-    """键空间（basicId vs 行 id）配对正确时，工作流才会真的取到图与 drawio。"""
-    lifecycle = _understand(_client())["lifecycle"]
-    involved = lifecycle["involvedWorkflows"]
-    assert involved, "应有被发起的工作流"
-    workflow = involved[0]
-    assert workflow["name"] == "CAPA审批流"
-    assert workflow["graph"] and workflow["graph"]["nodes"], "工作流图没取到（basicId/行 id 键空间错配？）"
-
-
-def test_relations_drop_tree_only_self_reference() -> None:
-    """enableTree=false 时自引用父对象应被丢弃（夹具刻意如此构造）。"""
-    relations = _understand(_client())["relations"]
-    targets = {e["target"] for e in relations["edges"]}
-    assert "capa_plan__c" not in targets
-    assert "user__c" in targets, "普通引用（dataType 15）应保留"
-
-
-def test_unknown_data_type_does_not_crash() -> None:
-    understanding = _understand(_client())
-    assert any(f["code"] == "future__c" for f in understanding["fields"])
-
-
-# ---------------------------------------------------------------- 可复现
-
-
-def test_two_runs_produce_identical_markdown() -> None:
-    a = _understand(_client())["markdown"]
-    b = _understand(_client())["markdown"]
-    assert a == b, "同一夹具两次跑出的报告必须逐字节一致"
-
-
-def test_two_runs_produce_identical_json_payload() -> None:
-    a = understand_mod._json_dumps(_understand(_client()))
-    b = understand_mod._json_dumps(_understand(_client()))
-    assert a == b
-
-
-def test_replay_returns_deep_copies() -> None:
-    """调用方会就地改动作栏行（打 _consumed 标记）；共用同一份对象会让第二次回放结果不同。"""
+def test_scope_is_taken_from_fixture_base_url() -> None:
     client = _client()
-    ids = {"ids": ["ua-1", "ua-4", "ua-2", "ua-3"]}
-    first = client.post("/api/config/lifecycle/UserAction/GetActionBar", ids)
-    first[0]["_consumed"] = True
-    first[0]["name"] = "被改坏了"
-    second = client.post("/api/config/lifecycle/UserAction/GetActionBar", ids)
-    assert second[0]["name"] == "提交"
-    assert "_consumed" not in second[0]
+    assert client.scope == "https://demo-val.example.com"
+
+
+def test_graph_counts_match_fixture(tmp_path: Path) -> None:
+    """节点/边计数由夹具推导：1 对象 + 3 状态节点，1 条引用字段归因边。"""
+    result = _spider(_client(), tmp_path)
+    assert result["ok"] is True
+    assert result["stats"] == {
+        "objectNodes": 1, "stateNodes": 3, "attrEdges": 1, "relationEdges": 0,
+    }, "图模型计数与夹具不符——多半是推导逻辑变了，而不是夹具坏了"
+
+
+def test_coverage_is_complete_and_manifest_self_proves(tmp_path: Path) -> None:
+    """产物自证覆盖度：manifest 必须记下命令、对象、三态覆盖度与产物哈希。"""
+    result = _spider(_client(), tmp_path)
+    assert result["coverage"]["status"] == "complete"
+
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["command"] == "spider"
+    assert manifest["objectCode"] == OBJECT
+    assert manifest["coverage"]["status"] == "complete"
+    names = {a["name"] for a in manifest["artifacts"]}
+    assert names == {
+        "spider-network.json", "spider-network.drawio",
+        "spider-network.md", "step3-attribution.md",
+    }
+    assert all(a.get("sha256") for a in manifest["artifacts"]), "产物必须带哈希，否则 manifest 不自证"
 
 
 def test_artifact_write_is_inside_output_dir(tmp_path: Path) -> None:
-    understanding = _understand(_client())
-    written = understand_mod.write_understanding_artifacts(understanding, tmp_path / "out")
-    root = (tmp_path / "out").resolve()
-    assert written
-    for path in written:
-        assert path.resolve().is_relative_to(root)
+    """对象 code 来自用户输入：落点必须被 resolve_within 约束在输出目录内。"""
+    result = _spider(_client(), tmp_path)
+    root = tmp_path.resolve()
+    for path in result["artifacts"]:
+        assert Path(path).resolve().is_relative_to(root), f"产物逃出了输出目录：{path}"
 
 
-def test_drawio_from_fixture_is_well_formed(tmp_path: Path) -> None:
-    understanding = _understand(_client())
-    written = understand_mod.write_understanding_artifacts(understanding, tmp_path / "out")
-    drawio_files = [p for p in written if p.suffix == ".drawio"]
-    assert drawio_files, "夹具里被发起的工作流应产出 drawio"
-    for path in drawio_files:
-        drawio.validate(path.read_text(encoding="utf-8"))
+def test_networkx_analysis_is_present_in_markdown(tmp_path: Path) -> None:
+    _spider(_client(), tmp_path)
+    md = (tmp_path / "spider-network.md").read_text(encoding="utf-8")
+    assert "networkx" in md
+    assert "有向无环" in md
 
 
-# ---------------------------------------------------------------- 录制回路
+def test_drawio_is_well_formed(tmp_path: Path) -> None:
+    _spider(_client(), tmp_path)
+    text = (tmp_path / "spider-network.drawio").read_text(encoding="utf-8")
+    assert text.startswith("<mxfile")
+    assert "<mxGraphModel" in text
+
+
+def test_two_runs_produce_identical_json_payload(tmp_path: Path) -> None:
+    """可复现：两次回放的图模型逐字节一致（键序都不得漂移）。"""
+    a_dir, b_dir = tmp_path / "a", tmp_path / "b"
+    _spider(_client(), a_dir)
+    _spider(_client(), b_dir)
+    left = (a_dir / "spider-network.json").read_text(encoding="utf-8")
+    right = (b_dir / "spider-network.json").read_text(encoding="utf-8")
+    # generatedAt 是时间戳，属预期差异；比对去掉它之后的正文
+    def strip_stamp(text: str) -> str:
+        data = json.loads(text)
+        (data.get("meta") or {}).pop("generatedAt", None)
+        return json.dumps(data, ensure_ascii=False, sort_keys=True)
+    assert strip_stamp(left) == strip_stamp(right)
+
+
+def test_replay_returns_deep_copies(tmp_path: Path) -> None:
+    """回放必须返回深拷贝：调用方改动不得污染夹具（否则第二次跑就漂了）。"""
+    fixture = replay.load_fixture(GOLDEN)
+    client = replay.ReplayClient(fixture)
+    first = client.get(f"/api/openapi/v1.0/BasicObject/{OBJECT}")
+    first["name"] = "被调用方改坏了"
+    second = client.get(f"/api/openapi/v1.0/BasicObject/{OBJECT}")
+    assert second["name"] == "培训管理"
 
 
 def test_recorder_roundtrip_via_fake_platform(tmp_path: Path) -> None:
-    """Recorder 包住假平台录一份夹具，再回放——两条路径必须给出同样的结论。"""
+    """Recorder 包住假平台录一遍，再回放——两条路径必须给出同样的结论。"""
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent))
@@ -224,54 +187,30 @@ def test_recorder_roundtrip_via_fake_platform(tmp_path: Path) -> None:
 
     from workbench.services.egmp import orchestrate
 
-    platform = FakeEgmpClient()
-    orchestrate.run_full_workflow(platform, test_native._sample_blueprint())
+    fake = FakeEgmpClient()
+    orchestrate.run_full_workflow(fake, test_native._sample_blueprint(),
+                                  approved=True, confirmed_env=True)
+    recorded = replay.make_fixture("roundtrip", base_url="https://fake.example.com", env_name="假平台")
+    live = insight.run_spider(replay.Recorder(fake, recorded), [OBJECT], output_dir=tmp_path / "live")
+    replayed = insight.run_spider(
+        replay.ReplayClient(recorded), [OBJECT], output_dir=tmp_path / "replay")
 
-    fixture = replay.make_fixture("roundtrip", base_url="https://fake")
-    recorder = replay.Recorder(platform, fixture)
-    direct = understand_mod.understand_object(recorder, "training_mgr__c")
-
-    assert fixture["interactions"], "应录到交互"
-
-    dump = tmp_path / "rec.json"
-    replay.save_fixture(fixture, dump)
-    replayed = understand_mod.understand_object(replay.ReplayClient(replay.load_fixture(dump)),
-                                                "training_mgr__c")
-
-    assert replayed["markdown"] == direct["markdown"], "回放结论与直连不一致"
+    assert live["stats"] == replayed["stats"], "录制与回放的图模型结论必须一致"
+    assert (tmp_path / "live" / "spider-network.json").exists()
+    assert (tmp_path / "replay" / "spider-network.json").exists()
 
 
 def test_recorder_captures_failures_too() -> None:
-    """平台上真实发生的失败也必须录下来，否则回放会「凭空成功」。"""
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent))
     from fakes import FakeEgmpClient
 
-    platform = FakeEgmpClient()
-    platform.fail_paths.add("/api/platform/Menu/GetMenuList")
-    recorder = replay.Recorder(platform, replay.make_fixture("with-failure"))
+    fake = FakeEgmpClient()
+    fake.fail_paths.add(f"/api/openapi/v1.0/BasicObject/{OBJECT}")
+    fixture = replay.make_fixture("fail")
+    rec = replay.Recorder(fake, fixture)
     with pytest.raises(RuntimeError):
-        recorder.list_menus()
-    entry = recorder.fixture["interactions"][-1]
-    assert entry["ok"] is False
-    assert "模拟失败" in entry["error"]
-
-
-def test_replay_reproduces_recorded_failure() -> None:
-    fixture = replay.make_fixture("failing")
-    fixture["interactions"].append({
-        "method": "GET", "path": "/api/platform/Menu/GetMenuList",
-        "ok": False, "error": "模拟失败：菜单", "errorType": "RuntimeError",
-    })
-    client = replay.ReplayClient(fixture)
-    with pytest.raises(replay.ReplayRecordedError, match="模拟失败"):
-        client.list_menus()
-
-
-def test_scope_is_taken_from_fixture_base_url() -> None:
-    """回放也有作用域，缓存隔离在回放路径上同样成立。"""
-    assert _client().scope == "https://demo-val.example.com"
-    other = replay.ReplayClient({"formatVersion": 1, "baseUrl": "https://d.example.com",
-                                "interactions": []})
-    assert other.scope != _client().scope
+        rec.get_object(OBJECT)
+    recorded = [i for i in fixture["interactions"] if i["ok"] is False]
+    assert recorded, "失败也必须入夹具，否则回放不出真实失败"

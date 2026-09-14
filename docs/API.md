@@ -102,17 +102,15 @@ POST /api/chat/stream   Content-Type: application/json
 ## 6. 平台洞察 `/api/insight`（`routes_insight.py`）
 
 凭证链：账号 id → `account` 表 → Fernet 解密（仅内存）→ `egmp.client.login`（55 分钟 token 缓存）。
-产物落 `runtime/insight/<job_id>/`。**全程无 node、无子进程**。
+**全程无 node、无子进程**。
 
 请求体 `InsightRequest`：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `command` | str | `login` / `inventory` / `understand` / `spider` |
+| `command` | str | `login` / `spider`（`inventory` / `understand` 已于 0.3.8 下线，见 CHANGELOG） |
 | `account_id` | str | 必填，统一账号库账号 id |
-| `objects` | str | `understand` / `spider`：逗号分隔对象编码（必填） |
-| `known_objects` | str | `inventory` 兜底白名单（逗号分隔） |
-| `llm` | bool | `understand` 是否附加 LLM 职责摘要（需已配置 DeepSeek Key，否则静默回落确定性标注） |
+| `objects` | str | `spider`：逗号分隔对象编码（必填） |
 | `env_id` | str | token 缓存文件名后缀 |
 
 | 方法 | 路径 | 说明 |
@@ -126,18 +124,22 @@ POST /api/chat/stream   Content-Type: application/json
 | PUT | `/api/insight/workspace` | `{path}`：设置工作区根；**空串 = 恢复默认**；非绝对路径 / 是文件 / 无法创建 → 400 |
 
 `status` ∈ `running` / `succeeded` / **`partial`** / `failed`；`result` 内为各命令的
-`{summary|succeeded|stats, artifacts[], coverage, workspaces[]}`。
+`{stats, artifacts[], coverage, workspaces[]}`。
 
 > **`partial` 与 `coverage`（0.3.6 起）**：任务状态不再取布尔 `ok`，而是由**三态覆盖度**映射——
 > `complete→succeeded`、`partial→partial`、`degraded→failed`。这样「10 个对象只成功 3 个」
 > 不会再被记成 succeeded。`coverage` 形如
-> `{status, total, succeeded, failureCount, fieldsRead, statesRead, workflowsFound, workflowsWithGraph, entryConditionSource}`；
-> `entryConditionSource` 恒为 `"description"`（平台没有进入条件的读接口）。
+> `{status, total, succeeded, failureCount, objectNodes, stateNodes, attrEdges, relationEdges}`
+> ——后四项是 spider 的图规模计数，让产物自证「这次织出来多大的网」。
 
-> **产物落点（0.3.6 起）**：`understand` 不再写 `runtime/insight/<job_id>/`，而是落到**用户可配的工作区**
-> `<root>/<对象code>/<时间戳>/`（每对象一格，各带一份 `manifest.json` 自证覆盖度）；
-> `inventory` / `spider` 仍是单目录、落在 runtime 的 `artifact_dir`。
-> 读取接口优先从 `workspace_dir` 取，**历史行自动回落到 `artifact_dir`**（不打断既有数据）。
+> **产物落点（0.3.8 起）**：`spider` 写到**用户可配的工作区** `<root>/<对象code>/<时间戳>/`，
+> 落点带一份 `manifest.json` 自证覆盖度，并把目录回填到 `insight_runs.workspace_dir`。
+> 工作区根不可写时回落到 `runtime/insight/<job_id>/`，此时 `result.workspaces` 为空数组
+> （不得谎报工作区路径）。读取接口优先从 `workspace_dir` 取，**历史行自动回落到 `artifact_dir`**。
+
+> **对象读不到 = 失败，不是空网**：`get_object` 拿到空实体（对象不存在 / 无权限 / 令牌失效）时
+> spider 抛 `SpiderReadErrors`，任务记 `failed`；**不会**产出一张「1 个对象节点 + 0 状态」的
+> 空网再配上 `coverage.status = complete`。
 
 ## 7. 配置工厂 `/api/factory`（`routes_factory.py`）
 
@@ -235,7 +237,7 @@ autologin, has_token, monitoring, monitor_log}`；
 | GET | `/api/agent/audit?limit=50` | — | `{audit:[行]}`（上限 500）——⚠️ 见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账 |
 
 工具：`login_platform`（原生登录 + token 预热，回 `tokenHead` 前 8 字符）、`read_config`（egmp 只读元数据）、
-`run_insight`（跑 `understand`，**描述文字仍写「子进程封装」，实际已原生化**）、
+`run_insight`（跑 `spider` 蜘蛛计划；与页面走同一入口 `routes_insight.run`，任务台账一并回填）、
 `browser_status`（会话状态墙）。
 
 > ⚠️ 本模块与前端对话用的 `harness/tools.py`（`get_current_time` / `read_local_file` / `read_web_page`）

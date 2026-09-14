@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -29,29 +29,16 @@
             命令
             <select id="ins-command">
               <option value="login">login · 连通性验证</option>
-              <option value="inventory">inventory · 全量盘点</option>
-              <option value="understand">understand · 对象理解报告</option>
               <option value="spider">spider · 五步织网</option>
             </select>
           </label>
-          <label class="mfield">
-            对象编码（understand/spider 必填，逗号分隔）
+          <label class="mfield" id="ins-objects-field">
+            对象编码（spider 必填，逗号分隔）
             <input id="ins-objects" placeholder="capa_plan__c,change_control__c" spellcheck="false" />
           </label>
         </div>
-        <div class="mgrid cols-3" style="margin-top:10px">
-          <label class="mfield">
-            inventory 兜底白名单（可选）
-            <input id="ins-known" placeholder="capa_plan__c,…" spellcheck="false" />
-          </label>
-          <label class="mfield" style="justify-content:flex-end">
-            <span style="display:flex;align-items:center;gap:8px;height:36px">
-              <input type="checkbox" id="ins-llm" /> understand 启用 LLM 职责摘要
-            </span>
-          </label>
-          <div style="display:flex;align-items:flex-end;justify-content:flex-end">
-            <button class="mbtn" id="btn-insight-run">执行</button>
-          </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:10px">
+          <button class="mbtn" id="btn-insight-run">执行</button>
         </div>
         <p class="hint">凭证由统一账号库内联注入（--url/--user/--pass），不落盘；产物写运行时目录，原项目 output/ 不受影响。</p>
       </section>

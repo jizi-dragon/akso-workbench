@@ -158,8 +158,9 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 
 ### 3.7 `insight_runs` — 平台洞察任务（迁移 8）
 
-列同 `blueprint_jobs` 结构，`command` ∈ `login` / `inventory` / `understand` / `spider`，
-`module` 现状写 `'egmp-native'`，`objects` 列为洞察特有（逗号分隔对象编码）。
+列同 `blueprint_jobs` 结构，`command` ∈ `login` / `spider`（`inventory` / `understand` 已于 0.3.8
+下线，**历史行的这两个值仍在表里**，读取侧按原样展示、不得报错），`module` 现状写 `'egmp-native'`，
+`objects` 列为洞察特有（逗号分隔对象编码）。
 索引：`idx_insight_runs_status`、`idx_insight_runs_created_at`。
 
 ### 3.8 `job_logs` — 任务日志行（迁移 8）

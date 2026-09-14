@@ -13,7 +13,7 @@ _由 learn-codebase 技能生成，本轮复核重写于 **2026-09-13**，锚定
 
 ## Summary（定位）
 
-**Akso Workbench（`akso-workbench` v0.3.5，仓库 `akso-mogul`）** 是阿克索实施工程师的**单机 Windows 工作台**，把四个来源项目（akso-cc / mogul_simulator / akso-auto / quick-login）的能力**内化**为一个桌面应用：平台洞察（对象三层理解 + 蜘蛛织网）、配置工厂（蓝图校验 + 幂等创建 + 拓扑编排）、统一账号库（Fernet 加密）、多账号快捷登录（一个 Chrome 内并行身份）、Monitor 监听录制解读。
+**Akso Workbench（`akso-workbench` v0.3.5，仓库 `akso-mogul`）** 是阿克索实施工程师的**单机 Windows 工作台**，把四个来源项目（akso-cc / mogul_simulator / akso-auto / quick-login）的能力**内化**为一个桌面应用：平台洞察（蜘蛛织网 + networkx 图分析）、配置工厂（蓝图校验 + 幂等创建 + 拓扑编排）、统一账号库（Fernet 加密）、多账号快捷登录（一个 Chrome 内并行身份）、Monitor 监听录制解读。
 
 架构分工（用户定稿）：
 
@@ -51,7 +51,7 @@ Electron 壳 desktop/（只做壳：sidecar 生命周期 / 窗口 / 托盘 / 热
 api/（12 个路由域 + lifespan + 静态托管，见 api/__init__.py:74-86）
   ├─ fork 存量：routes_conversations / routes_settings / routes_chat(SSE)
   ├─ 聚合层：routes_modules（模块注册表 + 依赖体检）
-  ├─ egmp 原生：routes_insight（洞察四命令）/ routes_factory（蓝图/创建/编排）
+  ├─ egmp 原生：routes_insight（洞察两命令 login/spider）/ routes_factory（蓝图/创建/编排）
   ├─ 账号中心：routes_accounts + routes_browser（托管浏览器）
   ├─ 执行面蓝图：routes_extension（快照 + 指令长轮询 + 状态）
   ├─ 监听：routes_monitor　│　更新：routes_update（读壳状态文件）
@@ -59,14 +59,19 @@ api/（12 个路由域 + lifespan + 静态托管，见 api/__init__.py:74-86）
 services/
   ├─ browser_pool.py 625 行（专职工作线程 / 双模式 / CDP 托管 / 免密 / 自愈）
   ├─ accounts.py 607 · autologin.py 372 · proc.py 236 · deepseek.py 181 · modules.py 172 · storage.py 122
-  └─ egmp/（平台内核，36 文件 4,781 行）
-       ├─ client 197 · orchestrate 317 · generate 115 · auth 61 · queries 60 · cache 45 · checkpoint 46 · complexity 46
-       ├─ insight/  12 文件 1,766 行（spider 359 · flowgraph 270 · crawler 212 · render 175 · drawio 156 · understand 146 · report 91 · assemble 87 · lifecycle 69 · annotate 55 · relations 41）
-       ├─ writers/  11 文件 1,558 行（blueprint 513 · workflows 322 · layouts 167 · lifecycle 159 · fields 101 · endpoints 85 · idempotency 80 · menus 49 · picklists 41 · objects 19）
-       └─ monitor/   4 文件 553 行（monitor 207 · query_layer 168 · interpreter 148）
+  └─ egmp/（平台内核，34 文件 3,796 行）
+       ├─ client 252 · orchestrate 306 · replay 259（离线回放台架）· generate 104 · cache 87 · queries 69
+       ├─ kernel/ 3 文件 300 行（endpoints / semantics 等）
+       ├─ insight/  6 文件 1,145 行（spider 437 · drawio 309 · workspace 184 · report 86 · lifecycle 70 · __init__ 59）
+       ├─ writers/  11 文件 1,442 行（blueprint 513 · workflows 322 · layouts 167 · lifecycle 159 · fields 101 · endpoints 85 · idempotency 80 · menus 49 · picklists 41 · objects 19）
+       └─ monitor/   4 文件 530 行（monitor 207 · query_layer 168 · interpreter 148）
 harness/（对话 Agent 循环 7 文件 540 行：tools 231 · loop 129 · types 72 · context 43 · prompts 36 · safety 26）
 db.py 341 行（SQLite 单连接 + 13 条迁移常量表 + 方言边界）
 ```
+
+> **2026-09-14 变更**：`insight/` 从 12 文件 1,766 行降到 **6 文件 1,145 行**——`inventory` / `understand`
+> 下线，`assemble.py` / `annotate.py` / `flowgraph.py` / `relations.py` / `render.py` / `understand.py`
+> / `crawler.py` 删除；`crawler.py` 的 `SIGNATURE_RE` 内联进 `spider.py`（这就是 spider 从 359 涨到 437 的原因）。
 
 **四个来源项目的内化方式**（[ADR-0005](adr/0005-native-internalization-of-four-projects.md)）：不再是“子进程封装”，而是 Python 原生重写；`adapters/*.json` 降级为**只读参考存档**（`"mode": "native-python-internalized"`，`"frozen": true`），仅保存端点/产物口径对照。
 
@@ -94,7 +99,7 @@ db.py 341 行（SQLite 单连接 + 13 条迁移常量表 + 方言边界）
 
 **② 自动化 / 监听（执行面 = 内置 Chromium）**：`routes_browser.open {account_id}`（默认 headful）→ browser_pool 专职线程：解密凭据 → 一账号一 BrowserContext（`storage_state` 持久化 `runtime/browser-states/`）→ TokenCapture → 注入节奏门控 → 免密直达 / 自愈重登 → `routes_monitor` 在该会话上启停录制。
 
-**③ 洞察 / 工厂**：`insight.html` / `factory.html` → SSE 路由 → `egmp.insight` / `orchestrate.run_full_workflow` 直连 eGMP → 产物落 `runtime/{insight,factory}/`，`insight_runs` / `blueprint_jobs` 记账。
+**③ 洞察 / 工厂**：`insight.html` / `factory.html` → SSE 路由 → `egmp.insight` / `orchestrate.run_full_workflow` 直连 eGMP → **洞察产物落用户可配工作区** `<工作区根>/<对象code>/<时间戳>/`（工作区不可写才退回 `runtime/insight/`），工厂产物落 `runtime/factory/`，`insight_runs` / `blueprint_jobs` 记账。
 
 **④ 更新链**：Electron 启动 +20s 首查、之后每 6h（`updater.js:19-20`）→ 静默下载 → 下载完成后才弹一次对话框（默认「退出时安装」）→ `before-quit` **先 `killServer()` 再 `installOnExit()`**（顺序是承重的，安装器要覆写 `AksoServer.exe`）。更新状态经原子写的 `shell-state.json` 暴露给 Python 的 `GET /api/update`。
 

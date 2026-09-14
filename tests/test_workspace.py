@@ -143,35 +143,18 @@ def test_build_coverage_carries_counters() -> None:
     assert coverage["failureCount"] == 0
 
 
-def test_coverage_for_understand_reports_workflow_graphs() -> None:
-    understanding = {
-        "object": {"code": "x__c"},
-        "fields": [{"code": "a"}, {"code": "b"}],
-        "lifecycle": {
-            "states": [{"id": "s1"}],
-            "userActionEdges": [{"source": "s1"}],
-            "enterActionEdges": [],
-            "launchEdges": [{"source": "s1"}],
-            "workflowTriggerEdges": [{"statusId": "s1"}],
-            "involvedWorkflows": [
-                {"name": "W1", "graph": {"nodes": [{"id": "n"}], "edges": []}},
-                {"name": "W2", "graph": {"nodes": [], "edges": []}},  # 图没取到
-            ],
-        },
-        "failures": [],
-    }
-    coverage = workspace.coverage_for_understand(understanding)
-    assert coverage["fieldsRead"] == 2
-    assert coverage["statesRead"] == 1
-    assert coverage["workflowsFound"] == 2
-    assert coverage["workflowsWithGraph"] == 1
-    assert coverage["entryConditionSource"] == "description"
+def test_coverage_carries_spider_counters() -> None:
+    """spider 是唯一在跑的命令，它的四个图计数必须原样进 coverage（产物要能自证规模）。"""
+    coverage = workspace.build_coverage(
+        total=1, succeeded=1, failures=[],
+        objectNodes=1, stateNodes=3, attrEdges=1, relationEdges=0,
+    )
     assert coverage["status"] == "complete"
-
-
-def test_coverage_for_understand_degrades_without_object() -> None:
-    coverage = workspace.coverage_for_understand({"object": {}, "lifecycle": {}, "failures": []})
-    assert coverage["status"] == "degraded"
+    assert coverage["objectNodes"] == 1
+    assert coverage["stateNodes"] == 3
+    assert coverage["attrEdges"] == 1
+    assert coverage["relationEdges"] == 0
+    assert coverage["failureCount"] == 0
 
 
 # ---------------------------------------------------------------- manifest
@@ -181,14 +164,14 @@ def test_manifest_records_artifact_hashes(tmp_path: Path) -> None:
     (tmp_path / "a.md").write_text("hello", encoding="utf-8")
     (tmp_path / "b.json").write_text("{}", encoding="utf-8")
     manifest = workspace.build_manifest(
-        command="understand", object_code="capa_plan__c",
+        command="spider", object_code="training_mgr__c",
         coverage={"status": "complete"},
         artifacts=[tmp_path / "a.md", tmp_path / "b.json"],
         environment={"envName": "测试环境"},
     )
     assert manifest["schemaVersion"] == workspace.MANIFEST_SCHEMA_VERSION
-    assert manifest["command"] == "understand"
-    assert manifest["objectCode"] == "capa_plan__c"
+    assert manifest["command"] == "spider"
+    assert manifest["objectCode"] == "training_mgr__c"
     assert manifest["environment"]["envName"] == "测试环境"
     names = {a["name"] for a in manifest["artifacts"]}
     assert names == {"a.md", "b.json"}
@@ -198,7 +181,7 @@ def test_manifest_records_artifact_hashes(tmp_path: Path) -> None:
 
 
 def test_manifest_write_read_roundtrip(tmp_path: Path) -> None:
-    manifest = workspace.build_manifest(command="understand", object_code="x__c",
+    manifest = workspace.build_manifest(command="spider", object_code="x__c",
                                         coverage={"status": "partial"})
     path = workspace.write_manifest(tmp_path, manifest)
     assert path.name == workspace.MANIFEST_NAME
@@ -223,94 +206,110 @@ def test_read_manifest_corrupt_returns_none(tmp_path: Path) -> None:
 
 def test_manifest_is_valid_json_on_disk(tmp_path: Path) -> None:
     workspace.write_manifest(tmp_path, workspace.build_manifest(
-        command="inventory", object_code="", coverage={"status": "degraded"}))
+        command="spider", object_code="", coverage={"status": "degraded"}))
     raw = (tmp_path / workspace.MANIFEST_NAME).read_text(encoding="utf-8")
     assert json.loads(raw)["coverage"]["status"] == "degraded"
     assert raw.endswith("\n")
 
 
-# ---------------------------------------------------------------- 端到端：真实跑一遍 understand
+# ---------------------------------------------------------------- 端到端：真实跑一遍 spider
+
+FIXTURE = Path(__file__).parent / "fixtures" / "egmp" / "spider-training-mgr.json"
+OBJECT = "training_mgr__c"
 
 
-FIXTURE = Path(__file__).parent / "fixtures" / "egmp" / "understand-capa-plan.json"
-
-
-def test_run_understand_writes_into_workspace(tmp_path: Path) -> None:
-    """不给 output_dir 时，产物必须落到 <root>/<对象code>/<时间戳>/ 并带 manifest。"""
+def _client(strict: bool = True):
     from workbench.services.egmp import replay
-    from workbench.services.egmp.insight import run_understand
 
-    client = replay.ReplayClient(replay.load_fixture(FIXTURE))
-    result = run_understand(client, ["capa_plan__c"], workspace_root=tmp_path,
-                            environment={"envName": "测试环境"})
+    return replay.ReplayClient(replay.load_fixture(FIXTURE), strict=strict)
+
+
+def test_run_spider_writes_into_workspace(tmp_path: Path) -> None:
+    """给 workspace_root 时，产物必须落到 <root>/<对象code>/<时间戳>/ 并带 manifest。"""
+    from workbench.services.egmp.insight import run_spider
+
+    client = _client()
+    result = run_spider(client, [OBJECT], workspace_root=tmp_path,
+                        environment={"envName": "测试环境"})
 
     assert result["ok"]
     assert client.misses == []
     assert len(result["workspaces"]) == 1
 
     run_path = Path(result["workspaces"][0])
-    assert run_path.parent.name == "capa_plan__c"
+    assert run_path.parent.name == OBJECT, "落点必须按对象归集，否则历次产物无法比对"
     assert run_path.resolve().is_relative_to(tmp_path.resolve())
     names = {p.name for p in run_path.iterdir()}
-    assert "capa_plan__c.md" in names
-    assert "capa_plan__c.json" in names
+    assert "spider-network.md" in names
+    assert "spider-network.json" in names
+    assert "spider-network.drawio" in names
     assert workspace.MANIFEST_NAME in names
-    assert any(n.endswith(".drawio") for n in names), "被发起的工作流应有 drawio"
 
     manifest = workspace.read_manifest(run_path)
     assert manifest is not None
     assert manifest["schemaVersion"] == workspace.MANIFEST_SCHEMA_VERSION
-    assert manifest["objectCode"] == "capa_plan__c"
+    assert manifest["objectCode"] == OBJECT
     assert manifest["environment"]["envName"] == "测试环境"
     assert manifest["coverage"]["status"] == "complete"
-    assert manifest["coverage"]["workflowsWithGraph"] >= 1
-    assert manifest["coverage"]["entryConditionSource"] == "description"
+    assert manifest["coverage"]["stateNodes"] == 3
     recorded = {a["name"] for a in manifest["artifacts"]}
-    assert "capa_plan__c.md" in recorded
+    assert "spider-network.json" in recorded
 
 
-def test_run_understand_per_object_directories(tmp_path: Path) -> None:
-    """多对象时每个对象各自一格，互不覆盖。"""
+def test_run_spider_without_workspace_root_writes_to_output_dir(tmp_path: Path) -> None:
+    """不给 workspace_root 时退回直写 output_dir（路由的 runtime 兜底路径就是这样）。"""
+    from workbench.services.egmp.insight import run_spider
+
+    result = run_spider(_client(), [OBJECT], output_dir=tmp_path)
+    assert result["ok"]
+    assert result["workspaces"] == [], "没走工作区契约时不得谎报工作区目录"
+    assert (tmp_path / "spider-network.json").exists()
+
+
+def test_run_spider_reports_workspace_dir_it_actually_used(tmp_path: Path) -> None:
+    """回填的目录必须是真实落点，且产物确实在里面——否则任务表会把日志指到空目录。"""
+    from workbench.services.egmp.insight import run_spider
+
+    result = run_spider(_client(), [OBJECT], workspace_root=tmp_path)
+    run_path = Path(result["workspaces"][0])
+    for path in result["artifacts"]:
+        assert Path(path).resolve().is_relative_to(run_path.resolve())
+
+
+@pytest.mark.parametrize("code", ["../../evil", "C:/Temp/x", "..", "con"])
+def test_run_spider_dangerous_code_cannot_escape_workspace(tmp_path: Path, code: str) -> None:
+    """对象 code 来自用户输入：恶意 code 连**落点目录**都不得逃出工作区根。
+
+    这些 code 都读不到实体（`con` 在夹具里不存在，其余是被净化的非法名），所以这次运行注定
+    失败——那正好：**失败路径也必须不越界**，而且要失败得干净（建了目录，但不留半个产物）。
+    """
+    from workbench.services.egmp.insight import run_spider
+    from workbench.services.egmp.insight.spider import SpiderReadErrors
+
+    with pytest.raises(SpiderReadErrors):
+        run_spider(_client(strict=False), [code], workspace_root=tmp_path)
+    for path in tmp_path.rglob("*"):
+        assert path.resolve().is_relative_to(tmp_path.resolve()), f"{code!r} 越界：{path}"
+    assert not list(tmp_path.rglob(workspace.MANIFEST_NAME)), "失败不得留下 manifest"
+
+
+def test_run_spider_missing_object_raises_instead_of_empty_graph(tmp_path: Path) -> None:
+    """对象读不到实体 → 必须失败，不得静默产出一张空网冒充成功。
+
+    这是真实咬过的坑：`get_object` 拿到空账时流程会一路走完，产出「1 个对象节点 + 0 状态」
+    的空网，而 manifest 还写着 `complete` —— 任务绿的、图是假的。
+    落点目录会先被建出来（先定落点再爬），但**没有 manifest**：按约定 manifest 在才算一次
+    完整运行，所以半个目录不会被误读成成功。
+    """
     from workbench.services.egmp import replay
-    from workbench.services.egmp.insight import run_understand
-
-    client = replay.ReplayClient(replay.load_fixture(FIXTURE), strict=False)
-    result = run_understand(client, ["capa_plan__c", "deviation__c"], workspace_root=tmp_path)
-    # deviation__c 不在夹具里 → 该对象失败，但 capa_plan__c 仍应产出
-    dirs = [Path(p).resolve() for p in result["workspaces"]]
-    assert all(d.is_relative_to(tmp_path.resolve()) for d in dirs)
-    assert result["coverage"]["status"] == "partial", "一成功一失败应为 partial（不得谎报 complete）"
-    assert result["coverage"]["total"] == 2 and result["coverage"]["succeeded"] == 1
-
-
-def test_run_understand_reports_degraded_when_all_fail(tmp_path: Path) -> None:
-    """一个对象都没读到 → degraded。产物仍要落盘，因为 manifest 必须能告诉用户「这次是空的」。"""
-    from workbench.services.egmp import replay
-    from workbench.services.egmp.insight import run_understand
+    from workbench.services.egmp.insight import run_spider
+    from workbench.services.egmp.insight.spider import SpiderReadErrors
 
     client = replay.ReplayClient({"formatVersion": 1, "interactions": []}, strict=False)
-    result = run_understand(client, ["ghost__c"], workspace_root=tmp_path)
-    assert result["coverage"]["status"] == "degraded"
-    assert result["ok"] is False
-    assert result["succeeded"] == 0
-
-    # 失败也要留下可检查的痕迹：目录在、manifest 在、且如实写着 degraded
-    assert len(result["workspaces"]) == 1
-    run_path = Path(result["workspaces"][0])
-    assert run_path.resolve().is_relative_to(tmp_path.resolve())
-    manifest = workspace.read_manifest(run_path)
-    assert manifest is not None
-    assert manifest["coverage"]["status"] == "degraded"
-
-
-def test_run_understand_dangerous_code_cannot_escape_workspace(tmp_path: Path) -> None:
-    from workbench.services.egmp import replay
-    from workbench.services.egmp.insight import run_understand
-
-    client = replay.ReplayClient(replay.load_fixture(FIXTURE), strict=False)
-    result = run_understand(client, ["../../evil"], workspace_root=tmp_path)
-    for path in result["artifacts"]:
-        assert Path(path).resolve().is_relative_to(tmp_path.resolve()), f"越界：{path}"
+    with pytest.raises(SpiderReadErrors) as exc:
+        run_spider(client, ["ghost__c"], workspace_root=tmp_path)
+    assert "ghost__c" in str(exc.value)
+    assert not list(tmp_path.rglob(workspace.MANIFEST_NAME)), "失败不得留下 manifest"
 
 
 # ---------------------------------------------------------------- 路由状态映射

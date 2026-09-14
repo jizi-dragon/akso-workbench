@@ -5,6 +5,54 @@
 
 ## [未发布]
 
+### Removed
+
+- **平台洞察下线两个命令：`inventory`（全量盘点）与 `understand`（三层理解报告）**。
+  用户定稿：这两个功能的**应用场景模糊、实际使用效果不理想**，留着只会让人在命令下拉里猜
+  「我到底该用哪个」。现存命令收敛为两个：`login`（连通性验证 + token 预热）、
+  `spider`（五步织网 + networkx 图分析）。
+  - 删除代码：`insight/assemble.py`、`annotate.py`、`flowgraph.py`、`relations.py`、`render.py`、
+    `understand.py`、`crawler.py`；`workspace.coverage_for_understand()`；
+    `routes_insight.InsightRequest` 的 `known_objects` / `llm` 字段与 `_llm_summary_fn()`。
+    `insight/` 因此从 **12 文件 1,766 行降到 6 文件 1,145 行**。
+  - **保留的是通用产物契约而非「理解报告」那套**：`workspace.py`（工作区根 + 三态覆盖度 +
+    manifest）、`kernel/`、`replay.py`、`drawio.py`、`report.py`、`lifecycle.py` —— spider 在直接用。
+  - 页面：命令下拉只剩两项，去掉「已知对象白名单」「LLM 职责摘要」两行输入，
+    对象编码输入框仅在 `spider` 下显示。
+  - 测试删减：`tests/test_lifecycle_coverage.py`（13 项）与 `tests/fixtures/egmp/understand-capa-plan.json`
+    一并删除（它们是 `understand` 的专属门禁）。全量测试 330 → **281 项**。
+  - **历史数据不受影响**：`insight_runs` 里 `command` 为 `inventory`/`understand` 的旧行照常列出，
+    产物读取仍按 `workspace_dir` → `artifact_dir` 回落（迁移 1–14 一行未动）。
+
+### Fixed
+
+- **平台洞察：对象读不到时产出一张「假网」还报 `complete`（正确性，本轮新发现）**。
+  `client.get_object(code)` 拿到**空实体**（对象不存在 / 无权限 / token 失效）时并不抛异常，
+  而 spider 原来只做 `meta = ... or {}` 就继续：流程一路走完，产出「**1 个对象节点 + 0 状态**」的
+  空网，`stats` 照记，manifest 的 `coverage.status` 还是 `complete` —— **任务绿的、图是假的**，
+  与 `INSIGHT-SPEC` §4.3「产物自证覆盖度」直接冲突。
+  - 现改为：**目标对象**读不到实体即抛 `SpiderReadErrors`（带 code，任务记 `failed`，不写 manifest）；
+    **相关对象**读不到只记进 `failures`（部分对象本就在织网范围外，不该炸整次运行）；
+    状态表读不到则出网但如实记录。
+  - 回归：`tests/test_workspace.py::test_run_spider_missing_object_raises_instead_of_empty_graph`。
+  - 同一处还修掉一个**被静默吞掉的失败**：`get_object_statuses` 原先不在任何 `try` 里，
+    而 `paged_post` 的翻页失败会返回空列表——现在失败会进 `failures` 而不是悄悄变成「没有状态」。
+- **平台洞察：产物没有落到用户配的工作区（承诺与实现不符）**。`workspace.py` 的工作区契约
+  （`<root>/<对象code>/<时间戳>/`）此前**只有 `understand` 在用**，而 `understand` 下线后
+  `run_spider` 仍是「直接写 `runtime/insight/<job_id>/`」，同时 `routes_insight` 把
+  `outcome.get("workspaces")` 写进 `insight_runs.workspace_dir` —— 而 spider **从不返回该键**，
+  于是该列永远是空的，产物面板只能靠 `artifact_dir` 回落。现在改为**先定落点再爬**：
+  路由先 `workspace.run_dir()` 拿到工作区目录，把它当 `output_dir` 交给 spider，并回填
+  `workspaces`（同时在工作区留一份 `proc.log` 副本，好让产物面板在同一处列出日志与产物）；
+  工作区不可写则退回任务目录，此时 `workspaces` 为空数组而**不谎报**路径。
+  （没有做事后重试——那会把平台调用重放一遍。）
+- **`run_insight` Agent 工具仍在跑已删除的 `understand` 命令**（会直接 400「未知命令」）。
+  现改跑 `spider`，并且**改为调用 `routes_insight.run` 公共入口**而不是 `_start_job`/`_run_job`
+  内部函数——原先绕过去就漏掉了 `workspace_dir` / `coverage_status` 的回填。
+- **CHANGELOG 自身**：`[未发布]` 段出现两个 `Fixed` 标题（合并）；上一条 Security 条目里
+  历史重写的替换规则因「替换结果又被再次替换」而全部显示成 `A → A` 的空转表，现已补回**左侧原文**，
+  替换规则这才读得懂。
+
 ### Fixed
 
 - **`Alt+Q` 在桌面端未运行时被浏览器扩展抢走（用户实测 bug）**：只有扩展挂在浏览器里、
@@ -40,11 +88,12 @@
   内网地址、真机账号名全部替换为文档占位值。⚠️ **本次重写了全部提交历史（所有分支与标签），
   提交 SHA 全变** —— 协作者必须按 [`docs/HISTORY-REWRITE-NOTICE.md`](docs/HISTORY-REWRITE-NOTICE.md)
   迁移本地副本，不要 merge 旧历史。
-  - 替换规则（工作区与全历史一并执行）：
-    `*.example.com` → `*.example.com`；`example-config`（含 `example-config`）→ `example-config`；
-    `demo-val` → `demo-val`；`示例租户` → `示例租户`；`192.0.2.10` → `192.0.2.10`（RFC 5737 文档网段）；
-    `dev-admin` → `dev-admin`；`dev-user`（词边界）→ `dev-user`；`com.example` → `com.example`；
-    `VPN 客户端`/`VPN`/`VPN` → `VPN`；文档叙述中的 `jizi-dragon` → `example-org`。
+  - 替换规则（工作区与全历史一并执行）：真实平台/部署域名 → `*.example.com`；客户租户名 →
+    `example-config`；环境代号 → `demo-val`；中文租户名 → `示例租户`；内网地址 →
+    `192.0.2.10`（RFC 5737 文档网段）；真机管理员账号名 → `dev-admin`；真机普通账号名 →
+    `dev-user`；Java 包标识里的个人标识 → `com.example`；商业 VPN 产品名 → `VPN`；
+    文档叙述中的 `jizi-dragon` → `example-org`。
+    原文清单见 [`docs/HISTORY-REWRITE-NOTICE.md`](docs/HISTORY-REWRITE-NOTICE.md)。
   - **刻意保留的功能锚点**（改了会坏自动更新/发布）：`desktop/package.json` 的 `publish.owner`、
     `desktop/proxy.js` 的 `PROBE_URL`、`tools/publish_release.py` 的 `REPO`、
     `tools/verify_update_proxy.js` 的资产 URL 基准。该标识本就公开写在仓库 URL 里。
@@ -52,8 +101,6 @@
     JWT / `PRIVATE KEY` / `password|token|secret|api_key = "…"` 赋值形态，**全部 0 命中**；
     `sk-` 命中均为 CSS 类名，44 位 base64 命中均为 `package-lock.json` 的 SRI 哈希。
     Fernet 密钥与 API Key 只存在于未入库的 `%APPDATA%\AksoWorkbench\workbench.db`。
-
-### Fixed
 
 - **`ruff` 由 19 条违规清零（`uvx ruff check .` 全绿）**，恢复 lint 门禁：
   - `workbench/api/routes_insight.py:175` **F821 `Any` 未导入**（`_workspace_dirs(row: Any)`）——
@@ -166,27 +213,30 @@
   `ReplayClient`（按夹具回放，返回值深拷贝）、夹具格式与版本校验。
   两条覆盖度保证：回放时不得有请求缺失（`ReplayMiss` 会列出可用键），
   也**不得有夹具条目从未被用到**（能抓住夹具腐化）。
-  配套 `tests/fixtures/egmp/understand-capa-plan.json`（手写真实形态夹具，刻意覆盖进入动作、
-  `lifecycleStatusIds`、自引用父对象、未知 dataType）与 `tools/record_insight_fixture.py`
-  （对着真实环境录一次即可长期复用；只走只读链路）。
+  配套 `tests/fixtures/egmp/spider-training-mgr.json`（**真实形态**夹具：结构取自 `Recorder`
+  对假平台的实跑录制 11 条交互，ID 与业务命名换成确定性占位值，**不含真实平台数据**）
+  与 `tools/record_insight_fixture.py`（`--command spider` 对着真实环境录一次即可长期复用；只走只读链路）。
+  > 原名 `understand-capa-plan.json` 的夹具随 `understand` 下线删除（2026-09-14）。
 - **新增 `workbench/services/egmp/insight/workspace.py` + 迁移 14**：洞察产物落到**用户可配的工作区**
   `<root>/<对象code>/<时间戳>/`，每对象一格并各带一份 `manifest.json`（含 `schemaVersion`、环境、
   覆盖度三态、产物 sha256、失败清单）。新增设置键 `insight_workspace_root` 与接口
   `GET/PUT /api/insight/workspace`；`insight_runs` 增列 `workspace_dir` / `coverage_status`
   （**只追加迁移 14，1–13 不动**）；产物读取接口优先从工作区取、历史行回落 `artifact_dir`。
-- **新增 `tests/test_replay.py`（23 项）与 `tests/test_workspace.py`（32 项）**：
-  离线回放与工作区/manifest 门禁。全量测试由 240 项增至 **294 项**。
+- **新增 `tests/test_replay.py` 与 `tests/test_workspace.py`**：
+  离线回放与工作区/manifest 门禁（`inventory`/`understand` 下线后重挂到 spider 夹具：
+  回放 17 项、工作区 34 项）。
 - **新增 `tests/test_lifecycle_coverage.py`（13 项）**：L3 生命周期图的覆盖面与语义门禁——
   同名按钮跨状态不得错配、进入动作必须归入「进入动作」、`lifecycleStatusIds` 与按钮通道取并集、
   未知状态 id 不得产出悬空触发、进入条件仍取 `description`。
+  > **2026-09-14 已随 `understand` 下线删除**：这些断言全部挂在 understand 的 L3 产物上。
 - **新增 `tests/test_env_isolation.py`（19 项）**：环境与身份隔离门禁——token 跨环境/跨账号不泄漏、
   归属校验、JWT `exp` 优先、原子写、缓存作用域、假值可缓存。
 - **新增 `tests/test_drawio.py`（57 项）**：drawio 良构门禁——对抗性标签（`&`/`<`/`"`/换行/C0 控制字符/
   中文/emoji/空名）、id 为 `"0"`/`"1"` 的节点、重复步骤 id、并行同源边、成环分层、坐标重叠。
   断言分两层：**先良构**（`ET.fromstring` 必须成功），**再语义**（解析回来的属性值等于期望文本）。
-- **新增 `tests/test_paths.py`（88 项）**：路径安全门禁——正常编码恒等性、逐条对抗性输入
-  （`../`、绝对路径、保留设备名、控制字符、双向覆盖字符、尾点空格、超长）与**真实落盘**端到端断言。
-  全量测试由 63 项增至 **208 项**。
+- **新增 `tests/test_paths.py`**：路径安全门禁——正常编码恒等性、逐条对抗性输入
+  （`../`、绝对路径、保留设备名、控制字符、双向覆盖字符、尾点空格、超长）。
+  真实落盘的端到端断言 2026-09-14 移到 `tests/test_workspace.py`（`understand` 下线时一并搬）。
 - **新增 `tools/verify_insight_drawio.py`（11 项真机验收）**：把对抗性产物交给 **draw.io 桌面版 CLI**
   读一遍再回写，回写结果仍需良构——这是「标准 drawio」的最终判据。
 - **新增 `workbench/services/paths.py`**：`safe_path_component()` / `resolve_within()`，
