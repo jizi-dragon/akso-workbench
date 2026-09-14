@@ -102,6 +102,36 @@
 
 ### Changed
 
+- **模块 id 由上游项目名 `akso-cc` 改为 `insight`（用户定稿：「模块 id 要改名」）**。
+  上一轮只改了界面文案，接口里仍是 `GET /api/modules/akso-cc`——名不副实的那半个还在。
+  - `adapters/akso-cc.json` 的 `id` → `insight`；**文件名保持不变**，并在 `idNote` 里写明理由：
+    文件名是「这份存档对应哪个来源项目」的引用真源（`repoPathEnv=AKSO_CC_REPO`、`repoPath`
+    都指向它），改名会让该变量的语义失真。**id 与文件名不一致是刻意的**，由
+    `tests/test_modules.py::test_adapter_id_matches_its_filename_reference` 守住。
+  - 模块标题 → `平台洞察（登录 / 蜘蛛五步织网）`，原上游标题移入 `legacyTitle` 留档。
+  - 前端改调 `/api/modules/insight`；新增 `test_old_module_id_is_gone` 钉住**旧 id 返回 404**——
+    改名必须一次改干净，**不许留"第二个还能用的名字"**。
+  - **迁移 15 `rename_insight_module_id`**（数据行改写，**不动历史迁移 1–14**）：
+    `insight_runs.module` 统一为 `insight`。⚠️ 该列**历史上先后出现过三个值**——
+    `akso-cc`（迁移 8 的列默认值）、`egmp-native`（原生化后 `routes_insight` 实际写入的）、
+    `insight`（现行）。只改其中一个就会留下"同一个模块三个名字"，模块维度的统计/筛选**静默漏行**。
+    真实库实测：`akso-cc` 1 行 + `egmp-native` 11 行 → **12 行全部归一为 `insight`**，
+    且重复连接不再变化（可重入）。`routes_insight` 的 INSERT 同步改为写字面量 `'insight'`。
+    > 列默认值仍是旧的 `'akso-cc'`：改默认值只能靠"新迁移 + 重建表"，而代码**始终显式写入**
+    > 该列，默认值不会被用到。已在 [SCHEMA.md](docs/SCHEMA.md) §3.7 用表格记全三个值的来历。
+  - 回归：`tests/test_app.py` / `test_modules.py` 同步（3 项失败当场指出旧 id 的调用方——
+    这正是门禁的价值）；全量 299 → **301 项**。
+
+- **「UI 永远最新」的兜底入口：应用菜单（用户提出要有这个习惯）**。
+  页面一旦加载进渲染进程内存，服务端怎么改都不会反映到**已打开的那个窗口**——这是本轮
+  "改了看不见"反复出现的机制性原因。正确动作是**重新加载**（服务端已加 `no-store`，重载必拿最新版），
+  但 `Ctrl+R` 对非开发者不是可发现的操作。故：
+  - 新增应用菜单 `文件 / 视图 / 窗口`，其中 **`重新加载界面（F5 / Ctrl+R）— 改完代码后按这个`**
+    用菜单文案直说用途，不让人猜；F5 与 Ctrl+R 都收（F5 是 Windows/浏览器用户的肌肉记忆）。
+  - 另给 `强制重新加载（忽略缓存）`、缩放、全屏、`开发者工具（Ctrl+Shift+I）`——
+    排障时能自己开 DevTools 看 Network/Console，不必再靠"服务端实吐字节数"间接判断。
+  - 与全局热键 `Alt+Q`（账号轮盘）不冲突：那个走 `globalShortcut`，菜单只在窗口聚焦时生效。
+
 - **端口改为固定：撤回"壳当仲裁者、被占则顺延"（[ADR-0012](docs/adr/0012-fixed-ports.md) 取代
   [ADR-0011](docs/adr/0011-port-and-session-negotiation.md) §D-1）**。用户定稿原话：
   「我建议还是固定端口号吧，别拿所谓的桌面壳引导去调整，就固定端口号」。

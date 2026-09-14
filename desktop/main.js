@@ -555,11 +555,74 @@ async function bootstrapPorts() {
   return true;
 }
 
+// ------------------------------------------------- 应用菜单（"UI 永远最新"的兜底入口）
+
+/**
+ * 建立应用菜单：把「重新加载界面」做成一个**看得见、记得住**的入口。
+ *
+ * 为什么必须要有这个（本轮血泪）：静态页由本机服务端提供，而渲染进程一旦把页面加载进内存，
+ * 服务端后来怎么改都不会反映到**已经打开的那个窗口**上——表现就是"改了代码界面没变"。
+ * 正确做法是按一下重新加载（服务端已加 `Cache-Control: no-store`，重载必定拿到磁盘最新版），
+ * 但「Ctrl+R」这种快捷键对非开发者不是可发现的操作，所以：
+ *   - `F5` 与 `Ctrl+R` 都绑定 `reload`（F5 是浏览器/Windows 用户的肌肉记忆）；
+ *   - 另外给 `编辑器里的开发者` 留 `Ctrl+Shift+I` / `F12` 开 DevTools；
+ *   - 菜单文字直说用途（"重新加载界面（改完代码后按这个）"），不让人猜。
+ *
+ * ⚠ 与全局热键 `Alt+Q`（账号轮盘）不冲突：那个走 `globalShortcut`，本菜单只在窗口聚焦时生效。
+ */
+function createAppMenu() {
+  const template = [
+    {
+      label: '文件',
+      submenu: [{ role: 'quit', label: '退出' }],
+    },
+    {
+      label: '视图',
+      submenu: [
+        {
+          label: '重新加载界面（F5 / Ctrl+R）— 改完代码后按这个',
+          accelerator: 'CmdOrCtrl+R',
+          registerAccelerator: true,
+          // F5 是 Windows/浏览器用户的肌肉记忆；accelerator 只收一个，故用
+          // `registerAccelerator: false` 的孪生项把 F5 也收下，但不重复占菜单位。
+          click: (_item, win) => win?.reload(),
+        },
+        {
+          label: '重新加载界面（F5）',
+          accelerator: 'F5',
+          registerAccelerator: true,
+          visible: false,
+          click: (_item, win) => win?.reload(),
+        },
+        { type: 'separator' },
+        { role: 'forceReload', label: '强制重新加载（忽略缓存）' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: '实际大小' },
+        { role: 'zoomIn', label: '放大' },
+        { role: 'zoomOut', label: '缩小' },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: '全屏' },
+        { type: 'separator' },
+        { role: 'toggleDevTools', label: '开发者工具（Ctrl+Shift+I）' },
+      ],
+    },
+    {
+      label: '窗口',
+      submenu: [
+        { role: 'minimize', label: '最小化' },
+        { role: 'close', label: '关闭窗口（应用继续在托盘运行）' },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.whenReady().then(async () => {
   if (!(await bootstrapPorts())) return;
   spawnServer();
   createControlServer();
   createTray();
+  createAppMenu();
 
   globalShortcut.register('Alt+Q', toggleWheel);
 

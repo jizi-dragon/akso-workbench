@@ -33,9 +33,9 @@ async function loadAccounts() {
 async function checkHealth() {
   const badge = el('module-health');
   try {
-    // 模块 id 仍是 `akso-cc`（adapters 存档键，只读不改），但**界面上不出现上游项目名**：
-    // 能力已原生化，这里的体检只是本工作台自己的依赖自检（见 workbench/services/modules.py）。
-    const data = await api('/api/modules/akso-cc');
+    // 模块 id = `insight`（2026-09-14 由上游项目名 `akso-cc` 改来）：能力已是本工作台自己的，
+    // 界面上与接口上都不该再出现上游项目名。体检内容是本工作台自己的依赖自检。
+    const data = await api('/api/modules/insight');
     badge.className = `status-badge ${badgeFor(data.status)}`;
     const fail = (data.checks || []).filter((c) => !c.ok);
     badge.textContent = fail.length

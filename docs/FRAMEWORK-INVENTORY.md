@@ -164,7 +164,7 @@
 |---|---|---|
 | 系统提示词 | `harness/prompts.py` 写死药企合规提示词 | 框架提供 `build_system_prompt(pack)`，提示词包由下游提供 |
 | 自动填表的登录页选择器 | `autologin.py` 与扩展 `auto-login.ts` 硬编码 `请输入用户名`/`input[type=password]` 等 | 抽成"站点登录页配置"（选择器列表 + iframe 策略），随站点配置下发 |
-| 模块注册表 | `services/modules.py` 里 `akso-cc`/`akso-auto` 是写死的适配器概念 | 泛化为"下游模块声明"（下游插件自己声明体检项） |
+| 模块注册表 | `services/modules.py` 里 `insight`/`akso-auto` 是写死的适配器概念 | 泛化为"下游模块声明"（下游插件自己声明体检项） |
 
 ### 类型 4：前端导航与页面注册（**选修**）
 

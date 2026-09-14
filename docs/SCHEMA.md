@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | 12 | `add_account_tab_name` | `account.tab_name` | 账号中心 |
 | 13 | `add_created_at_indexes` | `agent_audit` / `blueprint_jobs` / `insight_runs` 的 `created_at` 索引 + `account(box)` | 数据层维护 |
 | 14 | `add_insight_workspace_and_coverage` | `insight_runs` 增 `workspace_dir`（多个工作区目录以**换行分隔**）与 `coverage_status`（三态覆盖度） | 平台洞察工作区 |
+| 15 | `rename_insight_module_id` | 数据行改写：`insight_runs.module` 由 `akso-cc` / `egmp-native` 统一为 `insight` | 模块 id 改名 |
 
 > **迁移 1–6 为 fork 历史，按不可变纪律保留**。其中 `documents` / `doc_chunks` / `qa_metrics`
 > 的知识库相关功能**源码已删**（表仅留存、不再读写）；`knowledge_nodes` / `knowledge_edges` /
@@ -158,8 +159,21 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 
 ### 3.7 `insight_runs` — 平台洞察任务（迁移 8）
 
-列同 `blueprint_jobs` 结构，`command` ∈ `login` / `spider`（`inventory` / `understand` 已于 0.3.8
-下线，**历史行的这两个值仍在表里**，读取侧按原样展示、不得报错），`module` 现状写 `'egmp-native'`，
+列同 `blueprint_jobs` 结构，`command` ∈ `login` / `spider`（`inventory` / `understand` 已于 2026-09-14
+下线，**历史行的这两个值仍在表里**，读取侧按原样展示、不得报错）。
+
+`module` 一列**历史上先后用过三个值**，迁移 15 已统一为 `'insight'`：
+
+| 值 | 来历 | 现状 |
+|---|---|---|
+| `akso-cc` | 迁移 8 建表时的列默认值（上游项目名） | 已由迁移 15 改写 |
+| `egmp-native` | 原生化后 `routes_insight` 实际写入的值 | 已由迁移 15 改写 |
+| `insight` | 现行值（模块 id，与 `adapters/*.json` 的 `id` 一致） | 代码写入 + 历史行均已统一 |
+
+> ⚠️ **列默认值仍是 `'akso-cc'`**：迁移 1–14 按不可变纪律保留，改默认值只能靠"新迁移 + 重建表"，
+> 而代码**始终显式写入**该列，所以默认值不会被用到。记在这里是为了让读表的人不困惑。
+> （`blueprint_jobs.module` 默认值 `'akso-auto'` 是同类情况，本表不动。）
+
 `objects` 列为洞察特有（逗号分隔对象编码）。
 索引：`idx_insight_runs_status`、`idx_insight_runs_created_at`。
 

@@ -139,7 +139,7 @@ def _start_job(req: InsightRequest) -> tuple[str, Path]:
     workdir.mkdir(parents=True, exist_ok=True)
     db.execute(
         "INSERT INTO insight_runs (id, module, command, objects, env_id, status, log_path, "
-        "artifact_dir, created_at, updated_at) VALUES (?, 'egmp-native', ?, ?, ?, 'running', ?, ?, ?, ?)",
+        "artifact_dir, created_at, updated_at) VALUES (?, 'insight', ?, ?, ?, 'running', ?, ?, ?, ?)",
         (job_id, req.command, req.objects, str(req.env_id or ""), str(workdir / "proc.log"),
          str(workdir), now_ms(), now_ms()),
     )

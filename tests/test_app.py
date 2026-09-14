@@ -38,13 +38,27 @@ def test_modules_endpoint(client: TestClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     ids = {m["id"] for m in data["modules"]}
-    assert {"workbench", "accounts", "akso-cc", "akso-auto"} <= ids
+    # 洞察模块的 id 是 `insight`（2026-09-14 由上游项目名 `akso-cc` 改来）；
+    # 它的**存档文件名**仍是 adapters/akso-cc.json，两者不一致是刻意的。
+    assert {"workbench", "accounts", "insight", "akso-auto"} <= ids
+    assert "akso-cc" not in ids, "上游项目名不得再作为模块 id 暴露"
 
 
 def test_module_recheck(client: TestClient) -> None:
-    resp = client.post("/api/modules/akso-cc/check")
+    resp = client.post("/api/modules/insight/check")
     assert resp.status_code == 200
     assert resp.json()["status"] in {"ok", "degraded", "missing"}
+
+
+def test_old_module_id_is_gone(client: TestClient) -> None:
+    """改名要彻底：旧 id 必须 404，而不是留一个"还能用"的第二名字。
+
+    留第二名字的代价：模块维度的统计/筛选会静默漏行，而这正是本轮
+    `insight_runs.module` 一列先后出现过三个值（`akso-cc` / `egmp-native` / `insight`）
+    的成因。改名就一次改干净。
+    """
+    assert client.get("/api/modules/akso-cc").status_code == 404
+    assert client.post("/api/modules/akso-cc/check").status_code == 404
 
 
 def test_agent_tools_listed(client: TestClient) -> None:

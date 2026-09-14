@@ -104,9 +104,13 @@ POST /api/chat/stream   Content-Type: application/json
 
 - **内置模块**（`services/modules.py`）：`workbench`（Python 依赖体检）、
   `accounts`（Python 依赖 + `playwright:chromium` 可执行文件存在性）。
-- **适配器模块**：读 `adapters/*.json`（`akso-cc` / `akso-auto`）。
+- **适配器模块**：读 `adapters/*.json`（`insight` / `akso-auto`）。
   阶段 3 原生化后它们降级为**只读参考存档**：体检项为 Python 依赖 + `source-reference`（信息项，
   原仓库缺失不影响功能，`ok` 恒为 `true`）。
+- ⚠️ **模块 id 与存档文件名可以不一致**（这是刻意的）：`insight` 模块的存档文件是
+  `adapters/akso-cc.json`（文件名是「这份存档对应哪个来源项目」的引用真源，
+  `repoPathEnv=AKSO_CC_REPO` 指向它）。2026-09-14 由上游项目名 `akso-cc` 改名为 `insight`——
+  能力已是本工作台自己的，接口与界面上都不该再出现上游项目名。
 - ⚠️ `status` 映射可读性存疑：`全过 → "ok"`、`全挂 → "degraded"`、`部分挂 → "missing"`（见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账）。
 
 ## 6. 平台洞察 `/api/insight`（`routes_insight.py`）

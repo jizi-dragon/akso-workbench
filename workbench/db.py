@@ -216,6 +216,15 @@ CREATE INDEX IF NOT EXISTS idx_account_box ON account(box);
 ALTER TABLE insight_runs ADD COLUMN workspace_dir TEXT NOT NULL DEFAULT '';
 ALTER TABLE insight_runs ADD COLUMN coverage_status TEXT NOT NULL DEFAULT '';
 """),
+    (15, "rename_insight_module_id", """
+-- 模块 id 由上游项目名（`akso-cc`）改为本工作台自己的模块名 `insight`。
+-- 历史行必须一并改写，且这个字段**历史上已经有过两个名字**：
+--   · `akso-cc`     —— 建表时的列默认值（迁移 8）
+--   · `egmp-native` —— 原生化之后 routes_insight 实际写入的值
+-- 只改其中一个会留下"同一个模块三个名字"，模块维度的统计/筛选会静默漏行。
+-- 注意：这**不是**改历史迁移——迁移 1–14 一行未动，本条只改写数据行。
+UPDATE insight_runs SET module = 'insight' WHERE module IN ('akso-cc', 'egmp-native');
+"""),
 ]
 
 
