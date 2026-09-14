@@ -32,6 +32,48 @@
 
 ### Fixed
 
+- **五步织网吐不出有效产物（用户实测）**——三个根因，各自独立：
+  - **step1 关系网恒为空**：平台字段页给的是 `referenceObjectId` + `objectRelation.objectName`，
+    **`referenceObjectCode` 恒为 null**，而 `collect_relations` 只读后者 → **任何对象都推不出关系边**。
+    实测 `the_change_lh__c`：修复前 0 条关系边，修复后 2 条（用户对象经由 7 个字段、部门对象经由 2 个）。
+    连本仓夹具里那条 `dataType=15` 字段也被丢掉，重放测试还把 `relationEdges: 0` 固化成黄金值。
+    现按「编码 → 名称 → id」解析，**以对象名称作节点标识**（用户定稿）；平台没给编码的作占位节点
+    并记入 `unexpandedRelations`，不再静默丢边。
+  - **step2/step3 归类用错了判据**：按动作栏 `behaviorType`（9/7 才算用户动作、其余算进入动作）归类，
+    而规格 §2.3 的口径是**按 `executeType`**（1=用户动作 / 2=进入动作）。于是一个 `behaviorType=5`
+    （更新字段值）的用户按钮会被错记成「进入动作」，没有动作栏行的用户动作也一起掉进去——四列表两列同时错。
+    `behaviorType` 现在只用于给名字加注（→目标状态 /（发起工作流））。
+  - **读失败被静默吞掉**：`except Exception: rows = []` 让「平台没配」与「我们没读到」长得一模一样，
+    而 `coverage` 还写着 `complete`。现在读失败一律进 `failures`（带 stage）并让覆盖度降级为 `partial`；
+    平台的**能力边界**（未启用生命周期、没给对象编码、该状态本来就没配动作）另记 `notes`，
+    两者都写进 manifest、报告与任务日志。容忍范围刻意收窄为「平台侧读失败」
+    （`httpx.HTTPError`/`ApiError`/`OSError`）——回放夹具的缺口异常必须炸穿，不许伪装成平台没配。
+- **补齐五步各自的产品级产物**（用户定稿的「有效产物」清单）：新增 `step1-relations.md`（关联对象表 + 未展开边界）、
+  `step2-status-table.md`（规格 C2 写死列口径：状态名称/进入动作/用户动作/进入条件）、
+  `step4-workflows.drawio`（每个被发起的工作流一页流程图，来源含动作发起与状态触发两条通道）；
+  `spider-network.md` 增加「步骤与产物」索引与「边界与缺口」段。实测 `the_change_lh__c`：
+  3 对象 / 21 状态 / 4 归因边 / 2 关系边 / 3 张工作流图，共 7 件产物；`change_plan__c` 这类
+  平台没配动作的对象则如实写明「平台未配置用户动作」，而不是给一张看不懂的空网。
+- **`login` 连通测试报「无法连通」的根因：环境 baseUrl 存成了「登录页地址」**（用户实测，2026-09-14）。
+  从浏览器地址栏复制的 `https://host/login` 存进 `platform_env.base_url` 后，AUTH 会被拼成
+  `.../login/api/openapi/v1.0/Auth` → 网关 **405 Not Allowed**；而**同主机根地址** POST 同名端点
+  返回的是平台信封 `{"code":500,...}`——这就是「地址存错」与「真不通」的判据（真不通表现为超时/502）。
+  - 新增归一化单点 `egmp/kernel/urls.py::normalize_base_url`：剥 `/login`、丢 query、**其余子路径不猜**、幂等；
+  - **写时**（`accounts.create_env/update_env`、备份导入）+ **读时**（`client` / `routes_insight` /
+    `routes_agent` / `browser_pool`）两侧都过它，存量脏数据不必手工改也能用；
+  - 实测：两个「通达」账号修复前均 405，修复后**真实登录成功**（796 / 693 ms，非缓存票据）。
+- **洞察任务失败时不再「没有任何现场」**：`on_log` 原先只在 login 成功之后才被调用，于是任何 login
+  失败（地址错 / 405 / 502 / 超时）都让 `proc.log` **根本不存在**，界面只剩一句无从下手的「无法连通」。
+  `_run_job` 现在先落「命令 + 平台环境」表头，失败时落 `执行失败：<类型>: <消息>` 再抛出。
+- **壳的 CDP 端口静默不监听**（v0.3.6 真机实测，见 [PITFALLS #27](docs/PITFALLS.md)）：
+  `applyCdpSwitch()` 被搬进 `bootstrapPorts()`，而它在 `app.whenReady()` **之后**才被调用 →
+  `remote-debugging-port` 完全不生效，实测 18766 从不 LISTEN、`/json/version` 拒绝连接。
+  同一轮又刚让壳下发 `WORKBENCH_SESSION_MODE=cdp`，于是托管会话必然报「CDP 连接失败…」（无回退）。
+  调用点移回**模块加载期**（0.3.5 的位置，也是 PITFALLS #3 的原始约束）。
+- **打包态「chromium 未安装」是体检误报**（见 [PITFALLS #28](docs/PITFALLS.md)）：playwright 默认找
+  `%LOCALAPPDATA%\ms-playwright`，包内那份在 `_MEIPASS` 下，而只有 `browser_pool._worker` 会设
+  `PLAYWRIGHT_BROWSERS_PATH`，两个体检入口（`/api/modules`、`/api/browser/check`）跑在它之前 →
+  `accounts` 恒为 `degraded`。抽成单点 `browser_pool.ensure_bundled_browsers_path()`，三处共用。
 - **"改了代码但 UI 没变"（用户实测，一次极难排查的事故）**。桌面壳跑的是 9/9 的旧打包副本、
   占着 18765；**新的壳因为 `waitReady()` 只看"这个端口上有人回了 200"就判定自己的服务已就绪**，
   于是主窗打开的是**旧实例**的页面——菜单里那两个明明已删除的命令又出现了。

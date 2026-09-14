@@ -143,8 +143,18 @@ POST /api/chat/stream   Content-Type: application/json
 > **`partial` 与 `coverage`（0.3.6 起）**：任务状态不再取布尔 `ok`，而是由**三态覆盖度**映射——
 > `complete→succeeded`、`partial→partial`、`degraded→failed`。这样「10 个对象只成功 3 个」
 > 不会再被记成 succeeded。`coverage` 形如
-> `{status, total, succeeded, failureCount, objectNodes, stateNodes, attrEdges, relationEdges}`
-> ——后四项是 spider 的图规模计数，让产物自证「这次织出来多大的网」。
+> `{status, total, succeeded, failureCount, objectNodes, stateNodes, attrEdges, relationEdges,
+> workflowGraphs, unexpandedRelations, boundaryNotes}`
+> ——后七项是 spider 的图规模与**边界**计数，让产物自证「这次织出来多大的网、边界在哪」。
+>
+> **产物清单（0.3.8 起）**：五步各有落盘产物 —— `step1-relations.md`（关联对象表）、
+> `step2-status-table.md`（四列表）、`step3-attribution.md`、`step4-workflows.drawio`（每个工作流一页，
+> 没取到就不生成该文件）、`spider-network.{md,json,drawio}`，外加 `manifest.json`。
+>
+> **读失败 vs 平台边界**（0.3.8 起）：`manifest.failures` = **我们没读到**（网络/HTTP/信封错误，
+> 带 `stage`，并让 coverage 降级为 `partial`）；`manifest.notes` = **平台本身的边界**
+> （未启用生命周期、关联对象没给编码所以未展开、该状态平台本来就没配动作）。
+> 两者分开记，否则「平台没配」与「我们没读到」在产物里长得一模一样。
 
 > **产物落点（0.3.8 起）**：`spider` 写到**用户可配的工作区** `<root>/<对象code>/<时间戳>/`，
 > 落点带一份 `manifest.json` 自证覆盖度，并把目录回填到 `insight_runs.workspace_dir`。
