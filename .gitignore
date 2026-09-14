@@ -14,6 +14,10 @@ output/
 *.db-shm
 .env
 
+# 本地排障暂存区：探针脚本、wheelhouse、构建日志、**DB 备份**（含凭据密文与密钥）。
+# 2026-09-14 加：此前未忽略，`git add -A` 会把带凭据的 workbench.db 备份一起提交。
+/tmp/
+
 # Node 子项目临时物（若本地调试）
 node_modules/
 
