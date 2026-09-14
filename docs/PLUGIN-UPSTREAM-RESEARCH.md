@@ -341,7 +341,14 @@ def register(reg) -> None:
 |---|---|---|---|
 | **R1** | **剥离仓库不改变权属**：若默认归公司，分仓只是形式 | 高——可能白做 | **先跑 §5.0**；把重心放在"取得授权/明确既有资产"而非重构 |
 | **R2** | **平台知识泄进上游**：把 `egmp/kernel/endpoints.py`（含实测端点常量）带进开源仓库 | 高——可能构成侵犯商业秘密 | 上游**只**接收 §4.2 表中"与行业无关"的资产；对上游做**平台特征词扫描**作为 CI 门禁（本仓库已有可用脚本，见本文 §2.4 的方法） |
-| **R3** | **打包链在插件化后变复杂**：PyInstaller 需显式收集插件包及其 `entry_points.txt`，漏收 = 装完没有洞察功能（静默） | 中→**低**（已实测工具齐备） | **实测结论：PyInstaller 6.22.2 自带 `copy_metadata()` 与 `collect_entry_point()`**，正是为入口点插件设计的；本项目 `server.spec` 已有 `collect_all()` 的成熟用法可照抄。做法：对每个下游插件 `collect_all()` + `copy_metadata()`（**缺 metadata 就发现不到入口点**，这是最容易漏的一步）；再复用 `tools/verify_packaging.py` 加一项"安装包里存在预期插件与其 dist-info"，打包后真机冒烟 |
+| **R3** | **打包链在插件化后变复杂**：PyInstaller 需显式收集插件包及其 `entry_points.txt`，漏收 = 装完没有洞察功能（静默） | 中→**低**（工具齐备 + **已有公开实证的失败案例**） | **⚠️ 这个坑有公开实证**：PyInstaller 官方讨论区有专门的
+[「Problem finding entry point via importlib.metadata.entry_points in packaged app」](https://github.com/orgs/pyinstaller/discussions/8325)，
+说明"开发态正常、打包后 entry point 发现不到"是**已知且真实**的失败模式（正是风险 R3 的症状）。
+**缓解已实测可行**：PyInstaller 6.22.2 自带 `copy_metadata()` 与 `collect_entry_point()`
+（后者已[移植到 importlib.metadata](https://github.com/pyinstaller/pyinstaller/commit/b69595054077628d9738be961b536b3349bb9c90)，与本项目选型一致），
+而 `workbench/server.spec` 已有 `collect_all()` 的成熟用法可照抄。
+做法：对每个下游插件 `collect_all()` + **`copy_metadata()`**（缺 metadata 就静默发现不到），
+再用 `tools/verify_packaging.py` 加一项"安装包里存在预期插件与其 dist-info"，打包后真机冒烟。 |
 | **R4** | **插件接口过早定稿**：写完第一个插件就冻结契约 | 中——第二个插件必然返工 | 方案 A 完成后先跑 2-4 周真实迭代再定版本号（§5.4） |
 | **R5** | **单人维护双仓的协调成本**：版本对齐、双份 CI、回归跑两遍 | 中 | 上游接口用严格的语义化版本 + 启动自检（缺扩展点直接报错，不静默降级）；下游 CI 拉起上游最新 tag 跑集成 |
 | **R6** | **"上游"变成事实上的公司产品**：公司要求你在上游里加他们的专属功能 | 中——边界再次模糊 | 明确写入 `CONTRIBUTING.md`：上游拒绝任何含平台知识的 PR；专属需求一律进下游插件 |
@@ -356,8 +363,8 @@ def register(reg) -> None:
 
 | 机制 | 发现方式 | 依赖注入 | 版本约束 | 适用场景 |
 |---|---|---|---|---|
-| **`importlib.metadata.entry_points`**（setuptools entry points，PEP 621 / Python 3.10+ 的 `group=` 选择器） | 安装元数据（`.dist-info/entry_points.txt`） | 手动（插件自注册进宿主 Registry） | 靠宿主自检 | ✅ **本项目推荐**：零额外依赖，与 `uv` 的安装模型天然契合。POC 已实跑（§3） |
-| **`pluggy`**（pytest 的插件内核） | `entry_points` + 显式 `register()` | hookspec/hookimpl（**有类型与签名校验**） | 靠 hookspec 版本 | 插件需要**多实现点 + 精细调用顺序**时；本项目的扩展点数量（约 2-4 个）还用不上它 |
+| **`importlib.metadata.entry_points`**（setuptools entry points，[官方规范](https://packaging.python.org/en/latest/specifications/entry-points/)、[标准库文档](https://raw.githubusercontent.com/python/cpython/b35c37910a4595f22458cf0291a9b0252b3c6c70/Doc/library/importlib.metadata.rst)） | 安装元数据（`.dist-info/entry_points.txt`） | 手动（插件自注册进宿主 Registry） | 靠宿主自检 | ✅ **本项目推荐**：零额外依赖，与 `uv` 的安装模型天然契合。POC 已实跑（§3） |
+| **`pluggy`**（[官方文档](https://pluggy.readthedocs.io/en/stable/)，pytest 的插件内核） | `entry_points` + 显式 `register()` | hookspec/hookimpl（**有签名校验**） | 靠 hookspec 版本 | 插件需要**多实现点 + 精细调用顺序**时；本项目的扩展点数量（约 2-4 个）还用不上它 |
 | **`stevedore`** | `entry_points` 封装 | Driver/Extension 两类模式 | 有 | OpenStack 生态；比 `pluggy` 更重，适合"驱动式"插件 |
 | **命名空间包（PEP 420）** | 导入路径自动合并 | 无 | 无 | 只做"代码分散在多包但共享命名空间"，**不做生命周期管理**；不适合做插件契约 |
 | **显式注册表 / 配置文件** | 读清单文件 | 手动 | 手动 | ✅ **与 entry_points 组合使用最稳**：清单给"启用/顺序/配置"，entry_points 给"发现" |
@@ -367,7 +374,7 @@ def register(reg) -> None:
 
 | 平台 | 模型 | 代价/教训（对本项目的启示） |
 |---|---|---|
-| **VS Code** | 扩展跑在**独立进程**（Extension Host），经 RPC 通信 | 换来崩溃隔离与依赖隔离；代价是 RPC 边界、启动延迟、API 版本矩阵。**本项目的插件全是自己写的可信代码，不需要这层** |
+| **VS Code** | 扩展跑在**独立进程**（Extension Host），经 RPC 通信（[官方设计说明](https://mintlify.wiki/microsoft/vscode/concepts/extension-system)、[Extensibility 原则](https://raw.githubusercontent.com/microsoft/vscode-docs/f9eab280a20fc7a13991fc83aa723abd716224e2/docs/extensionAPI/patterns-and-principles.md)） | 换来崩溃隔离与依赖隔离；代价是 RPC 边界、启动延迟、API 版本矩阵。**本项目的插件全是自己写的可信代码，不需要这层** |
 | **Eclipse / OSGi** | 进程内 bundle + 动态热插拔 | 复杂度极高（类加载隔离、服务注册表、版本范围）；**单人项目绝对不要模仿** |
 | **Jenkins** | 进程内插件 + 极长的 API 兼容期 | 教训：**"永不破坏插件 API"的承诺会成为巨大负担**，最终靠大量 `@Deprecated` 垫层维持 |
 | **Home Assistant / Ansible（collections）** | 进程内集成 + 严格契约与弃用周期 | 教训：契约文档与弃用流程比代码本身更耗人力 |
@@ -375,6 +382,11 @@ def register(reg) -> None:
 
 > **结论**：上表所有"重"模型（独立进程、热插拔、版本协商矩阵）都是**为第三方不可信插件或大规模生态**付出的成本。
 > 本项目的插件方只有你自己、全是可信代码、数量 1-3 个 → **只需"进程内 + entry_points + 启动自检"这一档**。
+>
+> **关于 `pluggy` 的补充判断**：它是"**多实现点 + 调用顺序语义**"的强项（pytest 需要为每个钩子协调几十个插件）。
+> 本项目只有 2-4 个扩展点、1-3 个插件，引入 `pluggy` 会多一层依赖与概念，收益不抵成本。
+> **但若将来扩展点数量上到 10+ 个、且需要"多个插件对同一动作按序介入"，应重新评估 `pluggy`**
+> （它自带 hookspec 签名校验，正好解决 §3 陷阱 #3 的"扩展点静默 None"）。
 
 ### 8.2 法规：需要核对的三份文本（**只给出处，不解释条款**）
 
@@ -397,6 +409,22 @@ def register(reg) -> None:
 1. 合同里知识产权条款的**原文**（有没有"成果归甲方"、"任职/受托期间一切成果"、
    有没有提到"既有资产/pre-existing"）；
 2. 你与公司之间是**劳动关系**还是**委托关系**（决定适用哪一套默认规则）。
+
+### 8.2.1 关于条款号：我为什么没写
+
+我原本安排了一轮独立的外部调研去核条款原文（含条号、职务作品与委托作品的默认归属差异），
+**该调研未产出结果**。我随后自己检索，但搜索返回的是来源清单而非条文正文，
+**我无法在不看到原文的情况下可靠引用条号**。
+
+**因此我选择不写条号，只给出官方出处**：复述法条而出错（尤其是条号）比"不给条文"更危险——
+你可能拿一个错的条号去和律师/公司沟通，反而损害你的立场。
+
+**这一块的正确获取方式**（任选其一，成本都很低）：
+1. 打开下面两个官方链接，用 `Ctrl+F` 搜「职务」「委托」定位到相关条款，连同合同条款一起给律师；
+2. 直接让律师查——这本来就是 §5.0 那 0.5 人日里该做的事。
+
+> 我刻意把这一节保持"薄"：**它的价值在于告诉你"该问什么"，不在于替你回答**。
+> 权利归属是合同解释问题，AI 不应也不会代替有资格的判断。
 
 ### 8.3 开源许可与"清洁室"的作用边界（工程视角）
 
@@ -441,7 +469,7 @@ POC 是临时的（建在 `%TEMP%\plugin_poc`，未入库）。要正式纳入�
 | 坏插件不会拖垮宿主 | POC 故意注入抛异常的插件 | ✅ 被隔离并告警 |
 | 插件向宿主贡献导航/扩展点、宿主反向取用 | POC 的 `add_nav` / `provide` / `get` | ✅ 通过 |
 | `uv` 支持 git / path / editable 依赖与 workspace | `uv add --help` / `uv help` | ✅ 参数齐备 |
-| PyInstaller 能收集入口点插件 | 检查 6.22.2 的 hooks 工具 | ✅ `copy_metadata()` + `collect_entry_point()` 存在 |
+| PyInstaller 能收集入口点插件 | 检查 6.22.2 的 hooks 工具 + 官方讨论区实证 | ✅ `copy_metadata()` + `collect_entry_point()` 存在；且"打包后 entry point 发现失败"是已知问题（见风险 R3） |
 | 本项目 spec 已有可照抄的收集模式 | 读 `workbench/server.spec` | ✅ 已有 `collect_all()` 用法 |
 | 前端/壳/扩展与公司平台无关 | 平台特征词全量扫描 | ✅ 仅产品名与注释，无平台语义 |
 
