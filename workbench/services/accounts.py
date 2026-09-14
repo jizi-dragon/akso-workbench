@@ -18,6 +18,7 @@ from typing import Any
 from cryptography.fernet import Fernet, InvalidToken
 
 from .. import db
+from .egmp.kernel.urls import normalize_base_url
 from .storage import get_setting, new_id, now_ms, set_setting
 
 _KEY_SETTING = "account_fernet_key"
@@ -88,7 +89,7 @@ def create_env(*, name: str, base_url: str = "", note: str = "") -> dict[str, An
     env = {
         "id": new_id(),
         "name": name.strip(),
-        "base_url": (base_url or "").strip().rstrip("/"),
+        "base_url": normalize_base_url(base_url),
         "note": note or "",
         "created_at": now_ms(),
         "updated_at": now_ms(),
@@ -111,7 +112,7 @@ def update_env(env_id: str, *, name: str | None = None, base_url: str | None = N
             raise AccountError("环境名称不能为空")
         env["name"] = name.strip()
     if base_url is not None:
-        env["base_url"] = base_url.strip().rstrip("/")
+        env["base_url"] = normalize_base_url(base_url)
     if note is not None:
         env["note"] = note
     env["updated_at"] = now_ms()
@@ -300,7 +301,7 @@ def account_env_base_url(account_id: str) -> str:
     account = get_account(account_id)
     if not account:
         raise AccountError(f"账号不存在：{account_id}")
-    return account.get("env_base_url") or ""
+    return normalize_base_url(account.get("env_base_url") or "")
 
 
 # ------------------------------------------------- 盒子管理（quick-login 盒子语义）
@@ -477,11 +478,11 @@ def import_backup(data: dict[str, Any]) -> dict[str, Any]:
         raise AccountError("备份缺少密钥（fernetKey）")
     file_fernet = _F(file_key.encode("ascii"))
 
-    env_by_url = {e["base_url"]: e["id"] for e in list_envs()}
-    existing = {(a.get("env_base_url") or "", a["username"]) for a in list_accounts()}
+    env_by_url = {normalize_base_url(e["base_url"]): e["id"] for e in list_envs()}
+    existing = {(normalize_base_url(a.get("env_base_url") or ""), a["username"]) for a in list_accounts()}
     created = skipped = 0
     for item in data.get("accounts") or []:
-        base_url = str(item.get("envBaseUrl") or "").strip().rstrip("/")
+        base_url = normalize_base_url(str(item.get("envBaseUrl") or ""))
         enc = str(item.get("passwordEnc") or "")
         username = str(item.get("username") or "").strip()
         if not base_url or not username or not enc:

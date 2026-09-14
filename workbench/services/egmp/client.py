@@ -22,7 +22,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from .. import accounts as accounts_svc
-from .kernel import endpoints
+from .kernel import endpoints, normalize_base_url
 
 TOKEN_TTL_S = 55 * 60
 
@@ -45,7 +45,13 @@ class EgmpSettings(BaseModel):
 
 
 def _trim_base(url: str) -> str:
-    return url.rstrip("/")
+    """归一化平台根地址（唯一事实来源见 `kernel.urls`）。
+
+    历史缺陷：这里原先是裸的 `url.rstrip("/")`，于是用户把**登录页**地址整段粘进来
+    （`https://host/login`）时，AUTH 会被拼成 `.../login/api/openapi/v1.0/Auth` →
+    网关 405，表现为「login 连通测试无法连通」。
+    """
+    return normalize_base_url(url)
 
 
 def token_cache_path(base_url: str, username: str) -> Path:

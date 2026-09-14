@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import db
+from ..services.egmp.kernel.urls import normalize_base_url
 from ..services.storage import now_ms
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -46,7 +47,7 @@ def _tool_login_platform(args: dict[str, Any]) -> dict:
     account = accounts_svc.get_account(account_id)
     if not account:
         raise ValueError(f"账号不存在：{account_id}")
-    base_url = account.get("env_base_url") or ""
+    base_url = normalize_base_url(account.get("env_base_url") or "")
     if not base_url:
         raise ValueError(f"账号 {account['username']} 所属平台环境未配置 baseUrl")
     password = accounts_svc.reveal_password(account_id)
