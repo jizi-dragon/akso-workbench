@@ -3,7 +3,7 @@
   "name": "spider-training-mgr",
   "baseUrl": "https://demo-val.example.com",
   "envName": "示例环境",
-  "note": "spider 链路的真实形态夹具。结构取自 Recorder 对假平台的实跑录制（11 条交互），ID 与业务命名为确定性占位值，不含任何真实平台数据。覆盖：对象元数据 → 字段页（含 dataType 15 引用字段 → 归因边）→ 生命周期状态 → 工作流清单 → 每个状态的用户动作/动作栏/状态详情。",
+  "note": "spider 链路的真实形态夹具。结构取自 Recorder 对假平台的实跑录制（12 条交互），ID 与业务命名为确定性占位值，不含任何真实平台数据。覆盖：对象元数据 → 字段页（含 dataType 15 引用字段：`owner_obj` 自环 + `owner_dept__c` 跨对象引用，**目标只给 referenceObjectId + objectRelation.objectName、referenceObjectCode 为 null**——这正是真机的形态，2026-09-14 在标准环境实测确认）→ 生命周期状态 → 工作流清单 → 工作流步骤（step4 流程图）→ 每个状态的用户动作/动作栏/状态详情。",
   "interactions": [
     {
       "method": "GET",
@@ -74,6 +74,27 @@
             "id": 1
           },
           "referenceObjectId": "obj-training-mgr"
+        },
+        {
+          "id": "fld-dept",
+          "code": "owner_dept__c",
+          "name": "所属部门",
+          "dataType": 15,
+          "invisible": false,
+          "disabled": false,
+          "isRequired": false,
+          "statisticsArrange": {
+            "id": 1
+          },
+          "referenceObjectId": "obj-department",
+          "objectRelation": {
+            "id": "rel-training-dept",
+            "name": "培训管理/所属部门/部门对象",
+            "objectId": "obj-department",
+            "objectName": "部门对象",
+            "objectCode": null,
+            "type": 2
+          }
         }
       ]
     },
@@ -117,6 +138,66 @@
           "lifecycleId": "lc-training-mgr",
           "workflowType": 10,
           "isSingleRecord": true
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/platform/Workflow/GetWorkflowSteps",
+      "params": {
+        "workflowConfigId": "wfview-training"
+      },
+      "ok": true,
+      "response": [
+        {
+          "id": "wfstep-start",
+          "name": "开始",
+          "stepType": 10,
+          "sort": 1,
+          "nextStepId": "wfstep-approve",
+          "nextStepList": [
+            {
+              "id": "wfstep-approve",
+              "name": "审批",
+              "code": null
+            }
+          ]
+        },
+        {
+          "id": "wfstep-approve",
+          "name": "审批",
+          "stepType": 30,
+          "sort": 2,
+          "nextStepId": "wfstep-done",
+          "nextStepList": [
+            {
+              "id": "wfstep-done",
+              "name": "改状态",
+              "code": null
+            }
+          ]
+        },
+        {
+          "id": "wfstep-done",
+          "name": "改状态",
+          "stepType": 90,
+          "sort": 3,
+          "nextStepId": "wfstep-end",
+          "nextStepList": [
+            {
+              "id": "wfstep-end",
+              "name": "结束",
+              "code": null
+            }
+          ]
+        },
+        {
+          "id": "wfstep-end",
+          "name": "结束",
+          "stepType": 20,
+          "sort": 4,
+          "nextStepId": null,
+          "nextStepList": []
         }
       ]
     },

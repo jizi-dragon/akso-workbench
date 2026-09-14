@@ -23,6 +23,7 @@ from .. import config, db
 from ..services import accounts as accounts_svc
 from ..services.egmp import insight as native_insight
 from ..services.egmp.client import EgmpClient
+from ..services.egmp.kernel.urls import normalize_base_url
 from ..services.storage import now_ms
 
 router = APIRouter(prefix="/api/insight", tags=["insight"])
@@ -43,7 +44,7 @@ def _credentials(account_id: str) -> tuple[dict, str, str, str]:
     account = accounts_svc.get_account(account_id)
     if not account:
         raise HTTPException(400, f"账号不存在：{account_id}")
-    base_url = account.get("env_base_url") or ""
+    base_url = normalize_base_url(account.get("env_base_url") or "")
     if not base_url:
         raise HTTPException(400, f"账号 {account['username']} 所属平台环境未配置 baseUrl")
     return account, base_url, account["username"], accounts_svc.reveal_password(account_id)
@@ -56,6 +57,21 @@ def _environment_of(account: dict, base_url: str) -> dict:
         "envName": account.get("env_name"),
         "baseUrl": base_url,
     }
+
+
+def _workspace_paths(target: Path, workdir: Path) -> list[str]:
+    """产物落点**如实回报**（供 `insight_runs.workspace_dir` 回填）。
+
+    只有真的落在用户工作区时才算工作区；写进任务兜底目录 `runtime/insight/<job_id>/`
+    时返回空数组——按产物接口的约定，那时面板应当回落到 `artifact_dir` 去列文件。
+
+    历史缺陷（0.3.8 真机实测）：路由**自己**定落点（先定落点再爬 + 不可写时回退），
+    却只把落点当 `output_dir` 交给 spider；而门面 `run_spider` 只在它**自己**解析
+    `workspace_root` 时才填 `workspaces` → 走 `output_dir` 这条路它一律返回空 →
+    `workspace_dir` 恒空 → 产物面板回落到 runtime 任务目录 →
+    **用户在工作区里明明有 8 件产物，界面上「只有一个 proc.log」**。
+    """
+    return [str(target)] if Path(target) != Path(workdir) else []
 
 
 def _status_from_coverage(result: dict) -> str:
@@ -74,51 +90,68 @@ def _run_job(req: InsightRequest, workdir: Path) -> dict:
     """同步执行（原生 Python，无子进程）。"""
     from ..services.egmp.client import login
 
-    account, base_url, username, password = _credentials(req.account_id)
-    environment = _environment_of(account, base_url)
-    token = login(base_url, username, password, req.env_id)
     log_path = workdir / "proc.log"
 
     def on_log(line: str) -> None:
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
 
-    def run_spider_into(codes: list[str]) -> dict:
-        """spider 落点：用户可配工作区根优先，不可用则退回任务目录。
+    # 先落一行「要做什么」：**失败也要留现场**。历史缺陷——`on_log` 只在 login 成功之后
+    # 才被调用，于是任何 login 失败（地址错、网关 405/502、超时）都会让 proc.log
+    # 根本不存在，界面只剩一句无从下手的「无法连通」。
+    on_log(f"洞察命令：{req.command}" + (f"（对象：{req.objects}）" if req.objects else ""))
 
-        先定落点再爬——不做事后重试，否则平台调用会被重放一遍。
-        """
-        from ..services.egmp.insight import workspace as workspace_mod
+    try:
+        account, base_url, username, password = _credentials(req.account_id)
+        environment = _environment_of(account, base_url)
+        on_log(f"平台环境：{base_url}")
+        token = login(base_url, username, password, req.env_id)
 
-        try:
-            target = workspace_mod.run_dir(",".join(codes))
-            on_log(f"产物落点：{target}")
-        except OSError as exc:
-            on_log(f"工作区不可写（{exc}），产物改落任务目录")
-            target = workdir
-        outcome = native_insight.run_spider(client, codes, output_dir=target,
-                                            on_log=on_log, environment=environment)
-        # 任务日志留在任务目录（同一 job 的既有位置不变），另在工作区留一份副本，
-        # 好让产物面板能在同一处列出「日志 + 产物」。
-        if target != workdir and log_path.is_file():
+        def run_spider_into(codes: list[str]) -> dict:
+            """spider 落点：用户可配工作区根优先，不可用则退回任务目录。
+
+            先定落点再爬——不做事后重试，否则平台调用会被重放一遍。
+            """
+            from ..services.egmp.insight import workspace as workspace_mod
+
             try:
-                (target / "proc.log").write_bytes(log_path.read_bytes())
-            except OSError:
-                pass
-        return outcome
+                target = workspace_mod.run_dir(",".join(codes))
+                on_log(f"产物落点：{target}")
+            except OSError as exc:
+                on_log(f"工作区不可写（{exc}），产物改落任务目录")
+                target = workdir
+            outcome = native_insight.run_spider(client, codes, output_dir=target,
+                                                on_log=on_log, environment=environment)
+            # **落点如实回报**：路由自己定的落点（先定落点再爬 + 不可写时回退），所以
+            # `workspaces` 也得由路由自己填——门面只在它**自己**解析 workspace_root 时才填，
+            # 走 output_dir 这条路它一律返回空。历史缺陷（0.3.8 真机实测）：这一格空了以后
+            # `insight_runs.workspace_dir` 恒为空 → 产物面板回落到 runtime 任务目录 →
+            # 用户在工作区里明明有 8 件产物，界面上「只有一个 proc.log」。
+            outcome["workspaces"] = _workspace_paths(target, workdir)
+            # 任务日志留在任务目录（同一 job 的既有位置不变），另在工作区留一份副本，
+            # 好让产物面板能在同一处列出「日志 + 产物」。
+            if target != workdir and log_path.is_file():
+                try:
+                    (target / "proc.log").write_bytes(log_path.read_bytes())
+                except OSError:
+                    pass
+            return outcome
 
-    started = now_ms()
-    with EgmpClient(base_url, token) as client:
-        if req.command == "login":
-            result = native_insight.run_login(client, base_url, username, password, req.env_id)
-            on_log(f"登录成功：{base_url}")
-        elif req.command == "spider":
-            codes = _split_codes(req.objects)
-            if not codes:
-                raise HTTPException(400, "spider 需要 objects（对象编码，逗号分隔）")
-            result = run_spider_into(codes)
-        else:
-            raise HTTPException(400, f"未知命令：{req.command}（login/spider）")
+        started = now_ms()
+        with EgmpClient(base_url, token) as client:
+            if req.command == "login":
+                result = native_insight.run_login(client, base_url, username, password, req.env_id)
+                on_log(f"登录成功：{base_url}")
+            elif req.command == "spider":
+                codes = _split_codes(req.objects)
+                if not codes:
+                    raise HTTPException(400, "spider 需要 objects（对象编码，逗号分隔）")
+                result = run_spider_into(codes)
+            else:
+                raise HTTPException(400, f"未知命令：{req.command}（login/spider）")
+    except Exception as exc:  # noqa: BLE001 —— 失败必须留痕后再抛
+        on_log(f"执行失败：{type(exc).__name__}: {exc}")
+        raise
 
     status = _status_from_coverage(result)
     coverage = result.get("coverage") or {}

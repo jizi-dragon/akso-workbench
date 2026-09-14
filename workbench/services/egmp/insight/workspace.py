@@ -152,8 +152,14 @@ def build_coverage(*, total: int, succeeded: int, failures: list | None = None,
 def build_manifest(*, command: str, object_code: Any, coverage: dict[str, Any],
                    artifacts: list[Path] | None = None, environment: dict[str, Any] | None = None,
                    failures: list | None = None, platform_version: str | None = None,
+                   notes: list | None = None,
                    generated_at: datetime | None = None) -> dict[str, Any]:
-    """构造 manifest：让产物自证「这是什么、覆盖到哪、有什么失败的」。"""
+    """构造 manifest：让产物自证「这是什么、覆盖到哪、有什么失败的、边界在哪」。
+
+    ``failures`` = **我们没读到**（读失败）；``notes`` = **平台本身的边界**
+    （未启用生命周期、没给对象编码所以没展开、这个状态本来就没配动作）。两者分开记，
+    否则「没配」与「没读到」在产物里长得一模一样。
+    """
     import hashlib
 
     files = []
@@ -177,6 +183,7 @@ def build_manifest(*, command: str, object_code: Any, coverage: dict[str, Any],
         "coverage": coverage,
         "artifacts": files,
         "failures": list(failures or []),
+        "notes": list(notes or []),
     }
 
 

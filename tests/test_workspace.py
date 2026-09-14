@@ -327,6 +327,30 @@ def test_coverage_maps_to_job_status() -> None:
     assert _status_from_coverage({}) == "failed"
 
 
+def test_job_reports_workspace_only_when_it_really_is_one() -> None:
+    """落点如实回报：走工作区才填 `workspace_dir`，落到任务兜底目录必须留空。
+
+    回归的是 0.3.8 真机缺陷：路由自己定落点却只当 `output_dir` 传给 spider，
+    `workspaces` 因此恒空 → `insight_runs.workspace_dir` 恒空 → 产物面板回落到
+    runtime 任务目录，**用户在工作区里明明有 8 件产物，界面上「只有一个 proc.log」**。
+    """
+    from workbench.api.routes_insight import _workspace_paths
+
+    workdir = Path("D:/data/runtime/insight/abc123")
+    ws = Path("D:/Documents/AksoWorkbench/洞察/change_plan__c/20260914-223238")
+    assert _workspace_paths(ws, workdir) == [str(ws)]
+    assert _workspace_paths(workdir, workdir) == [], "兜底目录不得被谎报成工作区"
+
+
+def test_artifact_lookup_prefers_workspace_then_falls_back() -> None:
+    """产物接口的取目录口径：工作区列优先，空则回落 `artifact_dir`（两半都要能读）。"""
+    from workbench.api.routes_insight import _workspace_dirs
+
+    assert _workspace_dirs({"workspace_dir": ""}) == [], "空 → 调用方回落 artifact_dir"
+    assert [p.name for p in _workspace_dirs({"workspace_dir": "a\nb"})] == ["a", "b"]
+    assert _workspace_dirs({}) == [], "历史行没有该列时不得炸"
+
+
 # ---------------------------------------------------------------- 迁移
 
 

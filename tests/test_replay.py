@@ -105,12 +105,51 @@ def test_scope_is_taken_from_fixture_base_url() -> None:
 
 
 def test_graph_counts_match_fixture(tmp_path: Path) -> None:
-    """节点/边计数由夹具推导：1 对象 + 3 状态节点，1 条引用字段归因边。"""
+    """节点/边计数由夹具推导：2 个对象节点（目标 + 1 个未展开的占位）+ 3 个状态节点；
+    1 条归因边（发起工作流）+ 1 条关系边。
+
+    关系边来自 `owner_dept__c`（dataType 15，目标只给 `referenceObjectId` + `objectName`）；
+    `owner_obj` 是**自环**，按定义不产生关系边（只记 selfLoop）。
+    占位节点也计入 objectNodes——它确实画在图上，且由 `unexpandedRelations` 显式标注。
+    """
     result = _spider(_client(), tmp_path)
     assert result["ok"] is True
     assert result["stats"] == {
-        "objectNodes": 1, "stateNodes": 3, "attrEdges": 1, "relationEdges": 0,
+        "objectNodes": 2, "stateNodes": 3, "attrEdges": 1, "relationEdges": 1,
     }, "图模型计数与夹具不符——多半是推导逻辑变了，而不是夹具坏了"
+
+
+def test_reference_field_target_is_read_from_reference_object_id(tmp_path: Path) -> None:
+    """step1 关系网必须认 `referenceObjectId` / `objectRelation.objectName`。
+
+    回归的是真机缺陷：平台 `referenceObjectCode` **恒为 null**，旧实现只读它，于是
+    **任何对象都推不出关系边**（真机 `change_plan__c` 有 5 个 dataType=15 引用字段，却出 0 条边）。
+    命名口径（用户定稿）：目标对象**以名称为标识**，平台没给编码就作占位节点、并记边界。
+    """
+    _spider(_client(), tmp_path)
+    model = json.loads((tmp_path / "spider-network.json").read_text(encoding="utf-8"))["model"]
+    relation = [e for e in model["edges"] if e["kind"] == "relation"]
+    assert len(relation) == 1
+    assert relation[0]["label"] == "所属部门"
+    target = next(n for n in model["nodes"] if n["id"] == relation[0]["target"])
+    assert target["label"] == "部门对象", "平台没给编码时，节点标识用目标对象名称"
+    assert target.get("stub") is True
+    assert model.get("unexpandedRelations"), "未展开的目标必须显式记边界，不得静默丢"
+
+
+def test_step_artifacts_cover_all_five_steps(tmp_path: Path) -> None:
+    """用户定稿的「有效产物」清单：五步每步都要有落盘产物（空表也要有文件说明为什么空）。"""
+    _spider(_client(), tmp_path)
+    names = {p.name for p in tmp_path.iterdir()}
+    assert {
+        "step1-relations.md", "step2-status-table.md", "step3-attribution.md",
+        "step4-workflows.drawio", "spider-network.md", "spider-network.json",
+        "spider-network.drawio", "manifest.json",
+    } <= names
+    step2 = (tmp_path / "step2-status-table.md").read_text(encoding="utf-8")
+    assert "| 生命周期状态名称 | 进入动作 | 用户动作 | 进入条件 |" in step2, "四列表列口径是写死的契约"
+    step4 = (tmp_path / "step4-workflows.drawio").read_text(encoding="utf-8")
+    assert "培训审批流" in step4 and step4.startswith("<mxfile")
 
 
 def test_coverage_is_complete_and_manifest_self_proves(tmp_path: Path) -> None:
@@ -122,10 +161,13 @@ def test_coverage_is_complete_and_manifest_self_proves(tmp_path: Path) -> None:
     assert manifest["command"] == "spider"
     assert manifest["objectCode"] == OBJECT
     assert manifest["coverage"]["status"] == "complete"
+    assert manifest["coverage"]["workflowGraphs"] == 1
+    assert manifest["coverage"]["unexpandedRelations"] == 1, "边界计数要进 coverage（自证）"
     names = {a["name"] for a in manifest["artifacts"]}
     assert names == {
-        "spider-network.json", "spider-network.drawio",
-        "spider-network.md", "step3-attribution.md",
+        "spider-network.json", "spider-network.drawio", "spider-network.md",
+        "step1-relations.md", "step2-status-table.md", "step3-attribution.md",
+        "step4-workflows.drawio",
     }
     assert all(a.get("sha256") for a in manifest["artifacts"]), "产物必须带哈希，否则 manifest 不自证"
 

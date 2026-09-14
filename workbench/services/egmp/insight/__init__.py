@@ -47,11 +47,16 @@ def run_spider(client: EgmpClient, codes: list[str], *, output_dir: Path | None 
     artifacts: list[str] = []
     workspaces: list[str] = []
     stats = spider["model"]["stats"]
+    notes = spider.get("notes") or []
+    graphs = spider.get("workflowGraphs") or []
+    unexpanded = spider["model"].get("unexpandedRelations") or []
     coverage = workspace.build_coverage(
         total=len(codes), succeeded=len(codes),
         failures=spider.get("failures") or [],
         objectNodes=stats.get("objectNodes"), stateNodes=stats.get("stateNodes"),
         attrEdges=stats.get("attrEdges"), relationEdges=stats.get("relationEdges"),
+        # 自证「这次织出来多大的网」以及**边界在哪**（规格：不允许静默留白）
+        workflowGraphs=len(graphs), unexpandedRelations=len(unexpanded), boundaryNotes=len(notes),
     )
     target = output_dir
     if workspace_root is not None:
@@ -63,8 +68,16 @@ def run_spider(client: EgmpClient, codes: list[str], *, output_dir: Path | None 
         workspace.write_manifest(target, workspace.build_manifest(
             command="spider", object_code=",".join(codes), coverage=coverage,
             artifacts=written, environment=environment, failures=spider.get("failures") or [],
+            notes=notes,
         ))
     log(f"■ 织网完成（覆盖度 {coverage['status']}）：{stats['objectNodes']} 对象 / "
-        f"{stats['stateNodes']} 状态 / {stats['attrEdges']} 归因边（networkx 分析已生成）")
+        f"{stats['stateNodes']} 状态 / {stats['attrEdges']} 归因边 / "
+        f"{stats['relationEdges']} 关系边 / {len(graphs)} 张工作流图 "
+        f"（产物 {len(artifacts)} 件，networkx 分析已生成）")
+    for item in notes[:5]:
+        log(f"  · 边界：{item}")
+    if spider.get("failures"):
+        log(f"  ! 读失败 {len(spider['failures'])} 项（已记入 manifest.failures）")
     return {"ok": coverage["status"] != "degraded", "stats": stats,
-            "artifacts": artifacts, "coverage": coverage, "workspaces": workspaces}
+            "artifacts": artifacts, "coverage": coverage, "workspaces": workspaces,
+            "notes": notes}
