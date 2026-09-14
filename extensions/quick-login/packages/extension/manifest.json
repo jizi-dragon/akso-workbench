@@ -6,14 +6,6 @@
   "version": "0.3.5",
   "description": "纯浏览器多账号并行：每账号独立标签页与存储命名空间，页签名自定义，凭证加密保存。",
   "minimum_chrome_version": "110",
-  "commands": {
-    "quick-wheel": {
-      "suggested_key": {
-        "default": "Alt+Q"
-      },
-      "description": "打开账号选择轮盘（可在 chrome://extensions/shortcuts 自定义；桌面壳运行时 Alt+Q 优先呼出桌面轮盘）"
-    }
-  },
   "icons": {
     "16": "assets/Icon16.png",
     "48": "assets/Icon48.png",

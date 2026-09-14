@@ -67,7 +67,7 @@
 | 站点权限 | 逐站点授权链路 + `optional_host_permissions` | **声明式全站权限** `host_permissions: ["<all_urls>"]`（0.2.21）；授权 UI 下线（0.2.22），`site-auth.ts` 保留为休眠源码 |
 | 页面监视 | Page Monitor + 最近页面轮盘（Alt+W） | **整块撤销**（0.2.22）；页签标题仍是页签名 |
 | 桌面联动 | 无 | 新增 `background/sync.ts` 桌面同步桥（快照 + 指令面 + 状态面） |
-| 快捷键 | 仅扩展 `quick-wheel` | 扩展 `quick-wheel`（Ctrl+Shift+Q）+ 桌面壳全局 `Alt+Q`；**桌面运行时 Alt+Q 优先**，扩展快捷键被压制 |
+| 快捷键 | 扩展 `quick-wheel`（`suggested_key: Alt+Q`） | **扩展不注册任何快捷键**（2026-09-14）：`Alt+Q` 归桌面壳全局热键**独占**；manifest 无 `commands` 段，SW 里也不再引用 `chrome.commands` |
 | 会话模型 | `session-manager.ts` / `account-registry.ts` / `navigation.ts` + `session.*` 协议 | **已删**（0.2.23），净删 2,849 行 |
 
 ## 四、与桌面的协议（数据面 / 指令面 / 状态面）
@@ -173,7 +173,7 @@ npm run build      # esbuild → dist/（build.mjs 先 rmSync 清空 dist 再重
 
 | 工具 | 验什么 | 基线 |
 |---|---|---|
-| `tools/verify_extension_boot.py` | 启动冒烟（隔离 profile 装载 dist） | 7/7：SW 启动未崩 / 命令清单仅 `quick-wheel` / 无 `ql:recentPages` / 无 `ql:pageNames` / `akso:acctMap` 数据面同步成功 |
+| `tools/verify_extension_boot.py` | 启动冒烟（隔离 profile 装载 dist） | **10/10**：SW 启动未崩 / 命令清单为空 / 无 `ql:recentPages` / 无 `ql:pageNames` / 宿主页零 JS 错误 / manifest 不含 `Alt+Q` / **B9 桌面同步桥已启动（`akso:sync` 闹钟存在）** / **B10 无 commands 声明时 SW 仍跑到底** |
 | `tools/verify_extension_isolation.py` | Cookie 袋隔离 + 多 iframe 自动填表 | 8/8（含 0.2.23 两个缺陷的回归点） |
 | `tools/verify_host_logic.mjs` | host/端口口径（`host.ts` 五函数） | 22/22 |
 | `tools/acceptance_extension_e2e.py` | 端到端：数据面同步 / `par.open` 开页 / 自动登录离开 `/login` | E2E_PASS（A1 2/2、A2 <1s、A3 进 `/web`） |
@@ -182,6 +182,12 @@ npm run build      # esbuild → dist/（build.mjs 先 rmSync 清空 dist 再重
 | `tools/verify_wheel_page.py` | 轮盘页渲染（SVG 扇区/Hub/动画/零 JS 错误） | — |
 
 冒烟要点：**必须有头模式** `+ --load-extension=dist`（headless 下 MV3 扩展不加载，`service_workers` 为空）。
+
+> ⚠️ **B9/B10 为什么必须存在**：SW「进程活着」不等于「顶层脚本跑完了」。
+> SW 顶层抛异常时进程仍在、宿主页零错误，前 8 项会全绿而功能全废。
+> `akso:sync` 闹钟由 `sync.ts` 的 `startDesktopSync()` 创建，是「顶层跑到最后一行」的可靠证据。
+> 反向验证方式：临时把 `dist/background.js` 里 `chrome.alarms.create("akso:sync"...)` 行删掉，
+> 冒烟应立刻从 10/10 掉到 8/10。
 
 ## 八、安全边界与已知风险
 
@@ -204,8 +210,19 @@ npm run build      # esbuild → dist/（build.mjs 先 rmSync 清空 dist 再重
 2. **同步通道无认证**：`127.0.0.1:18765` 的 `/extension/*` 无任何凭据校验——
    本机任意进程都能读快照（含 Fernet 密文与密钥）。
 3. **`host_permissions: ["<all_urls>"]`**：声明的权限面比功能所需更宽（换来的是免逐站点授权）。
-4. **Alt+Q 双绑**：桌面全局热键与扩展 `quick-wheel` 都是 Alt+Q，桌面运行时扩展侧被压制；
-   扩展命令的 `suggested_key` 与实际生效键位不一致（用户可在 `chrome://extensions/shortcuts` 改）。
+
+> **已修复（2026-09-14）：`Alt+Q` 双绑**。原先扩展 `quick-wheel` 的 `suggested_key` 也是 `Alt+Q`，
+> 且注释假设「桌面运行时 Alt+Q 优先」——**该假设不成立**：桌面没运行时没人抢，
+> Chrome 就把 `Alt+Q` 交给扩展，于是在浏览器里弹出浏览器版轮盘（用户实测）。
+> 现已删除 manifest 的 `commands` 段，`Alt+Q` 归还桌面独占。
+>
+> ⚠️ **改这一处有连带陷阱（已实机踩到）**：Chrome 在扩展**未声明任何命令**时
+> **根本不提供 `chrome.commands` 这个 API**（值为 `undefined`）。任何模块在 SW **顶层**
+> 无条件执行 `chrome.commands.onCommand.addListener(...)` 都会抛 `TypeError`，
+> 而**顶层抛出 = 其后所有代码永不执行**（含 `startDesktopSync()`）——
+> 表现是「账号不下发 / 徽标离线」这种完全看不出根因的静默故障，
+> 且当时启动冒烟 B1~B8 **全绿**。现由冒烟 **B9/B10** 钉住这个回归点
+> （见 §七 验证基线）。
 
 ## 九、关键文件索引
 

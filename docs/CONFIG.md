@@ -173,7 +173,7 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | 轮盘窗尺寸 | `desktop/main.js` | `560 × 640`，无边框透明置顶，失焦自动关（400ms 启动宽限） | |
 | 主窗尺寸 | `desktop/main.js` | `1440 × 920`（最小 1100×700） | |
 | 会话窗尺寸 | `desktop/main.js` | `1440 × 900` | |
-| 全局热键 | `desktop/main.js` | `Alt+Q`（轮盘单例 toggle） | 与扩展 `quick-wheel` 同名键位——桌面运行时扩展侧被压制（见 [EXTENSION-PLANE.md](EXTENSION-PLANE.md) §8.2） |
+| 全局热键 | `desktop/main.js` | `Alt+Q`（轮盘单例 toggle） | **桌面独占**：扩展已不注册任何快捷键（2026-09-14 删 manifest `commands`），桌面未运行时不会弹出浏览器版轮盘（见 [EXTENSION-PLANE.md](EXTENSION-PLANE.md) §8） |
 | 服务就绪等待 | `desktop/main.js` `waitReady` | 40 s，每 300ms 探一次 `/` | 超时则主窗加载 `blank.html?error=timeout` |
 | 更新检查节拍 | `desktop/updater.js` | 启动后 **20s** 首查，之后每 **6h** | |
 | 壳状态心跳 | `desktop/updater.js` | 15 s 写一次 `shell-state.json` | 服务侧 TTL 60s |

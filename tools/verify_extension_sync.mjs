@@ -17,9 +17,11 @@ for (const item of snap.accounts) {
   if (!item.host || !item.username || !item.passwordEnc || !item.desktopId) { dropped.push(item.username); continue; }
   map[item.desktopId] = `ext:${item.username}`;
 }
+// 输出脱敏：快照来自**运行期真实账号库**，直接打印用户名会把真机账号泄进终端/CI 日志
+const mask = (name) => (name.length <= 2 ? '**' : name.slice(0, 1) + '***' + name.slice(-1));
 console.log(`快照账号总数: ${snap.accounts.length}`);
-console.log(`通过过滤进入映射: ${Object.keys(map).length} → ${Object.values(map).join(', ')}`);
-console.log(`被丢弃: ${dropped.length ? dropped.join(', ') : '无'}`);
+console.log(`通过过滤进入映射: ${Object.keys(map).length} → ${Object.values(map).map(mask).join(', ')}`);
+console.log(`被丢弃: ${dropped.length ? dropped.map(mask).join(', ') : '无'}`);
 if (Object.keys(map).length !== snap.accounts.length) throw new Error('有账号被过滤丢弃——同步链路不通');
 
 // —— 复刻 pollCommands 的 par.open 解析（第 173-176 行语义）——
@@ -32,7 +34,8 @@ const open = data.commands.find((c) => c.type === 'par.open');
 if (!open) throw new Error('指令队列没有 par.open');
 const extId = map[String(open.payload?.accountId)];
 if (!extId) throw new Error(`par.open accountId=${open.payload?.accountId} 无法映射到扩展账号——键不匹配`);
-console.log(`par.open 解析: desktopId=${open.payload.accountId} → ${extId} ✓`);
+// 输出脱敏：extId 形如 `ext:<用户名>`，直接打印会把真机账号泄进终端/CI 日志
+console.log(`par.open 解析: desktopId=${open.payload.accountId} → ${mask(extId)} ✓`);
 await fetch(`${DESKTOP}/extension/ack`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ seqs: [open.seq] }),

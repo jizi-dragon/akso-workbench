@@ -145,9 +145,15 @@ export function registerAuthHandlers(): void {
     }
   });
 
-  chrome.commands.onCommand.addListener((command) => {
+  // ⚠️ `chrome.commands` 必须判空：Chrome 在扩展**未声明任何命令**时根本不提供该 API
+  // （值为 undefined）。本扩展已不再注册任何快捷键（Alt+Q 归桌面壳独占，见 manifest 注释），
+  // 若无条件访问会在 SW 顶层抛 TypeError → 其后所有代码（含 startDesktopSync）永不执行，
+  // 表现为「账号不下发 / 徽标离线」这种完全看不出根因的静默故障（2026-09-14 实机踩到）。
+  // 这里对应的 `add_current_site` 命令同样已不注册，故该分支现在实际是死代码，仅作防御。
+  const onCommand = (command: string) => {
     if (command === 'add_current_site') {
       void siteAuth.grantCurrentTab().catch(() => undefined);
     }
-  });
+  };
+  chrome.commands?.onCommand?.addListener(onCommand);
 }

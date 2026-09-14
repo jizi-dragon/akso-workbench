@@ -192,19 +192,28 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
   return true;
 });
 
-/* ---------------- 快捷键：账号选择轮盘（v3.8：扇形环；页面内无框浮层优先） ----------------
- * toggleAccountWheel 实现抽至 background/account-wheel.ts——桌面指令通道（sync.ts）
- * 需要直调同一函数（SW 自消息不投递给自身上下文，wheel.toggle 曾因此静默丢失）。 */
-
+/* ---------------- 账号选择轮盘（触发源：桌面指令通道） ----------------
+ * `toggleAccountWheel` 实现在 background/account-wheel.ts——桌面指令通道（sync.ts）
+ * 直调同一函数（SW 自消息不投递给自身上下文，wheel.toggle 曾因此静默丢失）。
+ *
+ * ⚠️ **扩展不注册任何快捷键，也不能引用 `chrome.commands`**（2026-09-14）：
+ * `Alt+Q` 归**桌面壳全局热键独占**。曾经在 manifest 里给 `quick-wheel` 声明
+ * `suggested_key: Alt+Q`，并注释「桌面壳运行时 Alt+Q 优先」——这个假设是错的：
+ * 用户没开工作台、只有扩展挂在浏览器里时，按 Alt+Q 会被 Chrome 交给扩展，
+ * 于是**在浏览器里弹出浏览器版轮盘**（内容与桌面轮盘重复，且此时桌面数据面不可达）。
+ *
+ * **删除 manifest 的 commands 后必须同时删掉下面这个监听器**：
+ * Chrome 在扩展未声明任何命令时**根本不提供 `chrome.commands` 这个 API**（值为 undefined），
+ * 所以 `chrome.commands.onCommand.addListener(...)` 会在 **SW 顶层**抛
+ * `TypeError: Cannot read properties of undefined (reading 'onCommand')`
+ * ——顶层抛出 = 其后所有代码（含 `startDesktopSync()`）永不执行，
+ * 表现是「账号不再下发、扩展徽标离线、状态上报全停」这种**看起来完全无关**的静默故障。
+ * 这条是实机踩出来的：扩展启动冒烟 B3/B7 都是绿的（SW 进程活着、宿主页零错误），
+ * 只有拿 `alarms.getAll()` / `storage.local` 才能发现同步桥压根没启动。
+ *
+ * 轮盘唯一触发源 = 桌面经 `/extension/commands` 下发 `wheel.toggle`；桌面没运行 = 没有触发源。 */
 import { toggleAccountWheel } from './account-wheel';
 
-chrome.commands.onCommand.addListener((command) => {
-  if (command === 'quick-wheel') {
-    // 角标闪标：证明命令确实到达了当前版本的后台（现场诊断手段）
-    void flashBadge('→');
-    void toggleAccountWheel();
-  }
-});
 
 /** 角标临时显示文本后恢复 */
 async function flashBadge(text: string): Promise<void> {

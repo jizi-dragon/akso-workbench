@@ -5,6 +5,35 @@
 
 ## [未发布]
 
+### Fixed
+
+- **`Alt+Q` 在桌面端未运行时被浏览器扩展抢走（用户实测 bug）**：只有扩展挂在浏览器里、
+  工作台没开时，按 `Alt+Q` 会在**浏览器里弹出浏览器版轮盘**（内容与桌面轮盘重复，
+  且此刻桌面数据面不可达——弹出的轮盘点谁都意义不大）。
+  - **根因**：`manifest.json` 给 `quick-wheel` 声明了 `suggested_key: {default: "Alt+Q"}`，
+    注释写着「桌面壳运行时 Alt+Q 优先」——**这个假设是错的**：桌面没运行时没人抢，
+    Chrome 就把 `Alt+Q` 交给扩展。扩展是**执行面**，它的轮盘只应由桌面经
+    `/extension/commands` 下发 `wheel.toggle` 触发；桌面没运行 = 没有触发源。
+  - **修法**：删除 manifest 的 `commands` 段（`Alt+Q` 归还桌面壳全局热键独占）；
+    同步删掉 SW 里对应的 `chrome.commands.onCommand` 监听器；
+    弹窗页脚文案由「`Alt+Q` 呼出账号轮盘」改为「轮盘由桌面端 `Alt+Q` 呼出」。
+  - **⚠️ 连带修一个由本次改动暴露的 SW 顶层崩溃（严重）**：Chrome 在扩展**未声明任何命令**时
+    **根本不提供 `chrome.commands` 这个 API**（值为 `undefined`），而 SW 顶层仍无条件执行
+    `chrome.commands.onCommand.addListener(...)` → 抛
+    `TypeError: Cannot read properties of undefined (reading 'onCommand')`。
+    **顶层抛出 = 其后所有代码永不执行**，包括 `startDesktopSync()` ——
+    表现是「账号不再下发、扩展徽标离线、状态上报全停」这种**看起来完全无关的静默故障**。
+    同时修掉 `background/core/site-auth.ts:148` 里同一处无条件访问（加了 `chrome.commands?.` 判空）。
+  - **测试缺口已补**：此次事故里扩展启动冒烟 B1~B8 **全绿**（SW 进程活着、宿主页零错误），
+    只有拿 `chrome.alarms.getAll()` 才看得出同步桥压根没启动。故新增
+    **B9「桌面同步桥已启动（`akso:sync` 闹钟存在）」**（顶层跑到最后一行的可靠证据）
+    与 **B10「无 commands 声明时 SW 仍跑到底」**；已用「摘掉闹钟创建」模拟顶层崩溃反向验证：
+    10/10 → 8/10，B9/B10 精准变红。
+  - 另修 `tools/verify_extension_boot.py` 的既有 flake：宿主页 `goto` 失败后的
+    `about:blank` 兜底未加保护，服务未起时整个脚本直接崩、连结果都不打印（改为二次 try）。
+  - 回归工具输出脱敏：`tools/verify_extension_sync.mjs` 原先直接打印快照里的
+    **真实账号名**（运行期账号库内容会泄进终端/CI 日志），改为掩码输出。
+
 ### Security
 
 - **清除仓库中的客户/环境标识与个人身份信息（含提交历史重写）**：真实部署域名、客户租户名、

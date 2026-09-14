@@ -1,6 +1,7 @@
 /**
  * 账号选择轮盘（扩展弹窗页版本，v3.9 Hub 切盒 + 扇形环）。
- * 由 background 在收到 quick-wheel 命令时以独立 popup 窗口打开——
+ * 由 background 的 `toggleAccountWheel()` 以独立 popup 窗口打开（触发源见 account-wheel.ts：
+ * 桌面指令通道的 `wheel.toggle`，或降级链的第三层）——
  * 在浏览器任何位置（含 chrome:// 页、新标签页）都能唤起。
  * 页面内无窗口控制元素；Esc 关闭；数字键 1-9/0 快选；失焦自动关闭（带启动宽限）。
  * 中心翻页：滚轮 / 点击 Hub 循环切换盒子，单环显示当前盒子的账号。
