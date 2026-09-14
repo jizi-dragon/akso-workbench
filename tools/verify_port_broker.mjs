@@ -43,6 +43,27 @@ const broker = require(path.join('..', 'desktop', 'ports.js'));
 
 const BASE = broker.BASE;
 
+// ---------------------------------------------------------------- 0. 前置：基准端口必须是空闲的
+// 本脚本靠「真占住基准端口」来验顺延，因此**必须先确认基准端口没被占**——
+// 否则最容易被"边跑着工作台边验收"触发：第 1 节会把真实占用误判成顺延、
+// 第 3 节 list 时直接抛未捕获的 EADDRINUSE 崩掉，报出来的是栈而不是结论。
+{
+  const busy = [];
+  for (const key of ['server', 'cdp', 'control']) {
+    // eslint-disable-next-line no-await-in-loop —— 只有三个端口，逐个探
+    if (!(await broker.canBind(BASE[key]))) busy.push(`${key}=${BASE[key]}`);
+  }
+  if (busy.length) {
+    console.error(
+      `✗ 基准端口被占用，无法进行本项验收：${busy.join('、')}\n` +
+      '  本脚本用"真占住基准端口"的方式验顺延，故必须在没有工作台运行时跑。\n' +
+      '  请先退出 Akso Workbench（托盘右键退出，或 taskkill /IM AksoWorkbench.exe /F ' +
+      '/IM AksoServer.exe /F），再重跑本脚本。',
+    );
+    process.exit(1);
+  }
+}
+
 // ---------------------------------------------------------------- 1. 无占用时取基准号
 {
   const res = await broker.negotiate();
@@ -114,22 +135,41 @@ const BASE = broker.BASE;
 }
 
 // ---------------------------------------------------------------- 5. 旧实例判定
+// ⚠ 本节原有一条用 `System`(pid 4) 当"活着的进程"来验"能识别出另一个实例"——
+// 那其实是**假阳性**：pid 4 是系统进程，不是 AksoWorkbench。Windows 的 pid 会被回收复用，
+// 只验"活着"就会永久误报、应用再也起不来（实测踩到过）。故本节的判据已升级为
+// "活着 **且** 映像名是我们"，用例也据此重写。
 {
   broker.publish({ server: 18765, cdp: 18766, control: 18767 }, '0.0.1-old');
   const raw = JSON.parse(fs.readFileSync(broker.PORTS_PATH, 'utf8'));
+  const write = (pid) => fs.writeFileSync(broker.PORTS_PATH, JSON.stringify({ ...raw, pid }));
 
-  raw.pid = process.pid; // 自己写的文件不算"另一个实例"
-  fs.writeFileSync(broker.PORTS_PATH, JSON.stringify(raw));
+  write(process.pid); // 自己写的文件不算"另一个实例"
   check('自己写的公布文件不被当成"另一个实例"', broker.detectRunningInstance() === null);
 
-  raw.pid = 999999999; // 一个几乎不可能存在的 pid
-  fs.writeFileSync(broker.PORTS_PATH, JSON.stringify(raw));
+  write(999999999); // 一个几乎不可能存在的 pid
   check('pid 已死时不再报"另一个实例在跑"', broker.detectRunningInstance() === null);
 
-  raw.pid = process.pid === 4 ? 5 : 4; // 现成存在的 pid（system）；Windows 上 4 = System
-  fs.writeFileSync(broker.PORTS_PATH, JSON.stringify(raw));
-  const detected = broker.detectRunningInstance();
-  check('pid 仍活着时能识别出"另一个实例在跑"', detected !== null, JSON.stringify(raw.pid));
+  // 核心回归：活着的**无关**进程不得被认成另一个实例（pid 复用假阳性）
+  const foreignPid = process.pid === 4 ? 5 : 4; // Windows 上 4 = System，恒存在
+  write(foreignPid);
+  check('活着的无关进程（如 System）不被误认成另一个实例',
+    broker.detectRunningInstance() === null, `pid=${foreignPid}`);
+  check('陈旧公布文件会被 clearStale 清掉（强杀后 will-quit 不触发的补救）',
+    broker.clearStale() === true && !fs.existsSync(broker.PORTS_PATH));
+
+  // 正例：注入"那个 pid 看起来是我们"的探测器（真实映像名不可造假，故用注入验证分支）
+  broker.publish({ server: 18765, cdp: 18766, control: 18767 }, '0.0.1-old');
+  write(foreignPid);
+  check('确实是我们另一个实例时仍能识别（注入探测器）',
+    broker.detectRunningInstance(() => true) !== null);
+  check('确实是我们另一个实例时 clearStale 不碰它（不能误删活实例的文件）',
+    broker.clearStale(() => true) === false && fs.existsSync(broker.PORTS_PATH));
+
+  // 真实身份判据：一个活着的系统进程不是我们
+  check('looksLikeOurs 对系统进程判否（真实映像名）',
+    broker.isAlive(foreignPid) === true && broker.looksLikeOurs(foreignPid) === false,
+    `pid=${foreignPid}`);
 
   fs.unlinkSync(broker.PORTS_PATH);
   check('公布文件缺失时不误报', broker.detectRunningInstance() === null);
@@ -141,10 +181,39 @@ const BASE = broker.BASE;
 
 // ---------------------------------------------------------------- 6. 提示文案可执行
 {
-  const text = broker.describeOccupant('server', { pid: 1234, version: '0.3.5', startedAt: '2026-09-14T10:00:00+08:00', ports: {} });
+  const text = broker.describeOccupant('server', {
+    pid: 1234, version: '0.3.5', startedAt: '2026-09-14T10:00:00+08:00',
+    ports: { server: 18765, cdp: 18766, control: 18767 },
+  });
   check('占用提示含 PID 与版本（用户据此找到该退哪个）',
     text.includes('1234') && text.includes('0.3.5'), text);
   check('占用提示给出动作', text.includes('退出'), text);
+}
+
+// ---------------------------------------------------------------- 7. 提示里的端口号必须是**实际**那个
+{
+  // 顺延后的实例：它实际在 18770/18771/18772，提示必须报 18770 而不是基准 18765
+  const text = broker.describeOccupant('server', {
+    pid: 4242, version: '0.3.5', startedAt: 'x',
+    ports: { server: 18770, cdp: 18771, control: 18772 },
+  });
+  check('顺延实例的提示报实际端口（不是基准号）', text.includes('18770'), text);
+  // 只对**第一行**（真正报告"哪个端口被占"的那行）判，并剔除刻意保留的来由说明
+  // 「（基准 18765 被占后顺延至此）」——那是解释，不是谎报。
+  const headLine = text.split('\n')[0].replace(/（[^）]*）/g, '');
+  check('顺延实例的提示行不把基准号当成被占端口',
+    headLine.includes('18770') && !headLine.includes(String(BASE.server)),
+    headLine);
+  check('顺延实例的提示标明"顺延"来由', text.includes('顺延'), text);
+
+  const baseText = broker.describeOccupant('server', {
+    pid: 4242, version: '0.3.5', startedAt: 'x',
+    ports: { server: 18765, cdp: 18766, control: 18767 },
+  });
+  check('未顺延时提示不画蛇添足说"顺延"', !baseText.includes('顺延'), baseText);
+
+  const legacyText = broker.describeOccupant('server', { pid: 7, version: null, ports: {} });
+  check('公布文件无端口信息时回落到基准号且不炸', legacyText.includes(String(BASE.server)), legacyText);
 }
 
 fs.rmSync(sandbox, { recursive: true, force: true });

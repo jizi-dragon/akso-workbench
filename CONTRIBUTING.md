@@ -173,7 +173,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 ```powershell
 .\.venv\Scripts\python.exe -m pytest          # 294 项（原生链路 11 / 更新 14 / kernel 28 / 回放 17 / 工作区 34 / 路径 63 / 端口契约 13 / drawio 57 等）
 # 2026-09-14：inventory/understand 下线后由 330 项降到 281 项，端口协商再 +13 项 = 294 项
-node tools\verify_port_broker.mjs             # 端口协商 23 项（离线，不需要 Electron）
+node tools\verify_port_broker.mjs             # 端口协商 32 项（离线，不需要 Electron；**须先退出工作台**——它靠真占基准端口验顺延）
 .\.venv\Scripts\uvx.exe ruff check .          # All checks passed（`uvx` 不在 PATH，须走 .venv 副本）
 .\.venv\Scripts\python.exe tools\verify_packaging.py
 ```
@@ -187,7 +187,7 @@ node tools\verify_host_logic.mjs                                 # host/端口�
 ```
 
 改动 `/extension/*` 蓝图后必跑 `node tools\verify_extension_sync.mjs`（**该蓝图无 pytest 覆盖**）。
-改动**端口 / 壳启动链路 / 扩展的桌面地址**后必跑 `node tools\verify_port_broker.mjs`（离线 23 项，不需要 Electron）。
+改动**端口 / 壳启动链路 / 扩展的桌面地址**后必跑 `node tools\verify_port_broker.mjs`（离线 32 项，不需要 Electron；**先退出工作台**，否则基准端口被占，脚本的前置检查会拦下并提示）。
 完整验收基线（含真机项与 E2E）见本文 §7 与 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) 的「验收基线实测」。
 
 - 阶段验收以 `tests/` 机器验收为准，不靠肉眼；

@@ -83,28 +83,113 @@ function readPublished() {
   }
 }
 
-/** pid 是否活着（用于判断公布文件是不是"某个还活着的实例"写的） */
-function isAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+/**
+ * 本进程的"映像名"集合——用于判定"这个 pid 是不是我们自己人"。
+ *
+ * 为什么必须核对**身份**而不只是"活着"：Windows 的 pid 会被回收复用，所以
+ * "公布文件里的 pid 仍存在" **不等于** "那个实例还在跑"。一旦撞上一个无关进程，
+ * 判据就永久为真 → 每次启动都弹「另一个实例在运行」，用户选了「退出」就再也起不来。
+ * 实测就是这个形态：对话框报 PID 3572 / System(pid 4) 之类的无关进程占着 18765。
+ *
+ * 打包态：映像名 = 产品名；开发态（`npm start` / `electron .`）：映像是 electron，
+ * 而 `node desktop/main.js` 则是 node —— 三种都放进来，宁可漏报也不误报。
+ */
+function ownImageNames() {
+  const names = new Set([path.basename(process.execPath).toLowerCase()]);
+  if (!process.defaultApp) names.add('aksoworkbench.exe');
+  names.add('electron.exe');
+  names.add('node.exe');
+  return names;
+}
+
+/**
+ * 查一个 pid 的映像名（Windows 用 tasklist；其余平台返回 null 表示"未知"）。
+ * 与 `isAlive` 合并成一次调用，避免每个判据各起一次进程。
+ */
+function imageNameOf(pid) {
   try {
-    process.kill(pid, 0); // 信号 0 = 只探测存在性
-    return true;
-  } catch (e) {
-    // EPERM = 进程存在但没权限（Windows 上常见于跨用户）→ 仍算活着
-    return e && e.code === 'EPERM';
+    const { execFileSync } = require('child_process');
+    const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/NH', '/FO', 'CSV'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 5000,
+    });
+    const m = /^"([^"]+)"/.exec(out.trim());
+    return m ? m[1].toLowerCase() : null;
+  } catch {
+    return null; // 非 Windows / tasklist 不可用 → 身份未知，交给 isAlive 兜底
   }
 }
 
 /**
- * 启动前的自检：上一次的公布文件还在，且那个 pid 仍活着？
- * 这就是"旧实例在跑"的**可执行**判据（而不是像 waitReady 那样只看有没有 200）。
+ * pid 是否活着（公布文件是不是"某个进程"写的）。
+ *
+ * ⚠ 这只是**必要条件，不是充分条件**——要判定"是我们另一个实例"，必须再过一遍
+ * `looksLikeOurs()`。单用本函数就是上面所说的 pid 复用假阳性。
  */
-function detectRunningInstance() {
+function isAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (process.platform === 'win32') {
+    // Windows 走 tasklist：`process.kill(pid, 0)` 在 Node 里对同用户进程**恒不抛错**，
+    // 对已消失的 pid 也不一定抛，判不准；tasklist 的输出同时给出映像名，一次调用两用。
+    return imageNameOf(pid) !== null;
+  }
+  try {
+    process.kill(pid, 0); // 信号 0 = 只探测存在性
+    return true;
+  } catch (e) {
+    // EPERM = 进程存在但没权限（跨用户）→ 仍算活着
+    return e && e.code === 'EPERM';
+  }
+}
+
+/** 那个 pid 是否**看起来是我们自己的另一个实例**（活着 + 映像名对得上） */
+function looksLikeOurs(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!isAlive(pid)) return false;
+  if (process.platform !== 'win32') return true; // 非 Windows 拿不到映像名，退回"活着即认"
+  const name = imageNameOf(pid);
+  return Boolean(name) && ownImageNames().has(name);
+}
+
+/**
+ * 启动前的自检：上一次的公布文件还在，且写它的进程**确实是我们的另一个实例**？
+ *
+ * 判据升级史（都是真机踩出来的）：
+ *   v1「端口上有人回 200」→ 旧实例占端口时新壳认错服务（ADR-0011 §1）；
+ *   v2「公布文件里的 pid 还活着」→ pid 被回收复用时**永久误报**，应用再也起不来；
+ *   v3「活着 **且** 映像名是我们」→ 本函数。宽松侧仍有残留（开发态 node 进程会误认），
+ *      但那需要"我们自己 publish 过、进程却已不是工作台"这一小概率组合；
+ *      而**误报**的代价是应用完全打不开，远大于漏报。
+ */
+function detectRunningInstance(probe) {
   const prev = readPublished();
   if (!prev) return null;
   if (prev.pid === process.pid) return null;
-  if (!isAlive(prev.pid)) return null;
+  const looks = probe || looksLikeOurs;
+  if (!looks(prev.pid)) return null;
   return prev;
+}
+
+/**
+ * 清理**陈旧**的公布文件：文件还在，但写它的实例已经不在了（或那个 pid 已被无关进程复用）。
+ *
+ * 为什么不能只靠 `unpublish()`：它挂在 `will-quit`，而应用被强杀（taskkill /F、崩溃）时
+ * **不会触发** → 文件残留成陈旧数据，下次启动就可能触发误报对话框（本函数就是为此而生）。
+ * 返回 true 表示确实清掉了一份陈旧文件。
+ */
+function clearStale(probe) {
+  const prev = readPublished();
+  if (!prev) return false;
+  if (prev.pid === process.pid) return false;
+  const looks = probe || looksLikeOurs;
+  if (looks(prev.pid)) return false; // 真的有实例在跑 → 不碰
+  try {
+    fs.unlinkSync(PORTS_PATH);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 原子写公布文件（先写临时文件再 rename —— 服务端可能随时来读） */
@@ -143,14 +228,23 @@ function unpublish() {
   }
 }
 
-/** 给用户看的占用提示（可执行：告诉他退出哪个进程） */
+/**
+ * 给用户看的占用提示。**两条硬要求**：
+ *   1. 报**实际被占的那个端口号**（从 `prev.ports` 取），不是 `BASE[key]`。
+ *      实测踩过：端口顺延后对话框仍印 18765，用户照它去查会查到空气——
+ *      而"端口信息不可信"正是 ADR-0011 要根治的病，不能在提示文案里复现。
+ *   2. 给出**可执行**的动作（退出哪个进程）。
+ */
 function describeOccupant(key, prev) {
   if (!prev) return `端口 ${BASE[key]} 已被其它程序占用。`;
-  const ports = prev.ports || {};
+  const ports = (prev.ports || {})[key];
+  const actual = Number.isInteger(ports) && ports > 0 ? ports : BASE[key];
+  const from = actual === BASE[key] ? '' : `（基准 ${BASE[key]} 被占后顺延至此）`;
+  const all = prev.ports || {};
   return (
-    `端口 ${BASE[key]} 已被另一个 AksoWorkbench 实例占用：\n` +
+    `端口 ${actual}${from} 已被另一个 AksoWorkbench 实例占用：\n` +
     `  PID ${prev.pid}，版本 ${prev.version || '未知'}，启动于 ${prev.startedAt || '未知'}\n` +
-    `  它占用的端口：server=${ports.server} cdp=${ports.cdp} control=${ports.control}\n\n` +
+    `  它占用的端口：server=${all.server} cdp=${all.cdp} control=${all.control}\n\n` +
     `请先退出那个实例再启动本程序。`
   );
 }
@@ -164,8 +258,10 @@ module.exports = {
   negotiate,
   readPublished,
   detectRunningInstance,
+  clearStale,
   publish,
   unpublish,
   describeOccupant,
   isAlive,
+  looksLikeOurs,
 };

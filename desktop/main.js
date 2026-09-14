@@ -508,15 +508,20 @@ async function checkUpdateFromTray() {
  * 而是给出可执行的提示后退出。
  */
 async function bootstrapPorts() {
+  // 先清陈旧公布文件：应用被强杀（taskkill /F、崩溃）时 will-quit 不触发，
+  // 文件会残留；若不核对写它的进程是否**真是我们的另一个实例**，下次启动就会误报
+  // 「已有实例在运行」并把用户劝退（实测踩到过，见 docs/PITFALLS.md #25）。
+  if (portBroker.clearStale()) {
+    console.warn('[akso-shell] 已清理陈旧的 desktop-ports.json（写它的实例已不在）');
+  }
   const prev = portBroker.detectRunningInstance();
   if (prev) {
-    const ports = prev.ports || {};
     const choice = dialog.showMessageBoxSync({
       type: 'warning',
       title: 'Akso Workbench 已在运行',
       message: '检测到另一个 Akso Workbench 实例正在运行。',
       detail: portBroker.describeOccupant('server', prev) +
-        `\n\n继续启动会另占一组端口（server=${ports.server || '?'} 附近），` +
+        '\n\n继续启动会另占一组端口（以 18765 为基准顺延），' +
         '两个实例会共用同一份数据目录。建议先退出那个实例。',
       buttons: ['仍然启动', '退出'],
       defaultId: 1,
