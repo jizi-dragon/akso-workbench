@@ -110,7 +110,9 @@ def main() -> int:
     print(f"假更新源：{BASE}/latest.yml → v{new_version}（当前 v{version}，包 {size} 字节）")
 
     httpd = serve()
-    env = dict(os.environ, AKSO_UPDATE_OVERRIDE=BASE)
+    env = dict(os.environ, AKSO_UPDATE_OVERRIDE=BASE,
+               # 自动更新默认关闭（2026-09-15 用户定稿）；本工具验的就是那条链，必须显式开启
+               WORKBENCH_AUTO_UPDATE="1")
     checks: dict[str, bool] = {}
     proc = None
     try:

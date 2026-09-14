@@ -24,6 +24,17 @@ const HEARTBEAT_MS = 15_000;
 /** 事件去抖：一次检查会连发 checking → update-available → …，不必逐条入日志 */
 const EVENT_DEBOUNCE_MS = 1200;
 
+/**
+ * 自动更新总开关（用户定稿 2026-09-15：**默认关闭**）。
+ *
+ * 关闭时：不启动定时检查、不静默下载、不在退出时安装；容器/菜单里的手动检查也直接返回
+ * 「已关闭」。开启方式 = 环境变量 `WORKBENCH_AUTO_UPDATE=1`（1/true/yes/on）。
+ *
+ * 为什么做成环境变量而不是设置项：它决定的是「这个应用会不会自己替换自己」，
+ * 属于**部署期决定**——放在运行时设置里迟早会被误点，而后果是用户手上的版本被悄悄换掉。
+ */
+const AUTO_UPDATE_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.WORKBENCH_AUTO_UPDATE || ''));
+
 let autoUpdater = null;
 let initialized = false;
 let wired = false;
@@ -95,6 +106,7 @@ function onChange(fn) {
 
 /** 托盘角标文案（无更新时为 null，避免托盘里塞无用项） */
 function trayHint() {
+  if (!AUTO_UPDATE_ENABLED) return null;   // 关闭时托盘不挂任何更新提示
   if (S.phase === 'downloading') return `正在下载更新 v${S.availableVersion || ''} ${S.percent || 0}%`;
   if (S.phase === 'ready') return `更新 v${S.availableVersion} 已就绪 · 退出时安装`;
   return null;
@@ -237,6 +249,20 @@ async function check(manual = false) {
 
 /** 手工检查（托盘菜单 / 账号中心版本角标）：结论必须反馈给用户 */
 async function checkAndReport() {
+  if (!AUTO_UPDATE_ENABLED) {
+    // 关掉自动更新时，手动检查也不该偷偷联网——直接说清现状与开启方式
+    await dialog.showMessageBox({
+      type: 'info',
+      title: '检查更新',
+      message: '自动更新已关闭',
+      detail: '本机把自动更新关掉了（应用不会自己检查/下载/替换版本）。\n\n'
+        + '如需开启：设置环境变量 WORKBENCH_AUTO_UPDATE=1 后重启应用。\n'
+        + '手动更新：直接运行新下载的 AksoWorkbench-<版本>-setup.exe 覆盖安装。',
+      buttons: ['知道了'],
+      noLink: true,
+    });
+    return { ok: false, phase: 'disabled', message: '自动更新已关闭' };
+  }
   const r = await check(true);
   if (!r.ok) {
     const detail =
@@ -294,6 +320,7 @@ async function checkAndReport() {
  * AksoServer.exe 与扩展目录，服务进程持有文件句柄时覆盖会失败。
  */
 function installOnExit() {
+  if (!AUTO_UPDATE_ENABLED) return false;
   if (S.phase !== 'ready' || !autoUpdater || installTriggered) return false;
   installTriggered = true;
   try {
@@ -309,6 +336,14 @@ function init({ onState } = {}) {
   if (onState) onChange(onState);
   S.currentVersion = app.getVersion();
   S.lastCheckAt = lastCheckAt;
+  if (!AUTO_UPDATE_ENABLED) {
+    // 用户定稿 2026-09-15：**自动更新默认关闭**——应用不再自己替换自己。
+    S.supported = false;
+    S.phase = 'idle';
+    S.message = '自动更新已关闭';
+    emit();
+    return state();
+  }
   if (!app.isPackaged) {
     S.supported = false;
     emit();
@@ -331,7 +366,7 @@ function init({ onState } = {}) {
 function start() {
   // 心跳不分打包态：开发态也要让 UI 知道「壳在跑，只是不支持自动更新」
   setInterval(emit, HEARTBEAT_MS);
-  if (!S.supported) return;
+  if (!AUTO_UPDATE_ENABLED || !S.supported) return;
   setTimeout(() => void check(false), FIRST_CHECK_DELAY_MS);
   setInterval(() => void check(false), PERIODIC_CHECK_MS);
 }
@@ -346,4 +381,5 @@ module.exports = {
   trayHint,
   state,
   PHASE_LABEL,
+  AUTO_UPDATE_ENABLED,
 };

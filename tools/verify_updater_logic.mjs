@@ -69,7 +69,7 @@ function makeStub({ packaged = true, version = '0.3.2', checkError = null } = {}
     },
     autoUpdater,
   };
-  return { electron, autoUpdater, calls, handlers };
+  return { electron, autoUpdater, calls, handlers, dialogs };
 }
 
 /**
@@ -80,7 +80,11 @@ function makeStub({ packaged = true, version = '0.3.2', checkError = null } = {}
  * 会让 init 内部那次 require 落到真实包上并抛错（本脚本第一版就栽在这里：
  * supported 恒为 false，且错误被 init 的 try/catch 静默吞掉）。
  */
-function loadUpdater(stub, initOpts) {
+function loadUpdater(stub, initOpts, { autoUpdate = true } = {}) {
+  // 开关是在 updater.js **模块体**里读环境变量的，所以必须在 require 之前设好；
+  // 下面 delete require.cache 保证每次调用都重新求值。
+  if (autoUpdate) process.env.WORKBENCH_AUTO_UPDATE = '1';
+  else delete process.env.WORKBENCH_AUTO_UPDATE;
   const origLoad = require('module')._load;
   require('module')._load = function patched(request, parent, isMain) {
     if (request === 'electron') return stub.electron;
@@ -96,12 +100,29 @@ function loadUpdater(stub, initOpts) {
     return mod;
   } finally {
     require('module')._load = origLoad;
-  }
-}
+  }}
 
 // ---------------------------------------------------------------- 用例
 
 console.log('更新状态机验证（desktop/updater.js）');
+
+// 0) **默认关闭**（用户定稿 2026-09-15）：不开环境变量时，一切自动行为都不发生
+{
+  const stub = makeStub({ packaged: true, version: '0.3.2' });
+  const updater = loadUpdater(stub, undefined, { autoUpdate: false });
+  const s = updater.state();
+  ok('默认关闭：supported=false', s.supported === false);
+  ok('默认关闭：message 说明已关闭', s.message === '自动更新已关闭');
+  updater.start();
+  await new Promise((r) => setTimeout(r, 30));
+  ok('默认关闭：start() 不触发检查', stub.calls.checkForUpdates === 0);
+  ok('默认关闭：托盘无更新提示', updater.trayHint() === null);
+  ok('默认关闭：installOnExit 为 no-op', updater.installOnExit() === false);
+  const r = await updater.checkAndReport();
+  ok('默认关闭：手动检查也只弹「已关闭」对话框', r.phase === 'disabled' && stub.dialogs.length === 1);
+  ok('默认关闭：对话框写明开启方式',
+    String(stub.dialogs[0]?.detail || '').includes('WORKBENCH_AUTO_UPDATE=1'));
+}
 
 // 1) 开发态：不支持自动更新，但不崩
 {

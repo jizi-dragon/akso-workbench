@@ -442,14 +442,21 @@ function createTray() {
     { label: '账号轮盘 (Alt+Q)', click: toggleWheel },
     { label: '安装浏览器扩展…', click: () => { void openExtensionSetup(); } },
     { type: 'separator' },
-    { label: '检查更新…', click: () => { void checkUpdateFromTray(); } },
+    // 自动更新默认关闭（用户定稿 2026-09-15）：菜单项保留但说清现状与开启方式，
+    // 免得用户以为"检查更新坏了"。开启 = 环境变量 WORKBENCH_AUTO_UPDATE=1。
+    { label: updater.AUTO_UPDATE_ENABLED ? '检查更新…' : '自动更新已关闭（WORKBENCH_AUTO_UPDATE=1 可开启）',
+      enabled: updater.AUTO_UPDATE_ENABLED,
+      click: () => { void checkUpdateFromTray(); } },
     { label: `关于 v${app.getVersion()}`, click: () => {
       const s = updateState || updater.state();
-      const detail = s.phase === 'ready'
-        ? `新版本 v${s.availableVersion} 已下载完成，退出应用时自动安装。`
-        : s.phase === 'downloading'
-          ? `正在后台下载 v${s.availableVersion}（${s.percent || 0}%），退出应用时自动安装。`
-          : '自动更新：启动时静默检查，后台下载，退出应用时安装。';
+      const detail = !updater.AUTO_UPDATE_ENABLED
+        ? '自动更新：**已关闭**（应用不会自己检查/下载/替换版本）。\n'
+          + '需要更新时手动运行新下载的安装包即可。'
+        : s.phase === 'ready'
+          ? `新版本 v${s.availableVersion} 已下载完成，退出应用时自动安装。`
+          : s.phase === 'downloading'
+            ? `正在后台下载 v${s.availableVersion}（${s.percent || 0}%），退出应用时自动安装。`
+            : '自动更新：启动时静默检查，后台下载，退出应用时安装。';
       void dialog.showMessageBox({
         type: 'info',
         title: '关于 Akso Workbench',
