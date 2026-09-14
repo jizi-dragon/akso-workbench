@@ -131,9 +131,9 @@ POST /api/chat/stream   Content-Type: application/json
 |---|---|---|
 | POST | `/api/insight/run` | **同步**执行，返回 `{job_id, status, exit_code, duration_ms, result, workdir}` |
 | POST | `/api/insight/run-sse` | **SSE** 进度流（见 §12.2） |
-| GET | `/api/insight/runs?limit=30` | 任务列表（`limit` 上限 200） |
+| GET | `/api/insight/runs?limit=10&offset=0` | 任务列表（**分页**：默认一页 10 条，上限 200）→ `{runs, total, limit, offset}` |
 | GET | `/api/insight/artifacts/{job_id}` | `{job_id, status, coverageStatus, workspaces[], files:[{name,size,suffix,workspace}]}`（递归列产物） |
-| GET | `/api/insight/artifacts/{job_id}/file?name=&download=` | 读产物（见 §12.4 路径守卫） |
+| GET | `/api/insight/artifacts/{job_id}/file?name=&download=` | 读产物（见 §12.4 路径守卫）。**内联可读**后缀与 media type：`.md`=`text/markdown`、`.json`=`application/json`、`.drawio`=`application/xml`、`.txt`/`.log`=`text/plain`、`.csv`=`text/csv`——前端取文本后自己渲染（markdown 排版、drawio 画成 SVG，均**离线自足**）；其余后缀与 `download=1` 走附件下载 |
 | GET | `/api/insight/workspace` | `{root, default, custom, exists}` —— 产物工作区根（用户可配） |
 | PUT | `/api/insight/workspace` | `{path}`：设置工作区根；**空串 = 恢复默认**；非绝对路径 / 是文件 / 无法创建 → 400 |
 

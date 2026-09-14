@@ -28,6 +28,18 @@ from ..services.storage import now_ms
 
 router = APIRouter(prefix="/api/insight", tags=["insight"])
 
+#: 可**内联**返回的产物后缀 → media type（其余走附件下载）。
+#: `.drawio` 由前端取文本后自己画成 SVG（离线自足，不连官方 viewer）——
+#: 所以它必须是内联可读的，而不是"只能下载"。
+_INLINE_SUFFIXES = {
+    ".md": "text/markdown",
+    ".json": "application/json",
+    ".drawio": "application/xml",
+    ".txt": "text/plain",
+    ".log": "text/plain",
+    ".csv": "text/csv",
+}
+
 
 class InsightRequest(BaseModel):
     command: str = Field(..., description="login | spider")
@@ -250,9 +262,19 @@ async def run_sse(req: InsightRequest):
 
 
 @router.get("/runs")
-def list_runs(limit: int = 30) -> dict:
-    rows = db.query("SELECT * FROM insight_runs ORDER BY created_at DESC LIMIT ?", (min(limit, 200),))
-    return {"runs": rows}
+def list_runs(limit: int = 10, offset: int = 0) -> dict:
+    """任务列表（分页）。
+
+    页大小默认 10（用户定稿：一页 10 条 + 翻页），上限 200；
+    ``total`` 一并回传，前端才能算出总页数——不用另开一条 count 接口。
+    """
+    size = max(1, min(limit, 200))
+    start = max(0, offset)
+    total = db.query_one("SELECT COUNT(*) AS n FROM insight_runs") or {}
+    rows = db.query(
+        "SELECT * FROM insight_runs ORDER BY created_at DESC LIMIT ? OFFSET ?", (size, start)
+    )
+    return {"runs": rows, "total": int(total.get("n") or 0), "limit": size, "offset": start}
 
 
 @router.get("/artifacts/{job_id}")
@@ -301,12 +323,13 @@ def read_artifact(job_id: str, name: str, download: bool = False):
             break
     if target is None:
         raise HTTPException(404, f"产物不存在：{name}")
-    if download or target.suffix.lower() not in {".md", ".json", ".txt", ".log", ".csv"}:
+    if download or target.suffix.lower() not in _INLINE_SUFFIXES:
         return FileResponse(target, filename=target.name)
     text = target.read_text(encoding="utf-8", errors="replace")
     if len(text) > 2_000_000:
         text = text[:2_000_000] + "\n…（超长截断，请下载查看）"
-    return PlainTextResponse(text)
+    # 给准 media type：前端按后缀决定怎么渲染，浏览器直接打开这条 URL 时也别把它当二进制
+    return PlainTextResponse(text, media_type=_INLINE_SUFFIXES[target.suffix.lower()])
 
 
 class WorkspaceIn(BaseModel):

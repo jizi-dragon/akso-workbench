@@ -40,27 +40,44 @@
         <div style="display:flex;justify-content:flex-end;margin-top:10px">
           <button class="mbtn" id="btn-insight-run">执行</button>
         </div>
+        <p class="hint" id="ins-run-status">就绪</p>
         <p class="hint">凭证由统一账号库内联注入（--url/--user/--pass），不落盘；产物写运行时目录，原项目 output/ 不受影响。</p>
-      </section>
-
-      <section class="mcard">
-        <h2>执行日志</h2>
-        <div class="log-console" id="ins-log"><div class="sys">// 等待执行…</div></div>
-      </section>
-
-      <section class="mcard">
-        <h2>产物</h2>
-        <div id="ins-artifacts" class="empty">尚无产物</div>
       </section>
 
       <section class="mcard">
         <h2>历史任务</h2>
         <table class="mtable" id="ins-runs">
-          <thead><tr><th>时间</th><th>命令</th><th>对象</th><th>状态</th><th>产物</th></tr></thead>
+          <thead><tr><th>时间</th><th>命令</th><th>对象</th><th>状态</th><th>产物 / 日志</th></tr></thead>
           <tbody></tbody>
         </table>
+        <div class="ins-pager" id="ins-pager"></div>
+      </section>
+
+      <section class="mcard">
+        <h2>产物</h2>
+        <div id="ins-artifacts" class="empty">点上方任务行的「产物」查看（markdown / drawio 可就地预览）</div>
       </section>
     </div>
+
+    <!-- 产物就地预览：markdown 渲染 / drawio 画成 SVG（离线自足，不连外网 viewer） -->
+    <dialog class="mdialog" id="artifact-preview">
+      <div class="mdialog-head">
+        <h3 id="apv-title">产物预览</h3>
+        <span class="apv-meta" id="apv-meta"></span>
+        <div class="spacer"></div>
+        <button class="mdialog-close" id="apv-close" title="关闭">✕</button>
+      </div>
+      <div class="mdialog-body">
+        <div class="apv-bar">
+          <div class="apv-tabs" id="apv-tabs"></div>
+          <div class="spacer"></div>
+          <button class="mbtn ghost" id="apv-raw">原始</button>
+          <a class="mbtn ghost" id="apv-download">下载</a>
+        </div>
+        <div class="apv-body" id="apv-body"></div>
+      </div>
+    </dialog>
+
     <script type="module" src="/static/js/insight.js"></script>
   </body>
 </html>

@@ -293,5 +293,67 @@ dialog.mdialog.closing::backdrop { animation: bkdOut .16s ease forwards; }
   padding: 0 var(--sp-5) var(--sp-5);
 }
 
+/* ———— 产物预览弹窗（insight 页）：markdown 排版 + drawio 画布 ———— */
+/* 弹窗比默认宽：产物是表格与图，540px 看不了 */
+dialog#artifact-preview { width: min(1080px, calc(100vw - 64px)); }
+.apv-meta { color: var(--text-3); font-size: 12px; margin-left: var(--sp-3); }
+.apv-bar { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.apv-bar .mbtn { padding: 5px 11px; font-size: 12.5px; text-decoration: none; }
+.apv-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.apv-tab {
+  border: 1px solid var(--line); background: var(--ink-1); color: var(--text-2);
+  border-radius: var(--rad-chip); padding: 4px 11px; font-size: 12px; cursor: pointer;
+}
+.apv-tab:hover { border-color: var(--acc-primary); color: var(--acc-primary); }
+.apv-tab.active { background: var(--acc-primary-soft); border-color: var(--acc-primary); color: var(--acc-primary); }
+.apv-body {
+  max-height: 68vh; overflow: auto;
+  border: 1px solid var(--line); border-radius: var(--rad-card);
+  background: var(--ink-1); padding: var(--sp-4);
+}
+.apv-stage { min-height: 320px; }
+.apv-canvas { height: 62vh; min-height: 320px; background: #fff; border-radius: var(--rad-input); }
+.apv-canvas svg { display: block; }
+.apv-source {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+  font-size: 12.5px; line-height: 1.55; color: var(--text-1);
+}
+
+/* markdown 排版：产物里的标题/表格/列表要能读 */
+.apv-md { font-size: 13.5px; line-height: 1.7; color: var(--text-1); }
+.apv-md h2 { font-family: var(--font-display); font-size: 16px; margin: 14px 0 8px; }
+.apv-md h3 { font-size: 14.5px; margin: 12px 0 6px; }
+.apv-md h4, .apv-md h5, .apv-md h6 { font-size: 13.5px; margin: 10px 0 6px; color: var(--text-2); }
+.apv-md > :first-child { margin-top: 0; }
+.apv-md p { margin: 8px 0; }
+.apv-md ul, .apv-md ol { margin: 6px 0 6px 20px; padding: 0; }
+.apv-md li { margin: 3px 0; }
+.apv-md a { color: var(--acc-primary); }
+.apv-md code {
+  background: var(--ink-3); border-radius: 4px; padding: 1px 5px;
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace); font-size: 12.5px;
+}
+.apv-md pre.apv-code {
+  background: var(--ink-3); border-radius: var(--rad-input); padding: 10px 12px;
+  overflow: auto; margin: 8px 0;
+}
+.apv-md pre.apv-code code { background: none; padding: 0; }
+.apv-md blockquote {
+  margin: 8px 0; padding: 6px 12px; border-left: 3px solid var(--acc-primary);
+  background: var(--acc-primary-soft); color: var(--text-2); border-radius: 0 var(--rad-input) var(--rad-input) 0;
+}
+.apv-md hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
+.apv-md table.apv-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 8px 0; }
+.apv-md table.apv-table th, .apv-md table.apv-table td {
+  border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top;
+}
+.apv-md table.apv-table th { background: var(--ink-3); color: var(--text-2); font-weight: 600; }
+
+/* ———— 历史任务分页（洞察页：一页 10 条 + 翻页） ———— */
+.ins-pager { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); margin-top: 10px; }
+.ins-pager .mbtn { padding: 5px 12px; font-size: 12.5px; }
+.ins-pager-info { color: var(--text-3); font-size: 12px; }
+
 /* ———— 其他 ———— */
 .empty { color: var(--text-3); font-size: 13px; text-align: center; padding: 26px 0; }
