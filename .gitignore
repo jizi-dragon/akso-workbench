@@ -19,4 +19,10 @@ node_modules/
 
 # 编辑器
 .idea/
+# .vscode/ 默认忽略个人配置，但 .vscode/settings.json（解释器与检查器口径）与
+# extensions.json（推荐扩展）是**有意入库**的团队共享配置——它们消除了
+# 「VS Code 报未找到 Python」这个本机特有坑（见 CONTRIBUTING.md §1）。
+# 因 gitignore 的否定规则无法重新包含被忽略目录内的文件，这两个文件用 git add -f 维护。
 .vscode/
+!.vscode/settings.json
+!.vscode/extensions.json

@@ -14,7 +14,7 @@
 uv sync --extra dev --extra build   # 严格按 uv.lock 拉齐依赖（含国内镜像，无需自己配源）
 uv run playwright install chromium  # 托管浏览器内核（账号库/自动登录/监听需要）
 powershell -ExecutionPolicy Bypass -File tools\setup.ps1   # 环境自检（兼容 PS 5.1/7）
-uv run pytest                       # 64 项全绿即环境就绪
+uv run pytest                       # 330 项全绿即环境就绪
 cd desktop; npm install; cd ..       # 桌面壳（Electron）依赖
 cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建产物 dist/
 ```
@@ -28,8 +28,35 @@ cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建
 > **`uv` 不在 PATH 时**（本机常见，`.venv\Scripts\uv.exe` 才是可用的那个）：
 > `.\\.venv\\Scripts\\uv.exe sync --extra dev --extra build`。同理 `ruff` 走
 > `.\\.venv\\Scripts\\uvx.exe ruff check .`。
+
+### 1.1 本机 Python / uv 的真实位置（**先看这条，再理 VS Code 的报错**）
+
+本机的 uv 与 Python **都是非常规位置**，这不是「装漏了」也不是「忘了加 PATH」，而是两种既有选择的结果：
+
+| 组件 | 实际位置 | 为什么在这里 |
+|---|---|---|
+| **uv** | `.venv\Scripts\uv.exe`（**不在 PATH**） | uv 是以 **pip 包**形式装进项目 venv 的（`.venv\Lib\site-packages\uv-<ver>.dist-info`），而不是用官方安装器装到用户目录 |
+| **Python** | `.venv\Scripts\python.exe` → 由 **conda 的 3.14.6** 创建 | `.venv\pyvenv.cfg` 的 `home = D:\software\conda`。venv 本体在项目内，但 `python` 命令本身不在系统 PATH |
+
+**因此 VS Code 会弹「未找到 Python，是否用 uv 安装一个」——那是误判**（本机已有可用解释器），
+不要点安装，它会白下一份 Python。仓库已提交 `.vscode/settings.json` 显式指定解释器，
+比「新装一个 Python」更省事也更安全。
+
+若你的编辑器仍然找不到解释器，手动选一次即可（**不是**配置错误，只是首次发现）：
+`Ctrl+Shift+P` → `Python: Select Interpreter` → `Enter interpreter path` →
+`<仓库>\.venv\Scripts\python.exe`。
+
+> 想彻底摆脱「uv 不在 PATH」，可选（非必需）：
+> `winget install astral-sh.uv` 或 `pip install --user uv`，然后重开终端。
+> 项目文档里的 `uv run` / `uvx` 命令在这之后才可直接用；**在此之前一律走 `.venv\Scripts\` 下的副本**。
+
+> **本机 venv 是 Python 3.14.6，项目要求 `>=3.12`** —— 满足要求，但要注意 3.14 上
+> `from __future__ import annotations` 的注解已不再于运行时求值，所以「注解里写了未导入的名字」
+> 这类错误不会在运行时暴露（`routes_insight.py` 的 `Any` 就是这么潜藏的）。ruff 的 F821 是唯一防线。
+
 >
-> **ruff 当前并非全绿**（9 条违规，见 §6 已知状态）——不是环境问题，是待修的债。
+> **ruff 现已全绿**（`uvx ruff check .` → All checks passed；`tools/*.py` 的 E402 是刻意豁免的引导式导入，
+> 见 `pyproject.toml` 的 `per-file-ignores`）。**验收基线是 330 项 pytest**，不是下面模板里的旧数字。
 
 ## 2. 依赖变更流程
 
@@ -131,11 +158,11 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 
 | 项 | 现状 | 影响 |
 |---|---|---|
-| `uvx ruff check .` | **9 条违规**：`tools/diag_electron_typing.py`（F401/E402）、`tools/publish_release.py:360`（B007）、`tools/verify_accounts_ui.py`（F401/E402）、`tools/verify_box_ops.py:24`（E402）、`tools/verify_wheel_page.py`（I001/E402）、`workbench/api/routes_update.py:13`（I001）<br>**⚠️ 2026-09-13 实测：本机 `uv`/`uvx` 与 `ruff` 均不存在，该门禁当前无法执行**（详见 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) 验收基线实测） | lint 门禁不成立；其中 4 条可 `--fix` 自动修 |
+| ~~`uvx ruff check .`~~ | ~~9 条违规~~ → **2026-09-14 已清零（All checks passed）**：F821（`routes_insight.py` 的 `Any` 未导入）、B017 裸 `Exception` 断言、4 处未用导入、6 处排序、B007 循环变量全部修掉；`tools/*.py` 的 E402 在 `pyproject.toml` 里**刻意豁免**（验证脚本必须先 reconfigure stdout、拉起服务再 import playwright） | ✅ 门禁恢复；**本机 `uv`/`uvx` 不在 PATH，须走 `.venv\Scripts\uvx.exe`**（见 §1.1） |
 | `tools/verify_packaging.py` | 8/8 PASS，但**未被 `build.ps1` 调用**、无 CI | 断点仍可能在构建数分钟后才暴露 |
-| `desktop/package-lock.json` | version `0.2.1`（package.json 已 `0.3.5`） | `npm install` 会改写它，发布后工作区变脏 |
+| `desktop/package-lock.json` | version `0.2.1`（`package.json` 已 `0.3.5`）——`bump.py` 五写不含它 | `npm install` 会改写它，发布后工作区变脏；安装包命名不受影响（electron-builder 读 `package.json`） |
 | ~~`extensions/quick-login/package-lock.json`~~ | ~~version `0.2.20`~~ → **2026-09-13 实测已是 `0.3.5`，本条已失效** | 同上 |
-| `tools/setup.ps1` §5 | 仍把 **Node** 当必检项并说「洞察/工厂功能不可用」 | 口径已过时（能力已原生化，Node 只影响遗留 `proc.py` 与它们的测试） |
+| ~~`tools/setup.ps1` §5~~ | ~~仍把 **Node** 当必检项并说「洞察/工厂功能不可用」~~ → **2026-09-14 已改为 `INFO` 信息项**（不计入失败），文案改为「仅影响 desktop/ 与 extensions/ 的构建（运行时不需要）」 | ✅ 口径已对齐 [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md) |
 | `tests/test_proc.py`（7 项） | 仍在测 Node 子进程封装 | 它测的是**遗留封装本身**，不代表运行时链路 |
 | `adapters/*.json` 的 `$schema` | 原指向已删除的 `docs/模块契约.md#adapters` | ✅ 本轮已改为 `docs/SCHEMA.md`（仅此字段） |
 
@@ -144,8 +171,8 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 ## 7. 验收纪律
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest          # 64 项（含原生链路 12 项、更新 14 项、浏览器 9 项）
-.\.venv\Scripts\uvx.exe ruff check .          # 见 §6，当前 9 条待修
+.\.venv\Scripts\python.exe -m pytest          # 330 项（原生链路 12 / 更新 14 / kernel 35 / 回放 23 / 工作区 31 / 路径 88 等）
+.\.venv\Scripts\uvx.exe ruff check .          # All checks passed（`uvx` 不在 PATH，须走 .venv 副本）
 .\.venv\Scripts\python.exe tools\verify_packaging.py
 ```
 
