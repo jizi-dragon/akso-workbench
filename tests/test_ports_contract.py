@@ -207,6 +207,33 @@ def test_no_hardcoded_shell_ports_outside_config() -> None:
     assert not offenders, "壳端口字面量必须只在 config 声明：\n" + "\n".join(offenders)
 
 
+# ---------------------------------------------------------------- 静态面禁缓存（ADR-0012 的连带修复）
+
+
+def test_static_and_index_are_not_cacheable(client: TestClient) -> None:
+    """静态页与首页必须带 `Cache-Control: no-store`。
+
+    **为什么这条是门禁而不是洁癖**：本项目是"改完就重建、重建就要立刻看到"的本机工具，
+    客户端就是自己的 Electron 渲染进程。`StaticFiles` 默认发 `ETag` + `Last-Modified`，
+    重建产物后渲染进程带 `If-Modified-Since` 复验、服务端回 **304 未修改** →
+    **界面继续显示旧副本**，而服务端实吐的已经是新版。
+    实测代价：一轮对话里绕了很久才定位——表现是「明明重建了、服务端也对，界面上还是旧功能」，
+    而且两边各自都"正确"，所以极难从代码反推。
+    """
+    for path in ("/", "/static/pages/insight.html", "/static/js/insight.js"):
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        cc = resp.headers.get("cache-control", "")
+        assert "no-store" in cc, f"{path} 缺少 no-store：{cc!r}"
+
+
+def test_api_endpoints_keep_their_own_caching_behavior(client: TestClient, no_ports_file) -> None:
+    """禁缓存只针对静态面：`/api/*` 不动（避免影响 SSE/流式与将来可能加缓存语义的端点）。"""
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    assert "no-store" not in (resp.headers.get("cache-control") or "")
+
+
 # ---------------------------------------------------------------- 固定端口（ADR-0012）
 
 

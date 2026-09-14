@@ -129,6 +129,37 @@
 
 ### Fixed
 
+- **静态页与首页禁止缓存（根因级修复：重建了产物，界面却一直显示旧版本）**。
+  这是"用户两次报『已下线的功能还在下拉里』"的**真正根因**——服务端实吐的已是新版
+  （实测 2563 bytes / 2 选项），但 Electron 渲染进程带 `If-Modified-Since` 复验、
+  `StaticFiles` 回 **304 未修改** → **渲染进程继续用自己那份旧副本**。
+  两侧各自都"正确"，所以从代码完全反推不出来，只能靠"服务端实吐字节数 vs 界面"对比才发现。
+  - 现对 `/` 与 `/static/*` 统一加 `Cache-Control: no-store, must-revalidate`
+    （+ `Pragma: no-cache` / `Expires: 0`）；`/api/*` **不动**（避免影响 SSE 与将来可能的缓存语义）。
+  - 本机回环读几十 KB 的 IO 成本可以忽略——**不值得为省这点开销换来"改了看不见"**。
+  - 回归：`tests/test_ports_contract.py` 增 2 项（静态面带 `no-store`；`/api/*` 不受影响）。
+  - 附带排查记录：磁盘上三份 `insight.html`（源码 / `dist/AksoServer` / 安装包内）
+    **哈希一致且都为修复版**，`dist\AksoWorkbench\` 旧产物与扩展的 Chromium `Cache\` 目录
+    均已排除——证据共同指向"服务端对、客户端缓存旧"，与结论自洽。
+- **界面上的上游项目名（`akso-cc`）已清除**（用户提出：「右上角 akso-cc 标识以及背后的功能
+  现在功能逻辑是单独成工具的，并不依赖上游文件」）。能力早已原生化，界面不该再自称"封装某项目"。
+  - 状态徽标 `akso-cc 就绪（ok）` → **`依赖就绪（ok）`**（失败态为 `依赖体检 ok：<项> 未就绪`）——
+    它本来就是**本工作台自己的依赖自检**（`services/modules.py`），不是"上游项目健康度"。
+  - 页头副标题 `封装 akso-cc：登录 / 蜘蛛（原仓库只读）` → **`本工作台原生实现：登录 / 蜘蛛五步织网（不依赖任何外部仓库）`**。
+  - 执行日志前缀 `$ akso-cc spider …` → **`$ insight spider …`**。
+  - ⚠️ 模块 **id 仍是 `akso-cc`**（`adapters/*.json` 的存档键，只读不改；改它会牵动
+    `docs/SCHEMA.md` 契约与多份文档引用）——**界面上不出现，但接口里还在**，这是刻意的。
+- **`inventory` / `understand` 的残留彻底清掉（用户提出这两个功能"太直接和庞大，一般实施用不到"）**。
+  命令本身早在 `2cc09bb` 已下线，本轮清的是**会让人以为它还在的残留**：
+  - **死代码**：`insight/report.py::to_markdown()`（把 `inventory.json` 渲染成「Gaia 系统配置清单」）
+    **零调用方**，且模块名会让人以为还存在一条全量盘点读路径。已删；该文件只剩 `_table`
+    （`spider.py` 在用的同包渲染工具），并改名/改述为"Markdown 表格渲染工具"。
+  - **存档与现值不符**：`adapters/akso-cc.json` 的 `commands` 里仍列着 `inventory` / `understand`，
+    而它会经 `GET /api/modules` 暴露给设置页的模块体检视图。已移除这两条
+    （`commands` 现为 `login` / `spider`），并在 `deprecation` 里写明来由。
+  - **刻意保留**（不是遗漏）：`insight/lifecycle.py` 的 `LifecycleApi` 被 `spider.py` 使用；
+    `drawio.workflow_to_drawio` 被 `tests/test_drawio.py` 与 `tools/verify_insight_drawio.py`
+    共 20+ 项断言锁定，且是"单页 mxfile"这一输出形态的唯一实现。删它们会伤到在用的能力。
 - **「另一个实例在运行」对话框被 pid 复用触发，应用再也起不来（严重，实测踩到）**。
   壳启动时读 `runtime/desktop-ports.json` 判「是否已有实例在跑」，判据是
   **「文件里的 pid 还活着」**——而 Windows 的 pid 会被回收复用，于是**任何**撞上同一 pid 的

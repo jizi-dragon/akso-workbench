@@ -73,6 +73,28 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Akso Workbench", version=__version__, lifespan=lifespan)
+
+    @app.middleware("http")
+    async def _no_store_static(request, call_next):
+        """静态页与首页**禁止缓存**。
+
+        为什么必须这么做（血泪）：本项目是"改完就重建、重建就要立刻看到"的本机工具，
+        客户端就是自己的 Electron 渲染进程。`StaticFiles` 默认发 `ETag` + `Last-Modified`，
+        于是重建产物后浏览器带 `If-Modified-Since` 复验、服务端回 **304 未修改** →
+        **渲染进程继续用自己那份旧副本**，而服务端实吐的已经是新版。
+        表现就是「我明明重建了、服务端也对，界面上却还是旧功能」——排查成本极高，
+        因为两边各自都"正确"（实测：一轮对话里绕了很久才发现是 304）。
+        本机回环读几十 KB 文件的成本可以忽略，**不值得为省这点 IO 换来"改了看不见"**。
+
+        只对静态面生效；`/api/*` 本来就是动态的，不动它（避免影响流式响应）。
+        """
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
     app.include_router(routes_conversations.router)
     app.include_router(routes_settings.router)
     app.include_router(routes_chat.router)

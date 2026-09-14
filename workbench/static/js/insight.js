@@ -33,12 +33,14 @@ async function loadAccounts() {
 async function checkHealth() {
   const badge = el('module-health');
   try {
+    // 模块 id 仍是 `akso-cc`（adapters 存档键，只读不改），但**界面上不出现上游项目名**：
+    // 能力已原生化，这里的体检只是本工作台自己的依赖自检（见 workbench/services/modules.py）。
     const data = await api('/api/modules/akso-cc');
     badge.className = `status-badge ${badgeFor(data.status)}`;
     const fail = (data.checks || []).filter((c) => !c.ok);
     badge.textContent = fail.length
-      ? `akso-cc ${data.status}：${fail.map((c) => c.name).join('、')} 未就绪`
-      : `akso-cc 就绪（${data.status}）`;
+      ? `依赖体检 ${data.status}：${fail.map((c) => c.name).join('、')} 未就绪`
+      : `依赖就绪（${data.status}）`;
   } catch (e) {
     badge.className = 'status-badge err';
     badge.textContent = `体检失败：${e.message}`;
@@ -58,7 +60,8 @@ async function run() {
     return;
   }
   log.innerHTML = '';
-  logLine(log, `$ akso-cc ${command}${command === 'spider' ? ` --objects=${el('ins-objects').value}` : ''}`, 'sys');
+  // 日志里也不出现上游项目名：这是本工作台的命令，不是"调某个外部工具"
+  logLine(log, `$ insight ${command}${command === 'spider' ? ` --objects=${el('ins-objects').value}` : ''}`, 'sys');
   setRunning(true);
   try {
     await postSSE('/api/insight/run-sse', {
