@@ -41,11 +41,27 @@ const sessionWindows = new Map();
 const serverUrl = (p) => `http://127.0.0.1:${SERVER_PORT}${p}`;
 
 // —— CDP 调试端口：必须在 app ready **之前**设置 ——
-// 端口是固定常量，故在模块加载期就能设定，不需要再等"协商完成"这个异步点。
+// ⚠ 2026-09-14 事故（v0.3.6 真机实测）：这两行一度被搬进 `bootstrapPorts()`，
+// 而它是在 `app.whenReady().then(...)` 里才被调用的 —— **晚于 ready 就完全不生效**
+// （实测 18766 从未监听，`/json/version` 拒绝连接），而同一轮刚好又让壳下发了
+// `WORKBENCH_SESSION_MODE=cdp`，于是托管会话必然报「CDP 连接失败…」（无回退）。
+// 结论：端口值虽是固定常量，这个开关也**只能在模块加载期**打——见 PITFALLS #3。
 function applyCdpSwitch() {
   app.commandLine.appendSwitch('remote-debugging-port', String(DEBUG_PORT));
   app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
 }
+
+// —— 端口预检与 CDP 开关的**顺序约束**（v0.3.7 真机事故，别再把这两句调换）——
+//   ① `remote-debugging-port` 只能在 ready 之前打（PITFALLS #3）；
+//   ② 而 `portBroker.unavailable()` 的判据是「这个端口**能不能绑**」，壳一旦启用 CDP，
+//      18766 就被**它自己**占住 —— 那样预检会把自己的监听判成「无关程序占用」，
+//      启动直接弹「端口被占用」退出（实测形态：18766 有 LISTEN、弹窗、服务端从未拉起）。
+// 两条约束的交集只有一个顺序：**先探（此刻 18766 上若有东西就是别人）→ 再打开关**。
+// 预检是毫秒级、串行的三个本地 bind，远早于 ready，所以「探完再打」仍满足 ①。
+const portPreflight = portBroker.unavailable().then((busy) => {
+  applyCdpSwitch();
+  return busy;
+});
 
 // ------------------------------------------------------------ 服务 sidecar
 
@@ -510,7 +526,8 @@ async function checkUpdateFromTray() {
  * 顺延引入的活动部件（协商窗口、实际端口公布、扩展按窗口探测、书签失效）
  * 换来的收益抵不上它带来的故障面；固定端口让"打开工作台"永远是同一个地址。
  *
- * 顺序：**先清陈旧公布文件 → 再判实例 → 再探端口 → 再设 CDP 开关 → 再写公布文件**。
+ * 顺序：**先清陈旧公布文件 → 再判实例 → 再取端口预检结果 → 再写公布文件**。
+ * （CDP 开关不在这里打——它必须在模块加载期、且**在端口预检之后**打，见文件上方注释。）
  */
 async function bootstrapPorts() {
   // 先清陈旧公布文件：应用被强杀（taskkill /F、崩溃）时 will-quit 不触发，
@@ -523,8 +540,10 @@ async function bootstrapPorts() {
   // 是不是我们自己的另一个实例在跑？（核对身份，不只看端口有没有人应答）
   const prev = portBroker.detectRunningInstance();
 
-  // 固定端口不可用 → 说清是哪个端口、被谁占、怎么办，然后退出（不换端口）
-  const busy = await portBroker.unavailable();
+  // 固定端口不可用 → 说清是哪个端口、被谁占、怎么办，然后退出（不换端口）。
+  // 结果取自模块加载期发起的 `portPreflight`（**CDP 开关打开之前**探的，见该处注释）——
+  // 这里若重新探一次，18766 已经是壳自己的监听，必然误报「被占用」。
+  const busy = await portPreflight;
   if (busy.length) {
     // 只有 server 端口上"我们的另一个实例"是可识别的（公布文件记的就是它的 server）；
     // 其余端口如实说"不是我们的实例占着"，并给出找占用者的命令。
@@ -550,7 +569,6 @@ async function bootstrapPorts() {
   // 顺带得到一个刻意的好处：**同一时刻只可能有一个实例**——不再有"两个实例共用同一份
   // 数据目录、各自一组端口、凭据互相解密"那一族问题（PITFALLS #23）。
   portInfo = { ports: { ...portBroker.PORTS }, startedAt: new Date().toISOString() };
-  applyCdpSwitch();
   portBroker.publish(app.getVersion());
   return true;
 }

@@ -29,6 +29,7 @@ from typing import Any, Callable
 
 from .. import config
 from . import accounts, autologin
+from .egmp.kernel.urls import normalize_base_url
 from .storage import now_ms
 
 # —— Electron 壳复用模式（WORKBENCH_SESSION_MODE=cdp）——
@@ -36,6 +37,31 @@ from .storage import now_ms
 # Playwright 经 CDP(18766) 反向接管页面；开户窗/聚焦/关窗走壳的控制服务(18767)。
 # local 模式 = 原生 playwright chromium（开发/无壳环境）。
 SESSION_MODE = os.environ.get("WORKBENCH_SESSION_MODE", "local")
+
+
+def ensure_bundled_browsers_path() -> str | None:
+    """打包态把 `PLAYWRIGHT_BROWSERS_PATH` 指向随包分发的 chromium，返回该目录。
+
+    **必须在任何 `sync_playwright()` 之前调用**：playwright 的浏览器目录默认取
+    `%LOCALAPPDATA%\\ms-playwright`（Node 驱动侧 `registryDirectory`），而打包态那份
+    在 `sys._MEIPASS/ms-playwright`。不设它的后果分两种：
+
+    - 运行期：拉不起浏览器（所以 `_worker` 一直有这段逻辑）；
+    - **体检**：`/api/modules` 与 `/api/browser/check` 会误报「chromium 未安装」 ——
+      2026-09-14 打包态实测：把该变量设成包内目录后检查立刻通过，且解出的正是包内的
+      `chromium-1234/chrome-win64/chrome.exe`。原先只有 `_worker` 设它，而两个体检入口
+      跑在 worker 之前，于是「包里有浏览器却报缺失」。（源码态不设也能过，因为默认目录里
+      确实装着——所以这个坑只在打包态现形。）
+
+    幂等：已设过就不覆盖（壳/工具可以显式指定，便于隔离测试）。
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    bundled = Path(getattr(sys, "_MEIPASS", ".")) / "ms-playwright"
+    if not bundled.exists():
+        return None
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(bundled))
+    return str(bundled)
 
 
 def _shell_port(which: str) -> int:
@@ -125,11 +151,9 @@ class BrowserPool:
     # --------------------------------------------------- 专职线程（Playwright 家）
 
     def _worker(self) -> None:
-        # 打包态：优先使用随包分发的 chromium（须在 sync_playwright 启动前设置）
-        if getattr(sys, "frozen", False):
-            bundled = Path(getattr(sys, "_MEIPASS", ".")) / "ms-playwright"
-            if bundled.exists():
-                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
+        # 打包态：优先使用随包分发的 chromium（须在 sync_playwright 启动前设置）。
+        # 与两个体检入口共用同一个单点实现，避免「运行期找得到、体检说没装」的漂移。
+        ensure_bundled_browsers_path()
         pw: Any = None
         browsers: dict[bool, Any] = {}
         sessions: dict[str, SessionEntry] = {}
@@ -261,7 +285,7 @@ class BrowserPool:
         account = accounts.get_account(account_id)
         if not account:
             raise BrowserError(f"账号不存在：{account_id}")
-        base_url = (account.get("env_base_url") or "").strip()
+        base_url = normalize_base_url(account.get("env_base_url") or "")
         if not base_url:
             raise BrowserError(f"账号 {account['username']} 的平台环境未配置 baseUrl")
 
@@ -326,7 +350,7 @@ class BrowserPool:
         连接发生在开户之后（实测窗口先于 connect 存在才可被 Playwright 挂接），
         每次开户追加一条连接；旧连接保持存活，其会话句柄继续有效。
         """
-        base_url = (account.get("env_base_url") or "").strip()
+        base_url = normalize_base_url(account.get("env_base_url") or "")
         window_id = f"acc-{account_id}"
         resp = _control_post("/windows", {"windowId": window_id})
         if not resp or not resp.get("ok"):
@@ -622,6 +646,8 @@ def get_pool() -> BrowserPool:
 def warmup_check() -> dict[str, Any]:
     """依赖体检：chromium 可执行文件是否存在（不真正启动）。"""
     try:
+        # 与运行期同一条解析路径——否则打包态会误报「未安装」（见 ensure_bundled_browsers_path）
+        ensure_bundled_browsers_path()
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
