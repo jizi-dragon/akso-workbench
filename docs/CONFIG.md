@@ -12,21 +12,27 @@
 
 ## 1. 端口与进程（先看这张表）
 
-**端口的唯一权威来源是桌面壳**（决策与事故复盘见 [ADR-0011](adr/0011-port-and-session-negotiation.md)）：
-壳启动时按下面的**基准值**取端口，**被占则顺延**（每端口最多 +8），然后把实际值
+**端口是固定常量**（决策见 [ADR-0012](adr/0012-fixed-ports.md)；它取代了
+[ADR-0011](adr/0011-port-and-session-negotiation.md) §D-1 的"被占则顺延"）：壳启动时**只认下面这三个号**，
+被占就报错退出并说清是谁占的，**不会换号继续跑**。壳把它们
 ①经环境变量下发给服务端、②公布到 `<数据目录>/runtime/desktop-ports.json`、③由控制服务的
-`GET /whoami` 答给浏览器扩展。**别处不要再写这些数字**——`tests/test_ports_contract.py` 会扫描源码钉住这点。
+`GET /whoami` 答给浏览器扩展。**别处不要再写这些数字**——`tests/test_ports_contract.py` 会扫描源码钉住这点，
+并额外核对壳侧 `PORTS` 与 Python 侧默认值**完全一致**（不一致会表现为"永远等不到就绪"的白屏）。
 
-| 端口（基准） | 归属 | 用途 | 谁在监听 |
+| 端口（固定） | 归属 | 用途 | 谁在监听 |
 |---|---|---|---|
 | **18765** | FastAPI 服务（uvicorn / `AksoServer.exe`） | 全部业务 HTTP + 静态页 + `/extension/*` + `/api/health` | sidecar 进程 |
 | **18766** | Electron 内置 Chromium | CDP 调试端口，`browser_pool` `connect_over_cdp` 用 | Electron 主进程 |
 | **18767** | Electron 控制服务（Node `http`） | 会话窗开户/聚焦/关窗、更新动作、扩展安装引导、`/whoami` | Electron 主进程 |
 
-> **顺延是常态而非异常**：端口被占时应用会**换号继续跑**，并把实际值公布出去。
-> 因此"18765 上是不是本项目服务"不能靠猜——要读 `desktop-ports.json`，或打
-> `GET /api/health` 看 `app` 字段（`AksoWorkbench` 才是我们）。
-> 壳的就绪探测本身就会核对这个字段；对不上会明确报错并告诉你占用者是谁，而不是静默连上去。
+> **端口被占 = 应用打不开，这是刻意的**：不换号是为了让"打开工作台"永远是同一个地址
+> （扩展、书签、运维脚本都指向它们）。报错对话框会区分两种情况：占用者是**我们自己的另一个实例**
+> （给 PID/版本，让你去托盘退出它）还是**无关程序**（给 `Get-NetTCPConnection -LocalPort <port>`
+> 的排查命令）。见 [ADR-0012](adr/0012-fixed-ports.md) §D-2。
+>
+> 判"端口上是不是我们的服务"必须核对身份，不能只看"有人应答"：
+> 读 `desktop-ports.json`，或打 `GET /api/health` 看 `app` 字段（`AksoWorkbench` 才是我们）。
+> 壳的就绪探测本身就会核对这个字段。
 
 | 进程 | 开发态 | 打包态 |
 |---|---|---|
@@ -34,9 +40,9 @@
 | 壳 | `cd desktop && npm start` | `AksoWorkbench.exe` |
 | 数据库 | 同左（默认 `%APPDATA%`） | 同左 |
 
-> ⚠️ **扩展不再是编译期常量**（2026-09-14 起）：它会先读缓存、再问壳的 `/whoami`、
-> 最后才回退固定 18765。所以服务端顺延端口时扩展仍能自愈——但**旧版扩展**（≤0.3.5 之前的
-> 那套写死 18765 的代码）不会，换端口即静默离线。验证扩展行为时先确认 `desktop-ports.json` 里的 `server`。
+> **扩展也不再是编译期常量**（2026-09-14 起）：它会先读缓存、再问壳的 `/whoami`（**核对 `app` 身份**）、
+> 最后回退固定 18765。端口固定后这一步的目的不再是"跟上顺延"，而是**确认 18765 上是不是我们的服务端**——
+> 凭据（Fernet 密文 + 原始密钥）会经过这条通道，而密钥就在本机库里（[PITFALLS.md](PITFALLS.md) #23）。
 > 常见陷阱：孤儿 uvicorn 占端口，见 [PITFALLS.md](PITFALLS.md) 环境坑 #20。
 
 ## 2. 第一层：环境变量
@@ -50,12 +56,12 @@
 | `WORKBENCH_DB` | `<数据目录>/workbench.db` | 单文件指向。测试用（`conftest.py` 指向临时目录）。**指向不存在的路径会新建空库**，表现为「账号全没了」 |
 | `MOGUL_DB` | — | `WORKBENCH_DB` 的兼容别名 |
 | `WORKBENCH_HOST` | `127.0.0.1` | 改成 `0.0.0.0` 会把**无认证**的业务面暴露到局域网——**不要这么做** |
-| `WORKBENCH_PORT` | `18765` | 服务端业务面 + 静态页。**壳会把它实际选中的值下发到这里**（ADR-0011）：正常情况就是基准值，被占则顺延。手工改它只影响自己起的进程；桌面壳运行时以 `runtime/desktop-ports.json` 为准 |
+| `WORKBENCH_PORT` | `18765` | 服务端业务面 + 静态页。**壳会把这个固定值下发到这里**（ADR-0011 §D-2 的下发通道，端口值本身已按 ADR-0012 固定）。手工改它只影响自己起的进程；**桌面壳运行时它会拒绝启动**（壳只认 18765） |
 | `MOGUL_HOST` / `MOGUL_PORT` | — | 上一对的兼容别名 |
 | `WORKBENCH_ADAPTERS` | `<项目根>/adapters` | 模块体检读取的适配器目录。测试用（指向仓库 `adapters/`，因为测试数据目录里没有） |
 | `WORKBENCH_SESSION_MODE` | `local` | `cdp` = 托管会话复用 Electron 壳的 Chromium（先壳控制服务开户再 `connect_over_cdp`）；`local` = 原生 Playwright chromium。**桌面壳运行时会下发 `cdp`**（2026-09-14 修：此前壳从不设置它，导致永远跑 `local`，与 [ADR-0002](adr/0002-browser-allocation-policy.md) 的意图相反）。开发者手起服务端时留空即 `local` |
-| `WORKBENCH_CONTROL_PORT` | `18767` | 壳控制服务端口。由壳下发（被占则顺延）；服务端侧的 `routes_update` / `routes_extension` 与 `browser_pool` 都读 `config.CONTROL_PORT`，**不得再写常量** |
-| `WORKBENCH_CDP_PORT` | `18766` | 同上，壳的 Chromium 调试口；与 `desktop/ports.js` 的 `BASE.cdp` 对应 |
+| `WORKBENCH_CONTROL_PORT` | `18767` | 壳控制服务端口（固定）。由壳下发；服务端侧的 `routes_update` / `routes_extension` 与 `browser_pool` 都读 `config.CONTROL_PORT`，**不得再写常量** |
+| `WORKBENCH_CDP_PORT` | `18766` | 同上，壳的 Chromium 调试口；与 `desktop/ports.js` 的 `PORTS.cdp` 对应 |
 | `PLAYWRIGHT_BROWSERS_PATH` | （仅打包态自动设置） | 打包态由 `browser_pool` 工作线程指向 `_MEIPASS/ms-playwright`，**必须在 `sync_playwright()` 之前**。手工覆盖会导致找不到 chromium |
 | `AKSO_CC_REPO` / `AKSO_AUTO_REPO` | 见 `adapters/*.json` 的 `repoPath` | **只影响两件事**：模块体检的 `source-reference` 提示、「原项目 env 导入」去哪里扫 `env.json`。**不影响任何业务功能**（能力已原生化，见 [ADR-0005](adr/0005-native-internalization-of-four-projects.md)） |
 | `NODE_COMMAND` | `node` | 遗留（`services/proc.py` 的 Node 子进程封装，仅被 `tests/test_proc.py` 使用）。**运行时链路不再依赖 Node** |

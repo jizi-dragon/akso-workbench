@@ -30,8 +30,10 @@ _由 learn-codebase 技能生成，本轮复核重写于 **2026-09-13**，锚定
 - **框架 / 运行时：** FastAPI + uvicorn[standard]（REST + SSE + 静态托管）；pydantic v2；**Electron 33** 桌面壳（窗口 / 托盘 / 全局热键 / 更新器 / 出网通道 / sidecar 生命周期）
 - **构建 / 包管理：** uv（`uv.lock`，默认清华镜像 `pyproject.toml:37-39`）；hatchling；ruff（`E4/E7/E9/F/I/B`，line-length 110）；**PyInstaller**（`build` extra，`workbench/server.spec` → `dist/AksoServer/` onedir）；**electron-builder → NSIS**（`tools/build.ps1` 一键出安装包）；esbuild 0.24（扩展打包）；版本真源 `pyproject.toml`
 - **存储 / 外部服务：** SQLite（WAL，**迁移 1–13**）；Playwright chromium；cryptography Fernet；DeepSeek API；networkx；GitHub Releases（electron-updater）
-- **端口：** 基准 18765 服务 · 18766 CDP · 18767 壳控制服务。**实际值是壳协商出来的**（被占则顺延，最多 +8），
-  经环境变量下发 + 公布到 `runtime/desktop-ports.json` + 由 `/whoami` 答给扩展 —— 见 [ADR-0011](adr/0011-port-and-session-negotiation.md)
+- **端口：** **固定常量** 18765 服务 · 18766 CDP · 18767 壳控制服务，**不顺延**（[ADR-0012](adr/0012-fixed-ports.md) 取代
+  [ADR-0011](adr/0011-port-and-session-negotiation.md) §D-1）。被占则报错退出并说清占用者是谁；
+  仍经环境变量下发 + 公布到 `runtime/desktop-ports.json` + 由 `/whoami` 答给扩展（那三条是**身份**手段，与顺延无关）。
+  壳侧真源 `desktop/ports.js::PORTS`，Python 侧默认值必须一致（`tests/test_ports_contract.py` 钉住）
 - **已应用技能：** `learn-codebase`（本文件）；分析期另派两个子代理分别深挖**扩展执行面**与**构建/发布链**，其结论已并入下文并逐条对码核验。
 
 ## Architecture（架构）

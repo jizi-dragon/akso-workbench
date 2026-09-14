@@ -15,20 +15,21 @@ const shellState = require('./shell-state');
 const portBroker = require('./ports');
 const proxy = require('./proxy');
 
-// 端口**不再各写一份**：壳是仲裁者，运行时协商（优先固定基准、被占则顺延），
-// 实际值经环境变量下发给服务端并公布到 runtime/desktop-ports.json。
-// 完整决策与"旧实例占端口"事故复盘见 docs/adr/0011。
-let SERVER_PORT = portBroker.BASE.server;
-let CONTROL_PORT = portBroker.BASE.control;
-let DEBUG_PORT = portBroker.BASE.cdp;
+// 端口**固定**（ADR-0012 取代 ADR-0011 §D-1）：18765 服务端 / 18766 CDP / 18767 壳控制服务。
+// 不做顺延——被占就报错退出，并说清是谁占的（我们自己的另一个实例，还是无关程序）。
+// 判定"谁占着"必须核对身份：只看"端口有人应答"会认错服务（PITFALLS #20），
+// 只看"pid 还活着"会被 pid 复用误报（#25）。
+const SERVER_PORT = portBroker.PORTS.server;
+const CONTROL_PORT = portBroker.PORTS.control;
+const DEBUG_PORT = portBroker.PORTS.cdp;
 
 let serverChild = null;
 let mainWindow = null;
 let wheelWindow = null;
 let tray = null;
 let quitting = false;
-/** 协商结果（端口 + 是否顺延），供 /whoami、shell-state 与排障使用 */
-let portInfo = { ports: { ...portBroker.BASE }, drifted: [] };
+/** 端口是固定的；这里只留壳的启动时刻，供 /whoami 与排障使用 */
+let portInfo = { ports: { ...portBroker.PORTS }, startedAt: null };
 /** updater 状态最后一次快照：供控制服务 /update-state 与渲染层 IPC 读取 */
 let updateState = null;
 /** 代理解析结果（写入壳状态，便于排障："更新下载不动"时先看这里） */
@@ -39,8 +40,8 @@ const sessionWindows = new Map();
 
 const serverUrl = (p) => `http://127.0.0.1:${SERVER_PORT}${p}`;
 
-// —— CDP 调试端口：必须在 app ready **之前**设置，故在协商完成后立即调用 ——
-// 参数不能放模块顶层：协商是异步的（要探测端口是否可绑），而这里原先写死常量才能提前设置。
+// —— CDP 调试端口：必须在 app ready **之前**设置 ——
+// 端口是固定常量，故在模块加载期就能设定，不需要再等"协商完成"这个异步点。
 function applyCdpSwitch() {
   app.commandLine.appendSwitch('remote-debugging-port', String(DEBUG_PORT));
   app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
@@ -49,7 +50,7 @@ function applyCdpSwitch() {
 // ------------------------------------------------------------ 服务 sidecar
 
 function spawnServer() {
-  // 端口下发的两条路一起走（ADR-0011 §D-2）：
+  // 端口下发的两条路一起走（ADR-0011 §D-2，端口值本身已按 ADR-0012 固定）：
   //  - 环境变量：Python 侧 config.PORT/CDP_PORT/CONTROL_PORT 是唯一读数点；
   //  - 命令行 --port：打包态入口 server_entry.main() 已支持解析，两者必须一致。
   // `WORKBENCH_SESSION_MODE=cdp` 也在这里下发——它此前**从没被壳设置过**，导致
@@ -312,8 +313,8 @@ function selfDescription() {
     pid: process.pid,
     version: app.getVersion(),
     startedAt: portInfo.startedAt || null,
-    base: { ...portBroker.BASE },
-    drifted: portInfo.drifted || [],
+    ports: { ...portBroker.PORTS },
+    fixed: true, // 端口固定、不顺延（ADR-0012）——扩展据此可省掉"按窗口探测"
   };
 }
 
@@ -335,8 +336,9 @@ function createControlServer() {
       const url = new URL(req.url, 'http://127.0.0.1');
       if (url.pathname === '/health') return json(res, 200, { ok: true });
 
-      // 端口发现（ADR-0011 §D-5）：扩展靠它拿到**服务端实际端口**，而不是猜 18765。
-      // 控制服务是壳自己的，所以它的回答天然比"18765 上是谁"可信。
+      // 身份自证（ADR-0011 §D-4/§D-5，ADR-0012 保留）：扩展靠它确认"18765 上是不是
+      // 我们的服务端"。控制服务是壳自己的，所以它的回答天然比"18765 上是谁"可信。
+      // 端口已固定，故本端点不再承担"发现端口"的职责，只回答**身份**。
       if (url.pathname === '/whoami') return json(res, 200, selfDescription());
 
       // 安装扩展引导（供桌面 UI 的「扩展未连接」提示条调用；也可由托盘菜单直接触发）
@@ -502,10 +504,13 @@ async function checkUpdateFromTray() {
 // ------------------------------------------------------------ 启动流程
 
 /**
- * 端口协商 + 旧实例自检（ADR-0011 §D-1/D-3）。
- * 顺序关键：**先协商端口 → 再设 CDP 开关 → 再 spawn 服务端 → 再起控制服务**。
- * 协商失败（三个端口的整个顺延窗口都被占）时不让应用"半死不活"地起来，
- * 而是给出可执行的提示后退出。
+ * 启动自检：**固定端口**是否可用 + 是不是我们自己的另一个实例占着（ADR-0012）。
+ *
+ * 不做顺延、不做协商——被占就明确失败并说清是谁占的。理由（用户定稿）：
+ * 顺延引入的活动部件（协商窗口、实际端口公布、扩展按窗口探测、书签失效）
+ * 换来的收益抵不上它带来的故障面；固定端口让"打开工作台"永远是同一个地址。
+ *
+ * 顺序：**先清陈旧公布文件 → 再判实例 → 再探端口 → 再设 CDP 开关 → 再写公布文件**。
  */
 async function bootstrapPorts() {
   // 先清陈旧公布文件：应用被强杀（taskkill /F、崩溃）时 will-quit 不触发，
@@ -514,52 +519,39 @@ async function bootstrapPorts() {
   if (portBroker.clearStale()) {
     console.warn('[akso-shell] 已清理陈旧的 desktop-ports.json（写它的实例已不在）');
   }
-  const prev = portBroker.detectRunningInstance();
-  if (prev) {
-    const choice = dialog.showMessageBoxSync({
-      type: 'warning',
-      title: 'Akso Workbench 已在运行',
-      message: '检测到另一个 Akso Workbench 实例正在运行。',
-      detail: portBroker.describeOccupant('server', prev) +
-        '\n\n继续启动会另占一组端口（以 18765 为基准顺延），' +
-        '两个实例会共用同一份数据目录。建议先退出那个实例。',
-      buttons: ['仍然启动', '退出'],
-      defaultId: 1,
-      cancelId: 1,
-    });
-    if (choice === 1) {
-      app.exit(0);
-      return false;
-    }
-  }
 
-  const res = await portBroker.negotiate();
-  if (!res.ok) {
+  // 是不是我们自己的另一个实例在跑？（核对身份，不只看端口有没有人应答）
+  const prev = portBroker.detectRunningInstance();
+
+  // 固定端口不可用 → 说清是哪个端口、被谁占、怎么办，然后退出（不换端口）
+  const busy = await portBroker.unavailable();
+  if (busy.length) {
+    // 只有 server 端口上"我们的另一个实例"是可识别的（公布文件记的就是它的 server）；
+    // 其余端口如实说"不是我们的实例占着"，并给出找占用者的命令。
+    const detail = busy
+      .map((b) => portBroker.describeOccupant(b.key, b.key === 'server' ? prev : null))
+      .join('\n\n');
     dialog.showMessageBoxSync({
       type: 'error',
-      title: '端口不可用',
-      message: `端口 ${portBroker.BASE[res.failedAt]} 及其后 ${portBroker.MAX_DRIFT} 个号都被占用，无法启动。`,
-      detail: portBroker.describeOccupant(res.failedAt, prev) +
-        '\n\n也可以设 WORKBENCH_PORT / WORKBENCH_CDP_PORT / WORKBENCH_CONTROL_PORT 指定其它端口后重试。',
+      title: '端口被占用',
+      message: `固定端口被占用，无法启动（${busy.map((b) => b.port).join('、')}）。`,
+      detail: detail +
+        '\n\n本次不会自动换端口——固定端口是刻意的设计（扩展地址、书签都指向它们）。',
       buttons: ['退出'],
     });
     app.exit(1);
     return false;
   }
-
-  SERVER_PORT = res.ports.server;
-  DEBUG_PORT = res.ports.cdp;
-  CONTROL_PORT = res.ports.control;
-  portInfo = {
-    ports: { ...res.ports },
-    drifted: res.drifted,
-    startedAt: new Date().toISOString(),
-  };
-  if (res.drifted.length) {
-    console.warn(`[akso-shell] 端口顺延：${res.drifted.join('，')}`);
-  }
+  // 端口本身可用，且没有我们的实例在跑 → 正常启动。
+  //
+  // ⚠ ADR-0012 起这里**不再有**「仍然启动 / 退出」的询问：端口固定意味着
+  // "活着的实例必然占着 18765"，所以那种情况已经被上面的端口检查拦住了，
+  // 询问分支是**永远走不到的死代码**（留着只会让下次改这里的人以为两个实例可以并存）。
+  // 顺带得到一个刻意的好处：**同一时刻只可能有一个实例**——不再有"两个实例共用同一份
+  // 数据目录、各自一组端口、凭据互相解密"那一族问题（PITFALLS #23）。
+  portInfo = { ports: { ...portBroker.PORTS }, startedAt: new Date().toISOString() };
   applyCdpSwitch();
-  portBroker.publish(res.ports, app.getVersion());
+  portBroker.publish(app.getVersion());
   return true;
 }
 

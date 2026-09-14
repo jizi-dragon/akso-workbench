@@ -1,15 +1,19 @@
-// 端口协商与公布（ADR-0011）——壳是唯一仲裁者
+// 端口固定 + 占用判定（ADR-0012 取代 ADR-0011 §D-1）
 //
-// 为什么需要这个文件：改造前 18765/18766/18767 三个端口被壳、Python 服务端、浏览器扩展
-// **各自硬编码**，没有任何一方负责裁决"谁在用"。后果是实测过的故障：旧实例占着 18765，
-// 新壳探到"有 HTTP 200"就认为就绪，于是主窗打开的是**旧实例**的页面 —— 表现成
-// "代码改了但 UI 没变"，排查成本极高（完整复盘见 docs/adr/0011）。
+// 历史上这里做过"壳当仲裁者、被占则顺延"（ADR-0011 §D-1）。**2026-09-14 撤回**：
+// 顺延带来的一整套活动部件（协商窗口、实际端口公布、扩展按窗口探测、书签失效）
+// 换来的收益，抵不上它引入的故障面——用户定稿：**就固定端口号**，
+// 端口被占时直接给出可执行的错误，而不是悄悄换个号继续跑。
 //
-// 本模块的职责边界：
-//   1. 选端口（优先固定基准，被占则顺延）——**不做全局随机**：固定端口对使用者更友好，
-//      随机只会把"我要打开工作台"变成"我得先查它这次在哪个口"；
-//   2. 把实际选中值**公布**到 runtime/desktop-ports.json（服务端、工具、排障都读它）；
-//   3. 启动时读旧文件，识别"已有另一个实例在跑"并给出可执行提示。
+// 本模块现在只做三件事，且都是"只读判定 + 固定事实"：
+//   1. 声明三个固定端口（与 Python 侧 config.py 的默认值一致）；
+//   2. 启动前核对**谁占着端口**——是我们自己的另一个实例？还是无关程序？给出可执行提示；
+//   3. 把固定端口**公布**到 runtime/desktop-ports.json（供服务端自证、工具与排障读取）。
+//
+// ⚠ 仍然保留"核对身份"这条判据（ADR-0011 §D-4 的遗产，与顺延无关）：
+// 只看"端口有人应答 / pid 还活着"会踩两种坑——旧实例占着端口导致新壳认错服务
+// （docs/PITFALLS.md #20），以及 pid 回收复用导致误报"另一个实例在跑"而把应用锁死
+// （#25）。所以判定必须问"**是不是我们**"，不能只问"有没有东西在"。
 
 const fs = require('fs');
 const net = require('net');
@@ -17,60 +21,34 @@ const path = require('path');
 
 const shellState = require('./shell-state');
 
-/** 端口基准：与历史版本保持一致（改了会让既有书签/扩展失效） */
-const BASE = { server: 18765, cdp: 18766, control: 18767 };
-/** 顺延上限：每个端口最多试这么多个号。够躲开偶发占用，又不会把号段铺得太远 */
-const MAX_DRIFT = 8;
+/**
+ * 三个固定端口。**改了就是破坏性变更**：扩展的兜底地址、既有书签、运维脚本都指向它们。
+ * 唯一真相来源仍是这里（Python 侧 `workbench/config.py` 的默认值必须与之相同）。
+ */
+const PORTS = { server: 18765, cdp: 18766, control: 18767 };
+/** 兼容旧调用点的别名（ADR-0011 时代叫 BASE） */
+const BASE = PORTS;
 
 const PORTS_PATH = path.join(shellState.dataDir(), 'runtime', 'desktop-ports.json');
 
 /** 探测单个端口是否可绑（绑上立刻放掉——真正的监听由各自的进程/服务去做） */
 function canBind(port) {
   return new Promise((resolve) => {
-    const srv = net.createServer();
-    srv.once('error', () => resolve(false));
-    srv.once('listening', () => srv.close(() => resolve(true)));
-    srv.listen(port, '127.0.0.1');
+    const s = net.createServer();
+    s.once('error', () => resolve(false));
+    s.once('listening', () => s.close(() => resolve(true)));
+    s.listen(port, '127.0.0.1');
   });
 }
 
-/**
- * 从基准端口起找一个能绑且尚未被本进程预留的号。
- *
- * 顺序有讲究：**先探 canBind、再看 taken**。反过来（先看 taken 就 continue）会漏探——
- * 而 taken 里的号通常正是"另一个端口已经占了"的那个，于是出现三级连带顺延：
- * server 被占 → 拿到 18766 → cdp 因 18766 在 taken 里而跳到 18767 → control 再跳到 18768。
- * 实测复现过（tools/verify_port_broker.mjs 有一条专门钉住它）。
- *
- * @returns {Promise<{port:number, drifted:boolean}>}
- */
-async function pickPort(base, taken) {
-  for (let i = 0; i <= MAX_DRIFT; i += 1) {
-    const port = base + i;
-    if (taken.has(port)) continue; // 本进程已预留（等价于已被占，无需再探）
-    // 顺延是串行的：必须按顺序取第一个可用，故这里刻意不并行
-    if (await canBind(port)) return { port, drifted: i > 0 };
-  }
-  return { port: 0, drifted: true };
-}
-
-/**
- * 选齐三个端口。**顺序有意义**：先服务端（扩展默认找它）→ CDP → 控制服务，
- * 且用 taken 集合互斥，避免三个端口挑到同一个号（号段相近，不互斥就会撞）。
- */
-async function negotiate() {
-  const taken = new Set();
-  const ports = {};
-  const drifted = [];
+/** 三个端口里谁不可绑（空数组 = 全部可用）。顺序即报错时的优先提示顺序。 */
+async function unavailable() {
+  const busy = [];
   for (const key of ['server', 'cdp', 'control']) {
-    // 同上：需要按序取号
-    const { port, drifted: moved } = await pickPort(BASE[key], taken);
-    if (!port) return { ok: false, failedAt: key, ports: { ...BASE } };
-    ports[key] = port;
-    if (moved) drifted.push(`${key} ${BASE[key]}→${port}`);
-    taken.add(port);
+    // 串行：只有三个端口，且报错信息要稳定（并发会让"谁先失败"变得不确定）
+    if (!(await canBind(PORTS[key]))) busy.push({ key, port: PORTS[key] });
   }
-  return { ok: true, ports, drifted };
+  return busy;
 }
 
 /** 读上一次公布的文件（可能不存在 / 半截 / 不是我们写的） */
@@ -89,7 +67,7 @@ function readPublished() {
  * 为什么必须核对**身份**而不只是"活着"：Windows 的 pid 会被回收复用，所以
  * "公布文件里的 pid 仍存在" **不等于** "那个实例还在跑"。一旦撞上一个无关进程，
  * 判据就永久为真 → 每次启动都弹「另一个实例在运行」，用户选了「退出」就再也起不来。
- * 实测就是这个形态：对话框报 PID 3572 / System(pid 4) 之类的无关进程占着 18765。
+ * 实测就是这个形态：对话框报的 PID 属于系统/无关进程。
  *
  * 打包态：映像名 = 产品名；开发态（`npm start` / `electron .`）：映像是 electron，
  * 而 `node desktop/main.js` 则是 node —— 三种都放进来，宁可漏报也不误报。
@@ -193,14 +171,15 @@ function clearStale(probe) {
 }
 
 /** 原子写公布文件（先写临时文件再 rename —— 服务端可能随时来读） */
-function publish(ports, version) {
+function publish(version) {
   const payload = {
     app: 'AksoWorkbench',
     schemaVersion: 1,
     pid: process.pid,
     version: version || null,
     startedAt: new Date().toISOString(),
-    ports,
+    ports: { ...PORTS },
+    fixed: true, // 显式声明：端口是固定的，不因占用而顺延（ADR-0012）
   };
   try {
     fs.mkdirSync(path.dirname(PORTS_PATH), { recursive: true });
@@ -229,33 +208,43 @@ function unpublish() {
 }
 
 /**
- * 给用户看的占用提示。**两条硬要求**：
- *   1. 报**实际被占的那个端口号**（从 `prev.ports` 取），不是 `BASE[key]`。
- *      实测踩过：端口顺延后对话框仍印 18765，用户照它去查会查到空气——
- *      而"端口信息不可信"正是 ADR-0011 要根治的病，不能在提示文案里复现。
- *   2. 给出**可执行**的动作（退出哪个进程）。
+ * 端口被占时的可执行提示：说清**是哪个端口、被谁占、该怎么办**。
+ *
+ * `prev` = 公布文件内容（若那个实例确实是我们的）。端口号取自 `PORTS`（固定端口，
+ * 不存在"实际协商值"这种第二真相），但如果 `prev` 里记的端口与当前不一致
+ * （例如旧版本留下 0.3.5 之前的顺延值），**如实报出来**——那正是用户要找的进程。
  */
 function describeOccupant(key, prev) {
-  if (!prev) return `端口 ${BASE[key]} 已被其它程序占用。`;
-  const ports = (prev.ports || {})[key];
-  const actual = Number.isInteger(ports) && ports > 0 ? ports : BASE[key];
-  const from = actual === BASE[key] ? '' : `（基准 ${BASE[key]} 被占后顺延至此）`;
-  const all = prev.ports || {};
-  return (
-    `端口 ${actual}${from} 已被另一个 AksoWorkbench 实例占用：\n` +
-    `  PID ${prev.pid}，版本 ${prev.version || '未知'}，启动于 ${prev.startedAt || '未知'}\n` +
-    `  它占用的端口：server=${all.server} cdp=${all.cdp} control=${all.control}\n\n` +
-    `请先退出那个实例再启动本程序。`
-  );
+  const port = PORTS[key];
+  const lines = [`端口 ${port}（${key}）已被占用。`];
+  if (prev) {
+    const theirs = (prev.ports || {})[key];
+    const extra = Number.isInteger(theirs) && theirs > 0 && theirs !== port
+      ? `（该实例记录自己用的是 ${theirs}）` : '';
+    lines.push(
+      `  占用者是一个正在运行的 Akso Workbench 实例：`,
+      `  PID ${prev.pid}，版本 ${prev.version || '未知'}，启动于 ${prev.startedAt || '未知'}${extra}`,
+      '',
+      '请先退出那个实例再启动本程序（托盘图标右键 → 退出）。',
+    );
+  } else {
+    lines.push(
+      '  占用者不是 Akso Workbench 实例（公布文件里没有指向它的记录）。',
+      '',
+      `请先找出占用 ${port} 的程序（管理员 PowerShell：`,
+      `  Get-NetTCPConnection -LocalPort ${port} | Select-Object OwningProcess`,
+      '  Get-Process -Id <上一步的 OwningProcess>）并结束它，或改用别的端口段后重试。',
+    );
+  }
+  return lines.join('\n');
 }
 
 module.exports = {
+  PORTS,
   BASE,
-  MAX_DRIFT,
   PORTS_PATH,
   canBind,
-  pickPort,
-  negotiate,
+  unavailable,
   readPublished,
   detectRunningInstance,
   clearStale,

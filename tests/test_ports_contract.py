@@ -1,19 +1,21 @@
-"""端口协商契约（ADR-0011）：`/api/health` 的身份、桌面端口文件的优先级、控制服务端口单点声明。
+"""端口契约（ADR-0011 的身份自证 + ADR-0012 的**固定端口**）。
 
 存在理由（docs/adr/0011）：改造前 18765/18766/18767 被壳、服务端、浏览器扩展**各自硬编码**，
 且壳的就绪探测只看"这个端口上有人回 200"。于是"旧实例占着端口"会表现成
 **"代码改了但 UI 没变"**——一次极难排查的真实事故。
 
-本文件钉住三件事：
-1. 服务端能**自证身份**（`/api/health` 的 `app`），壳的探测才有东西可核对；
-2. 端口值以壳公布的 `desktop-ports.json` 为准，环境变量优先，**缺失时回落默认值**（不炸）；
-3. 控制服务端口只有 `config` 一个来源——`routes_update` / `routes_extension` 都读它，
-   不能再出现第二个常量。
+> **2026-09-14 更新（ADR-0012）**：端口**固定**，不再顺延。本文件钉住的四件事：
+> 1. 服务端能**自证身份**（`/api/health` 的 `app`），壳的探测才有东西可核对；
+> 2. 服务端声明的端口与壳侧 `desktop/ports.js` 的 `PORTS` **完全一致**（跨语言同一条事实，
+>    壳侧的离线脚本验不了这个，故由本文件兜住）；
+> 3. 环境变量优先、文件次之、**缺失时回落默认值**（不炸）；
+> 4. 控制服务端口只有 `config` 一个来源——`routes_update` / `routes_extension` 都读它。
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -188,8 +190,6 @@ def test_no_hardcoded_shell_ports_outside_config() -> None:
     只扫代码，不扫注释与**字符串字面量内部**（文档字符串里写示例端口是正常的，
     例如"常量是 18767、实际壳在 18768"这句解释本身就该留在注释里）。
     """
-    import re
-
     root = Path(__file__).resolve().parent.parent / "workbench"
     allowed = {root / "config.py"}
     string_literal = re.compile(r'"""(?:.|\n)*?"""|\'\'\'(?:.|\n)*?\'\'\'|"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'')
@@ -205,3 +205,46 @@ def test_no_hardcoded_shell_ports_outside_config() -> None:
             if "18766" in bare or "18767" in bare:
                 offenders.append(f"{path.relative_to(root.parent)}:{lineno} {bare.strip()[:90]}")
     assert not offenders, "壳端口字面量必须只在 config 声明：\n" + "\n".join(offenders)
+
+
+# ---------------------------------------------------------------- 固定端口（ADR-0012）
+
+
+def _shell_ports() -> dict[str, int]:
+    """读壳侧 `desktop/ports.js` 的 `PORTS` 字面量。
+
+    用文本解析而非 `node -e`：后者要起子进程，而这条断言的价值在于**纯静态、零依赖**——
+    它要能在任何环境（含没装 Node 的机器）里守住"两侧数字一致"。
+    """
+    js = (Path(__file__).resolve().parent.parent / "desktop" / "ports.js").read_text(encoding="utf-8")
+    m = re.search(r"const PORTS\s*=\s*\{([^}]*)\}", js)
+    assert m, "desktop/ports.js 里找不到 PORTS 声明——固定端口必须有这一个真相来源"
+    return {k: int(v) for k, v in re.findall(r"(\w+)\s*:\s*(\d+)", m.group(1))}
+
+
+def test_python_defaults_match_shell_ports() -> None:
+    """Python 侧默认端口必须与壳侧 `PORTS` 完全一致（跨语言同一条事实）。
+
+    为什么这条特别重要：两侧一旦不一致，壳在 18765 上等、服务端却在 18766 上听，
+    表现就是**永远等不到就绪**（白屏 40 秒）——而这种错配不会有任何报错。
+    """
+    assert _shell_ports() == {
+        "server": config.PORT, "cdp": config.CDP_PORT, "control": config.CONTROL_PORT,
+    }, f"壳侧 {_shell_ports()} vs Python 侧 PORT={config.PORT} CDP={config.CDP_PORT} CONTROL={config.CONTROL_PORT}"
+
+
+def test_shell_ports_are_the_documented_fixed_values() -> None:
+    """固定端口被写死成这三个值本身也是契约（扩展兜底地址、书签、运维脚本都指向它们）。"""
+    assert _shell_ports() == {"server": 18765, "cdp": 18766, "control": 18767}
+
+
+def test_shell_exports_no_negotiation_api() -> None:
+    """ADR-0012 撤回了端口顺延：`negotiate` / `MAX_DRIFT` 不得再出现在壳的模块里。
+
+    留着它们就等于留了一条"可以悄悄换端口"的路——而扩展的 `whoami` 校验、书签、
+    用户预期都建立在**端口固定**之上。
+    """
+    js = (Path(__file__).resolve().parent.parent / "desktop" / "ports.js").read_text(encoding="utf-8")
+    assert "function negotiate" not in js, "端口协商已撤回（ADR-0012），不要再加回来"
+    assert "MAX_DRIFT" not in js, "顺延窗口已撤回（ADR-0012），不要再加回来"
+    assert "unavailable" in js, '固定端口模式下必须有「哪些端口不可用」的判定'

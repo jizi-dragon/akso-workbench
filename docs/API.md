@@ -12,19 +12,22 @@
 ## 0. 拓扑与约定
 
 ```
-                                基准端口        被占时
-Electron 壳 控制服务（无认证）      18767   →  顺延（最多 +8）
+                                固定端口（ADR-0012：不顺延）
+Electron 壳 控制服务（无认证）      18767
   /windows /windows/focus /windows/close  ←──  browser_pool（CDP 模式先开户后连接）
   /update-state /update-check /update-install
-  /extension-setup /health /whoami        ←──  routes_extension / routes_update 代理、扩展端口发现
-FastAPI 服务（本文档主体）          18765   →  顺延
-Electron 内置 Chromium CDP          18766   →  顺延   ←── playwright connect_over_cdp
+  /extension-setup /health /whoami        ←──  routes_extension / routes_update 代理、扩展身份确认
+FastAPI 服务（本文档主体）          18765
+Electron 内置 Chromium CDP          18766     ←── playwright connect_over_cdp
 ```
 
-> **端口不是常量，是壳协商出来的**（[ADR-0011](adr/0011-port-and-session-negotiation.md)）。
-> 本文档里写的端口都是**基准值**；实际值以壳公布的
-> `<数据目录>/runtime/desktop-ports.json` 为准，或打 `GET /api/health` 看 `ports` 字段。
-> 壳会把实际值经 `WORKBENCH_PORT` / `WORKBENCH_CDP_PORT` / `WORKBENCH_CONTROL_PORT` 下发给服务端。
+> **端口是固定常量，不再协商、不顺延**（[ADR-0012](adr/0012-fixed-ports.md) 取代
+> [ADR-0011](adr/0011-port-and-session-negotiation.md) §D-1）。唯一真相来源是壳侧
+> `desktop/ports.js` 的 `PORTS` 与 Python 侧 `workbench/config.py` 的默认值（两者一致性由
+> `tests/test_ports_contract.py` 钉住）。
+> **端口被占时应用报错退出**（说清占用者是谁），而不是换个号继续跑。
+> 想知道当前是谁在服务：打 `GET /api/health` 看 `app` 字段（`AksoWorkbench` 才是我们），
+> 或读 `<数据目录>/runtime/desktop-ports.json`（它记录当前实例的 pid/版本/固定端口）。
 
 **全局约定**
 
