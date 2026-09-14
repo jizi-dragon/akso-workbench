@@ -79,6 +79,20 @@ OBJECT_PROBES = (OBJECT_PROBE_QUERY_LIST, OBJECT_PROBE_PAGE_LIST, OBJECT_PROBE_P
 # ---------------------------------------------------------------- config（私有、无版本）
 
 USER_ACTION_LIST = "/api/config/lifecycle/UserAction/GetList"
+#: **某状态的用户动作**——带 `code`/`name`/`description`（真机实测：这才是设计器用的那条；
+#: `GetList` 在部分环境只回运行时形态 {actions, executeType}，没有 code）。
+USER_ACTION_BY_STATUS = "/api/config/lifecycle/UserAction/GetListByStatusId"
+USER_ACTION_BY_ID = "/api/config/lifecycle/UserAction/GetById"
+#: 对象级动作权限清单：**`behaviorTypes` 只在这里有值**（7=发起工作流 / 9=修改状态 / 46=修改相关对象生命周期状态…）
+USER_ACTION_PERMS = "/api/config/lifecycle/UserAction/GetUserAction"
+#: 行为可选目标：`targetType=1`=字段，`targetType=2`=**关系对象**（跨对象行为的 targetId 就取自这里）
+USER_ACTION_TARGETS = "/api/config/lifecycle/UserAction/GetFieldsAndRelationsList"
+#: **某状态的进入动作**（真机实测：description 形如「修改风险评估任务状态为[评估中]」）
+ENTER_ACTION_BY_STATUS = "/api/config/lifecycle/EnterAction/GetListByStatusId"
+#: 进入动作详情：`configs[].behaviorType` + `behaviorValue{statusId | relationId/relatedObjectId/targetStatusId}`
+ENTER_ACTION_BY_ID = "/api/config/lifecycle/EnterAction/GetById"
+EVENT_ACTION_LIST = "/api/config/lifecycle/EventAction/GetList"
+STATUS_LIST = "/api/config/lifecycle/Status/GetList"
 USER_ACTION_BAR = "/api/config/lifecycle/UserAction/GetActionBar"
 STATUS_DETAIL = "/api/config/lifecycle/Status/Detail"
 STATUS_CREATE = "/api/config/lifecycle/Status/Create"

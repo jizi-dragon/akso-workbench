@@ -3,7 +3,7 @@
   "name": "spider-training-mgr",
   "baseUrl": "https://demo-val.example.com",
   "envName": "示例环境",
-  "note": "spider 链路的真实形态夹具。结构取自 Recorder 对假平台的实跑录制（12 条交互），ID 与业务命名为确定性占位值，不含任何真实平台数据。覆盖：对象元数据 → 字段页（含 dataType 15 引用字段：`owner_obj` 自环 + `owner_dept__c` 跨对象引用，**目标只给 referenceObjectId + objectRelation.objectName、referenceObjectCode 为 null**——这正是真机的形态，2026-09-14 在标准环境实测确认）→ 生命周期状态 → 工作流清单 → 工作流步骤（step4 流程图）→ 每个状态的用户动作/动作栏/状态详情。",
+  "note": "spider 链路的真实形态夹具。**2026-09-15 按通达环境 change_plan__c 的真机契约重录**：状态动作分两条通道——用户动作 UserAction/GetListByStatusId（带 code）、进入动作 EnterAction/GetListByStatusId（+ GetById 给目标对象/状态）；动作类型只在 GetUserAction.behaviorTypes 里（7=发起工作流 / 9=修改状态 / 46=修改相关对象生命周期状态）；工作流按 objectId/lifecycleId 归属（objectCode 恒为 null）、触发状态在 lifecycleStatusIds（**逗号分隔字符串**）；跨对象行为出现在进入动作详情与工作流步骤详情的 configs[] 里（behaviorType=46 → relationId/relatedObjectId/targetStatusId）。ID 与业务命名为确定性占位值，不含任何真实平台数据。",
   "interactions": [
     {
       "method": "GET",
@@ -18,272 +18,220 @@
       }
     },
     {
-      "method": "POST",
-      "path": "/api/platform/BasicObject/FieldPage",
-      "body": {
-        "objectId": "obj-training-mgr"
-      },
-      "ok": true,
-      "response": [
-        {
-          "id": "fld-title",
-          "code": "title",
-          "name": "名称",
-          "dataType": 1,
-          "invisible": false,
-          "disabled": false,
-          "isRequired": true,
-          "statisticsArrange": {
-            "id": 1
-          }
-        },
-        {
-          "id": "fld-type",
-          "code": "type",
-          "name": "类型",
-          "dataType": 4,
-          "invisible": false,
-          "disabled": false,
-          "isRequired": false,
-          "statisticsArrange": {
-            "id": 1
-          },
-          "picklistId": "plk-type"
-        },
-        {
-          "id": "fld-start",
-          "code": "start_date",
-          "name": "开始日期",
-          "dataType": 5,
-          "invisible": false,
-          "disabled": false,
-          "isRequired": false,
-          "statisticsArrange": {
-            "id": 1
-          }
-        },
-        {
-          "id": "fld-owner",
-          "code": "owner_obj",
-          "name": "负责对象",
-          "dataType": 15,
-          "invisible": false,
-          "disabled": false,
-          "isRequired": false,
-          "statisticsArrange": {
-            "id": 1
-          },
-          "referenceObjectId": "obj-training-mgr"
-        },
-        {
-          "id": "fld-dept",
-          "code": "owner_dept__c",
-          "name": "所属部门",
-          "dataType": 15,
-          "invisible": false,
-          "disabled": false,
-          "isRequired": false,
-          "statisticsArrange": {
-            "id": 1
-          },
-          "referenceObjectId": "obj-department",
-          "objectRelation": {
-            "id": "rel-training-dept",
-            "name": "培训管理/所属部门/部门对象",
-            "objectId": "obj-department",
-            "objectName": "部门对象",
-            "objectCode": null,
-            "type": 2
-          }
-        }
-      ]
-    },
-    {
       "method": "GET",
       "path": "/api/openapi/v1.0/BasicObject/lifecycleStatus/training_mgr__c",
       "ok": true,
       "response": [
-        {
-          "id": "st-init",
-          "code": "init_status__c",
-          "name": "开启"
-        },
-        {
-          "id": "st-complete",
-          "code": "complete_status__c",
-          "name": "关闭"
-        },
-        {
-          "id": "st-doing",
-          "code": "status_doing__c",
-          "name": "进行中"
-        }
+        {"id": "st-init", "code": "init_status__c", "name": "开启"},
+        {"id": "st-doing", "code": "status_doing__c", "name": "进行中"},
+        {"id": "st-complete", "code": "complete_status__c", "name": "关闭"}
       ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/Status/Detail",
+      "params": {"id": "st-init"},
+      "ok": true,
+      "response": {"id": "st-init", "name": "开启", "code": "init_status__c", "isEnabled": true,
+                   "description": "培训生命周期状态：开启"}
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/Status/Detail",
+      "params": {"id": "st-doing"},
+      "ok": true,
+      "response": {"id": "st-doing", "name": "进行中", "code": "status_doing__c", "isEnabled": true,
+                   "description": ""}
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/Status/Detail",
+      "params": {"id": "st-complete"},
+      "ok": true,
+      "response": {"id": "st-complete", "name": "关闭", "code": "complete_status__c", "isEnabled": true,
+                   "description": ""}
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/Status/Detail",
+      "params": {"id": "st-dept-done"},
+      "ok": true,
+      "response": {"id": "st-dept-done", "name": "已完成", "code": "dept_complete__c", "isEnabled": true}
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/UserAction/GetListByStatusId",
+      "params": {"statusId": "st-init"},
+      "ok": true,
+      "response": [
+        {"id": "ua-submit", "code": "Initiate_the_review__c", "name": "提交审核",
+         "description": "提交审核", "icon": "font_family icon-gou", "group": 1,
+         "isCommonly": true, "isEnabled": true,
+         "lifecycleStatusId": "st-init", "lifecycleStatusName": "开启"}
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/UserAction/GetListByStatusId",
+      "params": {"statusId": "st-doing"},
+      "ok": true,
+      "response": [
+        {"id": "ua-close", "code": "close_training__c", "name": "关闭",
+         "description": "提交到状态“关闭”", "group": 1, "isEnabled": true,
+         "lifecycleStatusId": "st-doing", "lifecycleStatusName": "进行中"}
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/UserAction/GetListByStatusId",
+      "params": {"statusId": "st-complete"},
+      "ok": true,
+      "response": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/UserAction/GetUserAction",
+      "params": {"objectId": "obj-training-mgr"},
+      "ok": true,
+      "response": {
+        "userActionPerms": [
+          {"actionId": "ua-submit", "actionCode": "Initiate_the_review__c", "actionName": "提交审核",
+           "actionGroup": 1, "behaviorTypes": [7], "isCommonly": true},
+          {"actionId": "ua-close", "actionCode": "close_training__c", "actionName": "关闭",
+           "actionGroup": 1, "behaviorTypes": [9], "isCommonly": true}
+        ],
+        "objectActionPerms": [],
+        "objectFieldPerms": [],
+        "objectFunctionPerms": []
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/UserAction/GetFieldsAndRelationsList",
+      "params": {"objectId": "obj-training-mgr"},
+      "ok": true,
+      "response": [
+        {"targetId": "fld-owner", "targetName": "负责对象", "targetType": 1},
+        {"targetId": "rel-training-dept", "targetName": "部门/培训编号/培训", "targetType": 2}
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/EnterAction/GetListByStatusId",
+      "params": {"statusId": "st-init"},
+      "ok": true,
+      "response": [
+        {"id": "ea-assign-owner", "sort": 0, "description": "将培训负责人添加为负责人",
+         "belongId": "st-init", "belongType": 1, "executeType": 1, "isEnabled": true}
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/EnterAction/GetById",
+      "params": {"id": "ea-assign-owner"},
+      "ok": true,
+      "response": {
+        "id": "ea-assign-owner",
+        "description": "将培训负责人添加为负责人",
+        "condition": null,
+        "conditionStr": null,
+        "belongType": 1,
+        "configs": [
+          {"id": "cfg-owner", "behaviorType": 34, "behaviorValue": {"roleId": "role-trainer"}}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/EnterAction/GetListByStatusId",
+      "params": {"statusId": "st-doing"},
+      "ok": true,
+      "response": [
+        {"id": "ea-close-dept", "sort": 1, "description": "修改部门培训状态为[已完成]",
+         "belongId": "st-doing", "belongType": 1, "executeType": 1, "isEnabled": true}
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/EnterAction/GetById",
+      "params": {"id": "ea-close-dept"},
+      "ok": true,
+      "response": {
+        "id": "ea-close-dept",
+        "description": "修改部门培训状态为[已完成]",
+        "conditionStr": null,
+        "condition": {
+          "id": "cond-1",
+          "details": [{"targetCode": "name__ak", "logicType": 10, "logicValue": null}],
+          "relations": [{"logicalOperator": 1}]
+        },
+        "belongType": 1,
+        "configs": [
+          {"id": "cfg-dept-status", "behaviorType": 46,
+           "behaviorValue": {"relationId": "rel-training-dept", "relatedObjectId": "obj-department",
+                             "targetStatusId": "st-dept-done", "isSetCondition": false, "relationType": 1}}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/lifecycle/EnterAction/GetListByStatusId",
+      "params": {"statusId": "st-complete"},
+      "ok": true,
+      "response": []
     },
     {
       "method": "POST",
       "path": "/api/platform/Workflow/GetWorkflowBasicPageViewList",
-      "body": {
-        "filters": []
-      },
+      "body": {"filters": []},
       "ok": true,
       "response": [
-        {
-          "id": "wfview-training",
-          "workflowBasicId": "wf-training-approval",
-          "name": "培训审批流",
-          "code": "training_flow__c",
-          "status": 10,
-          "objectId": "obj-training-mgr",
-          "lifecycleId": "lc-training-mgr",
-          "workflowType": 10,
-          "isSingleRecord": true
-        }
+        {"id": "wfview-training", "workflowBasicId": "wf-training-approval", "name": "培训审批流",
+         "code": "review_training_approval__c", "status": 20, "objectId": "obj-training-mgr",
+         "objectCode": null, "lifecycleId": "lc-training-mgr", "lifecycleStatusIds": "st-init",
+         "lifeStatusName": "开启", "isEnable": true, "workflowType": 10, "isSingleRecord": true}
       ]
     },
     {
       "method": "GET",
       "path": "/api/platform/Workflow/GetWorkflowSteps",
-      "params": {
-        "workflowConfigId": "wfview-training"
-      },
+      "params": {"workflowConfigId": "wfview-training"},
       "ok": true,
       "response": [
-        {
-          "id": "wfstep-start",
-          "name": "开始",
-          "stepType": 10,
-          "sort": 1,
-          "nextStepId": "wfstep-approve",
-          "nextStepList": [
-            {
-              "id": "wfstep-approve",
-              "name": "审批",
-              "code": null
-            }
-          ]
-        },
-        {
-          "id": "wfstep-approve",
-          "name": "审批",
-          "stepType": 30,
-          "sort": 2,
-          "nextStepId": "wfstep-done",
-          "nextStepList": [
-            {
-              "id": "wfstep-done",
-              "name": "改状态",
-              "code": null
-            }
-          ]
-        },
-        {
-          "id": "wfstep-done",
-          "name": "改状态",
-          "stepType": 90,
-          "sort": 3,
-          "nextStepId": "wfstep-end",
-          "nextStepList": [
-            {
-              "id": "wfstep-end",
-              "name": "结束",
-              "code": null
-            }
-          ]
-        },
-        {
-          "id": "wfstep-end",
-          "name": "结束",
-          "stepType": 20,
-          "sort": 4,
-          "nextStepId": null,
-          "nextStepList": []
-        }
+        {"id": "wfstep-start", "name": "开始", "stepType": 10, "sort": 1, "nextStepId": "wfstep-approve",
+         "nextStepList": [{"id": "wfstep-approve", "name": "任务：培训审核", "code": null}]},
+        {"id": "wfstep-approve", "name": "任务：培训审核", "stepType": 30, "sort": 2,
+         "nextStepId": "wfstep-close",
+         "nextStepList": [{"id": "wfstep-close", "name": "修改状态：关闭", "code": null}]},
+        {"id": "wfstep-close", "name": "修改状态：关闭", "stepType": 90, "sort": 3,
+         "nextStepId": "wfstep-end",
+         "nextStepList": [{"id": "wfstep-end", "name": "结束", "code": null}]},
+        {"id": "wfstep-end", "name": "结束", "stepType": 20, "sort": 4, "nextStepId": null,
+         "nextStepList": []}
       ]
     },
     {
       "method": "GET",
-      "path": "/api/config/lifecycle/UserAction/GetList",
-      "params": {
-        "statusId": "st-init"
-      },
+      "path": "/api/platform/Workflow/GetWorkflowStepWithDetails",
+      "params": {"id": "wfstep-close"},
       "ok": true,
-      "response": [
-        {
-          "id": "ua-submit",
-          "actions": "提交",
-          "executeType": 1,
-          "description": "提交"
+      "response": {
+        "id": "wfstep-close",
+        "name": "修改状态：关闭",
+        "stepType": 90,
+        "stepAction": {
+          "belongType": 3,
+          "actions": [
+            {"id": "step-action-1",
+             "configs": [
+               {"id": "cfg-step-status", "behaviorType": 9,
+                "behaviorValue": {"statusId": "st-complete"}},
+               {"id": "cfg-step-dept", "behaviorType": 46,
+                "behaviorValue": {"relationId": "rel-training-dept", "relatedObjectId": "obj-department",
+                                  "targetStatusId": "st-dept-done", "isSetCondition": true}}
+             ]}
+          ]
         }
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/config/lifecycle/UserAction/GetActionBar",
-      "body": {
-        "ids": [
-          "ua-submit"
-        ]
-      },
-      "ok": true,
-      "response": [
-        {
-          "id": "ua-submit",
-          "name": "提交",
-          "behaviorType": 7,
-          "targetId": "wf-training-approval"
-        }
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/config/lifecycle/Status/Detail",
-      "params": {
-        "id": "st-init"
-      },
-      "ok": true,
-      "response": {
-        "isEnabled": true
-      }
-    },
-    {
-      "method": "GET",
-      "path": "/api/config/lifecycle/UserAction/GetList",
-      "params": {
-        "statusId": "st-complete"
-      },
-      "ok": true,
-      "response": []
-    },
-    {
-      "method": "GET",
-      "path": "/api/config/lifecycle/Status/Detail",
-      "params": {
-        "id": "st-complete"
-      },
-      "ok": true,
-      "response": {
-        "isEnabled": true
-      }
-    },
-    {
-      "method": "GET",
-      "path": "/api/config/lifecycle/UserAction/GetList",
-      "params": {
-        "statusId": "st-doing"
-      },
-      "ok": true,
-      "response": []
-    },
-    {
-      "method": "GET",
-      "path": "/api/config/lifecycle/Status/Detail",
-      "params": {
-        "id": "st-doing"
-      },
-      "ok": true,
-      "response": {
-        "isEnabled": true
       }
     }
   ]

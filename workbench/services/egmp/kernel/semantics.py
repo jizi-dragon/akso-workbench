@@ -19,7 +19,12 @@ REFERENCE_DATA_TYPES = {13, 15, 16, 23}
 
 # ---------------------------------------------------------------- 行为 / 步骤
 
-BEHAVIOR_TYPE_NAMES: dict[int, str] = {5: "更新字段值", 7: "发起工作流", 9: "修改状态"}
+BEHAVIOR_TYPE_NAMES: dict[int, str] = {
+    5: "更新字段值", 7: "发起工作流", 9: "修改状态",
+    # 46 = 修改相关对象生命周期状态（2026-09-15 真机实证：behaviorValue 带
+    # relationId / relatedObjectId / targetStatusId；名字取自平台自身的 i18n 词典）
+    46: "修改相关对象生命周期状态",
+}
 EXECUTE_TYPE_NAMES: dict[int, str] = {1: "用户触发", 2: "进入状态自动执行"}
 STEP_TYPE_NAMES: dict[int, str] = {
     10: "开始", 20: "结束", 30: "审批任务", 40: "通知", 70: "判断", 90: "动作",
@@ -30,6 +35,13 @@ DISPATCH_MODE_NAMES: dict[int, str] = {10: "会签", 20: "或签"}
 BEHAVIOR_UPDATE_FIELD = 5
 BEHAVIOR_LAUNCH_WORKFLOW = 7
 BEHAVIOR_UPDATE_STATUS = 9
+BEHAVIOR_UPDATE_RELATED_STATUS = 46   # 跨对象：改**相关对象**的生命周期状态
+
+#: 动作行为的**归属**（平台枚举 `belongType`，取自前端 bundle）：
+#: 1=进入反应(进入条件) / 2=进入用户动作 / 3=工作流步骤动作 / 4=工作流取消 / 5=事件动作 / 6=工作流起始步骤
+BELONG_TYPE_NAMES: dict[int, str] = {
+    1: "进入反应", 2: "进入动作", 3: "工作流步骤动作", 4: "工作流取消", 5: "事件动作", 6: "工作流起始步骤",
+}
 
 # 执行类型码
 EXECUTE_USER_ACTION = 1

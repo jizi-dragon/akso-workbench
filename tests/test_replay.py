@@ -75,18 +75,18 @@ def test_fixture_has_no_unused_interaction(tmp_path: Path) -> None:
 def test_missing_interaction_raises_with_actionable_message(tmp_path: Path) -> None:
     """夹具缺一条**爬取途中**的交互时，报错必须点名缺哪条、并列出可用键。
 
-    挑 `FieldPage`：它不在任何 `try/except` 保护里——缺了就直接炸穿（缺对象实体、缺相关对象
-    会被 spider 转成带 code 的 ReadErrors，那是另一条路径，见 test_workspace）。
+    挑对象元数据（`BasicObject/{code}`）：它不在任何 `try/except` 保护里——缺了就直接炸穿。
+    （缺状态表/动作这类被容忍的读会有另一条路径：进 `failures` 且覆盖度降级，见 test_workspace。）
     """
     fixture = replay.load_fixture(GOLDEN)
     fixture["interactions"] = [
-        i for i in fixture["interactions"] if "FieldPage" not in i["path"]
+        i for i in fixture["interactions"] if "BasicObject/training_mgr__c" not in i["path"]
     ]
     client = replay.ReplayClient(fixture)
     with pytest.raises(replay.ReplayMiss) as exc:
         _spider(client, tmp_path)
     message = str(exc.value)
-    assert "FieldPage" in message
+    assert "BasicObject/training_mgr__c" in message
     assert "夹具内已有" in message, "报错必须列出可用键，便于定位"
 
 
@@ -105,36 +105,50 @@ def test_scope_is_taken_from_fixture_base_url() -> None:
 
 
 def test_graph_counts_match_fixture(tmp_path: Path) -> None:
-    """节点/边计数由夹具推导：2 个对象节点（目标 + 1 个未展开的占位）+ 3 个状态节点；
-    1 条归因边（发起工作流）+ 1 条关系边。
+    """节点/边计数由夹具推导（2026-09-15 按新契约重校）：
 
-    关系边来自 `owner_dept__c`（dataType 15，目标只给 `referenceObjectId` + `objectName`）；
-    `owner_obj` 是**自环**，按定义不产生关系边（只记 selfLoop）。
-    占位节点也计入 objectNodes——它确实画在图上，且由 `unexpandedRelations` 显式标注。
+    - 1 个目标对象 + 1 个**相关对象占位节点**（部门，来自 behaviorType=46）= 2 个对象节点；
+    - 3 个状态节点；
+    - 2 条归因边：用户动作「关闭」描述里解析出的目标状态 + 工作流步骤 behaviorType=9；
+    - 1 条关系边：进入动作与工作流步骤里的 behaviorType=46 → 部门状态[已完成]。
     """
     result = _spider(_client(), tmp_path)
     assert result["ok"] is True
     assert result["stats"] == {
-        "objectNodes": 2, "stateNodes": 3, "attrEdges": 1, "relationEdges": 1,
+        "objectNodes": 2, "stateNodes": 3, "attrEdges": 2, "relationEdges": 1,
     }, "图模型计数与夹具不符——多半是推导逻辑变了，而不是夹具坏了"
 
 
-def test_reference_field_target_is_read_from_reference_object_id(tmp_path: Path) -> None:
-    """step1 关系网必须认 `referenceObjectId` / `objectRelation.objectName`。
+def test_cross_object_relation_comes_from_behaviour(tmp_path: Path) -> None:
+    """跨对象关联必须来自**行为**（behaviorType=46），不是字段引用。
 
-    回归的是真机缺陷：平台 `referenceObjectCode` **恒为 null**，旧实现只读它，于是
-    **任何对象都推不出关系边**（真机 `change_plan__c` 有 5 个 dataType=15 引用字段，却出 0 条边）。
-    命名口径（用户定稿）：目标对象**以名称为标识**，平台没给编码就作占位节点、并记边界。
+    回归两件事：① 上一版只读字段引用（`referenceObjectCode`）→ 真机恒空；
+    ② 用户定稿：字段级引用很多根本不在生命周期里起作用，只认「生命周期/工作流里真的被改动的相关对象」。
+    节点标识用对象名称，并带上被改成的目标状态。
     """
     _spider(_client(), tmp_path)
     model = json.loads((tmp_path / "spider-network.json").read_text(encoding="utf-8"))["model"]
     relation = [e for e in model["edges"] if e["kind"] == "relation"]
     assert len(relation) == 1
-    assert relation[0]["label"] == "所属部门"
     target = next(n for n in model["nodes"] if n["id"] == relation[0]["target"])
-    assert target["label"] == "部门对象", "平台没给编码时，节点标识用目标对象名称"
-    assert target.get("stub") is True
-    assert model.get("unexpandedRelations"), "未展开的目标必须显式记边界，不得静默丢"
+    assert target["label"] == "部门", "标识用关系名首段（相关对象名）"
+    assert "已完成" in relation[0]["label"], "边标签必须带被改成的目标状态"
+
+    step1 = (tmp_path / "step1-relations.md").read_text(encoding="utf-8")
+    assert "修改部门培训状态为[已完成]" in step1, "step1 要带上平台自己的动作描述作为证据"
+    assert "进入动作" in step1 and "步骤" in step1, "每条关联都要写清来源（哪个动作 / 哪一步）"
+    assert "已完成" in step1, "要写清被改成的目标状态"
+
+
+def test_status_table_columns_use_real_sources(tmp_path: Path) -> None:
+    """四列表必须用真实来源：用户动作带 code、进入动作带描述与目标对象。"""
+    _spider(_client(), tmp_path)
+    step2 = (tmp_path / "step2-status-table.md").read_text(encoding="utf-8")
+    assert "提交审核（Initiate_the_review__c）" in step2, "用户动作要带动作 code"
+    assert "发起工作流" in step2, "动作类型要来自 GetUserAction.behaviorTypes"
+    assert "将培训负责人添加为负责人" in step2, "进入动作要来自 EnterAction/GetListByStatusId"
+    assert "修改相关对象「部门」状态为[已完成]" in step2, "进入动作要补出目标对象与目标状态"
+    assert "name__ak 不为空" in step2, "进入条件要把条件对象渲染成可读文本，而不是 JSON"
 
 
 def test_step_artifacts_cover_all_five_steps(tmp_path: Path) -> None:

@@ -130,6 +130,49 @@ class FakeEgmpClient:
             return []
         if path == "/api/platform/MenuGroup/QueryList":
             return []
+        if path.startswith("/api/config/lifecycle/UserAction/GetListByStatusId"):
+            # 设计器口径：某状态的用户动作（带 code）。初始状态给一个「发起工作流」动作。
+            status_id = (params or {}).get("statusId", "")
+            for statuses in self.statuses_by_object.values():
+                status = next((s for s in statuses if s["id"] == status_id), None)
+                if status and status["code"] == "init_status__c":
+                    return [{"id": "ua-submit", "code": "Initiate_the_review__c", "name": "提交",
+                             # 真机形态：平台生成的描述里写明目标状态 → 归因边靠它解析
+                             "description": "提交到状态“关闭”", "group": 1, "isEnabled": True,
+                             "lifecycleStatusId": status_id}]
+            return []
+        if path.startswith("/api/config/lifecycle/UserAction/GetUserAction"):
+            # 动作类型只在这条接口里给（7=发起工作流 / 9=修改状态 / 46=跨对象）
+            return {"userActionPerms": [
+                {"actionId": "ua-submit", "actionCode": "Initiate_the_review__c",
+                 "actionName": "提交审核", "behaviorTypes": [7]},
+                {"actionId": "ua-close", "actionCode": "close__c",
+                 "actionName": "关闭", "behaviorTypes": [9]},
+            ]}
+        if path.startswith("/api/config/lifecycle/UserAction/GetFieldsAndRelationsList"):
+            return [{"targetId": "rel-fake-dept", "targetName": "部门/编号/主对象", "targetType": 2}]
+        if path.startswith("/api/config/lifecycle/EnterAction/GetListByStatusId"):
+            status_id = (params or {}).get("statusId", "")
+            for statuses in self.statuses_by_object.values():
+                status = next((s for s in statuses if s["id"] == status_id), None)
+                if status and status["code"] == "init_status__c":
+                    return [{"id": "ea-init", "sort": 0, "description": "将负责人添加为负责人",
+                             "belongId": status_id, "belongType": 1, "executeType": 1, "isEnabled": True}]
+            return []
+        if path.startswith("/api/config/lifecycle/EnterAction/GetById"):
+            return {"id": "ea-init", "description": "将负责人添加为负责人", "belongType": 1,
+                    "conditionStr": None, "condition": None,
+                    "configs": [{"id": "cfg-1", "behaviorType": 34, "behaviorValue": {}}]}
+        if path.startswith("/api/platform/Workflow/GetWorkflowStepWithDetails"):
+            # 步骤详情里才是跨对象行为的落点（behaviorType=46）
+            return {"id": "step-done", "stepType": 90, "stepAction": {"actions": [
+                {"id": "sa-1", "configs": [
+                    {"id": "c1", "behaviorType": 9, "behaviorValue": {"statusId": "st-complete"}},
+                    {"id": "c2", "behaviorType": 46,
+                     "behaviorValue": {"relationId": "rel-fake-dept", "relatedObjectId": "obj-dept",
+                                       "targetStatusId": "st-dept-done"}},
+                ]},
+            ]}}
         if path.startswith("/api/config/lifecycle/UserAction/GetList"):
             status_id = (params or {}).get("statusId", "")
             for statuses in self.statuses_by_object.values():
@@ -141,13 +184,18 @@ class FakeEgmpClient:
                     return []
             return []
         if path.startswith("/api/config/lifecycle/Status/Detail"):
-            return {"isEnabled": True}
+            # 名字解析用：targetStatusId → 名字（真机同形）
+            return {"id": (params or {}).get("id"), "name": f"状态-{(params or {}).get('id', '')[:6]}",
+                    "isEnabled": True}
         if path.startswith("/api/platform/Menu/GetMenuList"):
             return self.menus
         if path.startswith("/api/platform/Workflow/GetWorkflowSteps"):
+            # 真机形态：步骤之间用 nextStepList/nextStepId 连边（没有边就画不出流程图）
             return [
-                {"id": "step-start", "stepType": 10, "name": "开始"},
-                {"id": "step-end", "stepType": 20, "name": "结束"},
+                {"id": "step-start", "stepType": 10, "name": "开始", "sort": 1,
+                 "nextStepId": "step-end", "nextStepList": [{"id": "step-end", "name": "结束"}]},
+                {"id": "step-end", "stepType": 20, "name": "结束", "sort": 2,
+                 "nextStepId": None, "nextStepList": []},
             ]
         if path.startswith("/api/platform/Workflow/GetWorkflowBasicPageViewList"):
             return self.workflows
