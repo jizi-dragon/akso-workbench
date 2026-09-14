@@ -1,6 +1,6 @@
 # 平台洞察（INSIGHT）—— 功能定位与产品能力规格
 
-_2026-09-13 定稿 · 基于 `d0efa84`（v0.3.5）代码实测 + 上游 [akso-cc](https://github.com/jizi-dragon/akso-cc)（`gaia-inventory`）README 权威口径 · 四项决策已拍板_
+_2026-09-13 定稿 · 基于 `d0efa84`（v0.3.5）代码实测 + 上游 [akso-cc](https://github.com/example-org/akso-cc)（`gaia-inventory`）README 权威口径 · 四项决策已拍板_
 
 > **本文档的地位**：定义「平台洞察是什么、能做什么、不能做什么」。属**中变更频率**文档——
 > 能力范围变化时更新；实现细节走 `docs/API.md` / `docs/SCHEMA.md` / `docs/CONFIG.md`；踩坑走 `docs/PITFALLS.md`。
@@ -326,7 +326,7 @@ insight 与 egmp 顶层的**硬编码字面量归零**（36 处全部改为引�
 
 ## 8. 与上游 akso-cc 的对应关系
 
-前置项目：**https://github.com/jizi-dragon/akso-cc**（内部名 `gaia-inventory`）。
+前置项目：**https://github.com/example-org/akso-cc**（内部名 `gaia-inventory`）。
 本项目对它是**只读引用 + 知识迁移**，绝不修改原仓库；`adapters/akso-cc.json` 是降级后的只读参考存档
 （`"mode": "native-python-internalized"`, `"frozen": true`）。决策见 [ADR-0005](adr/0005-native-internalization-of-four-projects.md)。
 

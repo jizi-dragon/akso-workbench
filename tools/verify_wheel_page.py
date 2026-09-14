@@ -1,8 +1,8 @@
 """Electron 轮盘页渲染验证：SVG 扇区、Hub、动画、指纹防重绘、零 JS 错误。"""
+import json
 import subprocess
 import sys
 import time
-import json
 import urllib.request
 from pathlib import Path
 

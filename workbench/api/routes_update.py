@@ -19,7 +19,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from .. import config, __version__
+from .. import __version__, config
 
 router = APIRouter(prefix="/api/update", tags=["update"])
 

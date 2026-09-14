@@ -10,7 +10,7 @@
 # 会话状态压缩摘要（供后续上下文快速恢复 · 更新于 2026-09-10）
 
 ## 项目定位
-- 仓库：`D:\ai_assistant\akso-mogul` → https://github.com/jizi-dragon/akso-mogul（main，本地代理失效时用 `git -c http.proxy= push`）
+- 仓库：`D:\ai_assistant\akso-mogul` → https://github.com/example-org/akso-mogul（main，本地代理失效时用 `git -c http.proxy= push`）
 - Akso Workbench：四项目融合（akso-cc 洞察 / mogul_simulator 知识工作台 / akso-auto 配置工厂 / quick-login 账号+自动登录），**运行时零依赖原仓库**（能力内化到 Python + 扩展执行面）
 - 技术栈：Python 3.12+ / FastAPI / SQLite(迁移1-11) / Playwright / Fernet / networkx / **Electron 桌面壳**（pywebview 已退役）+ quick-login Chrome 扩展执行面；uv 管理（清华镜像已配）
 

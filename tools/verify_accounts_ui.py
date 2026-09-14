@@ -1,5 +1,4 @@
 """账号中心 v2 DOM 验证：CSS 生效、统计、chips、卡片结构、四态徽标、零 JS 错误。"""
-import json
 import subprocess
 import sys
 import time

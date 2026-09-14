@@ -15,7 +15,8 @@ from pathlib import Path
 import pytest
 
 from workbench.services.egmp import replay
-from workbench.services.egmp.insight import drawio, run_understand, understand as understand_mod
+from workbench.services.egmp.insight import drawio
+from workbench.services.egmp.insight import understand as understand_mod
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "egmp"
 GOLDEN = FIXTURE_DIR / "understand-capa-plan.json"
@@ -218,11 +219,10 @@ def test_recorder_roundtrip_via_fake_platform(tmp_path: Path) -> None:
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent))
+    import test_native
     from fakes import FakeEgmpClient
 
     from workbench.services.egmp import orchestrate
-
-    import test_native
 
     platform = FakeEgmpClient()
     orchestrate.run_full_workflow(platform, test_native._sample_blueprint())

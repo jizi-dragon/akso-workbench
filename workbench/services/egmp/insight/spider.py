@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from ..auth import is_complete_status, is_init_status, is_reference_field
+from ..kernel import endpoints
 from . import drawio as drawio_mod
 from .crawler import SIGNATURE_RE
 from .lifecycle import LifecycleApi
 from .report import _table  # noqa: PLC2701 —— 同包渲染工具
-from ..kernel import endpoints
 
 # ---------------------------------------------------------------- 第 1 步
 

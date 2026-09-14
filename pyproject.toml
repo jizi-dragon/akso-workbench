@@ -61,3 +61,10 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["workbench"]
+
+[tool.ruff.lint.per-file-ignores]
+# tools/ 下的验证脚本是「会被执行的一次性脚本」，不是可导入模块：
+# 它们必须先 reconfigure stdout 编码、拉起服务、等端口就绪，然后才 import playwright
+# （放到文件顶部会让驱动逻辑在导入期就跑起来）。这是刻意的引导式写法，E402 在此豁免。
+# 其余规则（含 F 未定义名、I 排序）对这些文件仍然生效。
+"tools/*.py" = ["E402"]

@@ -52,6 +52,10 @@
 
 ## 文档地图
 
+> ⚠️ **协作者注意**：2026-09-14 做过一次**提交历史重写**（清除客户/环境标识与个人身份信息），
+> 提交 SHA 已全部改变。若你的本地副本早于该时间点，请先读
+> [`docs/HISTORY-REWRITE-NOTICE.md`](docs/HISTORY-REWRITE-NOTICE.md) 再拉取——**不要 merge 旧历史**。
+
 | 文档 | 给谁看 | 内容 |
 |---|---|---|
 | **[docs/USER-MANUAL.md](docs/USER-MANUAL.md)** | **使用者** | 功能详解、操作步骤、常见问题、数据与安全须知 |
@@ -66,6 +70,7 @@
 | [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **22 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发者 | 环境搭建、依赖变更、构建发布、代码规约、验收纪律 |
 | [CHANGELOG.md](CHANGELOG.md) | 所有人 | 版本变更明细（含每次事故的根因） |
+| [docs/HISTORY-REWRITE-NOTICE.md](docs/HISTORY-REWRITE-NOTICE.md) | 协作者（受影响者） | 历史重写说明 + 本地副本迁移步骤（勿 merge 旧历史） |
 | [docs/archive/](docs/archive/) | 追溯用 | 已失效的历史文档（勿作现状依据） |
 
 ## 环境要求

@@ -11,6 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from ...paths import resolve_within, safe_path_component
 from . import drawio as drawio_mod
 from .annotate import annotate_purpose
 from .crawler import Crawler
@@ -18,7 +19,6 @@ from .flowgraph import build_lifecycle_graph, build_workflow_graph
 from .lifecycle import LifecycleApi
 from .relations import build_relation_graph
 from .render import to_markdown
-from ...paths import resolve_within, safe_path_component
 
 
 def understand_object(client: Any, code: str, *, llm_summary_fn=None) -> dict[str, Any]:

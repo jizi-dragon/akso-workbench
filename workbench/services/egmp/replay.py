@@ -21,6 +21,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
 from .kernel import endpoints
 
 FIXTURE_FORMAT_VERSION = 1

@@ -1,6 +1,5 @@
 """Electron 真机复现：连 CDP → 账号中心 → 新建盒模态 → 真实键盘输入。"""
 import sys
-import time
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 

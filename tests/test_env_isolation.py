@@ -15,8 +15,8 @@ from __future__ import annotations
 import base64
 import json
 import time
-from pathlib import Path
 
+import httpx
 import pytest
 
 from workbench.services.egmp import client as egmp_client
@@ -122,9 +122,14 @@ def test_login_returns_cached_token_without_network() -> None:
 
 
 def test_login_cache_is_not_shared_between_accounts() -> None:
-    """alice 有票、bob 没有：bob 登录必须走网络（此处域名不可达 → 抛错即是证明）。"""
+    """alice 有票、bob 没有：bob 登录必须走网络（此处域名不可达 → 抛错即是证明）。
+
+    断言具体类型而非裸 Exception：登录走 httpx，域名不可达时 httpx 抛 HTTPError
+    （含 ConnectError/ConnectTimeout 等子类）。裸 Exception 会把"实现里换了个完全
+    无关的异常"也判成通过，等于什么都没钉住。
+    """
     egmp_client.save_cached_token(ENV_A, "alice", "tokA")
-    with pytest.raises(Exception):
+    with pytest.raises(httpx.HTTPError):
         egmp_client.login(ENV_A, "bob", "pw")
 
 

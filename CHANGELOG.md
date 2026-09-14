@@ -5,7 +5,40 @@
 
 ## [未发布]
 
+### Security
+
+- **清除仓库中的客户/环境标识与个人身份信息（含提交历史重写）**：真实部署域名、客户租户名、
+  内网地址、真机账号名全部替换为文档占位值。⚠️ **本次重写了全部提交历史（所有分支与标签），
+  提交 SHA 全变** —— 协作者必须按 [`docs/HISTORY-REWRITE-NOTICE.md`](docs/HISTORY-REWRITE-NOTICE.md)
+  迁移本地副本，不要 merge 旧历史。
+  - 替换规则（工作区与全历史一并执行）：
+    `*.example.com` → `*.example.com`；`example-config`（含 `example-config`）→ `example-config`；
+    `demo-val` → `demo-val`；`示例租户` → `示例租户`；`192.0.2.10` → `192.0.2.10`（RFC 5737 文档网段）；
+    `dev-admin` → `dev-admin`；`dev-user`（词边界）→ `dev-user`；`com.example` → `com.example`；
+    `VPN 客户端`/`VPN`/`VPN` → `VPN`；文档叙述中的 `jizi-dragon` → `example-org`。
+  - **刻意保留的功能锚点**（改了会坏自动更新/发布）：`desktop/package.json` 的 `publish.owner`、
+    `desktop/proxy.js` 的 `PROBE_URL`、`tools/publish_release.py` 的 `REPO`、
+    `tools/verify_update_proxy.js` 的资产 URL 基准。该标识本就公开写在仓库 URL 里。
+  - **核查结论：历史中无密钥泄漏**。对 72 个提交全量扫描 GitHub PAT / AWS `AKIA` / Slack `xox*` /
+    JWT / `PRIVATE KEY` / `password|token|secret|api_key = "…"` 赋值形态，**全部 0 命中**；
+    `sk-` 命中均为 CSS 类名，44 位 base64 命中均为 `package-lock.json` 的 SRI 哈希。
+    Fernet 密钥与 API Key 只存在于未入库的 `%APPDATA%\AksoWorkbench\workbench.db`。
+
 ### Fixed
+
+- **`ruff` 由 19 条违规清零（`uvx ruff check .` 全绿）**，恢复 lint 门禁：
+  - `workbench/api/routes_insight.py:175` **F821 `Any` 未导入**（`_workspace_dirs(row: Any)`）——
+    因模块有 `from __future__ import annotations`，注解被惰性化才没在运行时炸；补 `from typing import Any`。
+  - `tests/test_env_isolation.py:127` **B017 裸 `Exception` 断言**改为断言 `httpx.HTTPError`：
+    原写法把「实现里换了个完全无关的异常」也判成通过，等于什么都没钉住。
+  - 删除 3 处真正未使用的导入（`tools/diag_electron_typing.py` 的 `time`、
+    `tools/verify_accounts_ui.py` 的 `json`、`tests/test_env_isolation.py` 的 `Path`、
+    `tests/test_replay.py` 的 `run_understand`）；修正 6 处 import 排序。
+  - `tools/publish_release.py:360` B007 未使用的循环变量 `i` → `_attempt`。
+  - **新增 `[tool.ruff.lint.per-file-ignores]`：`"tools/*.py" = ["E402"]`** ——
+    `tools/` 下的验证脚本是「会被执行的一次性脚本」而非可导入模块：必须先 `stdout.reconfigure`
+    设编码、拉起服务、等端口就绪，**然后**才 import playwright（放顶部会让驱动逻辑在导入期就跑）。
+    这是刻意的引导式写法，仅豁免 E402；未定义名（F）与排序（I）等规则仍生效。
 
 - **平台洞察：关系网的自环判定恒假（拿编码比显示名）**。`build_relation_graph` 用字段里的
   `referenceObjectCode`（**编码**）去比 `object_name`（**显示名**），比较永远不成立 →
@@ -279,7 +312,7 @@
 
 ### Changed
 
-- `tools/build.ps1` 的发布说明与 `docs/EXTENSION-INSTALL.md` 第四节新增「发布更新到 GitHub Releases」：含 **GH_TOKEN 的完整获取路径**（头像 → Settings → Developer settings → Personal access tokens → fine-grained（Contents: Read and write，选 `jizi-dragon/akso-mogul`）或 classic（勾 `repo`）→ Generate → 只显示一次的复制时机）、两种发布方式（`--publish always` 注入 `$env:GH_TOKEN` / 网页手动传 `setup.exe + latest.yml + blockmap`）、tag 与版本号必须一致的顺序要求、token 有效性与吊销的核对方法。**更新器匿名读取 Release ⇒ 仓库必须公开**（本仓库即公开）。
+- `tools/build.ps1` 的发布说明与 `docs/EXTENSION-INSTALL.md` 第四节新增「发布更新到 GitHub Releases」：含 **GH_TOKEN 的完整获取路径**（头像 → Settings → Developer settings → Personal access tokens → fine-grained（Contents: Read and write，选 `example-org/akso-mogul`）或 classic（勾 `repo`）→ Generate → 只显示一次的复制时机）、两种发布方式（`--publish always` 注入 `$env:GH_TOKEN` / 网页手动传 `setup.exe + latest.yml + blockmap`）、tag 与版本号必须一致的顺序要求、token 有效性与吊销的核对方法。**更新器匿名读取 Release ⇒ 仓库必须公开**（本仓库即公开）。
 - 账号中心右上角版本角标从静态 `<span>` 变为可点击按钮：平时只显示版本号，有新版/下载中/已就绪时分别上色（`has-update` / `is-ready`），`title` 给出具体状态；浏览器直开本页（无壳）时依旧是纯展示，不影响任何既有功能。
 
 ### Fixed

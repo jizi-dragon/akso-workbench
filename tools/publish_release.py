@@ -357,7 +357,7 @@ def main() -> int:
     # 所以这里重试几次、并且只作为告警，不改变退出码。
     anon_ok = False
     anon_err = ""
-    for i in range(4):
+    for _attempt in range(4):
         try:
             with build_opener(proxy).open(
                 f"https://github.com/{REPO}/releases/latest/download/latest.yml", timeout=60

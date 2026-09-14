@@ -96,7 +96,7 @@ Chrome 对**非 Chrome 网上应用店**的扩展有硬限制，逐条查证如�
 
    | 类型 | 直达路径 | 需要的权限 | 有效期 |
    | --- | --- | --- | --- |
-   | **Fine-grained**（GitHub 现推荐） | Developer settings → Personal access tokens → **Fine-grained tokens** → `Generate new token` | **Repository access** = `Only select repositories` → 选 `jizi-dragon/akso-mogul`；**Permissions → Repository permissions → Contents = Read and write**（`Metadata` 会自动变 Read-only） | 最长 1 年（可自定义） |
+   | **Fine-grained**（GitHub 现推荐） | Developer settings → Personal access tokens → **Fine-grained tokens** → `Generate new token` | **Repository access** = `Only select repositories` → 选 `example-org/akso-mogul`；**Permissions → Repository permissions → Contents = Read and write**（`Metadata` 会自动变 Read-only） | 最长 1 年（可自定义） |
    | **Classic**（最省事） | Developer settings → Personal access tokens → **Tokens (classic)** → `Generate new token (classic)` | 勾选 **`repo`**（一次勾选即含 Release 资产读写） | 可设 90 天 / 无到期 |
 
 4. **Generate token** → 页面只显示一次，**立刻复制**（形如 `ghp_…` 或 `github_pat_…`）。
