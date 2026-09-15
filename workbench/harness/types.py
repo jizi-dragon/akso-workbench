@@ -57,8 +57,9 @@ class ToolResult(BaseModel):
 EventType = Literal[
     "token",      # 流式正文增量 {text}
     "thought",    # 工具调用轮次里模型的叙述 {text}
-    "action",     # 发起工具调用 {call: ToolCall}
-    "observation",# 工具结果 {result: ToolResult}
+    "action",     # 发起工具调用 {call: ToolCall, tool: {name,risk,plugin}, auditId}
+    "observation",# 工具结果 {result: {ok,summary,status}, invocation: {…}}
+    "approval_required",  # 风险工具被确认门拦下 {pendingId, tool, risk, summary}
     "final",      # 最终回答 {content}
     "error",      # 终止性错误 {message}
 ]

@@ -1,7 +1,9 @@
 {
   "$schema": "docs/SCHEMA.md",
-  "id": "akso-auto",
-  "title": "Akso Auto 配置自动化引擎",
+  "id": "factory",
+  "idNote": "模块 id = `factory`（本工作台自己的配置工厂模块）。**文件名仍是 akso-auto.json**：它是『这份存档对应哪个来源项目』的引用真源（repoPathEnv=AKSO_AUTO_REPO、repoPath 都指向它），改名会让 repoPathEnv 的语义失真，故不动。id 与文件名不一致是刻意的——与 adapters/akso-cc.json 的 id=insight 同一处理。**2026-09-15 由 `akso-auto` 改名**：能力已是本工作台的，界面上与接口上都不该再出现上游项目名。",
+  "title": "配置工厂（蓝图校验 / 幂等创建 / 拓扑编排 / 断点续跑）",
+  "legacyTitle": "Akso Auto 配置自动化引擎",
   "repoPath": "D:\\ai_assistant\\akso-auto",
   "repoPathEnv": "AKSO_AUTO_REPO",
   "entry": "scripts/main.js",
@@ -10,7 +12,7 @@
   "mode": "native-python-internalized",
   "nativeModule": "workbench.services.egmp.{writers,orchestrate,monitor}",
   "frozen": true,
-  "deprecation": "阶段 3 已原生化：routes_factory 直接调用 egmp（httpx + pydantic），不再调 node；本文件降级为只读参考存档（端点常量见 egmp/writers/endpoints.py，自本仓库只读提取）。",
+  "deprecation": "阶段 3 已原生化：routes_factory 直接调用 egmp（httpx + pydantic），不再调 node；本文件降级为只读参考存档（端点常量见 egmp/writers/endpoints.py，自本仓库只读提取）。**2026-09-15 模块 id 由 `akso-auto` 改为 `factory`**，与页面（factory.html）、路由（/api/factory）、工具插件（plugins/factory.py）的命名对齐。",
   "commands": {
     "create": {
       "args": ["scripts/main.js", "create", "<blueprint.json>", "--url=<base>", "--user=<u>", "--pass=<p>"],

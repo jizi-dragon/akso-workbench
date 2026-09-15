@@ -1,0 +1,287 @@
+"""Agent 缓存：把 DeepSeek 的「上下文硬盘缓存」从"碰运气"变成可测可优化。
+
+## 为什么需要这一层（官方规则，2026-09-15 核对）
+
+DeepSeek 的 [上下文硬盘缓存](https://api-docs.deepseek.com/zh-cn/guides/kv_cache) 是**默认开启、
+自动生效**的，但命中条件很硬：
+
+> 后续请求必须**完整匹配**一个已持久化的**缓存前缀单元**（cache prefix unit）才算命中。
+
+前缀单元在三个地方产生：① 每次请求的**用户输入末尾**与**模型输出末尾**；② 系统检测到多次请求
+的公共前缀时；③ 长输入按固定 token 间隔切分。**"完整匹配"是关键**——前缀里改一个字节，
+从那一字节起全部算 cache miss。
+
+价格差是本层存在的全部理由（`deepseek-flash`，1M input tokens）：
+
+| | 缓存命中 | 缓存未命中 | 倍率 |
+|---|---|---|---|
+| 非高峰 | $0.003 | $0.15 | **50×** |
+| 高峰 | $0.006 | $0.30 | **50×** |
+
+## 本层做的三件事
+
+1. **稳定前缀（stable prefix）**：本模块保证每次请求的 messages 满足
+   `本轮 = [system] + [冻结的摘要（如有）] + [原文历史] + [新消息]`，
+   且**已发出的前缀永不改写**（append-only）。
+2. **摘要暂存**：改造前 `_manage_context` 每轮都重新调 LLM 生成摘要——既慢、又烧 token、
+   还让前缀每轮都变（缓存必 miss）。现在摘要**按冻结边界持久化**，只在需要时重算一次。
+3. **命中量入账**：官方在 `usage` 里回 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`
+   （Responses API 里叫 `input_tokens_details.cached_tokens`）。把它落库并算命中率——
+   **没有度量就没有优化**，之前这些字段是被整个丢掉的。
+
+## 一条容易被忽略的坑
+
+`prompt_cache_hit_tokens` 是**省钱的量**，但**缓存不会降低输出随机性**，也不保证命中
+（官方原文：best-effort，缓存几小时到几天不用就清）。因此本层的目标是**提高命中率**，
+而不是"保证命中"——统计表里同时记 hit 与 miss，才能看出真实比例。
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+
+from . import db
+from .services.storage import now_ms
+
+logger = logging.getLogger("workbench.cache")
+
+
+# ---------------------------------------------------------------- 摘要暂存
+
+
+@dataclass
+class SummaryState:
+    """一个会话的冻结摘要状态（落库，跨轮次跨进程稳定）。"""
+
+    conversation_id: str
+    summary: str = ""
+    summarized_upto: int = 0
+    """摘要覆盖到的消息**条数**（按 created_at 正序的前 N 条）。
+
+    用条数而不是消息 id：历史消息不会删除也不会重排，条数是单调递增的，
+    天然满足"冻结边界只前进、不回退"这一缓存前提。
+    """
+    updated_at: int = 0
+
+    @property
+    def frozen(self) -> dict:
+        """已经冻进前缀的那条 system 消息（没有摘要时为空）。"""
+        if not self.summary:
+            return {}
+        return {"role": "system", "content": f"历史对话摘要：\n{self.summary}"}
+
+
+def load_state(conversation_id: str) -> SummaryState:
+    if not conversation_id:
+        return SummaryState(conversation_id="")
+    row = db.query_one(
+        "SELECT summary, summarized_upto, updated_at FROM conversation_context WHERE conversation_id = ?",
+        (conversation_id,),
+    )
+    if not row:
+        return SummaryState(conversation_id=conversation_id)
+    return SummaryState(
+        conversation_id=conversation_id,
+        summary=row["summary"] or "",
+        summarized_upto=int(row["summarized_upto"] or 0),
+        updated_at=int(row["updated_at"] or 0),
+    )
+
+
+def freeze_summary(conversation_id: str, summary: str, upto: int) -> SummaryState:
+    """把摘要冻到指定边界（只前进）。"""
+    if not conversation_id:
+        return SummaryState(conversation_id="")
+    state = load_state(conversation_id)
+    if upto <= state.summarized_upto:
+        return state
+    db.execute(
+        "INSERT INTO conversation_context (conversation_id, summary, summarized_upto, updated_at) "
+        "VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id) DO UPDATE SET "
+        "summary = excluded.summary, summarized_upto = excluded.summarized_upto, "
+        "updated_at = excluded.updated_at",
+        (conversation_id, summary, upto, now_ms()),
+    )
+    return SummaryState(conversation_id=conversation_id, summary=summary,
+                        summarized_upto=upto, updated_at=now_ms())
+
+
+def clear_state(conversation_id: str) -> None:
+    db.execute("DELETE FROM conversation_context WHERE conversation_id = ?", (conversation_id,))
+
+
+# ---------------------------------------------------------------- 前缀组装
+
+
+@dataclass
+class PrefixPlan:
+    """一次请求的上下文计划：**稳定前缀 + 待追加**，同时说明是否需要重算摘要。"""
+
+    messages: list[dict] = field(default_factory=list)
+    truncated: list[dict] = field(default_factory=list)
+    """尚未进摘要、需要本次折叠的历史（空 = 无需重算摘要，前缀保持不变）。"""
+
+    def needs_summary(self) -> bool:
+        return bool(self.truncated)
+
+
+def plan_prefix(
+    conversation: list[dict],
+    state: SummaryState,
+    *,
+    window_tokens: int,
+    threshold: float,
+    keep_recent_turns: int,
+) -> PrefixPlan:
+    """把完整对话切成「稳定前缀 + 待追加」。
+
+    返回值保证：未触发折叠时，`plan.messages` 是 `[摘要] + conversation[边界:]`，
+    而边界（`summarized_upto`）**只在折叠时前进** —— 因此已发出的前缀逐字节不变，
+    DeepSeek 侧能命中上一轮请求末尾产生的缓存前缀单元。
+
+    **不要**改成"每轮按最近 N 轮裁剪"：那样前缀每轮都在滑动，缓存命中率恒为 0。
+    """
+    summarized = state.frozen
+    tail = conversation[state.summarized_upto:]
+    messages = _with_summary(tail, summarized)
+
+    if not _over_budget(messages, window_tokens, threshold):
+        return PrefixPlan(messages=messages, truncated=[])
+
+    # 超预算才折叠：「摘要边界之后、最近 keep_recent_turns 轮之前」那一段并进摘要。
+    # 这一步让前缀变一次（摘要变长），之后连续多轮重新稳定。
+    kept_recent, _older = _split_keep(conversation, keep_recent_turns)
+    recent_ids = {id(m) for m in kept_recent}
+    fold = [m for m in tail if id(m) not in recent_ids]
+    if not fold:
+        # 已经只剩最近几轮还超预算 —— 没有可折叠的了，如实返回（不装作已处理）
+        return PrefixPlan(messages=messages, truncated=[])
+
+    fold_upto = state.summarized_upto + len(fold)
+    return PrefixPlan(
+        messages=_with_summary(conversation[fold_upto:], summarized),
+        truncated=fold,
+    )
+
+
+def _with_summary(messages: list[dict], summarized: dict) -> list[dict]:
+    return [summarized, *messages] if summarized else list(messages)
+
+
+def _split_keep(conversation: list[dict], keep_recent_turns: int) -> tuple[list[dict], list[dict]]:
+    from .harness.context import split_turns
+
+    turns = split_turns(conversation)
+    if len(turns) <= keep_recent_turns:
+        return conversation, []
+    kept = [m for turn in turns[-keep_recent_turns:] for m in turn]
+    older = [m for turn in turns[:-keep_recent_turns] for m in turn]
+    return kept, older
+
+
+def _over_budget(messages: list[dict], window_tokens: int, threshold: float) -> bool:
+    from .harness.context import estimate_messages_tokens
+
+    return estimate_messages_tokens(messages) > int(window_tokens * threshold)
+
+
+# ---------------------------------------------------------------- 用量入账
+
+
+@dataclass
+class UsageStats:
+    """一次回答的 token 用量与缓存命中情况。"""
+
+    conversation_id: str = ""
+    model: str = ""
+    calls: int = 0
+    prompt_tokens: int = 0
+    cache_hit_tokens: int = 0
+    cache_miss_tokens: int = 0
+    completion_tokens: int = 0
+    reasoning_tokens: int = 0
+    summary_calls: int = 0
+    """其中用于「重算历史摘要」的调用数（这些是纯开销，应当趋近于 0）。"""
+    latency_ms: int = 0
+
+    def add(self, usage: dict) -> None:
+        """累计一次 API 响应的 usage（Chat Completions 与 Responses 两种口径都吃）。"""
+        self.calls += 1
+        hit = usage.get("prompt_cache_hit_tokens")
+        miss = usage.get("prompt_cache_miss_tokens")
+        prompt = usage.get("prompt_tokens")
+        if hit is None and miss is None:
+            # Responses API 口径：input_tokens + input_tokens_details.cached_tokens
+            details = usage.get("input_tokens_details") or {}
+            hit = details.get("cached_tokens") or 0
+            prompt = usage.get("input_tokens") or prompt
+            miss = max(0, int(prompt or 0) - int(hit or 0))
+        hit = int(hit or 0)
+        miss = int(miss or 0)
+        self.cache_hit_tokens += hit
+        self.cache_miss_tokens += miss
+        self.prompt_tokens += int(prompt or (hit + miss))
+        self.completion_tokens += int(usage.get("completion_tokens")
+                                      or usage.get("output_tokens") or 0)
+        output_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+        self.reasoning_tokens += int(output_details.get("reasoning_tokens") or 0)
+
+    @property
+    def hit_rate(self) -> float:
+        total = self.cache_hit_tokens + self.cache_miss_tokens
+        return round(self.cache_hit_tokens / total, 4) if total else 0.0
+
+    def to_api(self) -> dict:
+        """给前端的事件字段（camelCase）。"""
+        return {
+            "calls": self.calls,
+            "promptTokens": self.prompt_tokens,
+            "cacheHitTokens": self.cache_hit_tokens,
+            "cacheMissTokens": self.cache_miss_tokens,
+            "completionTokens": self.completion_tokens,
+            "reasoningTokens": self.reasoning_tokens,
+            "hitRate": self.hit_rate,
+            "summaryCalls": self.summary_calls,
+        }
+
+    def persist(self) -> None:
+        try:
+            db.execute(
+                "INSERT INTO deepseek_usage (id, conversation_id, model, calls, prompt_tokens, "
+                "cache_hit_tokens, cache_miss_tokens, completion_tokens, reasoning_tokens, "
+                "summary_calls, latency_ms, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (f"{now_ms()}-{self.conversation_id[:8]}", self.conversation_id, self.model,
+                 self.calls, self.prompt_tokens, self.cache_hit_tokens, self.cache_miss_tokens,
+                 self.completion_tokens, self.reasoning_tokens, self.summary_calls,
+                 self.latency_ms, now_ms()),
+            )
+        except Exception:  # noqa: BLE001 —— 度量失败绝不影响回答
+            logger.warning("用量入账失败", exc_info=True)
+
+
+def usage_overview(days: int = 7) -> dict:
+    """近 N 天的缓存命中概览（设置页与 `/api/agent/cache` 用）。"""
+    since = now_ms() - days * 86_400_000
+    row = db.query_one(
+        "SELECT COUNT(*) AS n, SUM(prompt_tokens) AS prompt, SUM(cache_hit_tokens) AS hit, "
+        "SUM(cache_miss_tokens) AS miss, SUM(completion_tokens) AS completion, "
+        "SUM(summary_calls) AS summary_calls FROM deepseek_usage WHERE created_at >= ?",
+        (since,),
+    ) or {}
+    hit = int(row.get("hit") or 0)
+    miss = int(row.get("miss") or 0)
+    total = hit + miss
+    return {
+        "days": days,
+        "answers": int(row.get("n") or 0),
+        "promptTokens": int(row.get("prompt") or 0),
+        "cacheHitTokens": hit,
+        "cacheMissTokens": miss,
+        "completionTokens": int(row.get("completion") or 0),
+        "summaryCalls": int(row.get("summary_calls") or 0),
+        "hitRate": round(hit / total, 4) if total else 0.0,
+        # 省钱口径：命中价按未命中价的 1/50 计（官方 2026-09-15 价格表）
+        "savedRatio": round(hit / total * 0.98, 4) if total else 0.0,
+    }

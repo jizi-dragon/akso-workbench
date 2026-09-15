@@ -1,0 +1,562 @@
+/* ============================================================
+   对话工具面：工具调用轨迹卡 / 人工确认卡 / 工具清单浮层
+   —— 不并入 modules.css：那一份是给「平台模块」独立页用的，
+   开头就重写了 html/body 的 overflow（文档流自滚动），挂到工作台
+   SPA 上会把 base.css 锁定的壳层滚动一起放开，聊天区随之被撑破。
+   色值全部取自 tokens.css，不新增色板。
+   ============================================================ */
+
+/* ———— 轨迹块 ———— */
+
+.tool-thought {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.tool-thought-label {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.tool-thought-text {
+  min-width: 0;
+}
+
+/* ———— 轨迹卡 ———— */
+
+/* 左侧色条 = 这次调用最终落在哪一态：卡片收起时状态行还在，
+   但一屏十几张卡时，色条才是能一眼扫过去的那一层信息 */
+.tool-card {
+  border-left-width: 3px;
+  border-left-color: var(--line);
+  transition: border-color 0.18s var(--ease-out);
+}
+
+.tool-card[data-state="running"] { border-left-color: var(--line-strong); }
+.tool-card[data-state="ok"] { border-left-color: var(--lime); }
+.tool-card[data-state="error"] { border-left-color: var(--red); }
+.tool-card[data-state="bad_args"] { border-left-color: var(--red); }
+.tool-card[data-state="timeout"] { border-left-color: var(--amber); }
+.tool-card[data-state="needs_approval"] { border-left-color: var(--amber); }
+.tool-card[data-state="unknown_tool"] { border-left-color: var(--text-3); }
+.tool-card[data-state="rejected"] { border-left-color: var(--sky); }
+.tool-card[data-state="error"],
+.tool-card[data-state="bad_args"] {
+  background: linear-gradient(180deg, var(--red-dim), var(--ink-2) 52%);
+}
+
+button.tool-card-header {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+  font-size: 12.5px;
+}
+
+.tool-caret {
+  flex: 0 0 auto;
+  width: 10px;
+  font-size: 9px;
+  color: var(--text-3);
+}
+
+.tool-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-risk {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 1px 7px;
+}
+
+.tool-plugin {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+
+.tool-known-chip {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--amber);
+  border: 1px dashed rgba(217, 119, 6, 0.45);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+
+.tool-status {
+  flex: 0 0 auto;
+}
+
+.tool-status-glyph {
+  font-family: var(--font-mono);
+}
+
+.tool-status.timeout { color: var(--amber); }
+.tool-status.bad-args { color: var(--red); }
+.tool-status.unknown-tool { color: var(--text-3); }
+.tool-status.rejected { color: var(--sky); }
+.tool-status.needs-approval { color: var(--amber); }
+.tool-status.unknown { color: var(--text-3); }
+
+.tool-card-panel {
+  border-top: 1px solid var(--line);
+}
+
+.tool-section-label {
+  padding: 8px 13px 0;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.tool-args {
+  margin: 0;
+  padding: 6px 13px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* 长参数默认折叠：几百行 JSON 会把状态行和结果摘要顶出视野 */
+.tool-args.is-clamped {
+  max-height: 76px;
+  overflow: hidden;
+}
+
+.tool-args-more {
+  margin: 0 13px 10px;
+  padding: 2px 9px;
+  font-size: 11px;
+  color: var(--teal);
+  border-color: var(--line);
+  border-radius: var(--radius-s);
+}
+
+.tool-result-block {
+  border-top: 1px dashed var(--line);
+}
+
+/* 摘要是远端平台的纯文本：正常换行、不解析标记，长了只滚动不截断——
+   截断掉的那半句往往正是失败原因 */
+.tool-result-summary {
+  padding: 6px 13px 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-result-summary.is-error {
+  color: var(--red);
+}
+
+.tool-audit {
+  padding: 0 13px 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+/* ———— 缓存命中徽章（贴在回答的 meta 行里）————
+   命中率是每次请求都在变的数字，用户看不到就不知道自己的用法（长会话 vs 每次新开）
+   对成本的影响；DeepSeek 命中价是未命中价的 1/50，所以这个百分比≈省钱比例。 */
+
+.usage-chip {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.usage-chip[data-level="good"] { color: var(--lime); border-color: rgba(22, 163, 74, 0.35); }
+.usage-chip[data-level="mid"] { color: var(--amber); border-color: rgba(217, 119, 6, 0.35); }
+.usage-chip[data-level="low"] { color: var(--text-3); }
+
+.usage-chip:hover {
+  background: var(--ink-3);
+}
+
+.usage-detail {
+  display: block;
+  margin: 4px 0 0;
+  padding: 6px 9px;
+  border-radius: var(--radius-m);
+  background: var(--ink-2);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* ———— 人工确认卡 ———— */
+
+.approval-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 13px;
+  font-size: 12.5px;
+  border: 1px solid rgba(217, 119, 6, 0.4);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius-m);
+  background: linear-gradient(180deg, var(--amber-dim), var(--ink-2) 62%);
+}
+
+.approval-card[data-decision="allowed"] {
+  border-color: rgba(22, 163, 74, 0.4);
+  border-left-color: var(--lime);
+  background: linear-gradient(180deg, var(--lime-dim), var(--ink-2) 62%);
+}
+
+.approval-card[data-decision="rejected"] {
+  border-color: rgba(2, 132, 199, 0.35);
+  border-left-color: var(--sky);
+  background: linear-gradient(180deg, var(--sky-dim), var(--ink-2) 62%);
+}
+
+.approval-card[data-decision="stale"] {
+  border-color: var(--line);
+  border-left-color: var(--text-3);
+  background: var(--ink-3);
+}
+
+.approval-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.approval-title {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.approval-tool {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.approval-summary {
+  color: var(--text-2);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.approval-foot {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.approval-actions button {
+  padding: 5px 16px;
+  font-size: 12.5px;
+}
+
+.approval-state {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.approval-state.is-pending { color: var(--amber); }
+.approval-state.is-allowed { color: var(--lime); font-weight: 600; }
+.approval-state.is-rejected { color: var(--sky); font-weight: 600; }
+.approval-state.is-stale { color: var(--text-3); font-weight: 600; }
+.approval-state.is-failed { color: var(--red); }
+
+.approval-detail {
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+/* ———— 拒绝理由对话框（原生 dialog：焦点与 Esc 交给 UA） ———— */
+
+dialog.tk-dialog {
+  max-width: min(460px, calc(100vw - 48px));
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--ink-2);
+  color: var(--text-1);
+  box-shadow: var(--shadow-panel);
+}
+
+dialog.tk-dialog::backdrop {
+  background: rgba(23, 35, 59, 0.34);
+  backdrop-filter: blur(2px);
+}
+
+.tk-dialog-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px 16px;
+}
+
+.tk-dialog-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.tk-dialog-target {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.tk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tk-field-label {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.tk-dialog-reason {
+  min-height: 64px;
+  resize: vertical;
+}
+
+.tk-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ———— 工具清单浮层 ———— */
+
+.tool-palette-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.tool-palette-btn {
+  padding: 3px 10px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: transparent;
+}
+
+.tool-palette-btn[aria-expanded="true"] {
+  color: var(--teal);
+  border-color: rgba(7, 108, 224, 0.45);
+  background: var(--teal-dim);
+}
+
+.tool-palette {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, 78vw);
+  max-height: min(440px, 62vh);
+  overflow: hidden;
+  background: var(--ink-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-panel);
+  animation: rise-in 0.18s var(--ease-out);
+}
+
+.tool-palette-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tool-palette-title {
+  flex: 1;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.tool-palette-close {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  line-height: 1;
+  color: var(--text-3);
+  border-color: transparent;
+  border-radius: var(--radius-s);
+}
+
+.tool-palette-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px;
+  overflow-y: auto;
+}
+
+.palette-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.palette-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 2px;
+}
+
+.palette-plugin {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--teal);
+}
+
+.palette-plugin-title,
+.palette-plugin-version {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.palette-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 7px 9px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+}
+
+.palette-tool:hover {
+  background: var(--ink-3);
+  border-color: var(--line);
+}
+
+.palette-tool-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.palette-tool-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.palette-tool-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.palette-tool-args {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.tool-palette-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.tool-palette-msg.is-error {
+  color: var(--red);
+}
+
+.tool-palette-retry {
+  padding: 3px 12px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  border-color: var(--line);
+}
+
+.tool-palette-failures {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 6px 6px;
+  padding: 8px 10px;
+  background: var(--amber-dim);
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  border-radius: var(--radius-s);
+}
+
+.tool-palette-failures-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--amber);
+}
+
+.tool-palette-failure {
+  font-size: 11px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}

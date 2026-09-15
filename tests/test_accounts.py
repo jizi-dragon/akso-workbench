@@ -47,7 +47,12 @@ def test_create_account_validations(env: dict) -> None:
 
 
 def test_scan_original_env_files_readonly() -> None:
-    """只读扫描：不修改原项目文件，只报告发现。"""
+    """只读扫描：不修改原项目文件，只报告发现。
+
+    这里的 `akso-cc` / `akso-auto` 是**来源项目名**（env.json 属于哪个原仓库），
+    不是模块 id——模块 id 已改为 `insight` / `factory`，但这个扫描器的输出口径
+    就是"这份 env.json 来自哪个项目"，改名反而会让它指向不明。
+    """
     results = accounts.scan_original_env_files()
     assert {r["module"] for r in results} >= {"akso-cc", "akso-auto"}
     for result in results:

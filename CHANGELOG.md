@@ -11,6 +11,195 @@
 > [ADR-0012](docs/adr/0012-fixed-ports.md) 条目。保留原文是为了留痕；
 > **现行行为是端口固定、不顺延**，读本条时勿把"顺延"当成现状。
 
+- **工具插件层：Agent 核心有了唯一的能力扩展面，三大业务以插件形式接入**（用户定稿：先提升核心中枢，
+  再把三个工具做成插件与 Agent 关联）。契约见 **[docs/PLUGIN-SDK.md](docs/PLUGIN-SDK.md)**。
+  改造前的事实是：`harness/tools.py` 有自己一套工具（三个基础工具），`api/routes_agent.py` 另有一套
+  （四个域工具 `login_platform`/`read_config`/`run_insight`/`browser_status`），**两套并存且互不可见**
+  ——于是「对话里的模型只能聊天，一个平台能力都看不到」，而那四个域工具又只对 HTTP 调用方可见。
+  现在只有一个事实源 `plugin_api.ToolHub`，工具 **19 个 / 4 个插件**：
+
+  | 插件 | 工具 | 风险 |
+  |---|---|---|
+  | `builtin` | `get_current_time` / `read_local_file` / `read_web_page` | read |
+  | `insight` | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | read |
+  | `factory` | `factory_validate_blueprint` / `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
+  | `factory` | `factory_create` | **dangerous** |
+  | `accounts` | `accounts_list` / `accounts_login` / `accounts_browser_sessions` | read |
+  | `accounts` | `accounts_browser_open` / `accounts_browser_close` | write |
+
+  - **单一事实源**：`GET /api/agent/tools`、对话 Agent 的 function calling schema、审计三处读同一份定义。
+  - **插件 API 就是 `ToolHub`**（`workbench/plugin_api.py`）。不做 entry_points 自动发现 / 独立进程 /
+    热插拔 / 版本矩阵——研究结论是"插件作者只有你自己时，那些是为第三方生态付的成本"
+    （[core-plugin-separation-research](docs/research/core-plugin-separation-research.md) §A5）。
+  - **装配纪律**：插件清单显式（`plugins/__init__.py::_MODULES`），单个插件抛异常只记一条 failure
+    **并跳过**，绝不阻断启动；依赖方向 `plugins → plugin_api` **单向**，`plugin_api` 里不出现任何
+    平台术语（连 `db` 都不 import，审计与确认门是注入的）。
+  - **启动自检**：`GET /api/agent/selfcheck` + 启动日志（`REQUIRED_TOOLS` 缺一即报）。
+    坏插件被隔离的另一面是**静默**——"应用照常启动但功能少了几个"必须能被看见。
+  - **PyInstaller**：插件是 `importlib.import_module` 动态导入的，`server.spec` 的 `hiddenimports`
+    逐个列出（漏收 = 装完没功能且不报错）。
+  - 旧工具名不再存在：`read_config`→`insight_read_config`、`run_insight`→`insight_run`、
+    `login_platform`→`accounts_login`、`browser_status`→`accounts_browser_sessions`。
+
+- **危险操作确认门：风险分级从"声明"变成"强制"**（`workbench/approvals.py` + 迁移 16）。
+  `Risk.WRITE`/`DANGEROUS` 的工具**没有单次令牌绝不执行**——不是"执行后警告"，
+  测试断言的是 handler 的调用记录为空。
+  - 两条链路一套机制：对话链路 SSE 发 `approval_required` 事件；HTTP 链路 `POST /api/agent/invoke`
+    回 **409 + pendingId**（"需要确认"不是错误，是流程中止）；两边都走 `/api/agent/pending/*` 决策。
+  - 令牌**一次性 / 5 分钟 / 绑定工具+参数指纹**（换参数要重新确认）；批准一次不能重放多次。
+  - 摘要说**后果**不说参数：`approvals.summarize()` 生成"这个工具要做什么 + 影响谁 + ［几级］"。
+  - `pending_action` 只做**留痕**，权威状态在内存；重启时上一进程未决的操作标 `expired` 而**不恢复**。
+  - `factory_create` 与引擎侧"环境强制确认"（`confirmed=true` 否则 409）是**两条独立闸门**：
+    工具级挡 Agent 链路，引擎侧挡"绕过页面直接打 HTTP"的人。
+
+- **工具调用可观测：对话里的每次调用都入审计 + 前端实时卡片**。
+  - 审计唯一入口 `approvals.write_audit()`，HTTP 面与对话循环共用——改造前 `harness` **完全不写**
+    `agent_audit`（对话里跑 30 次平台调用，审计里一条没有）。
+  - 新增事件：`action` 带 `tool:{name,risk,plugin}` + `auditId`，`observation` 带
+    `invocation:{status,durationMs,auditId,…}` + 人话 `summary`；**靠 `auditId` 就地更新卡片**，
+    同一 id 也是 `GET /api/agent/audit/{id}` 的主键。
+  - `GET /api/agent/audit` 不再 `SELECT *`（此前会把 `args` 原始 JSON 一起回吐）；
+    细节走新增的 `GET /api/agent/audit/{audit_id}`。
+  - 前端：工具调用卡片（风险徽章 / 参数 / 耗时 / 结果摘要，错误态默认展开）、
+    `approval_required` 的内联「放行·拒绝」卡片、对话输入区的工具面板。
+
+- **工具资产的其他新端点**：`GET /api/agent/plugins`（插件维度）、`GET /api/agent/selfcheck`（自检）。
+- **回归**：`tests/test_plugin_api.py`（装配隔离 / 命名与 schema 契约 / 风险分级 / 令牌一次性 /
+  审计脱敏）、`tests/test_agent_loop.py`（事件序列 / 结果回填 / 确认门 / 步数预算 / 重复调用切断）。
+  测试数 **335 → 375**。
+
+- **Agent 缓存机制：把 DeepSeek 的上下文硬盘缓存从"碰运气"变成可测可优化**（用户目标 ①）。
+  官方规则是"后续请求必须**完整匹配**一个缓存前缀单元"才命中，而**命中价是未命中价的 1/50**
+  （`deepseek-flash` 非高峰 $0.003 vs $0.15 / 1M input tokens，见
+  [核查文档](docs/research/deepseek-api-capabilities.md)）。改造前的三个问题各自都会让命中率归零：
+
+  | 问题 | 现在 |
+  |---|---|
+  | `_manage_context` **每轮都重新调 LLM 生成摘要** → 请求前缀每轮都变 | 摘要**按边界冻结**（`conversation_context.summarized_upto`，只前进不回退），只在超预算时折叠一次；之后连续多轮前缀逐字节不变 |
+  | `usage` 里的 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` **被整个丢掉** → 命中率无从得知 | 强制 `stream_options.include_usage`，`UsageStats` 跨调用累计（工具轮次 + 摘要重算）并落 `deepseek_usage` 表 |
+  | 没有任何地方能看到"缓存到底有没有生效" | 设置页「缓存与用量」面板（命中率 / 命中与未命中 token / 摘要重算次数）+ 回答旁的 `缓存 N%` 徽章 + `GET /api/agent/cache` |
+
+  - 请求组装改为 **append-only**：`[system] + [冻结摘要] + [原文历史] + [新消息]`，
+    已发出的前缀永不改写（`workbench/cache.py::plan_prefix`，`tests/test_cache.py` 用
+    逐字节指纹钉住这条不变量）。
+  - **纪律（写进 cache.py 与提示词模块的文档）**：不要在运行时按轮次拼装 system 提示词——
+    system 是每个请求的第一个字节，按轮次拼 = 每轮都让缓存从头失效。
+  - 新增 `tests/test_cache.py`（14 项）：前缀逐字节稳定、摘要只前进、折叠确实缩短上下文、
+    两种 usage 口径都吃下、无缓存字段时按全 miss 记（**宁可低估命中率也不虚报省钱**）。
+
+- **自建 `web_search` 工具**（用户目标 ②，结论见 [核查文档](docs/research/deepseek-api-capabilities.md) §2）。
+  用户问"DeepSeek API 是否支持联网搜索"——**不支持**，两处官方文档互证：
+  Responses API 的 Tools 表把 `web_search` 等内置工具列为**忽略**，API 参考里 `tools`
+  参数写着 "Built-in tool types are ignored"。那条"`web_search_call` item 仍会被还原"
+  的注记说的是"**旧模型**此前产生的搜索结果作为输入被容忍"，**不是**"服务端会替你搜"。
+  - **两条通道**（选型是实测出来的，见 §2.1）：主通道 **Bing RSS**（结构化 XML + **真实直链**），
+    兜底 **360**（几乎必成，但链接是需解跳转的 `so.com/link?m=…`）。
+    百度/搜狗虽然 6/6，但返回的是**反爬页**——"没有失败"和"给了结果"是两回事。
+  - **三个反直觉的实测结论**（都改掉了初版实现，见 §2.2）：
+    ① **重试反而更糟**（失败突发成簇，3 次重试把失败耗时从 4s 拉到 10s 而不提高成功率；
+    降到 2 次后连打 8 次实测 8/8、平均 1.1s）；
+    ② **解不开的跳转地址必须丢弃**（360 的 `m` 会过期，事后重放 400；把废链接交给模型
+    会让它再失败一次并据此**引用一个没读到的页面**）；
+    ③ **"没有结果"与"通道挂了"必须分开报**（都返回空列表的话，模型会把通道不可达
+    读成"网上没有这东西"然后据此下结论）。
+  - `Risk.READ`，不过确认门；工具描述里要求引用条文前用 `read_web_page` 读原文核对。
+  - 验证脚本 `tmp/verify_websearch_fallback.py` 逼工具走兜底通道，断言它只会给出
+    **两种可接受结局**：可直读的真实链接，或明确报错（**不允许**交出废地址/空列表）。
+
+- **设置页开放系统提示词编辑**（用户目标 ③）。提示词分基线（代码里的
+  `DEFAULT_SYSTEM_PROMPT`）与用户版（`settings.systemPrompt`，空 = 用基线），
+  新增 `GET/PUT /api/settings/prompt`；「填入默认内容」只填框不保存，
+  保存必须显式点按钮（改提示词会打断一次缓存前缀，得让用户自己决定何时生效）。
+
+### Changed
+
+- **模块 id `akso-auto` → `factory`**（用户定稿：将 akso-auto 更名）。与 2026-09-14 的
+  `akso-cc` → `insight` 同一处理：**能力已是本工作台的，界面与接口上都不该再出现上游项目名**。
+  - 改名范围：模块 id（`GET /api/modules/factory`）、模块标题（原「Akso Auto 配置自动化引擎」）、
+    页面文案、前端体检与日志前缀。**迁移 18** 把 `blueprint_jobs.module` 的历史值
+    （`akso-auto` / `egmp-native`）统一为 `factory`——`insight_runs.module` 曾出现三个值
+    （迁移 15 才收口），这次不重犯。
+  - **存档文件名仍是 `adapters/akso-auto.json`**：它是"这份存档对应哪个来源项目"的引用真源
+    （`repoPathEnv=AKSO_AUTO_REPO`、`repoPath` 都指向它），改名会让 `repoPathEnv` 的语义失真。
+    id 与文件名不一致是刻意的，与 `akso-cc.json` 的 `id=insight` 同构。
+  - 旧 id `akso-auto` / `akso-cc` 一律 **404**（不留"还能用"的第二名字），有回归断言。
+
+### Fixed
+
+- **配置工厂的执行日志从来什么都不显示**（真缺陷，潜伏至今）。`factory.js` 读的是
+  `result.stdout_tail` / `stderr_tail` / `code` / `duration_s`，而 `POST /api/factory/run`
+  返回的是 `{job_id, status, result, log_tail}`——**那四个字段它从来不返回**（它们是
+  `services/proc.py` 的进程结果形状，而工厂在阶段 3 原生化之后没有进程了）。
+  表现为"点执行 → 转一圈 → 日志区还是空的、收尾行写着 `exit=undefined`"，
+  且**页面不报错、测试也不报错**：`undefined` 在 JS 里不抛错，`for...of undefined` 也被
+  `|| []` 兜住了。→ 现在渲染 `log_tail` + 逐对象步骤状态 + **`manualItems`（平台上建不出来、
+  必须人工补的项）** + `checkpoint.completedCount/totalSteps`；成功态不再依赖只在失败时才有值的
+  `result.message`。
+  **防复发**：新增 `tools/verify_factory_page.py` —— 把**真实后端返回**喂给**真实前端渲染函数**
+  （DOM 桩，只需 node，不装任何 npm 包），断言渲染结果含成功/步骤/断点/任务 id 且**不含
+  `undefined`**，并检查前端代码里不再引用那三个幽灵字段（只看代码不看注释）。
+  跨语言字段名是**没有类型系统保护的接口**，只能靠这种对照验证守。
+
+- **`services/modules.py::module_status` 按 id 硬解析适配器**：`mod = adapter or {}` 只认调用方
+  显式传进来的存档，于是 `GET /api/modules/<id>` 对任何**适配器模块**都返回空清单 +
+  `status=missing`。改名时正是这样暴露的——工厂模块的体检项整片消失，而代码一处都没错。
+  → 缺省时自己 `get_adapter(mod_id)`。
+
+- **`status` 三态映射写反**（风险台账 C5）：原写法把"全挂"显示成 `degraded`、"部分可用"显示成
+  `missing`，而状态词是运维唯一的判据，反了就没人去修。→ 改为显式四分支
+  （空=missing / 全通过=ok / 部分=degraded / 全挂=missing）。
+
+- **`tests/test_modules.py::test_adapter_paths_exist` 常驻红**（自 2026-09-13 起，是本仓
+  `pytest` 唯一的失败项）。它断言"只读存档指向的原仓库目录存在"，而存档的 `mode` 已是
+  `native-python-internalized` + `frozen: true`——**能力全部内化、运行时零依赖原仓库**。
+  把"原仓库在不在"当断言，等于给一个已经不需要它的系统加一道环境门禁。
+  → 拆成两条守**契约**（而非守**环境**）的断言：路径口径解析得出且与存档声明一致；
+  缺失时报信息项、模块状态不变红。**不要**改回 `assert repo.exists()`。
+
+- 工厂页两处过时文案：`pages/factory.html` 的副标题仍写"封装 akso-auto"，
+  且声称"凭证导出为临时 env 文件（任务后删除）"——原生化后凭证是**内存直连、从不落盘**，
+  该描述与实现不符。
+
+### Changed
+
+- **系统提示词简化为最小形态**（用户定稿 ③）：只回答**你是谁、工具从哪找、信息从哪来**，
+  不再写身份设定（ISPE GAMP5 / 阿克索 / 纯 4 类可配置平台）。**约 1,500 字 → 511 字**。
+  去掉的三类内容及理由：
+  - **工具清单**（原提示词逐个点名 9 个工具）：工具 schema 每次请求都会下发，每个工具自带
+    `description`。写两份必然漂移——本轮加 `web_search` 时就得改两个地方，下次谁忘了改，
+    模型就会以为自己没有某个工具。**这不是"更简洁"，是消除了一个必然出错的同步点。**
+  - **回答格式**（结论先行 / 依据溯源 / ⚠️ 风险提示）：那是产品偏好，该由用户在设置页决定。
+  - **身份设定**：对行为没有约束力，却占着每个请求最前面的字节——**前缀越靠前越值钱**。
+  回归里加了"不许再往提示词里硬编码工具名"的断言（`test_default_prompt_is_minimal`）。
+
+- **默认模型名 `deepseek-v4-flash` → `deepseek-flash`**，并新增 `normalize_model()`
+  把历史名在读设置时就归一（含 `deepseek-v4-flash-vision-exp`）。
+  依据：官方 2026-09-10 起 **V4 Flash 已退役**，旧名靠一条"temporarily routed"的兼容路由
+  活着。归一化不改行为（同模型同价格），但不再依赖一条随时可能撤掉的路由。
+
+- **`read_local_file` 收边界**（安全）。它原来是**无限制的绝对路径读**——任何凭据文件都能被模型
+  一句话读出来，结果还会原样进对话进审计。现在：① 敏感路径（凭据库 / 浏览器 cookie 库 / 系统目录）
+  一律拒；② 应用目录之外只收"文本类后缀 + ≤2MB"。
+  **刻意不用确认门**：那样每次合法读文件都要点一下，而"读用户指定的报表/日志"是高频真实用法，
+  过度打扰会让人习惯性点"放行"，反而把确认门用废。
+
+- **`harness/tools.py` 降级为兼容垫片**（只剩再导出）。`@tool` 装饰器**已下线**并显式抛
+  `NotImplementedError`——它的形态会诱导写出没有风险分级的工具，而"没有分级"意味着不过确认门。
+
+### Fixed
+
+- `include_usage` 未开启导致流式响应**根本收不到 usage**——缓存命中量再准也无从取得。
+  同时兼容两种形态：usage 独立成帧（OpenAI 约定）与夹在带 choices 的帧里（部分网关）。
+- 摘要调用的用量此前完全不进账。现在**单独计数**（`summaryCalls`）：它的输入是历史原文，
+  几乎必然全 miss，是"缓存优化到底有没有省到钱"最该看的那笔开销。
+
+### Fixed
+
+- `ToolContext.timeout_s` 的默认值**静默盖掉**所有工具的 `timeout_s`
+  （实测：声明 0.05s 超时的探针工具照样跑完 0.5s）。改为 `float | None = None`。
+- 确认门闭包捕获旧 `PendingStore` 实例：`reset_store()`（测试隔离用）之后中枢仍捏着旧店，
+  表现为"申请到 pendingId 却查不到 / 批不了"，且**只在测试里出现**。改为每次现取单例。
+
 - **产物就地预览：应用内直接看 markdown 与 drawio**（用户要求）。此前 markdown 只能在新标签页里看
   **源码**、drawio 只能下载——五步产物虽然齐了，读起来还是得离开应用另找工具。
   现在洞察页产物表每行给「预览 · 下载」，预览走应用内弹窗（原生 `<dialog>`，与账号中心同一套）：

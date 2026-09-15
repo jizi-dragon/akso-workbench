@@ -1,4 +1,4 @@
-/** 设置视图：DeepSeek Key / 模型 / 温度 */
+/** 设置视图：DeepSeek Key / 模型 / 温度 / **系统提示词** / **缓存命中率** */
 
 import { api } from "./api.js";
 import { state } from "./app.js";
@@ -6,8 +6,8 @@ import { state } from "./app.js";
 let settingsInitialized = false;
 
 const MODEL_OPTIONS = [
-  { id: "deepseek-v4-flash", tag: "经济版", desc: "响应快、成本低：日常问答、工具调用与知识抽取" },
-  { id: "deepseek-v4-pro", tag: "旗舰版", desc: "深度推理更强：复杂合规架构分析与多步推演" },
+  { id: "deepseek-flash", tag: "经济版", desc: "V4.1-Flash：响应快、成本低，日常问答与工具调用" },
+  { id: "deepseek-v4-pro", tag: "旗舰版", desc: "深度推理更强：复杂架构分析与多步推演" },
 ];
 
 export function initSettings() {
@@ -54,14 +54,135 @@ export function initSettings() {
     state.settings = result.settings;
     flashButton("btn-save-settings", "✓ 已保存");
   });
+
+  initPromptEditor();
+  initCachePanel();
 }
+
+/* ---------------------------------------------------------------- 系统提示词 */
+
+function initPromptEditor() {
+  const textarea = document.getElementById("set-system-prompt");
+  const badge = document.getElementById("prompt-custom-badge");
+  const counter = document.getElementById("prompt-chars");
+
+  // 输入即更新字数与「已自定义」徽章：用户要能立刻看出"我现在到底是不是在用默认"
+  textarea.addEventListener("input", () => {
+    const value = textarea.value.trim();
+    counter.textContent = `${value.length} 字`;
+    badge.hidden = !value;
+  });
+
+  // 「填入默认内容」只把基线文本填进框里，**不保存**——保存必须显式点按钮，
+  // 否则误点一下就改动线上行为，而用户可能只是想把默认内容拿去改一改
+  document.getElementById("btn-prompt-default").addEventListener("click", async () => {
+    const current = await api.getPrompt();
+    textarea.value = current.default;
+    textarea.dispatchEvent(new Event("input"));
+  });
+
+  // 显式保存（不做输入防抖自动保存：改提示词会打断缓存前缀，得让用户自己决定何时生效）
+  document.getElementById("btn-save-prompt").addEventListener("click", async () => {
+    const button = document.getElementById("btn-save-prompt");
+    try {
+      const saved = await api.savePrompt(textarea.value);
+      state.settings.systemPrompt = saved;
+      // 保存的是"用户版"（空 = 用基线），所以回填时用**生效值**，
+      // 否则留空表示默认的用户会看到框里空空如也、以为提示词被清掉了
+      textarea.value = saved.prompt;
+      textarea.dispatchEvent(new Event("input"));
+      flashButton("btn-save-prompt", saved.custom ? "✓ 已保存" : "✓ 已恢复默认");
+    } catch (error) {
+      button.textContent = `保存失败：${error.message}`;
+      setTimeout(() => { button.textContent = "保存提示词"; }, 2600);
+    }
+  });
+}
+
+function paintPrompt() {
+  const prompt = state.settings.systemPrompt || {};
+  const textarea = document.getElementById("set-system-prompt");
+  // 框里永远显示**当前生效**的内容：未自定义时就是基线，便于直接看着改
+  textarea.value = prompt.prompt || "";
+  textarea.dispatchEvent(new Event("input"));
+}
+
+/* ---------------------------------------------------------------- 缓存面板 */
+
+function initCachePanel() {
+  document.getElementById("btn-cache-refresh").addEventListener("click", () => loadCache(true));
+}
+
+async function loadCache() {
+  const box = document.getElementById("cache-stats");
+  const note = document.getElementById("cache-note");
+  if (!box) return;
+  try {
+    paintCache(await api.getCache());
+  } catch (error) {
+    box.textContent = `读取失败：${error.message}`;
+    note.textContent = "";
+  }
+}
+
+function paintCache(data) {
+  const box = document.getElementById("cache-stats");
+  const note = document.getElementById("cache-note");
+  const hit = data.cacheHitTokens || 0;
+  const miss = data.cacheMissTokens || 0;
+  const total = hit + miss;
+
+  if (!data.answers || !total) {
+    box.innerHTML =
+      '<div class="cache-empty">最近 7 天还没有对话记录。发一条消息后这里会显示真实的缓存命中量。</div>';
+    note.textContent = "";
+    return;
+  }
+
+  const rate = Math.round((data.hitRate || 0) * 100);
+  const saved = Math.round((data.savedRatio || 0) * 100);
+  box.innerHTML = `
+    <div class="cache-metric cache-metric-main">
+      <span class="cache-metric-value">${rate}%</span>
+      <span class="cache-metric-label">缓存命中率</span>
+      <div class="cache-bar"><div class="cache-bar-fill" style="width:${rate}%"></div></div>
+    </div>
+    <div class="cache-metric"><span class="cache-metric-value">${fmtTokens(hit)}</span>
+      <span class="cache-metric-label">命中 token</span></div>
+    <div class="cache-metric"><span class="cache-metric-value">${fmtTokens(miss)}</span>
+      <span class="cache-metric-label">未命中 token</span></div>
+    <div class="cache-metric"><span class="cache-metric-value">${fmtTokens(data.completionTokens)}</span>
+      <span class="cache-metric-label">输出 token</span></div>
+    <div class="cache-metric"><span class="cache-metric-value">${data.answers}</span>
+      <span class="cache-metric-label">回答数</span></div>`;
+  // 摘要重算次数单独提示：它是"前缀被打断"的直接证据，命中率掉了先看它
+  note.textContent = data.summaryCalls
+    ? `按命中价折算，约省下 ${saved}% 的输入费用；期间重算历史摘要 ${data.summaryCalls} 次（每次都会打断前缀，越少越好）`
+    : `按命中价折算，约省下 ${saved}% 的输入费用；历史摘要未重算过（前缀一直稳定）`;
+}
+
+function fmtTokens(value) {
+  const n = Number(value || 0);
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+/* ---------------------------------------------------------------- 填充与保存 */
 
 export function fillSettings() {
   const settings = state.settings;
   document.getElementById("set-api-key").value = settings.apiKey || "";
   document.getElementById("set-temperature").value = settings.temperature ?? 0.7;
   document.getElementById("temp-value").textContent = Number(settings.temperature ?? 0.7).toFixed(1);
+  // 模型名做一次归一：库里可能存着已退役的 `deepseek-v4-flash`（官方兼容路由到
+  // V4.1-Flash），卡片上没有它就一个都不高亮，看着像"没选模型"
+  if (settings.model && !MODEL_OPTIONS.some((m) => m.id === settings.model)) {
+    settings.model = "deepseek-flash";
+  }
   paintModelGrid();
+  paintPrompt();
+  loadCache();
 }
 
 function paintModelGrid() {

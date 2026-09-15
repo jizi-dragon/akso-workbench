@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/static/css/tokens.css" />
     <link rel="stylesheet" href="/static/css/base.css" />
     <link rel="stylesheet" href="/static/css/app.css" />
+    <link rel="stylesheet" href="/static/css/chat-tools.css" />
     <link rel="stylesheet" href="/static/css/settings.css" />
     <link rel="stylesheet" href="/static/css/splash.css" />
   </head>
@@ -107,6 +108,9 @@
               <div class="composer">
                 <textarea id="composer-input" rows="1" placeholder="输入你的问题…（Enter 发送，Shift+Enter 换行）"></textarea>
                 <div class="composer-footer">
+                  <div class="tool-palette-anchor" id="tool-palette-anchor">
+                    <button class="tool-palette-btn" id="btn-tool-palette" type="button" aria-haspopup="dialog" aria-expanded="false" title="可用工具清单（点工具名即插入输入框）">工具</button>
+                  </div>
                   <div class="composer-hint">Enter 发送 · Shift+Enter 换行</div>
                   <button class="send-btn" id="btn-send" title="发送">➤</button>
                 </div>
@@ -154,6 +158,47 @@
                       <small>发散 · 1.3+</small>
                     </div>
                   </label>
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <h2 class="settings-section-title">⚡ 系统提示词</h2>
+                <div class="settings-card">
+                  <p class="settings-hint">
+                    这一段是每次对话最先发给模型的内容，决定它的定位与做事方式。<b>留空即用默认</b>——
+                    默认只说明「你是谁、工具从哪找、信息从哪来」，工具清单由系统按当前已装插件自动下发，
+                    不需要（也不应该）在这里手写。
+                  </p>
+                  <label class="field">
+                    <span>
+                      提示词正文
+                      <b class="mono prompt-chars" id="prompt-chars">0</b>
+                      <span class="badge badge-teal" id="prompt-custom-badge" hidden>已自定义</span>
+                    </span>
+                    <textarea id="set-system-prompt" class="prompt-input" rows="10"
+                              spellcheck="false"
+                              placeholder="留空 = 使用默认提示词"></textarea>
+                  </label>
+                  <div class="prompt-actions">
+                    <button class="btn-primary" id="btn-save-prompt" type="button">保存提示词</button>
+                    <button class="btn-ghost" id="btn-prompt-default" type="button">填入默认内容</button>
+                    <small>改完点「保存提示词」立即生效；⚠️ 会让下一次请求的缓存前缀失效一次（之后恢复命中）。</small>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <h2 class="settings-section-title">⚡ 缓存与用量</h2>
+                <div class="settings-card">
+                  <p class="settings-hint">
+                    DeepSeek 的上下文缓存按「完整匹配前缀」命中，<b>命中价是未命中价的 1/50</b>。
+                    命中率越高，同样的对话花得越少。这里显示最近 7 天的实际数字。
+                  </p>
+                  <div class="cache-stats" id="cache-stats"></div>
+                  <div class="prompt-actions">
+                    <button class="btn-ghost" id="btn-cache-refresh" type="button">刷新</button>
+                    <small id="cache-note"></small>
+                  </div>
                 </div>
               </section>
 

@@ -68,7 +68,31 @@ def _optional_routers(app: FastAPI) -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     db.connect()
+    _tool_selfcheck()
     yield
+
+
+def _tool_selfcheck() -> None:
+    """工具插件自检（启动期一条日志，不阻断启动）。
+
+    坏插件是被**静默跳过**的（`ToolHub.load` 的刻意设计），所以这里必须把结果喊出来：
+    少了哪个插件、少了哪个必需工具，一眼可见。也可经 `GET /api/agent/selfcheck` 复查。
+    """
+    try:
+        from ..plugin_api import get_hub, verify_required_tools
+        from .routes_agent import REQUIRED_TOOLS
+
+        hub = get_hub()
+        missing = verify_required_tools(hub, REQUIRED_TOOLS)
+        logger.info(
+            "工具中枢：%d 个插件 / %d 个工具%s",
+            len(hub.plugins), len(hub.specs()),
+            f"；装配失败 {hub.failures}" if hub.failures else "",
+        )
+        if missing:
+            logger.error("工具自检未通过：必需工具缺失 %s（对应插件未装配成功）", missing)
+    except Exception:  # noqa: BLE001 —— 自检本身绝不能阻断应用启动
+        logger.warning("工具自检执行失败", exc_info=True)
 
 
 def create_app() -> FastAPI:

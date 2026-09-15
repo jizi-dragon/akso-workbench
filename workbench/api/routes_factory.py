@@ -109,7 +109,7 @@ def run(body: FactoryRunIn) -> dict:
     if body.command not in {"create", "orchestrate"}:
         raise HTTPException(400, f"未知命令：{body.command}（monitor 长驻录制见 /api/monitor）")
     if not body.confirmed:
-        raise HTTPException(409, "违反 akso-auto「环境强制确认」原则：需要 UI 明确确认（confirmed=true）")
+        raise HTTPException(409, "违反配置工厂「环境强制确认」原则：需要 UI 明确确认（confirmed=true）")
 
     workdir = config.RUNTIME_DIR / "factory" / (body.blueprint_id or uuid.uuid4().hex[:12])
     workdir.mkdir(parents=True, exist_ok=True)
@@ -119,7 +119,7 @@ def run(body: FactoryRunIn) -> dict:
     db.execute(
         "INSERT INTO blueprint_jobs (id, module, command, blueprint_path, env_id, status, "
         "log_path, artifact_dir, created_at, updated_at) "
-        "VALUES (?, 'egmp-native', ?, ?, 'workbench', 'running', ?, ?, ?, ?)",
+        "VALUES (?, 'factory', ?, ?, 'workbench', 'running', ?, ?, ?, ?)",
         (job_id, body.command, str(blueprint_path), str(workdir / "proc.log"), str(workdir),
          now_ms(), now_ms()),
     )

@@ -81,11 +81,18 @@
 
 | 键 | 值 | 说明 |
 |---|---|---|
-| `repoPath` | `D:\ai_assistant\akso-cc` / `akso-auto` | 只读参考存档路径 |
+| `id` | `insight` / `factory` | **模块 id（本工作台自己的名字）**，不是来源项目名 |
+| `repoPath` | `D:\ai_assistant\akso-cc` / `akso-auto` | 只读参考存档路径（原仓库所在处） |
 | `repoPathEnv` | `AKSO_CC_REPO` / `AKSO_AUTO_REPO` | 环境变量可覆盖 `repoPath`（环境变量优先） |
 | `mode` | `native-python-internalized` | 表示能力已内化；`frozen: true` |
 | `deprecation` | 文本 | 说明原生化事实与文件降级为只读参考 |
 
+> **文件名是来源项目名，`id` 是本工作台的模块名，两者刻意不一致**：
+> 2026-09-14 `akso-cc` → `insight`、2026-09-15 `akso-auto` → `factory`，但**文件名没动**——
+> `akso-auto.json` 是"这份存档对应哪个原仓库"的引用真源（`repoPathEnv=AKSO_AUTO_REPO`
+> 也据此命名）。改文件名会让 `repoPathEnv` 的语义失真。
+> 这条口径由 `tests/test_modules.py` 的断言守住（不许泄漏上游名 / 引用不许断）。
+>
 > ℹ️ `adapters/*.json` 的 `$schema` 字段原指向已删除的 `docs/模块契约.md#adapters`，
 > 已于本轮文档重构改为 `docs/SCHEMA.md`（只动这一个字段）。除此之外这些文件属于
 > 「原项目只读引用」区，改动需谨慎（见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的「原四仓库只读」约定）。

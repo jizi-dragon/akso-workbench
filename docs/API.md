@@ -48,7 +48,7 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 | 400 | 参数/业务规则错误（`AccountError`、空字段、未知命令、缺少必填项） |
 | 404 | 资源不存在（账号/环境/任务/产物/会话） |
 | 405 | 路由存在但方法不符（如 `GET /extension/setup-helper`） |
-| 409 | 状态冲突（受管会话不可用、环境未确认、监听未启动） |
+| 409 | 状态冲突（受管会话不可用、环境未确认、监听未启动、**风险工具待确认**——见 §10） |
 | 413 | 上传超限（蓝图 > 10 MB） |
 | 502 | 上游失败（egmp 平台/工具执行/工厂执行） |
 | 503 | 依赖不可用（`BrowserError` 且非「账号不存在」） |
@@ -66,12 +66,40 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 
 | 方法 | 路径 | 请求 | 响应 |
 |---|---|---|---|
-| GET | `/api/bootstrap` | — | `{conversations, stats:{qaTotal, adoptRate\|null}, settings:{apiKey,model,temperature}}` |
-| PUT | `/api/settings` | `{apiKey?, model?, temperature?}` | `{ok:true, settings:{...}}` |
+| GET | `/api/bootstrap` | — | `{conversations, stats:{qaTotal, adoptRate\|null}, settings:{apiKey,model,temperature,systemPrompt:{prompt,default,custom,chars}}, cache:{…}}` |
+| PUT | `/api/settings` | `{apiKey?, model?, temperature?}` | `{ok:true, settings:{…}}`（`model` 会归一为官方现行名，见下） |
+| GET | `/api/settings/prompt` | — | `{prompt, default, custom, chars}`——`prompt` 是**当前生效**的那一份 |
+| PUT | `/api/settings/prompt` | `{prompt}` | 同上；**空串 = 恢复基线** |
+| GET | `/api/agent/cache?days=7` | — | `{days, answers, promptTokens, cacheHitTokens, cacheMissTokens, completionTokens, summaryCalls, hitRate, savedRatio}` |
 
 - `adoptRate`：`feedback==1 的比例 × 100` 取整；无任何评分时为 `null`。
 - `apiKey` 明文回传（本机信任边界内的既有契约）——**这是 web 版能力的遗留形态**，见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账。
 - 设置读写唯一入口是 `services/settings.py`；DB 键固定为 `apiKey` / `model` / `temperature`。
+
+### 2.1 模型名归一（`deepseek-v4-flash` → `deepseek-flash`）
+
+`deepseek-v4-flash` 自 2026-09-10 起**已退役**，官方为兼容把它路由到 V4.1-Flash
+（原文 "temporarily routed"，见 [DeepSeek 更新日志](https://api-docs.deepseek.com/zh-cn/updates)）。
+本工作台在**读与写两处**都做归一，所以接口回给你的一律是现行名；**行为不变**（同模型同价格）。
+完整核查（含**联网搜索到底支不支持**的结论）见
+[research/deepseek-api-capabilities.md](research/deepseek-api-capabilities.md)。
+
+### 2.2 系统提示词
+
+- 基线在代码里（`harness/prompts.py::DEFAULT_SYSTEM_PROMPT`）：只说明**你是谁、工具从哪找、
+  信息从哪来**。**工具清单不在提示词里**——它由每次请求的 `tools` 下发（每个工具自带
+  `description`），写两份必然漂移。
+- 用户版存 `settings` 表的 `systemPrompt` 键，**空串 = 用基线**；改完立即生效。
+- ⚠️ 改提示词会**让缓存前缀失效一次**（system 是请求的第一个字节）。低频动作可以接受；
+  但**不要在运行时按轮次拼装提示词**——那等于每轮都让缓存从头失效。
+
+### 2.3 缓存与用量
+
+DeepSeek 的上下文缓存按"**完整匹配**一个缓存前缀单元"命中，**命中价是未命中价的 1/50**
+（`deepseek-flash` 非高峰 $0.003 vs $0.15 / 1M input tokens）。`/api/agent/cache` 读的是
+`deepseek_usage` 表的**真实累计值**：`cache.py` 在每次回答收尾时入账，
+**摘要重算那部分开销单独计**（`summaryCalls`）——它的输入是历史原文、几乎必然全 miss，
+是"缓存优化到底有没有省到钱"最该看的数字。
 
 ## 3. SSE 流式对话 `POST /api/chat/stream`（`routes_chat.py`）
 
@@ -104,7 +132,9 @@ POST /api/chat/stream   Content-Type: application/json
 
 - **内置模块**（`services/modules.py`）：`workbench`（Python 依赖体检）、
   `accounts`（Python 依赖 + `playwright:chromium` 可执行文件存在性）。
-- **适配器模块**：读 `adapters/*.json`（`insight` / `akso-auto`）。
+- **适配器模块**：读 `adapters/*.json`（模块 id 为 `insight` / `factory`；
+  文件名仍是来源项目名 `akso-cc.json` / `akso-auto.json`，那是"对应哪个原仓库"的引用真源，
+  见 [CONFIG.md](CONFIG.md) §4）。
   阶段 3 原生化后它们降级为**只读参考存档**：体检项为 Python 依赖 + `source-reference`（信息项，
   原仓库缺失不影响功能，`ok` 恒为 `true`）。
 - ⚠️ **模块 id 与存档文件名可以不一致**（这是刻意的）：`insight` 模块的存档文件是
@@ -254,18 +284,57 @@ autologin, has_token, monitoring, monitor_log}`；
 
 ## 10. Agent 工具层 `/api/agent`（`routes_agent.py`）
 
+> **单一事实源**：工具清单来自**工具插件中枢** `plugin_api.ToolHub`（`workbench/plugins/`
+> 四个插件装配）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
+> schema、审计三处读的是同一份定义。插件 SDK 契约见 [PLUGIN-SDK.md](PLUGIN-SDK.md)。
+
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
-| GET | `/api/agent/tools` | — | `{tools:[{name,description,args}]}` |
-| POST | `/api/agent/invoke` | `{tool, args:{}}` | `{tool, ok:true, result}`；未知工具 404；`ValueError`/`TypeError` → 400；其余 → 502 |
-| GET | `/api/agent/audit?limit=50` | — | `{audit:[行]}`（上限 500）——⚠️ 见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账 |
+| GET | `/api/agent/tools` | — | `{plugins:[{id,title,version,description,tools:[name]}], tools:[{name,description,risk,plugin,args:{参数:说明}}], failures:[{plugin,error}]}` |
+| GET | `/api/agent/plugins` | — | `{plugins:[...], failures:[...]}`（插件维度视图；与上一条的分工：这里答"装了哪些插件"，上一条答"能调什么"） |
+| POST | `/api/agent/invoke` | `{tool, args:{}, approvalToken?}` | 成功 `{tool,ok:true,status:"ok",risk,plugin,auditId,durationMs,result}`；见下方状态码 |
+| GET | `/api/agent/pending?status=pending&limit=50` | — | 待确认（危险）操作清单；`status=""` 取全部状态 |
+| GET | `/api/agent/pending/{pending_id}` | — | 单条待确认（无令牌；404 = 不存在或已过期） |
+| POST | `/api/agent/pending/{pending_id}/approve` | —（无请求体） | `{pendingId,approvalToken,expiresInMs,summary,retry}`；已决策/已过期 → 409 |
+| POST | `/api/agent/pending/{pending_id}/reject` | `{reason?}` | `{pendingId,status:"rejected",summary}`；已决策 → 409 |
+| GET | `/api/agent/audit?limit=50` | — | `{audit:[{id,tool,plugin,risk,status,result_summary,duration_ms,created_at}]}`（上限 500；**刻意不带 `args`**） |
+| GET | `/api/agent/audit/{audit_id}` | — | 单条审计（含 `args`/`meta`，已 JSON 还原）；404 = 无此记录 |
+| GET | `/api/agent/selfcheck` | — | `{ok,plugins,tools,riskCounts,requiredTools,missingRequired,failures}`（启动自检的可查视图） |
 
-工具：`login_platform`（原生登录 + token 预热，回 `tokenHead` 前 8 字符）、`read_config`（egmp 只读元数据）、
-`run_insight`（跑 `spider` 蜘蛛计划；与页面走同一入口 `routes_insight.run`，任务台账一并回填）、
-`browser_status`（会话状态墙）。
+**`POST /invoke` 的状态码语义**（比通用错误码表更细，因为要区分"要不要确认"）：
 
-> ⚠️ 本模块与前端对话用的 `harness/tools.py`（`get_current_time` / `read_local_file` / `read_web_page`）
-> **是两套独立的工具注册表**，不要混淆。
+| 码 | 何时 | 响应体 |
+|---|---|---|
+| 200 | 执行成功 | `{ok:true,status:"ok",result:{...}}`（`result` 为工具返回的 JSON 正文还原） |
+| 400 | `bad_args` / `unknown_tool` / `rejected`——**调用方能自己修** | `{detail:{tool,status,error,...}}` |
+| 404 | 工具名不在目录里 | `{detail:"未知工具：…"}` |
+| 409 | `needs_approval`——风险工具缺单次令牌。**不是错误，是流程中止** | `{detail:{pendingId,risk,summary,message}}` |
+| 502 | 执行期失败（平台侧/超时） | `{detail:{tool,status,error,...}}` |
+
+**风险分级与确认门**（详见 [PLUGIN-SDK.md](PLUGIN-SDK.md) §4）：
+
+- `risk=read` 直接执行；`risk=write|dangerous` **没有单次令牌绝不执行**。
+- 令牌兑换链：`invoke` 得 409+`pendingId` → `approve` 得 `approvalToken` → 原样重投 `invoke`。
+  令牌**一次性 / 5 分钟 / 绑定工具+参数指纹**（换个参数要重新确认）。
+- 对话链路等价走法：SSE `approval_required` 事件 → 同一套 `/pending/*` 端点 → 让模型重试同一次调用。
+
+**工具清单（19 个，按插件）**：
+
+| 插件 | 工具 | 风险 |
+|---|---|---|
+| `builtin` | `get_current_time` / `read_local_file` / `read_web_page` | read |
+| `insight` | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
+| `factory` | `factory_validate_blueprint` / `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
+| `factory` | `factory_create` | **dangerous** |
+| `accounts` | `accounts_list` / `accounts_login` / `accounts_browser_sessions` | read |
+| `accounts` | `accounts_browser_open` / `accounts_browser_close` | **write** |
+
+> ⚠️ **2026-09-15 收口**：本模块此前有**第二套工具表**（`login_platform` / `read_config` /
+> `run_insight` / `browser_status`），与前端对话用的 `harness/tools.py`（三个基础工具）
+> 并存且互不可见——后果是"对话里的模型只能聊天、一个平台能力都看不到"。两者已合并为
+> `ToolHub`，旧工具名不再存在（`read_config` → `insight_read_config`，
+> `run_insight` → `insight_run`，`login_platform` → `accounts_login`，
+> `browser_status` → `accounts_browser_sessions`）。
 
 ## 11. 执行面 `/extension`（`routes_extension.py`）
 
@@ -298,16 +367,33 @@ autologin, has_token, monitoring, monitor_log}`；
 {"type":"start","conversationId":"..."}
 {"type":"token","text":"..."}            ← 0..N 次（增量正文）
 {"type":"thought","text":"..."}          ← 可选：模型在工具调用前的说明
-{"type":"action","call":{...}}           ← 工具调用（每次一条）
-{"type":"observation","result":{...}}    ← 对应结果（紧随其 action）
-↑ (thought/action/observation) 可循环多轮，受 max_steps 预算约束
+{"type":"action","call":{"id","name","arguments"},          ← 工具调用（每次一条）
+ "tool":{"name","risk","plugin","known"},"auditId":"..."}
+{"type":"observation",                    ← 对应结果（紧随其 action）
+ "result":{"ok":bool,"summary":"≤220字纯文本","status":"ok|error|needs_approval|…"},
+ "invocation":{"toolCallId","tool","auditId","durationMs","risk","plugin","status","isError"}}
+{"type":"approval_required",              ← 风险工具被确认门拦下（每次一条，紧随其 observation）
+ "pendingId":"...","tool":"...","risk":"write|dangerous","summary":"人话摘要","auditId":"..."}
+↑ (thought/action/observation/approval_required) 可循环多轮，受 max_steps 预算约束
 {"type":"final","content":"完整正文"}     ← 或 {"type":"error","message":"..."}
-{"type":"done","conversationId":"...","content":"...","metricId":"...","titleUpdated":bool,"latencyMs":int}
+{"type":"usage","usage":{...}}            ← 收尾必发一条：本轮 token 用量与**缓存命中量**
+{"type":"done","conversationId":"...","content":"...","metricId":"...","titleUpdated":bool,
+ "latencyMs":int,"usage":{...}}           ← usage 与上一条同源（前端不必额外记状态）
 ```
 
 - **`done` 必发**（含错误路径），其 `metricId` 是 §4 反馈接口的入参。
 - 模型无内容时 `content` 回落为「（模型未返回内容）」；错误路径写「错误：<原因>」。
 - 会话标题在首条用户消息时自动更新，`titleUpdated` 告知前端。
+- **`usage` 在 final/error 之后单独发**：命中量要等所有模型调用（工具轮次 + 历史摘要重算）
+  都结束才是完整答案，提前发会给出一个偏低的数字。字段：
+  `{calls, promptTokens, cacheHitTokens, cacheMissTokens, completionTokens, reasoningTokens,
+  hitRate, summaryCalls}`（见 §2.3 与 [research/deepseek-api-capabilities.md](research/deepseek-api-capabilities.md)）。
+- **`action` ↔ `observation` 靠 `invocation.auditId` 对齐**（前端卡片就地更新用），
+  同一 id 也是 `GET /api/agent/audit/{id}` 的主键——即"对话里看到的那次调用"与
+  "审计表里那一行"是同一条记录。
+- `invocation.status` 取 `ok|error|needs_approval|rejected|timeout|unknown_tool|bad_args`；
+  **`needs_approval` 不是失败**，是"流程中止等你确认"（见 §10 的确认门）。
+- 工具调用**全部入审计**（`agent_audit`，`meta.source="agent"`），HTTP 面与对话面共用同一张表。
 
 ### 12.2 SSE 洞察进度流（`POST /api/insight/run-sse`）
 

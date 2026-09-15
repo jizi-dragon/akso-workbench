@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
   逐列适配并对未知 `NOT NULL` 无默认值列填中性值，避免接管旧库时 IntegrityError。
 - `checksum` 按 sqlx 语义取迁移 SQL 的 SHA-384 摘要。
 
-### 迁移账（1–13，全部已应用）
+### 迁移账（1–18，全部已应用）
 
 | # | 名称 | 内容 | 血统 |
 |---|---|---|---|
@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | 13 | `add_created_at_indexes` | `agent_audit` / `blueprint_jobs` / `insight_runs` 的 `created_at` 索引 + `account(box)` | 数据层维护 |
 | 14 | `add_insight_workspace_and_coverage` | `insight_runs` 增 `workspace_dir`（多个工作区目录以**换行分隔**）与 `coverage_status`（三态覆盖度） | 平台洞察工作区 |
 | 15 | `rename_insight_module_id` | 数据行改写：`insight_runs.module` 由 `akso-cc` / `egmp-native` 统一为 `insight` | 模块 id 改名 |
+| 16 | `tool_plugin_layer` | `agent_audit` 增 `plugin` / `risk` / `meta`；新建 `pending_action`（危险操作确认门留痕）+ 索引 | 工具插件层 |
+| 17 | `agent_cache_layer` | 新建 `conversation_context`（冻结的历史摘要，`summarized_upto` 只前进）与 `deepseek_usage`（token 用量与**缓存命中量**）+ 索引 | Agent 缓存层 |
+| 18 | `rename_factory_module_id` | 数据行改写：`blueprint_jobs.module` 由 `akso-auto` / `egmp-native` 统一为 `factory` | 模块 id 改名 |
 
 > **迁移 1–6 为 fork 历史，按不可变纪律保留**。其中 `documents` / `doc_chunks` / `qa_metrics`
 > 的知识库相关功能**源码已删**（表仅留存、不再读写）；`knowledge_nodes` / `knowledge_edges` /
@@ -145,7 +148,7 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | TEXT | PK | |
-| `module` | TEXT | NOT NULL DEFAULT `'akso-auto'` | 现状写入 `'egmp-native'`（原生化后） |
+| `module` | TEXT | NOT NULL DEFAULT `'akso-auto'` | **现行写入 `'factory'`**（迁移 18 起） |
 | `command` | TEXT | NOT NULL | `create` / `orchestrate` |
 | `blueprint_path` | TEXT | DEFAULT `''` | |
 | `env_id` | TEXT | 可空 | 工厂侧固定写 `'workbench'` 占位 |
@@ -156,6 +159,18 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 | `created_at` / `updated_at` | INTEGER | NOT NULL | |
 
 索引：`idx_blueprint_jobs_status(status)`、`idx_blueprint_jobs_created_at(created_at)`。
+
+`module` 一列**历史上先后用过三个值**，迁移 18 已统一为 `'factory'`：
+
+| 值 | 来历 | 现状 |
+|---|---|---|
+| `akso-auto` | 迁移 8 建表时的列默认值（上游项目名） | 已由迁移 18 改写 |
+| `egmp-native` | 原生化后 `routes_factory` 实际写入的值 | 已由迁移 18 改写 |
+| `factory` | 现行值（模块 id，与 `adapters/akso-auto.json` 的 `id` 一致） | 代码写入 + 历史行均已统一 |
+
+> ⚠️ **列默认值仍是 `'akso-auto'`**：迁移 1–17 按不可变纪律保留，改默认值只能靠"新迁移 +
+> 重建表"，而代码**始终显式写入**该列（`'factory'`），所以默认值不会被用到。
+> 记在这里是为了让读表的人不困惑。
 
 ### 3.7 `insight_runs` — 平台洞察任务（迁移 8）
 
@@ -172,7 +187,7 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 
 > ⚠️ **列默认值仍是 `'akso-cc'`**：迁移 1–14 按不可变纪律保留，改默认值只能靠"新迁移 + 重建表"，
 > 而代码**始终显式写入**该列，所以默认值不会被用到。记在这里是为了让读表的人不困惑。
-> （`blueprint_jobs.module` 默认值 `'akso-auto'` 是同类情况，本表不动。）
+> （`blueprint_jobs.module` 默认值 `'akso-auto'` 是同类情况，见 §3.6。）
 
 `objects` 列为洞察特有（逗号分隔对象编码）。
 索引：`idx_insight_runs_status`、`idx_insight_runs_created_at`。
@@ -191,24 +206,101 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 > 它是迁移 8 中唯一使用 `INTEGER PRIMARY KEY AUTOINCREMENT` 的表（迁移历史不可变故保留）；
 > **新表不要再用 AUTOINCREMENT，一律 `TEXT PRIMARY KEY`**（UUID 文本主键与方言无关）。
 
-### 3.9 `agent_audit` — Agent 工具审计（迁移 9）
+### 3.9 `agent_audit` — Agent 工具审计（迁移 9 + 16 加列）
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
-| `id` | TEXT | PK | `uuid4().hex[:12]` |
-| `tool` | TEXT | NOT NULL | `login_platform` / `read_config` / `run_insight` / `browser_status` |
-| `args` | TEXT | NOT NULL DEFAULT `'{}'` | 入参 JSON，截断 2,000 字符 |
-| `status` | TEXT | NOT NULL DEFAULT `'ok'` | `ok` / `bad_request` / `error` |
+| `id` | TEXT | PK | `uuid4().hex[:12]`；**= SSE 事件的 `auditId`**，前端卡片与审计行靠它对齐 |
+| `tool` | TEXT | NOT NULL | 工具名，如 `insight_run` / `factory_create`（清单见 [API.md](API.md) §10） |
+| `args` | TEXT | NOT NULL DEFAULT `'{}'` | 审计维度 JSON（`audit_extra` 抽取），截断 2,000 字符；**凭据键被打码** |
+| `status` | TEXT | NOT NULL DEFAULT `'ok'` | `ok` / `error` / `needs_approval` / `rejected` / `timeout` / `unknown_tool` / `bad_args` |
 | `result_summary` | TEXT | NOT NULL DEFAULT `''` | 截断 1,000 字符 |
 | `duration_ms` | INTEGER | 可空 | |
 | `created_at` | INTEGER | NOT NULL | |
+| `plugin` | TEXT | NOT NULL DEFAULT `''`（迁移 16） | 来源插件：`builtin` / `insight` / `factory` / `accounts` |
+| `risk` | TEXT | NOT NULL DEFAULT `'read'`（迁移 16） | `read` / `write` / `dangerous` |
+| `meta` | TEXT | NOT NULL DEFAULT `'{}'`（迁移 16） | 目前只放 `{source: "agent"\|"http"}` |
 
 索引：`idx_agent_audit_tool(tool)`、`idx_agent_audit_created_at(created_at)`。
 
-> ⚠️ `GET /api/agent/audit` 目前 `SELECT *` 全列回吐（含 `args` 原始 JSON）。
-> 表当前 0 行，但**与「凭据不落明文」口径不一致**——见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账。
+**写入口只有一个**：`approvals.write_audit()`（HTTP 面与对话循环共用）。
+改造前 `harness` 完全不写这张表——"对话里跑了 30 次平台调用，审计里一条没有"。
+老行（迁移 16 之前）`plugin`/`risk`/`meta` 为空串/默认值：**刻意不回填**，
+因为历史调用确实没有插件与风险概念。
 
-### 3.10 已下线但表仍在（勿恢复业务代码）
+`GET /api/agent/audit` **不再 `SELECT *`**（此前会把 `args` 原始 JSON 一起回吐）：
+列表只回摘要列，细节走 `GET /api/agent/audit/{id}`。
+
+### 3.10 `pending_action` — 危险操作确认门留痕（迁移 16）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | TEXT | PK | `uuid4().hex[:12]`；即 `/api/agent/pending/{id}` 的 `pendingId` |
+| `tool` | TEXT | NOT NULL | 被拦下的工具名 |
+| `plugin` | TEXT | NOT NULL DEFAULT `''` | 来源插件 |
+| `risk` | TEXT | NOT NULL DEFAULT `'write'` | `write` / `dangerous` |
+| `args` | TEXT | NOT NULL DEFAULT `'{}'` | 参数（已脱敏），截断 2,000 字符 |
+| `summary` | TEXT | NOT NULL DEFAULT `''` | **人话摘要**（"做什么 + 影响谁 + ［几级］"），截断 1,000 字符 |
+| `status` | TEXT | NOT NULL DEFAULT `'pending'` | `pending` / `approved` / `rejected` / `expired` |
+| `created_at` | INTEGER | NOT NULL | |
+| `decided_at` | INTEGER | NOT NULL DEFAULT `0` | 决策时间（0 = 未决策） |
+| `decided_by` | TEXT | NOT NULL DEFAULT `''` | 目前恒为 `user` |
+| `conversation_id` | TEXT | NOT NULL DEFAULT `''` | 从哪轮对话发起的（HTTP 面为空） |
+
+索引：`idx_pending_action_status(status)`、`idx_pending_action_created_at(created_at)`。
+
+> ⚠️ **权威状态在内存**（`approvals.PendingStore._items`），这张表只做**留痕**。
+> 启动时把上一进程遗留的 `pending`/`approved` 行标成 `expired`，**刻意不恢复**——
+> 用户重启了应用，凭什么还替他记住一个未确认的写操作？别"顺手"改成恢复。
+> 令牌本身**不入库、不进日志、不回给模型**（只回给批准它的那一次 HTTP 响应）。
+
+### 3.11 `conversation_context` — 冻结的历史摘要（迁移 17）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `conversation_id` | TEXT | PK | = `conversations.id` |
+| `summary` | TEXT | NOT NULL DEFAULT `''` | 已折叠历史的摘要（进请求前缀的那条 system 消息） |
+| `summarized_upto` | INTEGER | NOT NULL DEFAULT `0` | **冻结边界**：摘要覆盖到历史的前多少条消息 |
+| `updated_at` | INTEGER | NOT NULL | |
+
+**为什么必须冻结**：DeepSeek 的上下文缓存要求"**完整匹配**一个缓存前缀单元"。
+改造前 `_manage_context` **每轮都重新调 LLM 生成摘要**，于是请求前缀每轮都变 →
+缓存命中率恒为 0。现在摘要按边界冻结、**只前进不回退**，只在超预算时折叠一次，
+之后连续多轮前缀逐字节不变（`tests/test_cache.py` 用哈希指纹钉住这条不变量）。
+
+> ⚠️ `summarized_upto` 用「消息条数」而不是消息 id：历史消息不会删除也不会重排，
+> 条数天然单调递增，正好满足"边界只前进"这一前提。**别改成按轮次滑动**——
+> 滑一次前缀就变一次，缓存必 miss。
+
+### 3.12 `deepseek_usage` — token 用量与缓存命中量（迁移 17）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | TEXT | PK | `<毫秒>-<会话前8位>` |
+| `conversation_id` | TEXT | NOT NULL DEFAULT `''` | |
+| `model` | TEXT | NOT NULL DEFAULT `''` | 官方现行名（如 `deepseek-flash`） |
+| `calls` | INTEGER | NOT NULL DEFAULT `0` | 这次回答里的 LLM 调用次数（工具轮次 + 摘要重算） |
+| `prompt_tokens` | INTEGER | NOT NULL DEFAULT `0` | 输入 token |
+| `cache_hit_tokens` | INTEGER | NOT NULL DEFAULT `0` | **命中缓存的输入 token** |
+| `cache_miss_tokens` | INTEGER | NOT NULL DEFAULT `0` | 未命中的输入 token |
+| `completion_tokens` | INTEGER | NOT NULL DEFAULT `0` | 输出 token |
+| `reasoning_tokens` | INTEGER | NOT NULL DEFAULT `0` | 思维链 token |
+| `summary_calls` | INTEGER | NOT NULL DEFAULT `0` | 其中用于**重算历史摘要**的调用数 |
+| `latency_ms` | INTEGER | NOT NULL DEFAULT `0` | 整轮耗时 |
+| `created_at` | INTEGER | NOT NULL | |
+
+索引：`idx_deepseek_usage_created_at`、`idx_deepseek_usage_conversation`。
+
+**为什么值得一张表**：官方在 `usage` 里回 `prompt_cache_hit_tokens` /
+`prompt_cache_miss_tokens`（Responses API 口径为 `input_tokens_details.cached_tokens`），
+而**命中价是未命中价的 1/50**。这些字段此前被整个丢掉 → "缓存到底生效没有"完全没有答案。
+现在设置页的命中率、`GET /api/agent/cache`、回答旁的 `缓存 N%` 徽章都读这张表。
+
+> 没有缓存字段时按**全 miss** 记（宁可低估命中率，也不虚报省钱）；
+> `summary_calls` 单独计是因为摘要调用的输入是历史原文、几乎必然全 miss——
+> 它是"前缀被打断"的直接证据。
+
+### 3.13 已下线但表仍在（勿恢复业务代码）
 
 | 表 | 来源迁移 | 现状 |
 |---|---|---|
@@ -322,6 +414,10 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 4. 若新列是配置项：更新 [CONFIG.md](CONFIG.md) §3。
 5. 跑 `.\\.venv\\Scripts\\python.exe -m pytest`（`tests/conftest.py` 用临时库，迁移会在测试库上全新执行一遍）
    与 `\\.venv\\Scripts\\python.exe tools\\db_maintenance.py --report`（确认真实库迁移到位）。
+
+> **迁移只跑一次，且不会重跑**：`ALTER TABLE ADD COLUMN` 不是幂等的，所以新增列时
+> 不要写"先检查列是否存在"的防御代码（那会让"迁移到底跑没跑"变得看不出来）。
+> 真要兼容旧库，用 `approvals._has_columns()` 那种**读侧探测**（它在写入见下表结构时用）。
 
 ## 七、维护工具
 

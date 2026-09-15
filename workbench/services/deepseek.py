@@ -2,8 +2,25 @@
 
 事件契约（stream_chat 依次 yield）：
   {"type": "delta", "text"}                    正文增量
-  {"type": "end", "content", "tool_calls"}     流结束；tool_calls 为聚合后的完整调用列表
+  {"type": "end", "content", "tool_calls", "usage"}
+                                               流结束；tool_calls 为聚合后的完整调用列表；
+                                               usage 含**缓存命中量**（见下）
+  {"type": "reasoning", "text"}                思考模式的思维链增量（可选）
+  {"type": "usage", "usage"}                   流式下用量单独到达（部分网关形态）
 错误统一抛 DeepSeekError（带 HTTP 状态码），由上层转为事件/HTTP 响应。
+
+## usage 与缓存（2026-09-15）
+
+官方在**每个**响应里回缓存命中情况，此前这里把它整个丢掉了：
+
+- Chat Completions：`prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` / `prompt_tokens`
+- Responses API：`input_tokens` + `input_tokens_details.cached_tokens`
+
+（[上下文硬盘缓存](https://api-docs.deepseek.com/zh-cn/guides/kv_cache) §Checking Cache Hit Status）
+
+`stream_options.include_usage` 让流式响应的**最后一帧**带上 usage；本模块强制打开它，
+并把 usage 一并挂到 `end` 事件上（单独到达的 usage 帧也会转成 `usage` 事件，
+以兼容某些网关的形态差异）。
 """
 
 from __future__ import annotations
@@ -14,9 +31,33 @@ from typing import AsyncIterator
 import httpx
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
-DEFAULT_MODEL = "deepseek-v4-flash"
+
+#: 官方现行模型名（2026-09-10 起 `deepseek-v4-flash` 已退役，
+#: 旧名仍被兼容路由到 V4.1-Flash，见 https://api-docs.deepseek.com/updates）。
+#: 用新名而不是旧名，是因为旧名"迟早不再被接受"，而它现在**没有任何好处**。
+DEFAULT_MODEL = "deepseek-flash"
+
+MODEL_ALIASES = {
+    "deepseek-v4-flash": "deepseek-flash",
+    "deepseek-v4-flash-vision-exp": "deepseek-flash",
+    "deepseek-v4.1-flash": "deepseek-flash",
+    "deepseek-v4.1flash": "deepseek-flash",
+}
+
 _STREAM_TIMEOUT = httpx.Timeout(120.0, connect=15.0)
 _CHAT_TIMEOUT = httpx.Timeout(90.0, connect=15.0)
+
+
+def normalize_model(name: str | None) -> str:
+    """把历史/别名模型名归一为官方现行名。
+
+    为什么要有这一步：`deepseek-v4-flash` 在 2026-09-10 随 V4.1-Flash 发布**已退役**，
+    官方为兼容把它路由到 V4.1-Flash（"temporarily routed"）。库里存着旧名的用户
+    不会报错，但会在某天突然 404——归一化把这件事提前到现在，且对用户**行为不变**
+    （同一个模型、同一个价格），只是名字对了。
+    """
+    key = (name or "").strip()
+    return MODEL_ALIASES.get(key.lower(), key) or DEFAULT_MODEL
 
 
 class DeepSeekError(Exception):
@@ -67,6 +108,12 @@ class DeepSeekClient:
         self.api_key = api_key
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
         self.model = model or DEFAULT_MODEL
+        self.last_usage: dict = {}
+        """最近一次调用的 `usage`（含缓存命中量）。
+
+        为什么用属性而不是改返回值签名：`chat()` 的调用点（摘要折叠、蓝图生成）
+        只关心文本，为它们全都改签名不值得；用量经属性回传，只有在意的人来读。
+        """
 
     async def stream_chat(
         self,
@@ -75,12 +122,15 @@ class DeepSeekClient:
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> AsyncIterator[dict]:
-        """流式对话，yield 事件：{"type": "delta"|"tool_delta"|"end", ...}"""
+        """流式对话，yield 事件：{"type": "delta"|"usage"|"end", ...}"""
         body: dict = {
-            "model": self.model,
+            "model": normalize_model(self.model),
             "messages": [_to_api_message(m) for m in messages],
             "stream": True,
             "temperature": temperature,
+            # 不打开它，流式响应**不会**带 usage，缓存命中量就永远看不到
+            # （OpenAI 兼容协议约定：include_usage 时最后一帧 data 只含 usage）。
+            "stream_options": {"include_usage": True},
         }
         if tools:
             body["tools"] = tools
@@ -105,6 +155,7 @@ class DeepSeekClient:
 
                     tool_calls: dict[int, dict] = {}
                     content_parts: list[str] = []
+                    usage: dict = {}
                     async for line in res.aiter_lines():
                         line = line.strip()
                         if not line.startswith("data:"):
@@ -116,6 +167,12 @@ class DeepSeekClient:
                             data = json.loads(payload)
                         except ValueError:
                             continue
+                        if data.get("usage"):
+                            # include_usage 的最后一帧：choices 为空、只有 usage。
+                            # 并存一份到局部变量，保证即使这一帧形态有差异（某些网关会
+                            # 把它塞进最后一帧的 choices 里），`end` 事件仍带得上用量。
+                            usage = data["usage"]
+                            yield {"type": "usage", "usage": usage}
                         delta = (data.get("choices") or [{}])[0].get("delta") or {}
                         if delta.get("content"):
                             content_parts.append(delta["content"])
@@ -139,6 +196,7 @@ class DeepSeekClient:
             "type": "end",
             "content": "".join(content_parts),
             "tool_calls": [tool_calls[i] for i in sorted(tool_calls)],
+            "usage": usage,
         }
 
     async def chat(
@@ -149,7 +207,7 @@ class DeepSeekClient:
         json_mode: bool = False,
     ) -> str:
         body: dict = {
-            "model": self.model,
+            "model": normalize_model(self.model),
             "messages": [_to_api_message(m) for m in messages],
             "temperature": temperature,
         }
@@ -174,6 +232,7 @@ class DeepSeekClient:
         if res.status_code != 200:
             raise _map_error(res.status_code, res.text)
         data = res.json()
+        self.last_usage = data.get("usage") or {}
         try:
             return data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:

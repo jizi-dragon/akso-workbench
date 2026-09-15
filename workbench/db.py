@@ -225,6 +225,81 @@ ALTER TABLE insight_runs ADD COLUMN coverage_status TEXT NOT NULL DEFAULT '';
 -- 注意：这**不是**改历史迁移——迁移 1–14 一行未动，本条只改写数据行。
 UPDATE insight_runs SET module = 'insight' WHERE module IN ('akso-cc', 'egmp-native');
 """),
+    (16, "tool_plugin_layer", """
+-- 工具插件层（2026-09-15）：让 agent_audit 能表达"这条调用来自哪个插件的哪一级风险"，
+-- 并给"危险操作需人确认"一个留痕表。
+--
+-- 为什么给 agent_audit 加列而不是建新表：审计的语义没变（还是"谁在什么时候调了什么、
+-- 结果如何"），只是维度变多了；拆表会让"按时间列出全部工具调用"变成三表 UNION。
+-- 旧行留空串即可——**不回填**，因为历史调用确实没有插件/风险概念。
+ALTER TABLE agent_audit ADD COLUMN plugin TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_audit ADD COLUMN risk TEXT NOT NULL DEFAULT 'read';
+ALTER TABLE agent_audit ADD COLUMN meta TEXT NOT NULL DEFAULT '{}';
+
+-- 待确认操作留痕（权威状态在内存，见 workbench/approvals.py 的模块文档）。
+-- `status`: pending | approved | rejected | expired（consumed 不单独记，令牌一次性即可）。
+CREATE TABLE IF NOT EXISTS pending_action (
+    id TEXT PRIMARY KEY,
+    tool TEXT NOT NULL,
+    plugin TEXT NOT NULL DEFAULT '',
+    risk TEXT NOT NULL DEFAULT 'write',
+    args TEXT NOT NULL DEFAULT '{}',
+    summary TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    decided_at INTEGER NOT NULL DEFAULT 0,
+    decided_by TEXT NOT NULL DEFAULT '',
+    conversation_id TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_pending_action_status ON pending_action(status);
+CREATE INDEX IF NOT EXISTS idx_pending_action_created_at ON pending_action(created_at);
+"""),
+    (17, "agent_cache_layer", """
+-- Agent 缓存层（2026-09-15）：让 DeepSeek 的上下文硬盘缓存从"碰运气"变成可测可优化。
+--
+-- ① conversation_context：**冻结的历史摘要**。改造前摘要每轮重算 —— 既慢又烧 token，
+--    更要命的是让请求前缀每轮都变，缓存必然 miss（官方要求"完整匹配一个缓存前缀单元"）。
+--    `summarized_upto` 是冻结边界（已折叠的消息条数），只前进不回退 ——
+--    这就是「已发出的前缀永不改写」的来源。
+CREATE TABLE IF NOT EXISTS conversation_context (
+    conversation_id TEXT PRIMARY KEY,
+    summary TEXT NOT NULL DEFAULT '',
+    summarized_upto INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+);
+
+-- ② deepseek_usage：官方在 usage 里回 prompt_cache_hit_tokens / prompt_cache_miss_tokens
+--    （Responses API 口径为 input_tokens_details.cached_tokens），此前这些字段**被整个丢掉**，
+--    于是"缓存到底命中没有"完全没有答案。命中价是未命中价的 1/50，必须可度量。
+CREATE TABLE IF NOT EXISTS deepseek_usage (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    calls INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_hit_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+    summary_calls INTEGER NOT NULL DEFAULT 0,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_deepseek_usage_created_at ON deepseek_usage(created_at);
+CREATE INDEX IF NOT EXISTS idx_deepseek_usage_conversation ON deepseek_usage(conversation_id);
+"""),
+    (18, "rename_factory_module_id", """
+-- 模块 id 由上游项目名（`akso-auto`）改为本工作台自己的模块名 `factory`。
+-- 与迁移 15（`akso-cc` → `insight`）同一处理，理由也相同：能力已是本工作台的，
+-- 界面与接口上都不该再出现上游项目名。
+--
+-- `blueprint_jobs.module` 历史上出现过两个值：
+--   · `akso-auto`    —— 建表时的列默认值（迁移 8）
+--   · `egmp-native`  —— 原生化之后 routes_factory 实际写入的值
+-- 只改其中一个会留下"同一个模块三个名字"，模块维度的统计/筛选会静默漏行。
+-- 注意：这**不是**改历史迁移——迁移 1–17 一行未动，本条只改写数据行。
+UPDATE blueprint_jobs SET module = 'factory' WHERE module IN ('akso-auto', 'egmp-native');
+"""),
 ]
 
 

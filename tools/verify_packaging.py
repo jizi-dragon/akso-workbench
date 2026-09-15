@@ -11,12 +11,14 @@
   P4 安装包要携带的扩展产物存在，且其 manifest 版本 == 项目版本（三写一致性）
   P5 tools/build.ps1 具备 UTF-8 BOM（PS5.1 约定；编辑后极易丢失）
   P6 桌面壳的每个源文件都在 electron-builder 的 files 白名单里
+  P7 工具插件清单（`plugins/__init__.py::_MODULES`）全部进了 server.spec 的 hiddenimports
 
 用法：
     .venv\\Scripts\\python.exe tools\\verify_packaging.py
 """
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -31,11 +33,31 @@ MAIN_JS = ROOT / "desktop" / "main.js"
 BUILD_PS1 = ROOT / "tools" / "build.ps1"
 PYPROJECT = ROOT / "pyproject.toml"
 EXT_DIST = ROOT / "extensions" / "quick-login" / "dist"
+PLUGINS_INIT = ROOT / "workbench" / "plugins" / "__init__.py"
 
 
 def _project_version() -> str:
     m = re.search(r'^version\s*=\s*"([^"]+)"', PYPROJECT.read_text(encoding="utf-8"), re.M)
     return m.group(1) if m else "?"
+
+
+def _plugin_modules() -> list[str]:
+    """读 `workbench/plugins/__init__.py` 的 `_MODULES` 清单（AST，不 import）。
+
+    不 import 的原因：这个脚本要在**没装依赖的机器上**也能跑（它本来就是构建前的体检）。
+    找不到就返回空列表 —— P7 会因此判 FAIL，那是刻意的：读不到清单等于体检没做。
+    """
+    try:
+        tree = ast.parse(PLUGINS_INIT.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return []
+    for node in tree.body:
+        if not isinstance(node, ast.AnnAssign) or getattr(node.target, "id", "") != "_MODULES":
+            continue
+        value = node.value
+        if isinstance(value, ast.Tuple):
+            return [e.value for e in value.elts if isinstance(e, ast.Constant)]
+    return []
 
 
 def main() -> int:
@@ -111,6 +133,20 @@ def main() -> int:
     details.append(f"   files = {listed}；壳源文件 = {shell_sources}")
     if missing_src:
         details.append(f"   缺：{missing_src}（打包后会 require 失败）")
+
+    # P7 工具插件清单 vs PyInstaller hiddenimports
+    # 为什么必须查：插件是 `importlib.import_module(f"{__name__}.{name}")` **按名字动态导入**的，
+    # PyInstaller 的静态分析看不到；而插件加载器把坏插件隔离成一条 warning（刻意的，
+    # "坏插件不拖垮宿主"），于是「漏打进去」与「加载失败」表现完全一样：安装后少几个工具、
+    # 不报任何错。P7 拿源码里的 `_MODULES` 清单去比对 server.spec，把这类静默失败挡在构建前。
+    declared_plugins = _plugin_modules()
+    undeclared = [m for m in declared_plugins if f'"workbench.plugins.{m}"' not in spec_text]
+    checks["P7 工具插件清单全部进了 server.spec hiddenimports"] = (
+        bool(declared_plugins) and not undeclared
+    )
+    details.append(f"   插件清单（plugins/__init__.py::_MODULES）= {declared_plugins or '读取失败'}")
+    if undeclared:
+        details.append(f"   缺：{undeclared}（打包后这些插件静默消失）")
 
     print("\n".join(details))
     print()

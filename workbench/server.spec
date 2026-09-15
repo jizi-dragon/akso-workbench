@@ -25,6 +25,20 @@ binaries = []
 hiddenimports = [
     "workbench",
     "workbench.api",
+    # 工具插件是**按名字动态导入**的（plugins/__init__.py 里 importlib.import_module
+    # 拼字符串），PyInstaller 的静态分析看不到它们 —— 漏收的后果是"装完没功能"
+    # 且**不报错**（2026-09-15 工具插件层上线时补）。
+    # ⚠️ 新增插件必须同步这里；`tools/verify_packaging.py` 的 P7 会拿
+    #    plugins/__init__.py 的 `_MODULES` 清单来对账，漏了直接 FAIL（实测拦下过 websearch）。
+    "workbench.plugin_api",
+    "workbench.approvals",
+    "workbench.cache",
+    "workbench.plugins",
+    "workbench.plugins.builtins",
+    "workbench.plugins.websearch",
+    "workbench.plugins.insight",
+    "workbench.plugins.factory",
+    "workbench.plugins.accounts",
     "uvicorn.logging",
     "uvicorn.loops",
     "uvicorn.loops.auto",

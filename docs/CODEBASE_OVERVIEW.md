@@ -58,7 +58,14 @@ api/（12 个路由域 + lifespan + 静态托管，见 api/__init__.py:74-86）
   ├─ 账号中心：routes_accounts + routes_browser（托管浏览器）
   ├─ 执行面蓝图：routes_extension（快照 + 指令长轮询 + 状态）
   ├─ 监听：routes_monitor　│　更新：routes_update（读壳状态文件）
-  └─ Agent：routes_agent（工具层 + 审计）
+  └─ Agent：routes_agent（**工具目录/调用/待确认/审计/自检**，全部转发给 plugin_api）
+plugin_api.py（**插件 SDK 契约**：ToolHub / ToolSpec / Risk / ToolContext / Plugin）
+  ├─ 唯一的能力扩展面；不 import 任何插件、不给插件暴露 app
+  └─ 审计写入器与确认门由 approvals.install(hub) 注入（故本文件连 db 都不 import）
+approvals.py（**危险操作确认门 + 审计写入器 + 人话摘要**）
+plugins/（**四个工具插件** = 19 个工具）
+  ├─ builtins.py（时间 / 读文件 / 读网页）　├─ insight.py（读元数据 / 跑织网 / 取产物）
+  ├─ factory.py（蓝图校验与清单 / 创建任务）　└─ accounts.py（登录验证 / 托管会话）
 services/
   ├─ browser_pool.py 625 行（专职工作线程 / 双模式 / CDP 托管 / 免密 / 自愈）
   ├─ accounts.py 607 · autologin.py 372 · proc.py 236 · deepseek.py 181 · modules.py 172 · storage.py 122
@@ -68,9 +75,15 @@ services/
        ├─ insight/  6 文件 1,145 行（spider 437 · drawio 309 · workspace 184 · report 86 · lifecycle 70 · __init__ 59）
        ├─ writers/  11 文件 1,442 行（blueprint 513 · workflows 322 · layouts 167 · lifecycle 159 · fields 101 · endpoints 85 · idempotency 80 · menus 49 · picklists 41 · objects 19）
        └─ monitor/   4 文件 530 行（monitor 207 · query_layer 168 · interpreter 148）
-harness/（对话 Agent 循环 7 文件 540 行：tools 231 · loop 129 · types 72 · context 43 · prompts 36 · safety 26）
-db.py 341 行（SQLite 单连接 + 13 条迁移常量表 + 方言边界）
+harness/（对话 Agent 循环：loop 事件流 · tools **已降级为兼容垫片** · types/prompts/safety/context）
+db.py（SQLite 单连接 + **16 条**迁移常量表 + 方言边界）
 ```
+
+> **2026-09-15 变更（工具插件层）**：新增 `plugin_api.py` / `approvals.py` / `plugins/`（4 插件 19 工具）。
+> 动因是**两套工具表并存**：`harness/tools.py` 有三个基础工具、`api/routes_agent.py` 有四个域工具，
+> 两套互不可见 → 对话里的模型看不到任何平台能力。现已收口为 `ToolHub` 单一事实源；
+> `harness/tools.py` 只剩再导出，`@tool` 装饰器下线。契约与三个真踩过的坑见
+> **[PLUGIN-SDK.md](PLUGIN-SDK.md)**；环境坑见 PITFALLS #32–#34。
 
 > **2026-09-14 变更**：`insight/` 从 12 文件 1,766 行降到 **6 文件 1,145 行**——`inventory` / `understand`
 > 下线，`assemble.py` / `annotate.py` / `flowgraph.py` / `relations.py` / `render.py` / `understand.py`
@@ -90,8 +103,11 @@ db.py 341 行（SQLite 单连接 + 13 条迁移常量表 + 方言边界）
 | `workbench/services/accounts.py` | Fernet 密钥管理、环境/账号/盒子 CRUD、分配池（config/monitor）、备份导出导入（`fernetKey` 随文件下发） |
 | `workbench/services/autologin.py` | 节奏门控五重门（MAIN world JS 注入 + TokenCapture JWT） |
 | `workbench/services/egmp/` | 平台内核：`client`（code==0 信封 / paged_post / 55min token 缓存）、`insight`、`writers`、`orchestrate`、`monitor` |
-| `workbench/db.py` | SQLite + `MIGRATIONS`（**1–13**；13 = `add_created_at_indexes`）；迁移**只增不改** |
-| `workbench/harness/` | 对话 Agent 循环；注意 `harness/tools.py` 是**独立于** `routes_agent` 的另一套工具表 |
+| `workbench/db.py` | SQLite + `MIGRATIONS`（**1–16**；13 = `add_created_at_indexes`，14 = 洞察工作区与覆盖度，15 = 模块 id 数据改写，16 = `agent_audit` 加列 + `pending_action`）；迁移**只增不改** |
+| `workbench/plugin_api.py` | **插件 SDK 契约**：`ToolHub`（工具注册表/执行器）+ `ToolSpec`（含 `Risk` 分级）+ `ToolContext` + `Plugin`。零领域知识（不 import 插件、不 import `services/egmp`、连 `db` 都不 import） |
+| `workbench/approvals.py` | **危险操作确认门**（单次令牌 / 5 分钟 / 参数指纹）+ **审计写入器**（唯一入口）+ 人话摘要 |
+| `workbench/plugins/` | 四个工具插件（`builtins` / `insight` / `factory` / `accounts`，共 19 个工具）。`plugins/__init__.py::_MODULES` 是显式清单，坏插件隔离成 failure |
+| `workbench/harness/` | 对话 Agent 循环（`loop.py` 事件流）。⚠️ `harness/tools.py` **已降级为兼容垫片**（只剩再导出 + `default_registry()` 转发 `get_hub()`），工具定义全部搬进 `plugins/` |
 | `extensions/quick-login/` | MV3 + TS 扩展源（npm workspace，单包 `packages/extension`）：`parallel-session.ts` 1,589 行（≈29% TS）、`shield-main.ts` 806 行（MAIN world，平面 1/4/5/6）、`auto-login.ts` 377 行 |
 | `tools/build.ps1` | 六步打包：bump → 扩展重建 → `uv sync` → release commit/push → PyInstaller → electron-builder NSIS |
 | `tools/*.py` `tools/*.mjs` | 23 个工具：构建/发布 + 13 个回归/验收脚本 + `db_maintenance.py` |
@@ -148,13 +164,23 @@ powershell -File tools\build.ps1
 | `uvx ruff check .` | 9 条违规 | **无法执行**：`.venv\Scripts\uvx.exe` / `uv.exe` 不存在，venv 内也无 `ruff` 模块，PATH 上无 ruff | ❌ 门禁在本机不成立 |
 | `python tools\verify_packaging.py` | 8/8 PASS | **8/8 PASS** | ✅ |
 
-- **pytest 唯一失败**：`tests/test_modules.py::test_adapter_paths_exist` —— `AssertionError: akso-auto repoPath 无效：D:\ai_assistant\akso-auto`。`adapters/*.json` 指向的四个来源仓库（`D:\ai_assistant\{akso-auto,akso-cc,mogul_simulator,quick-login}`）**在本机全部不存在**。这是**环境依赖型断言**，不是代码缺陷：该测试校验只读存档的路径有效性，而存档在本机已失去意义（`frozen: true`）。
+- **pytest 唯一失败（2026-09-15 已修）**：`tests/test_modules.py::test_adapter_paths_exist` —— `AssertionError: akso-auto repoPath 无效：D:\ai_assistant\akso-auto`。该断言校验只读存档指向的原仓库**在不在**，而 `adapters/*.json` 的 `mode` 已是 `native-python-internalized` + `frozen: true`——**能力全部内化，运行时零依赖原仓库**。把"原仓库目录存在"当断言，等于给一个已经不需要它的系统加一道环境门禁：没克隆那四个仓库的机器上测试就红，而**功能完全正常**。
+  **修法**：拆成两条守"契约"而不是守"环境"的断言——`test_frozen_adapters_do_not_require_the_upstream_repo`（路径口径解析得出且与存档声明一致）+ `test_missing_upstream_repo_is_reported_as_info_not_failure`（缺失时报信息项、模块状态不变红）。**不要**改回 `assert repo.exists()`。
+- **`uv` 现在可用**（2026-09-15 实测）：`.venv\Scripts\uv.exe` 存在，`uv tool run ruff check .` 全绿。本节早先"本机无 uv/ruff、lint 门禁不成立"的记录**已过期**（保留原文是为了留痕）。
 - **沙箱影响**：在默认 `workspace-write` 沙箱下 pytest 表现为 `38 passed / 7 failed / 19 errors`，全部由 `PermissionError: [WinError 5]` 引起（`conftest.py:12` 用 `tempfile.mkdtemp()` 在系统临时目录建隔离数据目录，且测试需要创建子进程管道）。**在放开临时目录与管道限制后复跑即得上表的 63/1**。据此判断：**仓库的测试基线本身是健康的，已删除的原 `AGENT.md` 记录的“64 passed”与实测只差上述 1 项环境失败**。
 - **原 `AGENT.md` §8 的依赖纪律已过期**（该文档于 2026-09-13 因整体滞后被删除）：它称“`uv` / `ruff` 不在 PATH，可用的是 `.venv\Scripts\uv.exe` / `uvx.exe`”——**这两个文件在本机并不存在**（`pyvenv.cfg` 记录 `uv = 0.12.10`，但 venv 已不再内置这两个 shim）。因此 `CONTRIBUTING.md` 里的 lint 门禁与 `uv sync` 命令在本机都需要先装 uv。
 
 ## Conventions（约定）
 
 - **路由注册**：新路由在 `api/__init__.py` 显式登记（fork 域直挂，新域走 `_optional_routers` 容错表，单域装配失败不拖垮应用）。
+- **工具只有一个定义处**：新工具写进 `workbench/plugins/*.py` 的 `ToolSpec`（**必须显式声明 `risk`**），
+  经 `plugins/__init__.py::_MODULES` 装配。**不要在 `routes_agent.py` 或 `harness/` 里另建工具表**——
+  2026-09-15 之前那两套并存，后果是"对话里的模型看不到任何平台能力"。同时记得同步
+  `server.spec` 的 `hiddenimports`（动态导入的插件打包器看不见）与 `REQUIRED_TOOLS`。
+- **插件依赖方向单向**：`plugins → plugin_api`，永不反向。`plugin_api.py` 里出现平台术语/端点/
+  `services.egmp` 的 import 都是错的（它连 `db` 都不 import，审计与确认门靠注入）。
+- **同步阻塞调用挪线程**：工具 handler 是 `async`，但 `egmp.client`/`browser_pool`/`proc` 都是同步的，
+  一律 `asyncio.to_thread`——否则阻塞事件循环（表现为整个服务卡住，而不是报错）。
 - **请求体一律 pydantic `BaseModel`**：pydantic 默认**忽略多余字段**，漏字段会**静默失效**（`AccountPatch` 漏 `box` 是已发生事故，环境坑 #6）。
 - **Playwright 纪律**：sync API 单线程单实例 —— 所有浏览器操作**必须**走 `browser_pool` 专职线程队列；**事件回调内禁止连接调用**（只入队，worker 空隙 `drain()`）；同线程禁第二个 `sync_playwright()`；**测试不得另起 chromium 夹具**。
 - **DB 迁移只增不改**：历史迁移（尤其 1–6）不可变。`job_logs` 表建了索引但零写入是**故意**的（日志落磁盘），不要“顺手”改成入库。
@@ -187,9 +213,11 @@ powershell -File tools\build.ps1
 |---|---|---|
 | **C1** | `browser_pool.py:247-248` | 状态判断写反：先置 `entry.status="stopped"`，再判断 `== "online"` → 该分支恒假，首次登录后关窗误报「已关闭」 |
 | **C2** | `routes_insight.py:215` | 产物路径守卫用**纯字符串前缀**（未补分隔符）：`.../insight/abc` 会“包含” `.../insight/abc_evil` → 应改 `Path.is_relative_to()` |
-| **C3** | `routes_agent.py:173` | `GET /api/agent/audit` 用 `SELECT *` 全列回吐，含 `args` 原始 JSON（可能含凭据） |
+| **C3** | `routes_agent.py:173` | ~~`GET /api/agent/audit` 用 `SELECT *` 全列回吐，含 `args` 原始 JSON（可能含凭据）~~ → **2026-09-15 已修**：列表只回摘要列，细节走新增的 `GET /api/agent/audit/{audit_id}`；`args` 里的凭据键在写入时即被打码（`approvals.write_audit` + `plugin_api.redact_args`），有回归断言 |
 | **C4** | `routes_extension.py:240-242` | ack 回收是「全部 ack 才清」：一条指令永不被 ack 则队列既不回收也不前进，`_acked` 只增不减（且客户端只 ack 最大 cursor，`sync.ts:229-235` → **实际上永不排空**） |
-| C5–C7, C10–C13 | `services/modules.py:145`、`routes_factory.py:47,63`、`routes_agent.py:78`、`static/js/app.js:78`、`static/css/wheel.css`、`browser_pool.py` 的 `_close_entry` / `_submit` | `status` 映射语义反了（全挂 = `degraded`、部分挂 = `missing`）/ `native_orchestrate_imported_validate` 定义在调用点之后 / `routes_agent` 跨模块调用 `routes_insight` 私有函数 / `app.js:78` 死分支 / `wheel.css` 是无引用死文件 / 关窗不停监听、多数浏览器作业无超时 |
+| **C14** | `static/js/factory.js` 的 `run()` | **工厂执行日志从来什么都不显示**：前端读 `result.stdout_tail` / `stderr_tail` / `code` / `duration_s`，而 `POST /api/factory/run` 返回的是 `{job_id,status,result,log_tail}`——那四个字段是 `services/proc.py` 的进程结果形状，原生化后**没有进程了**。表现为"点执行、转一圈、日志区还是空的、收尾行写着 `exit=undefined`"，且**页面不报错、测试也不报错**。→ **2026-09-15 已修**：渲染 `log_tail` + 逐对象 `steps` + `manualItems` + `checkpoint.completedCount`，并加 `tmp/verify_factory_frontend.py`（真实后端返回 → 真实前端渲染函数，两侧字段任何一边改名立刻红） |
+| C5–C7, C10–C13 | `services/modules.py:145`、`routes_factory.py:47,63`、`routes_agent.py:78`、`static/js/app.js:78`、`static/css/wheel.css`、`browser_pool.py` 的 `_close_entry` / `_submit` | ~~`status` 映射语义反了（全挂 = `degraded`、部分挂 = `missing`）~~ → **2026-09-15 已修**（改为显式三态：空=missing / 全通过=ok / 部分=degraded / 全挂=missing）/ `native_orchestrate_imported_validate` 定义在调用点之后 / `routes_agent` 跨模块调用 `routes_insight` 私有函数（**已随工具插件化消除**：`insight_run` 改为经 `ToolHub` 调 `routes_insight.run`）/ `app.js:78` 死分支 / `wheel.css` 是无引用死文件 / 关窗不停监听、多数浏览器作业无超时 |
+| **C15** | `services/modules.py::module_status` | **按 id 硬解析适配器**：`mod = adapter or {}` 只认调用方显式传进来的存档，于是 `GET /api/modules/<id>` 这条路径对任何**适配器模块**都返回空清单 + `status=missing`。2026-09-15 把 `akso-auto` 改名 `factory` 时暴露：体检项整片消失、状态变 missing，而代码一处都没错——**这层耦合会把"改名"变成静默故障**。→ **已修**：缺省时自己 `get_adapter(mod_id)`，并加回归 `test_module_status_resolves_adapter_without_being_handed_one` |
 
 ### 构建与打包
 
@@ -227,6 +255,8 @@ powershell -File tools\build.ps1
 | T3 | `browser_pool` 的**事件回调纪律无法被测试拦住** | 违规表现为运行期死锁，不是断言失败 |
 | T4 | 扩展端**无单测框架**（in-tree 无测试） | 依赖 3 个 verify 工具 + 人工装载 |
 | T5 | `egmp` HTTP 内核无单测；前端无 JS 测试框架（`accounts.js` 1,137 行是最大且回归面最薄的模块） | 改动风险靠人工 |
+| T6 | **工具插件的真实平台路径无自动化回归**（`insight_run`/`factory_create`/`accounts_browser_open` 只能真机手验） | 契约层（分级/确认门/审计/schema）已有 `tests/test_plugin_api.py` 钉住；"调下去真的对"仍靠真机冒烟 |
+| T7 | 前端工具卡片（`chat.js` 的 action/observation/approval 渲染）无自动化回归 | 与 `accounts.js` 同一处境：靠人工看。事件契约本身在 `tests/test_agent_loop.py` 里钉住了，前端只消费它 |
 
 ### 仓库卫生（本轮新发现）
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from . import storage
-from .deepseek import DEFAULT_MODEL
+from .deepseek import DEFAULT_MODEL, normalize_model
 
 _DEEPSEEK_DB_KEYS = ("apiKey", "model", "temperature")
 
@@ -36,11 +36,18 @@ class DeepSeekSettings(BaseModel):
 
 
 def load_deepseek() -> DeepSeekSettings:
+    """读设置。
+
+    **模型名在这里就归一**：库里可能存着 2026-09-10 已退役的 `deepseek-v4-flash`
+    （官方为兼容把它路由到 V4.1-Flash，"temporarily"）。归一的收益是双重的——
+    接口回给设置页的是现行名（模型卡片能正确高亮），请求里发的也是现行名
+    （不依赖一条随时可能撤掉的兼容路由）。行为不变：同一个模型、同一个价格。
+    """
     raw = {key: storage.get_setting(key) for key in _DEEPSEEK_DB_KEYS}
     temperature = raw["temperature"]
     return DeepSeekSettings(
         api_key=raw["apiKey"] or "",
-        model=raw["model"] or DEFAULT_MODEL,
+        model=normalize_model(raw["model"]),
         temperature=float(temperature) if temperature else 0.7,
     )
 
@@ -50,7 +57,7 @@ def save_deepseek(*, api_key: str | None = None, model: str | None = None,
     if api_key is not None:
         storage.set_setting("apiKey", api_key.strip())
     if model:
-        storage.set_setting("model", model.strip())
+        storage.set_setting("model", normalize_model(model))
     if temperature is not None:
         storage.set_setting("temperature", str(temperature))
     return load_deepseek()

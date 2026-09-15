@@ -221,3 +221,111 @@
   background: var(--amber-dim);
   border-color: rgba(217, 119, 6, 0.3);
 }
+
+/* ============================================================
+   系统提示词 + 缓存命中率（2026-09-15）
+   ============================================================ */
+
+.settings-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-2);
+}
+
+.prompt-input {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  padding: 11px 13px;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--line);
+  background: var(--ink-1);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.7;
+  tab-size: 2;
+}
+
+.prompt-input:focus {
+  outline: none;
+  border-color: var(--teal);
+}
+
+.prompt-chars {
+  margin-left: 6px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.prompt-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.prompt-actions small {
+  flex: 1 1 260px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-3);
+}
+
+.cache-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 10px;
+}
+
+.cache-empty {
+  grid-column: 1 / -1;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-m);
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.cache-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--ink-2);
+}
+
+.cache-metric-main {
+  grid-column: span 2;
+}
+
+.cache-metric-value {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.cache-metric-label {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.cache-bar {
+  margin-top: 6px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--ink-3);
+  overflow: hidden;
+}
+
+.cache-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--teal);
+  transition: width 0.35s var(--ease-out);
+}

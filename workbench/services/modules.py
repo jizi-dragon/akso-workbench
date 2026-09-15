@@ -2,9 +2,15 @@
 
 四个模块：
 - workbench   自身（FastAPI/Python 依赖体检）
-- akso-cc     平台洞察（只读引用；能力已原生化，体检只做信息项）
-- akso-auto   配置自动化（只读引用；能力已原生化，体检只做信息项）
+- insight     平台洞察（只读引用；能力已原生化，体检只做信息项）
+- factory     配置工厂（只读引用；能力已原生化，体检只做信息项）
 - accounts    统一账号库 + 托管浏览器（能力已内化，检查 Playwright）
+
+⚠️ **模块 id 与存档文件名不一致是刻意的**：id 是本工作台自己的模块名（`insight` /
+`factory`），文件名是「这份存档对应哪个来源项目」的引用真源（`akso-cc.json` /
+`akso-auto.json`，其 `repoPathEnv` 也据此命名）。2026-09-14 把 `akso-cc` 改成 `insight`、
+2026-09-15 把 `akso-auto` 改成 `factory`，文件名都没动——改文件名会让 `repoPathEnv`
+（`AKSO_CC_REPO` / `AKSO_AUTO_REPO`）的语义失真（见 tests/test_modules.py 的守护断言）。
 
 原仓库只读：本模块绝不写 adapters 指向的目录。
 """
@@ -136,7 +142,17 @@ def _check_playwright_browser() -> dict[str, Any]:
 
 
 def module_status(mod_id: str, adapter: dict[str, Any] | None = None) -> dict[str, Any]:
-    """单个模块的完整状态（清单 + 体检）。"""
+    """单个模块的完整状态（清单 + 体检）。
+
+    **adapter 缺省时自己去 `adapters/` 里找**——这一句是必须的，不是优化：
+    早先这里 `mod = adapter or {}` 只认调用方显式传进来的适配器，于是
+    `GET /api/modules/<id>` 这条路径（不带 adapter 调用）对任何**适配器模块**
+    都返回空清单 + `status=missing`。后果在改名时暴露：2026-09-15 把
+    `akso-auto` 改成 `factory` 后，工厂模块的体检项整片消失、状态变成 missing，
+    而代码里没有任何一处真正出错——**是这层"按 id 硬解析"的耦合把改名变成了静默故障**。
+    """
+    resolved = adapter if adapter is not None else get_adapter(mod_id)
+
     if mod_id == "workbench":
         checks = _check_python_deps()
         mod = BUILTIN_MODULES[0]
@@ -144,11 +160,22 @@ def module_status(mod_id: str, adapter: dict[str, Any] | None = None) -> dict[st
         checks = _check_python_deps() + [_check_playwright_browser()]
         mod = BUILTIN_MODULES[1]
     else:
-        mod = adapter or {}
+        mod = resolved or {}
         checks = _check_adapter(mod) if mod else []
 
     ok_count = sum(1 for c in checks if c["ok"])
-    status = "ok" if ok_count == len(checks) and checks else "degraded" if ok_count else "missing"
+    # 三态语义（**曾经写反过**，见 CODEBASE_OVERVIEW 的 C5）：
+    #   全通过 → ok ／ 部分通过 → degraded ／ 全挂（含无体检项）→ missing
+    # 反过来的写法（`"degraded" if ok_count else "missing"` 放在 ok 分支里）会让
+    # "全挂"显示成"部分可用"，而**状态词是运维唯一的判据**，反了就没人去修。
+    if not checks:
+        status = "missing"
+    elif ok_count == len(checks):
+        status = "ok"
+    elif ok_count:
+        status = "degraded"
+    else:
+        status = "missing"
     repo = resolve_repo_path(mod) if mod else None
     return {
         "id": mod_id,
@@ -171,6 +198,12 @@ def list_modules() -> list[dict[str, Any]]:
 
 
 def get_adapter(mod_id: str) -> dict[str, Any] | None:
+    """按模块 id 取只读存档（找不到返回 None）。
+
+    ⚠️ 单次调用会重读 `adapters/` 目录。这里刻意不加缓存：目录只有两个小 JSON、
+    调用频率是"用户点一下体检"，而加缓存就多一个"改了文件不生效"的坑
+    （本项目已经在静态资源上踩过 304 那次，见 `api/__init__.py` 的中间件注释）。
+    """
     for adapter in load_adapters():
         if adapter["id"] == mod_id:
             return adapter

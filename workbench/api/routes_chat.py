@@ -72,7 +72,7 @@ async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
     yield _sse({"type": "start", "conversationId": conversation_id})
 
     result: dict = {"content": "", "error": None}
-    async for sse in _stream_agent(history, cfg, result):
+    async for sse in _stream_agent(history, cfg, result, conversation_id):
         yield sse
 
     error_message = result["error"]
@@ -89,6 +89,7 @@ async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
         "metricId": metric_id,
         "titleUpdated": title_updated,
         "latencyMs": int((time.perf_counter() - started) * 1000),
+        "usage": result.get("usage") or {},
     })
 
 
@@ -108,8 +109,13 @@ async def _stream_agent(
     history: list[dict],
     cfg,
     result: dict,
+    conversation_id: str = "",
 ) -> AsyncIterator[str]:
-    """跑 Agent 循环并逐事件转发 SSE；把最终内容/错误写入 result 供调用方收尾。"""
+    """跑 Agent 循环并逐事件转发 SSE；把最终内容/错误写入 result 供调用方收尾。
+
+    事件**原样透传**（token / thought / action / observation / approval_required /
+    usage / final / error）——前端工具卡片靠 action/observation，缓存命中量靠 usage。
+    """
     client = DeepSeekClient(cfg.api_key, model=cfg.model)
     agent_config = AgentConfig(
         temperature=cfg.temperature,
@@ -118,7 +124,10 @@ async def _stream_agent(
 
     assistant_content = ""
     try:
-        async for event in run_agent_loop(history, client, default_registry(), agent_config):
+        async for event in run_agent_loop(
+            history, client, default_registry(), agent_config,
+            conversation_id=conversation_id,
+        ):
             if event["type"] == "token":
                 assistant_content += event["text"]
             elif event["type"] == "final":
@@ -126,6 +135,9 @@ async def _stream_agent(
                 result["content"] = assistant_content
             elif event["type"] == "error":
                 result["error"] = event["message"]
+            elif event["type"] == "usage":
+                # 一起塞进 done 事件，前端不必额外记状态
+                result["usage"] = event.get("usage") or {}
             yield _sse(event)
     except Exception as exc:  # noqa: BLE001 —— 循环外异常（网络/协议层）转为 error 事件
         result["error"] = str(exc)
