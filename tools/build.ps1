@@ -1,13 +1,13 @@
-﻿# Akso Workbench 一键构建 v3（Electron 壳）
+﻿# Workbench 一键构建 v3（Electron 壳）
 # 用法：powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none] [-SkipPush]
-# 产物：desktop\dist\AksoWorkbench-<ver>-setup.exe（NSIS；内含 AksoServer sidecar + chromium + 浏览器扩展）
+# 产物：desktop\dist\Workbench-<ver>-setup.exe（NSIS；内含 WorkbenchServer sidecar + chromium + 浏览器扩展）
 #
 # 链路：
 #   1. 版本演进（-Bump：build=MINOR+1 / push=PATCH+1 / none=沿用当前）
 #   2. 重建浏览器扩展并校验版本一致（安装包会携带它）
 #   3. 提交并推送版本号（release commit；含扩展 manifest/package 与 uv.lock）
 #   4. uv sync（确保 PyInstaller）
-#   5. PyInstaller 打包服务端 sidecar（workbench/server.spec → dist/AksoServer）
+#   5. PyInstaller 打包服务端 sidecar（workbench/server.spec → dist/WorkbenchServer）
 #   6. electron-builder（NSIS 安装包；extraResources 带 sidecar 与扩展；updater 产物 latest.yml）
 #
 # 更新发布（可选）：设 GH_TOKEN 后改用 --publish always，或手动上传 desktop\dist\*.exe
@@ -79,9 +79,9 @@ if (-not $SkipPush) {
 }
 
 # 4) 服务端 sidecar（PyInstaller onedir，含 chromium）
-Write-Host "[5/6] AksoServer sidecar 打包中（数分钟）…"
+Write-Host "[5/6] WorkbenchServer sidecar 打包中（数分钟）…"
 & python -m PyInstaller workbench\server.spec --noconfirm --distpath dist --workpath build 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { Write-Host "✗ AksoServer 打包失败" -ForegroundColor Red; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Host "✗ WorkbenchServer 打包失败" -ForegroundColor Red; exit 1 }
 
 # 5) Electron 壳（NSIS 安装包）
 Write-Host "[6/6] electron-builder 打包中…"
@@ -93,7 +93,7 @@ try {
     Pop-Location
 }
 
-$installer = Join-Path $root "desktop\dist\AksoWorkbench-$version-setup.exe"
+$installer = Join-Path $root "desktop\dist\Workbench-$version-setup.exe"
 if (Test-Path $installer) {
     $size = [math]::Round((Get-Item $installer).Length / 1MB, 1)
     Write-Host ""

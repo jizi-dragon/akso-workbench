@@ -1,5 +1,5 @@
 /**
- * 桌面同步桥（Akso Workbench）——数据面外移的扩展侧接线。v2：直连 parallelStore。
+ * 桌面同步桥（Workbench）——数据面外移的扩展侧接线。v2：直连 parallelStore。
  *
  * - 每 2s 轮询桌面快照（账号/盒子/站点，凭据为 Fernet 密文 + 密钥）→ 内存解密 →
  *   直连 parallelStore 增删改（本地仍 AES-GCM 加密落盘）；
@@ -116,7 +116,11 @@ async function saveMap(map: Record<string, string>): Promise<void> {
 
 /** 应用快照（幂等）：创建/更新/删除账号 + 盒子清单与默认盒名 */
 async function applySnapshot(snap: any): Promise<void> {
-  if (!snap || snap.format !== 'akso-workbench-snapshot' || !snap.fernetKey) return;
+  // 快照格式名 2026-09-16 更名（akso-workbench-snapshot → workbench-snapshot）。
+  // **两个都收**：扩展是手动「重新加载」才升级的，桌面端先更新时旧扩展仍在跑，
+  // 只认新名会让它静默丢弃全部账号（PITFALLS #14 的形态）。
+  const format = snap && snap.format;
+  if ((format !== 'workbench-snapshot' && format !== 'akso-workbench-snapshot') || !snap.fernetKey) return;
   const stored = await chrome.storage.local.get(SNAPSHOT_ID_KEY);
   if (stored[SNAPSHOT_ID_KEY] === snap.snapshotId) return; // 内容未变，跳过
 

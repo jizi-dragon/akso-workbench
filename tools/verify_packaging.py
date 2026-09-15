@@ -91,9 +91,9 @@ def main() -> int:
     resources = pkg.get("build", {}).get("extraResources", [])
     to_map = {r.get("to"): r.get("from") for r in resources if isinstance(r, dict)}
     main_js = MAIN_JS.read_text(encoding="utf-8")
-    spawn_ok = "path.join(process.resourcesPath, 'server', 'AksoServer.exe')" in main_js
-    checks["P3 壳 spawn 的 resources/server/AksoServer.exe 有对应 extraResources"] = (
-        spawn_ok and to_map.get("server") == "../dist/AksoServer"
+    spawn_ok = "path.join(process.resourcesPath, 'server', 'WorkbenchServer.exe')" in main_js
+    checks["P3 壳 spawn 的 resources/server/WorkbenchServer.exe 有对应 extraResources"] = (
+        spawn_ok and to_map.get("server") == "../dist/WorkbenchServer"
     )
     details.append(f"   extraResources → {to_map or '(空)'}")
 

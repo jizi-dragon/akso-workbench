@@ -16,11 +16,12 @@
   改造前的事实是：`harness/tools.py` 有自己一套工具（三个基础工具），`api/routes_agent.py` 另有一套
   （四个域工具 `login_platform`/`read_config`/`run_insight`/`browser_status`），**两套并存且互不可见**
   ——于是「对话里的模型只能聊天，一个平台能力都看不到」，而那四个域工具又只对 HTTP 调用方可见。
-  现在只有一个事实源 `plugin_api.ToolHub`，工具 **19 个 / 4 个插件**：
+  现在只有一个事实源 `plugin_api.ToolHub`，工具 **20 个 / 5 个插件**：
 
   | 插件 | 工具 | 风险 |
   |---|---|---|
   | `builtin` | `get_current_time` / `read_local_file` / `read_web_page` | read |
+  | `websearch` | `web_search` | read |
   | `insight` | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | read |
   | `factory` | `factory_validate_blueprint` / `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
   | `factory` | `factory_create` | **dangerous** |
@@ -112,6 +113,29 @@
   保存必须显式点按钮（改提示词会打断一次缓存前缀，得让用户自己决定何时生效）。
 
 ### Changed
+
+- **品牌中立化：`AksoWorkbench` → `Workbench`**（用户定稿 2026-09-16：「更名，剥离 akso 的信息，
+  按照 workbench 进行后续发展（逐渐将项目转变成可复用的工作台，核心差距就在于插件/tools 功能）」）。
+  完整决策、改动面与"刻意不改"清单见 **[ADR-0013](docs/adr/0013-brand-neutralization-workbench.md)**。
+  - **改动面**：58 个文件 / 200 处。包名 `akso-workbench`→`workbench`、产品名与 appId
+    （`AksoWorkbench`/`com.akso.workbench`→`Workbench`/`com.workbench.app`）、安装包
+    `Workbench-<版本>-setup.exe`、sidecar 产物 `dist/WorkbenchServer/`、
+    数据目录 `%APPDATA%\Workbench`、环境变量 `WORKBENCH_PROXY` / `WORKBENCH_NO_PROXY` /
+    `WORKBENCH_HTTPS_PROXY` / `WORKBENCH_UPDATE_OVERRIDE`、洞察默认工作区 `<我的文档>/Workbench/洞察`。
+  - **数据不丢**：`config.legacy_db_candidates()` 新增最高优先级候选
+    `%APPDATA%\AksoWorkbench\workbench.db`，**只在目标库不存在时**接管（复制不移动、不覆盖现有库），
+    连 `-wal`/`-shm` 一起。真机实测：接管后 `/extension/snapshot` 读出 5 个账号全部通过过滤。
+  - **兼容读取（写出端只发新名）**：旧环境变量名继续认；`import_backup` 同时接受
+    `akso-workbench-backup`；扩展 `sync.ts` 同时接受 `akso-workbench-snapshot`
+    （扩展要手动「重新加载」才升级，只认新名会让旧扩展静默丢账号）；`ports.js` 的占用判定
+    同时认 `workbench.exe` 与 `aksoworkbench.exe`；洞察工作区在旧目录存在时继续沿用。
+  - **刻意不改**：上游项目名（`akso-cc` / `akso-auto` / 仓库名 `akso-mogul` / `adapters/akso-*.json`
+    / `AKSO_CC_REPO` / `AKSO_AUTO_REPO`）、平台适配层目录 `services/egmp/`、
+    扩展内部存储键 `akso:*`（改名会让指令游标复位 → [PITFALLS](docs/PITFALLS.md) #15）、
+    历史 ADR/archive/CHANGELOG 条目。仓库名本次**不改**（用户决定），故 `publish.repo` 仍指向 `akso-mogul`。
+  - **升级注意**：`productName` 变了 → NSIS 安装目录与卸载项是新的一套，**旧版不会被覆盖安装**，请先卸载旧版；
+    发布产物更名后旧客户端的 `latest.yml` 检查会断（自动更新默认已关闭，影响面小）。
+  - 经验固化：[PITFALLS](docs/PITFALLS.md) #36「改名真正会坏的是协议与持久化标识」。
 
 - **模块 id `akso-auto` → `factory`**（用户定稿：将 akso-auto 更名）。与 2026-09-14 的
   `akso-cc` → `insight` 同一处理：**能力已是本工作台的，界面与接口上都不该再出现上游项目名**。

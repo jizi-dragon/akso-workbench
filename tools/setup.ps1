@@ -13,7 +13,7 @@ function Check($name, $ok, $detail, [switch]$Info) {
     Write-Host ("[{0}] {1,-30} {2}" -f $mark, $name, $detail)
 }
 
-Write-Host "=== Akso Workbench 环境自检 ===" -ForegroundColor Cyan
+Write-Host "=== Workbench 环境自检 ===" -ForegroundColor Cyan
 
 # 解析解释器：优先项目 .venv（uv sync 产物），未激活 venv 也不会误报
 $pyExe = Join-Path $PSScriptRoot "..\.venv\Scripts\python.exe"
@@ -98,7 +98,7 @@ foreach ($file in $adapters) {
 }
 
 # 7) 数据目录可写
-$dataDir = Join-Path $env:APPDATA "AksoWorkbench"
+$dataDir = Join-Path $env:APPDATA "Workbench"
 if ($env:WORKBENCH_DATA) { $dataDir = $env:WORKBENCH_DATA }
 $dataOk = $true
 try { New-Item -ItemType Directory -Force -Path $dataDir | Out-Null } catch { $dataOk = $false }

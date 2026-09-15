@@ -10,7 +10,7 @@ const getJson = async (path) => {
 
 // —— 复刻 sync.ts applySnapshot 的过滤与映射（第 92-149 行语义）——
 const snap = await getJson('/extension/snapshot');
-if (snap.format !== 'akso-workbench-snapshot' || !snap.fernetKey) throw new Error('快照格式不对');
+if (snap.format !== 'workbench-snapshot' || !snap.fernetKey) throw new Error('快照格式不对');
 const map = {}; // desktopId → extension accountId（此处用 desktopId 代指 extId）
 const dropped = [];
 for (const item of snap.accounts) {

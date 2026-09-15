@@ -14,7 +14,7 @@
 uv sync --extra dev --extra build   # 严格按 uv.lock 拉齐依赖（含国内镜像，无需自己配源）
 uv run playwright install chromium  # 托管浏览器内核（账号库/自动登录/监听需要）
 powershell -ExecutionPolicy Bypass -File tools\setup.ps1   # 环境自检（兼容 PS 5.1/7）
-uv run pytest                       # 294 项全绿即环境就绪
+uv run pytest                       # 382 项全绿即环境就绪
 cd desktop; npm install; cd ..       # 桌面壳（Electron）依赖
 cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建产物 dist/
 ```
@@ -25,9 +25,10 @@ cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建
 > **`--extra build` 不能省**：`uv sync` 不带它会把 PyInstaller 移出环境，
 > 之后 `tools/build.ps1` 的第 5 步（PyInstaller）直接失败。`build.ps1` 内部已带这两个 extra。
 >
-> **`uv` 不在 PATH 时**（本机常见，`.venv\Scripts\uv.exe` 才是可用的那个）：
-> `.\\.venv\\Scripts\\uv.exe sync --extra dev --extra build`。同理 `ruff` 走
-> `.\\.venv\\Scripts\\uvx.exe ruff check .`。
+> **`uv` 不在 PATH 时**：2026-09-16 实测**本机 `.venv\Scripts\uv.exe` / `uvx.exe` 都不存在**
+> （PATH 上也没有）——早先"改用 venv 内 uv.exe"的记录已失效。可用的等价命令：
+> lint 走 **`.\.venv\Scripts\ruff.exe check .`**（全绿），依赖同步在**已建好的 venv** 上可跳过
+> （依赖已装齐）；换机器时仍先装 uv（`pip install uv`）。
 
 ### 1.1 本机 Python / uv 的真实位置（**先看这条，再理 VS Code 的报错**）
 
@@ -78,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 
 链路（6 步）：① 版本演进 → ② **重建扩展并校验版本一致** → ③ **`uv sync`** → ④ release commit + push
 → ⑤ PyInstaller sidecar → ⑥ electron-builder NSIS。
-产物：`desktop\dist\AksoWorkbench-<ver>-setup.exe` + `latest.yml`。
+产物：`desktop\dist\Workbench-<ver>-setup.exe` + `latest.yml`。
 
 ### 3.2 版本规则（方案 A，用户定稿）
 
@@ -104,14 +105,29 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 ### 3.4 构建前的秒级体检（必跑）
 
 ```powershell
-.\.venv\Scripts\python.exe tools\verify_packaging.py   # 8 项静态核对，当前 8/8 PASS
+.\.venv\Scripts\python.exe tools\verify_packaging.py   # 9 项静态核对，当前 9/9 PASS
+.\.venv\Scripts\python.exe tools\gen_tools_doc.py      # 工具清单/数字门禁，当前 PASS
 ```
 
 它拦住的是「跑完 PyInstaller（数分钟）才暴露」的断点：spec 入口脚本缺失、入口用了相对导入、
 壳 spawn 路径与 `extraResources` 不一致、扩展产物缺失/版本不符、`build.ps1` 丢 UTF-8 BOM、
-壳新增 `.js` 忘了进 electron-builder 的 `files` 白名单。
+壳新增 `.js` 忘了进 electron-builder 的 `files` 白名单、**工具插件漏登记 `hiddenimports`（P7）**。
 
-> ⚠️ **该工具目前没有被 `build.ps1` 自动调用**（已知问题，见 §6）——请手动跑。
+> ⚠️ **`verify_packaging.py` 目前没有被 `build.ps1` 自动调用**（已知问题，见 §6）——请手动跑。
+> ⚠️ **P4b 红了先看"扩展是不是没重建"**：它比对的是**构建产物** `extensions/quick-login/dist/manifest.json`
+> 与项目版本；`git pull` 之后、`npm run build` 之前必然红（2026-09-16 实测踩过）。
+> ⚠️ **改了扩展源码（TS）必须重建 + 重载**：`cd extensions\quick-login; npm run build`，
+> 并在 `chrome://extensions` 点一次「重新加载」（`tools/verify_extension_sync.mjs` 需要服务在 18765 上跑）。
+
+### 3.4.1 工具清单门禁（改了 `plugins/` 必跑）
+
+```powershell
+.\.venv\Scripts\python.exe tools\gen_tools_doc.py --write   # 重生成 docs/TOOLS.md 的清单块
+.\.venv\Scripts\python.exe tools\gen_tools_doc.py           # 核对：文档清单/数字 == 运行期中枢
+```
+
+`tests/test_tools_doc.py` 把它也钉进了 pytest，所以**忘了跑也会在测试里红**。
+治理规则见 [docs/TOOLS.md](docs/TOOLS.md)：工具是产品面，加/删/改都要过确认门与文档两道。
 
 ### 3.5 构建链路的脚本纪律（PS 5.1）
 
@@ -158,9 +174,10 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 
 | 项 | 现状 | 影响 |
 |---|---|---|
-| ~~`uvx ruff check .`~~ | ~~9 条违规~~ → **2026-09-14 已清零（All checks passed）**：F821（`routes_insight.py` 的 `Any` 未导入）、B017 裸 `Exception` 断言、4 处未用导入、6 处排序、B007 循环变量全部修掉；`tools/*.py` 的 E402 在 `pyproject.toml` 里**刻意豁免**（验证脚本必须先 reconfigure stdout、拉起服务再 import playwright） | ✅ 门禁恢复；**本机 `uv`/`uvx` 不在 PATH，须走 `.venv\Scripts\uvx.exe`**（见 §1.1） |
-| `tools/verify_packaging.py` | 8/8 PASS，但**未被 `build.ps1` 调用**、无 CI | 断点仍可能在构建数分钟后才暴露 |
-| `desktop/package-lock.json` | version `0.2.1`（`package.json` 已 `0.3.5`）——`bump.py` 五写不含它 | `npm install` 会改写它，发布后工作区变脏；安装包命名不受影响（electron-builder 读 `package.json`） |
+| ~~`uvx ruff check .`~~ | ~~9 条违规~~ → **2026-09-14 已清零（All checks passed）**：F821（`routes_insight.py` 的 `Any` 未导入）、B017 裸 `Exception` 断言、4 处未用导入、6 处排序、B007 循环变量全部修掉；`tools/*.py` 的 E402 在 `pyproject.toml` 里**刻意豁免**（验证脚本必须先 reconfigure stdout、拉起服务再 import playwright） | ✅ 门禁恢复；**2026-09-16 实测本机 `uv`/`uvx` 既不在 PATH、也不在 `.venv\Scripts\`**，须走 `.\.venv\Scripts\ruff.exe check .`（见 §1） |
+| `tools/verify_packaging.py` | **9/9 PASS**（2026-09-16 新增 P7 插件登记对账），但**未被 `build.ps1` 调用**、无 CI | 断点仍可能在构建数分钟后才暴露 |
+| 文档里的工具/插件数字 | **已上机检**：`tools/gen_tools_doc.py` + `tests/test_tools_doc.py` 核对 `docs/TOOLS.md` 与运行期中枢，并扫活跃文档里的"N 个工具/插件" | 2026-09-15 曾四处文档同时写旧数字且由用户先发现（[docs/TOOLS.md](docs/TOOLS.md) §7） |
+| `desktop/package-lock.json` | version `0.2.1`（`package.json` 已 `0.3.12`）——`bump.py` 五写不含它 | `npm install` 会改写它，发布后工作区变脏；安装包命名不受影响（electron-builder 读 `package.json`） |
 | ~~`extensions/quick-login/package-lock.json`~~ | ~~version `0.2.20`~~ → **2026-09-13 实测已是 `0.3.5`，本条已失效** | 同上 |
 | ~~`tools/setup.ps1` §5~~ | ~~仍把 **Node** 当必检项并说「洞察/工厂功能不可用」~~ → **2026-09-14 已改为 `INFO` 信息项**（不计入失败），文案改为「仅影响 desktop/ 与 extensions/ 的构建（运行时不需要）」 | ✅ 口径已对齐 [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md) |
 | `tests/test_proc.py`（7 项） | 仍在测 Node 子进程封装 | 它测的是**遗留封装本身**，不代表运行时链路 |
@@ -171,12 +188,16 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 ## 7. 验收纪律
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest          # 294 项（原生链路 11 / 更新 14 / kernel 28 / 回放 17 / 工作区 34 / 路径 63 / 端口契约 13 / drawio 57 等）
-# 2026-09-14：inventory/understand 下线后由 330 项降到 281 项，端口协商再 +13 项 = 294 项
-node tools\verify_port_broker.mjs             # 固定端口 + 占用判定 27 项（离线，不需要 Electron；**须先退出工作台**——它靠真占固定端口验判定）
-.\.venv\Scripts\uvx.exe ruff check .          # All checks passed（`uvx` 不在 PATH，须走 .venv 副本）
-.\.venv\Scripts\python.exe tools\verify_packaging.py
+.\.venv\Scripts\python.exe -m pytest          # 382 项（2026-09-16 实测全绿；含新增的 test_plugin_api/test_cache/test_agent_loop/test_tools_doc）
+.\.venv\Scripts\python.exe tools\gen_tools_doc.py   # 工具清单与数字门禁
+node tools\verify_port_broker.mjs             # 固定端口 + 占用判定（离线，不需要 Electron；**须先退出工作台**——它靠真占固定端口验判定）
+.\.venv\Scripts\ruff.exe check .              # All checks passed（uv/uvx 本机都没有，走 venv 内的 ruff.exe）
+.\.venv\Scripts\python.exe tools\verify_packaging.py   # 9/9
 ```
+
+> **`git pull` 之后先重建扩展再跑体检**：`extensions/quick-login/dist/` 是构建产物，
+> 拉取只更新源码 → `verify_packaging.py` 的 P4b（扩展 manifest 版本 == 项目版本）必红，
+> 那反映的是本地构建残留，不是上游坏了。`cd extensions\quick-login; npm run build` 即消。
 
 改动扩展后**额外必跑**（扩展端无单测框架，这三个就是它的回归测试）：
 

@@ -9,7 +9,7 @@ import os
 import tempfile
 from pathlib import Path
 
-_TMP = Path(tempfile.mkdtemp(prefix="akso-workbench-test-"))
+_TMP = Path(tempfile.mkdtemp(prefix="workbench-test-"))
 os.environ["WORKBENCH_DATA"] = str(_TMP / "data")
 os.environ["WORKBENCH_DB"] = str(_TMP / "data" / "test.db")
 os.environ["WORKBENCH_ADAPTERS"] = str(Path(__file__).resolve().parent.parent / "adapters")

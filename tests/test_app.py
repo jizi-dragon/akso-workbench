@@ -30,7 +30,7 @@ def test_routes_registered() -> None:
 def test_index_served(client: TestClient) -> None:
     resp = client.get("/")
     assert resp.status_code == 200
-    assert "Akso Workbench" in resp.text
+    assert "Workbench" in resp.text
 
 
 def test_modules_endpoint(client: TestClient) -> None:

@@ -1,6 +1,6 @@
-"""打包态服务端入口（PyInstaller → dist/AksoServer/AksoServer.exe）。
+"""打包态服务端入口（PyInstaller → dist/WorkbenchServer/WorkbenchServer.exe）。
 
-调用约定：桌面壳 spawn `AksoServer.exe --server`（见 desktop/main.js 的 spawnServer）。
+调用约定：桌面壳 spawn `WorkbenchServer.exe --server`（见 desktop/main.js 的 spawnServer）。
 
 与开发态入口 `workbench/main.py` 的区别：**不打开浏览器**——打包态 UI 由 Electron 主窗承载，
 sidecar 只提供服务本身；另外冻结态会把启动信息落到 `DATA_DIR/server.log`，
@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         i += 1
 
     line = (
-        f"AksoServer v{__version__} pid={os.getpid()} → http://{host}:{port} "
+        f"WorkbenchServer v{__version__} pid={os.getpid()} → http://{host}:{port} "
         f"(frozen={config.FROZEN})"
     )
     print(line, flush=True)

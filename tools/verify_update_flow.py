@@ -3,7 +3,7 @@
 为什么需要：真机验证这条链要下 350MB 安装包（本机上行/下行都不快），成本高到没人会做；
 而它恰恰是最容易"看着对、实际断"的地方（0.3.3 实测就是：能发现新版却下不动）。
 做法：起一个本地静态服务冒充更新源（`latest.yml` + 一个极小的假安装包，体积与真实包无关，
-因为这里验证的是**流程**不是内容），用 `AKSO_UPDATE_OVERRIDE` 把打包好的应用指过去，
+因为这里验证的是**流程**不是内容），用 `WORKBENCH_UPDATE_OVERRIDE` 把打包好的应用指过去，
 再读它落盘的 `shell-state.json` 断言相位推进。
 
 用**打包产物**跑（win-unpacked），因为 electron-updater 只在打包态工作（需要 app-update.yml）。
@@ -30,14 +30,14 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parent.parent
 UNPACKED = ROOT / "desktop" / "dist" / "win-unpacked"
-EXE = UNPACKED / "AksoWorkbench.exe"
+EXE = UNPACKED / "Workbench.exe"
 BENCH = Path(os.environ.get("TEMP", "/tmp")) / "akso_update_bench"
 SERVE = BENCH / "serve"
 PORT = 18999
 BASE = f"http://127.0.0.1:{PORT}"
 
-# 壳状态文件：壳把 updater 状态写在 %APPDATA%\AksoWorkbench\shell-state.json
-DATA_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "AksoWorkbench"
+# 壳状态文件：壳把 updater 状态写在 %APPDATA%\Workbench\shell-state.json
+DATA_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "Workbench"
 STATE = DATA_DIR / "shell-state.json"
 
 
@@ -94,7 +94,7 @@ def main() -> int:
 
     version = project_version()
     new_version = bump_patch(version)
-    installer_name = f"AksoWorkbench-{new_version}-setup.exe"
+    installer_name = f"Workbench-{new_version}-setup.exe"
 
     SERVE.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(SERVE / "old", ignore_errors=True)
@@ -110,7 +110,7 @@ def main() -> int:
     print(f"假更新源：{BASE}/latest.yml → v{new_version}（当前 v{version}，包 {size} 字节）")
 
     httpd = serve()
-    env = dict(os.environ, AKSO_UPDATE_OVERRIDE=BASE,
+    env = dict(os.environ, WORKBENCH_UPDATE_OVERRIDE=BASE,
                # 自动更新默认关闭（2026-09-15 用户定稿）；本工具验的就是那条链，必须显式开启
                WORKBENCH_AUTO_UPDATE="1")
     checks: dict[str, bool] = {}

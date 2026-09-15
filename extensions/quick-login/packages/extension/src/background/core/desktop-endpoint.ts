@@ -6,7 +6,7 @@
  * （用户定稿：就固定端口号），于是探测窗口随之取消，只剩一次确认请求。
  *
  * **现在做两件事**：
- *  1. 打一次 `GET http://127.0.0.1:18767/whoami`，核对 `app === 'AksoWorkbench'`；
+ *  1. 打一次 `GET http://127.0.0.1:18767/whoami`，核对 `app === 'Workbench'`；
  *  2. 拿到答案就用；拿不到就回退固定 `18765`（保证旧桌面端仍可用、离线也不炸）。
  *
  * **为什么还留这一次请求**（而不是直接把 18765 写死）：它回答的是**身份**——
@@ -78,7 +78,7 @@ async function writeCache(ep: Endpoint): Promise<void> {
 /** 问壳的控制服务：要的不是"端口是多少"，而是"18765 上是不是我们的服务端" */
 async function askShell(): Promise<Endpoint | null> {
   const data = await fetchJson(`http://127.0.0.1:${CONTROL_PORT}/whoami`);
-  if (!data || data.app !== 'AksoWorkbench') return null;
+  if (!data || data.app !== 'Workbench') return null;
   const port = Number(data.serverPort);
   if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
   return { base: `http://127.0.0.1:${port}`, port, at: Date.now() };

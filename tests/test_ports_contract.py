@@ -42,7 +42,7 @@ def no_ports_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 def _write_ports(tmp_path: Path, **ports: int) -> Path:
     path = tmp_path / "desktop-ports.json"
     path.write_text(json.dumps({
-        "app": "AksoWorkbench", "schemaVersion": 1, "pid": 4242, "version": "9.9.9",
+        "app": "Workbench", "schemaVersion": 1, "pid": 4242, "version": "9.9.9",
         "startedAt": "2026-09-14T10:00:00+08:00",
         "ports": {"server": 18765, "cdp": 18766, "control": 18767, **ports},
     }), encoding="utf-8")
@@ -55,7 +55,7 @@ def _write_ports(tmp_path: Path, **ports: int) -> Path:
 def test_health_reports_identity(client: TestClient, no_ports_file) -> None:
     """`app` 字段是壳判定"是我们的服务"的唯一依据——不能改名，也不能少。"""
     body = client.get("/api/health").json()
-    assert body["app"] == "AksoWorkbench"
+    assert body["app"] == "Workbench"
     assert body["service"] == "workbench-server"
     assert body["version"]
     assert isinstance(body["pid"], int) and body["pid"] > 0
@@ -113,7 +113,7 @@ def test_ports_file_with_partial_ports_keeps_defaults(client: TestClient, monkey
     """只公布了部分端口时，剩下的用默认值补齐，而不是丢字段（探测方要能无条件读三个）。"""
     monkeypatch.delenv("WORKBENCH_PORT", raising=False)
     path = tmp_path / "desktop-ports.json"
-    path.write_text(json.dumps({"app": "AksoWorkbench", "ports": {"server": 19000}}), encoding="utf-8")
+    path.write_text(json.dumps({"app": "Workbench", "ports": {"server": 19000}}), encoding="utf-8")
     monkeypatch.setattr(config, "DESKTOP_PORTS_PATH", path)
     assert client.get("/api/health").json()["ports"] == {
         "server": 19000, "cdp": config.CDP_PORT, "control": config.CONTROL_PORT,

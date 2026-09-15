@@ -6,8 +6,13 @@
 // 比再多一条跨端口 HTTP 链路更简单也更耐故障（壳没跑时文件是陈旧的 → 标记 live=false）。
 //
 // 路径必须与 workbench/config.py 的 DATA_DIR 保持同一套规则（WORKBENCH_DATA >
-// MOGUL_DATA > %APPDATA%/AksoWorkbench），否则开发态（WORKBENCH_DATA 指向别处）
+// MOGUL_DATA > %APPDATA%/Workbench），否则开发态（WORKBENCH_DATA 指向别处）
 // 会读到另一个目录。
+//
+// ⚠️ 2026-09-16 更名：目录名 AksoWorkbench → Workbench。**数据库由 Python 侧自动接管**
+// （config.legacy_db_candidates 会复制旧库），但壳自己写在旧目录里的三样东西**不迁移**：
+// `proxy.txt`（强制代理/直连开关）、`shell-state.json`（陈旧即可，会被新目录覆盖）、
+// `runtime/browser-states/`（浏览器登录态，重登即可）。旧目录不会自动删除。
 
 const fs = require('fs');
 const path = require('path');
@@ -15,8 +20,8 @@ const path = require('path');
 function dataDir() {
   const env = process.env.WORKBENCH_DATA || process.env.MOGUL_DATA;
   if (env) return env;
-  if (process.env.APPDATA) return path.join(process.env.APPDATA, 'AksoWorkbench');
-  return path.join(require('os').homedir(), '.akso-workbench');
+  if (process.env.APPDATA) return path.join(process.env.APPDATA, 'Workbench');
+  return path.join(require('os').homedir(), '.workbench');
 }
 
 const STATE_PATH = path.join(dataDir(), 'shell-state.json');

@@ -261,7 +261,7 @@ def safe_page_name(base: str, used: set[str]) -> str:
     return candidate
 
 
-def mxfile(diagrams: list[tuple[str, str]], *, host: str = "akso-workbench") -> str:
+def mxfile(diagrams: list[tuple[str, str]], *, host: str = "workbench") -> str:
     """多页 mxfile。``diagrams``: ``[(page_name, cells...)]``。"""
     pages: list[str] = []
     used_ids: set[str] = set()

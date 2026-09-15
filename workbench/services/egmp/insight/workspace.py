@@ -37,22 +37,32 @@ MANIFEST_SCHEMA_VERSION = 1
 TIMESTAMP_FORMAT = "%Y%m%d-%H%M%S"
 
 WORKSPACE_DIR_NAME = "洞察"
-APP_SUBDIR = "AksoWorkbench"
+APP_SUBDIR = "Workbench"
+LEGACY_APP_SUBDIR = "AksoWorkbench"  # 2026-09-16 更名前的目录名（已存在则继续沿用）
 
 
 # ---------------------------------------------------------------- 根目录
 
 
 def default_workspace_root() -> Path:
-    """默认工作区根：``<我的文档>/AksoWorkbench/洞察``。
+    """默认工作区根：``<我的文档>/Workbench/洞察``。
 
     取不到「我的文档」时回落到数据目录——绝不因为取不到桌面路径而让洞察无法落盘。
+
+    **更名兼容（2026-09-16）**：若本机已存在 ``<我的文档>/AksoWorkbench/洞察`` 而新目录还没有，
+    就**继续用旧目录**——已落盘的产物、用户已经习惯的路径，不该因为改个品牌名而"消失"
+    （表现为"我的产物去哪了"）。旧目录被用户自行清掉后，下一次自动落到新名。
     """
     candidates = [Path.home() / "Documents", Path.home() / "文档"]
     for candidate in candidates:
         try:
-            if candidate.is_dir():
-                return candidate / APP_SUBDIR / WORKSPACE_DIR_NAME
+            if not candidate.is_dir():
+                continue
+            legacy = candidate / LEGACY_APP_SUBDIR / WORKSPACE_DIR_NAME
+            fresh = candidate / APP_SUBDIR / WORKSPACE_DIR_NAME
+            if legacy.is_dir() and not fresh.is_dir():
+                return legacy
+            return fresh
         except OSError:
             continue
     return config.DATA_DIR / WORKSPACE_DIR_NAME

@@ -33,10 +33,29 @@ def db_ready():
 
 
 def test_default_root_is_absolute_and_named() -> None:
+    """根名恒为「洞察」；父目录是新名 **或更名前的旧名**。
+
+    刻意不写成"父目录必须是 `Workbench`"：本机若已存在 `<我的文档>/AksoWorkbench/洞察`，
+    默认根会**继续沿用旧目录**（产物不该因为改品牌名而"消失"，见 docs/adr/0013）。
+    """
     root = workspace.default_workspace_root()
     assert root.is_absolute()
     assert root.name == workspace.WORKSPACE_DIR_NAME
-    assert root.parent.name == workspace.APP_SUBDIR
+    assert root.parent.name in (workspace.APP_SUBDIR, workspace.LEGACY_APP_SUBDIR)
+
+
+def test_default_root_legacy_takeover_rules(tmp_path, monkeypatch) -> None:
+    """旧目录在、新目录不在 → 沿用旧目录；两者都在 → 用新目录。"""
+    docs = tmp_path / "Documents"
+    legacy = docs / workspace.LEGACY_APP_SUBDIR / workspace.WORKSPACE_DIR_NAME
+    fresh = docs / workspace.APP_SUBDIR / workspace.WORKSPACE_DIR_NAME
+    legacy.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    assert workspace.default_workspace_root() == legacy, "旧目录已被使用时应继续沿用"
+
+    fresh.mkdir(parents=True)
+    assert workspace.default_workspace_root() == fresh, "新目录一旦存在就切过去"
 
 
 def test_workspace_root_falls_back_to_default(db_ready) -> None:
@@ -337,7 +356,7 @@ def test_job_reports_workspace_only_when_it_really_is_one() -> None:
     from workbench.api.routes_insight import _workspace_paths
 
     workdir = Path("D:/data/runtime/insight/abc123")
-    ws = Path("D:/Documents/AksoWorkbench/洞察/change_plan__c/20260914-223238")
+    ws = Path("D:/Documents/Workbench/洞察/change_plan__c/20260914-223238")
     assert _workspace_paths(ws, workdir) == [str(ws)]
     assert _workspace_paths(workdir, workdir) == [], "兜底目录不得被谎报成工作区"
 

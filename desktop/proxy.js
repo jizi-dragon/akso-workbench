@@ -9,7 +9,7 @@
 // 代理（Clash 之类）**稳定但慢**，所以把它当默认通道是错的。
 //
 // 策略：**优先生成直连，只有直连确实不通时才用代理**（用户定稿："能不能不配代理"）。
-//   1. AKSO_PROXY / HTTPS_PROXY / HTTP_PROXY 有值 → 强制用该代理（排障用）
+//   1. WORKBENCH_PROXY / HTTPS_PROXY / HTTP_PROXY 有值 → 强制用该代理（排障用）
 //   2. 数据目录 proxy.txt：一行代理串 = 强制代理；存在但为空 = 强制直连（终极兜底开关）
 //   3. 否则**自动**：直连探测 GitHub 检查端点，通 → 直连；不通 → 回落到 Windows 系统代理
 //      （注册表 Internet Settings；没有系统代理就退回直连并把失败原因记进状态）
@@ -22,7 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 
-const OVERRIDE_FILE = 'proxy.txt'; // 放在壳状态同目录（%APPDATA%\AksoWorkbench）
+const OVERRIDE_FILE = 'proxy.txt'; // 放在壳状态同目录（%APPDATA%\Workbench）
 const BYPASS = '<local>;127.0.0.1;localhost;[::1]';
 
 /** 探测用的端点：更新器"查版本"走的就是这里（Atom feed），通不通直接决定更新能否开始 */
@@ -101,7 +101,11 @@ async function apply(session, { dataDir, net, log = () => {} } = {}) {
   let probe = null;
 
   const envProxy = normalize(
-    process.env.AKSO_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY,
+    // AKSO_PROXY = 2026-09-16 更名前的变量名，**继续认**（用户手写的启动脚本不该因为改名而失效）
+    process.env.WORKBENCH_PROXY
+      || process.env.AKSO_PROXY
+      || process.env.HTTPS_PROXY
+      || process.env.HTTP_PROXY,
   );
   const fileProxy = readOverride(dataDir);
 

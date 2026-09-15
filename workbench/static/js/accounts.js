@@ -370,7 +370,7 @@ function updateVerChip(info, health) {
   const version = info?.version || health?.desktopVersion || '';
   if (version) chip.textContent = `v${version}`;
   chip.classList.remove('has-update', 'is-ready');
-  let title = version ? `Akso Workbench v${version}` : 'Akso Workbench';
+  let title = version ? `Workbench v${version}` : 'Workbench';
   if (!shell.live) {
     title += '\n桌面壳未运行：浏览器直接打开本页时无法检查更新（改用托盘菜单「检查更新…」）。';
   } else if (shell.phase === 'ready') {
@@ -1044,8 +1044,8 @@ async function importBackup(file) {
     alert('文件不是有效的 JSON。');
     return;
   }
-  if (backup?.format !== 'akso-workbench-backup' || backup.version !== 1) {
-    alert('不是 Akso Workbench 备份文件（格式版本不符）。');
+  if (backup?.format !== 'workbench-backup' || backup.version !== 1) {
+    alert('不是 Workbench 备份文件（格式版本不符）。');
     return;
   }
   const total = backup.accounts?.length ?? 0;

@@ -1,9 +1,9 @@
 {
-  "name": "akso-workbench-desktop",
-  "productName": "AksoWorkbench",
+  "name": "workbench-desktop",
+  "productName": "Workbench",
   "version": "0.3.12",
   "private": true,
-  "description": "Akso Workbench 桌面壳（Electron）：窗口/热键/托盘/更新器 + Python 服务 sidecar",
+  "description": "Workbench 桌面壳（Electron）：窗口/热键/托盘/更新器 + Python 服务 sidecar",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -18,8 +18,8 @@
     "electron-updater": "^6.3.9"
   },
   "build": {
-    "appId": "com.akso.workbench",
-    "productName": "AksoWorkbench",
+    "appId": "com.workbench.app",
+    "productName": "Workbench",
     "directories": {
       "output": "dist"
     },
@@ -33,7 +33,7 @@
     ],
     "extraResources": [
       {
-        "from": "../dist/AksoServer",
+        "from": "../dist/WorkbenchServer",
         "to": "server"
       },
       {
@@ -55,8 +55,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "AksoWorkbench-${version}-setup.${ext}",
-      "shortcutName": "Akso Workbench"
+      "artifactName": "Workbench-${version}-setup.${ext}",
+      "shortcutName": "Workbench"
     },
     "publish": {
       "provider": "github",

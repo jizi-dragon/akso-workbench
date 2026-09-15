@@ -13,7 +13,7 @@ from . import config
 def main() -> None:
     url = f"http://{config.HOST}:{config.PORT}"
     threading.Timer(1.5, webbrowser.open, args=(url,)).start()
-    print(f"Akso Workbench 启动中：{url}（Ctrl+C 退出）")
+    print(f"Workbench 启动中：{url}（Ctrl+C 退出）")
     uvicorn.run("workbench.api:app", host=config.HOST, port=config.PORT, log_level="warning")
 
 

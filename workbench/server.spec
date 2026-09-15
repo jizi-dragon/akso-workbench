@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller 打包定义：AksoServer（服务端 sidecar，onedir）。
+"""PyInstaller 打包定义：WorkbenchServer（服务端 sidecar，onedir）。
 
 构建：pyinstaller workbench/server.spec --noconfirm
-产物：dist/AksoServer/ → build.ps1 v3 交给 electron-builder（extraResources）
+产物：dist/WorkbenchServer/ → build.ps1 v3 交给 electron-builder（extraResources）
 要点：
 - playwright collect_all（node 驱动）+ chromium 浏览器本体打入（运行时
   browser_pool 设 PLAYWRIGHT_BROWSERS_PATH=_MEIPASS/ms-playwright）；
@@ -85,9 +85,9 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="AksoServer",
+    name="WorkbenchServer",
     debug=False,
     console=True,
     icon=None,
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="AksoServer")
+coll = COLLECT(exe, a.binaries, a.datas, name="WorkbenchServer")

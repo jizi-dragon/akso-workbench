@@ -1,9 +1,10 @@
 """路径与运行配置（fork 自 mogul.config，改名 + 兼容接管）。
 
 数据目录：优先环境变量 WORKBENCH_DATA（兼容 MOGUL_DATA）；
-默认 %APPDATA%/AksoWorkbench（Windows）或 ~/.akso-workbench。
-首次运行时若本机存在旧版 mogul（Tauri 或 Python 版）的 mogul.db，
-自动接管（复制）为初始数据库，历史会话 / 知识 / 密钥全部保留。
+默认 %APPDATA%/Workbench（Windows）或 ~/.workbench。
+首次运行时若本机存在**更名前**的数据目录（%APPDATA%/AksoWorkbench，2026-09-16 之前）
+或旧版 mogul（Tauri / Python 版）的库，自动接管（复制）为初始数据库——
+历史会话 / 账号 / 密钥全部保留。**接管只在目标库不存在时发生，绝不覆盖现有数据。**
 """
 
 from __future__ import annotations
@@ -13,7 +14,8 @@ import shutil
 import sys
 from pathlib import Path
 
-APP_NAME = "AksoWorkbench"
+APP_NAME = "Workbench"
+LEGACY_APP_NAME = "AksoWorkbench"  # 2026-09-16 更名前的自有数据目录（自动接管，见 docs/adr/0013）
 LEGACY_IDENTIFIER = "com.example.mogulsimulator"  # 旧 Tauri 版
 LEGACY_PY_NAME = "MogulWorkbench"  # 旧 Python 版（mogul_simulator）
 
@@ -25,7 +27,7 @@ def app_data_dir() -> Path:
     appdata = os.environ.get("APPDATA")
     if appdata:
         return Path(appdata) / APP_NAME
-    return Path.home() / ".akso-workbench"
+    return Path.home() / ".workbench"
 
 
 DATA_DIR = app_data_dir()
@@ -37,10 +39,16 @@ DB_PATH = Path(
 
 
 def legacy_db_candidates() -> list[Path]:
-    """旧版数据库的可能位置（旧 Tauri 版 + 旧 Python 版 mogul）。"""
+    """旧数据库的可能位置，**按「越可能是真数据」排序**（先命中者胜）。
+
+    1. `%APPDATA%/AksoWorkbench/workbench.db` —— **本工作台更名前**（2026-09-16 之前）的数据目录。
+       里面有账号库 + Fernet 密钥，**不接管就等于让用户看到「账号全没了」**（见 docs/adr/0013）。
+    2. 更早的两版 mogul（Python 版 / Tauri 版）。
+    """
     candidates: list[Path] = []
     appdata = os.environ.get("APPDATA")
     if appdata:
+        candidates.append(Path(appdata) / LEGACY_APP_NAME / "workbench.db")
         candidates.append(Path(appdata) / LEGACY_PY_NAME / "mogul.db")
         candidates.append(Path(appdata) / LEGACY_IDENTIFIER / "mogul.db")
     candidates.append(Path.home() / LEGACY_IDENTIFIER / "mogul.db")

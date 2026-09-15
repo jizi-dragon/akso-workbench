@@ -247,7 +247,7 @@ void flashBadge(`v${extVersion().split('.').slice(0, 2).join('.')}`).finally(() 
   // flashBadge 自身 1.2s 后清空；这里把启动展示延长为额外一次，共约 2.4s 可见窗口
 });
 
-/* 桌面同步桥（Akso Workbench 私有改造）：账号/盒子数据面外移到桌面端，
+/* 桌面同步桥（Workbench 私有改造）：账号/盒子数据面外移到桌面端，
    本扩展作为执行面每 2s 轮询快照与指令（wheel.toggle/par.open）；桌面不可达时离线回退本地数据 */
 import { startDesktopSync } from './sync';
 startDesktopSync();

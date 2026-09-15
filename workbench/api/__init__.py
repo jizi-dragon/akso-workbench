@@ -96,7 +96,7 @@ def _tool_selfcheck() -> None:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Akso Workbench", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="Workbench", version=__version__, lifespan=lifespan)
 
     @app.middleware("http")
     async def _no_store_static(request, call_next):
@@ -143,7 +143,7 @@ def create_app() -> FastAPI:
         import os
 
         return {
-            "app": "AksoWorkbench",
+            "app": "Workbench",
             "service": "workbench-server",
             "version": __version__,
             "pid": os.getpid(),

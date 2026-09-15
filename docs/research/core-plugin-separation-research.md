@@ -67,7 +67,7 @@
 | **FastAPI APIRouter 组合** | `include_router` 显式装配 | 业务 → 框架 | 随包 | **你已经在用**（`workbench/api/__init__.py`） |
 | Terraform provider 协议 | 进程外 gRPC | provider → 协议 | 独立二进制 | 隔离最强、成本最高，**不建议** |
 
-【建议】把 `workbench` 做成"库 + 装配器"两层：`akso-core`（harness + 通用 services + 通用 api + db/config，独立 repo、独立版本号）与 `akso-egmp`（当前 `services/egmp/` 全部 + 平台专属路由，独立 repo/包），`akso-workbench`（应用）只负责按清单装配二者。对应的依赖方向：`akso-egmp → akso-core`，**永不反向**。
+【建议】把 `workbench` 做成"库 + 装配器"两层：`akso-core`（harness + 通用 services + 通用 api + db/config，独立 repo、独立版本号）与 `akso-egmp`（当前 `services/egmp/` 全部 + 平台专属路由，独立 repo/包），`workbench`（应用）只负责按清单装配二者。对应的依赖方向：`akso-egmp → akso-core`，**永不反向**。
 
 ## A4 FastAPI 落地方案（可直接施工）
 
@@ -82,7 +82,7 @@
 **最小注册骨架（【建议】，示意代码，非实测）**
 
 ```python
-# akso_workbench/plugin_loader.py
+# workbench/plugin_loader.py
 from importlib.metadata import entry_points, version
 from packaging.specifiers import SpecifierSet
 
@@ -178,7 +178,7 @@ def load_plugins(app, ctx) -> list[str]:
 
 以下均为**【建议】**，目标是让"哪部分属于通用能力、哪部分源于公司专属环境"在**仓库层面可证明、可审计**；它们**不是**法律手段，也不代替 B10 的确认。
 
-1. **仓库与包分层**：`akso-core`（`harness/` + 通用 `services/` + 通用 `api/` + `db.py`/`config.py`）、`akso-egmp`（`services/egmp/` 全部 + `routes_insight/factory/agent` 中的平台部分）、`akso-workbench`（装配 + `desktop/` + 前端）。各自独立 repo、独立版本号、独立 CHANGELOG。
+1. **仓库与包分层**：`akso-core`（`harness/` + 通用 `services/` + 通用 `api/` + `db.py`/`config.py`）、`akso-egmp`（`services/egmp/` 全部 + `routes_insight/factory/agent` 中的平台部分）、`workbench`（装配 + `desktop/` + 前端）。各自独立 repo、独立版本号、独立 CHANGELOG。
 2. **依赖方向单向化的"守卫"**：在 CI 加一条最便宜的规则——`akso-core` 中禁止出现平台名/平台端点/公司术语（正则黑名单），违反即失败。这条规则同时是技术边界和"来源说明"的自动证据。
 3. **接口层用抽象声明**：为平台侧能力定义 `Protocol`/ABC（auth / client / writers / queries / 录制回放 / 编排），core 只依赖抽象；`services/egmp/**` 作为实现。这与你现有 `harness/tools.py` 的 `Tool` 注册表天然对齐（端口-适配器思路的公开表述见 [PLUGIN_ARCHITECTURE 指南](https://github.com/MatthewKerns/software-development-best-practices-guide/blob/main/03-clean-architecture/PLUGIN_ARCHITECTURE.md)）。注意：**把你实测出的端点常量和语义留在 `akso-egmp` 内，绝不进 core**。
 4. **清单化 + 宿主下发句柄**：把 `adapters/*.json`（`services/modules.py:50-70`）规范化为插件清单（id / version / requires / entry）。插件**不得自行决定数据目录与配置存储位置**，改为由 core 下发路径与存储句柄——这一步正好消掉你 4 处耦合中的 `services.paths` 与 `services.storage` 两处（`services.queries` 随 `egmp` 一起搬走，`workbench` 版本号改为 core 的依赖声明）。

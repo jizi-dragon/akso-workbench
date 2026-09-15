@@ -1,4 +1,4 @@
-// Akso Workbench 桌面壳（Electron）
+// Workbench 桌面壳（Electron）
 // 职责：Python 服务 sidecar 生命周期 + 主窗/透明轮盘窗 + 全局热键 Alt+Q
 //       + 托盘 + 会话控制服务(18767，供 browser_pool CDP 模式开户窗) + 自动更新
 // 架构不变量：窗口只做"壳"，业务全在 FastAPI 服务（HTTP 暴露）；
@@ -79,7 +79,7 @@ function spawnServer() {
     WORKBENCH_SESSION_MODE: 'cdp',
   };
   const packaged = process.resourcesPath
-    ? path.join(process.resourcesPath, 'server', 'AksoServer.exe')
+    ? path.join(process.resourcesPath, 'server', 'WorkbenchServer.exe')
     : null;
   if (packaged && fs.existsSync(packaged)) {
     serverChild = spawn(packaged, ['--server', '--port', String(SERVER_PORT)], {
@@ -118,7 +118,7 @@ function killServer() {
  * 于是一个**旧实例**（或任何别的程序）占着 18765 时，新壳会认为自己的服务已经起来了，
  * 主窗打开的是别人的页面——那次事故表现成"代码改了但 UI 没变"（ADR-0011 §1）。
  *
- * 现在改成打 `GET /api/health` 并核对 `app === 'AksoWorkbench'`：
+ * 现在改成打 `GET /api/health` 并核对 `app === 'Workbench'`：
  * 从"有人应答"升级为"是我们的服务在应答"。探测端点必须**无副作用**——
  * 别用 `/extension/health`，它会写 `everConnected` 闩锁（ADR-0011 §D-4）。
  *
@@ -145,7 +145,7 @@ function waitReady(timeoutMs = 40000) {
         res.on('end', () => {
           let data = null;
           try { data = JSON.parse(body); } catch { data = null; }
-          if (data && data.app === 'AksoWorkbench') {
+          if (data && data.app === 'Workbench') {
             lastSeen = data;
             lastReason = 'ok';
           } else {
@@ -179,7 +179,7 @@ function createMain() {
     height: 920,
     minWidth: 1100,
     minHeight: 700,
-    title: 'Akso Workbench',
+    title: 'Workbench',
     show: false,
     backgroundColor: '#eef4fc',
     webPreferences: { backgroundThrottling: false },
@@ -321,7 +321,7 @@ async function openExtensionSetup(mode = 'install') {
 /** 本壳的身份与端口——`/whoami` 与 desktop-ports.json 用**同一份**口径 */
 function selfDescription() {
   return {
-    app: 'AksoWorkbench',
+    app: 'Workbench',
     service: 'workbench-shell',
     controlPort: CONTROL_PORT,
     serverPort: SERVER_PORT,
@@ -459,8 +459,8 @@ function createTray() {
             : '自动更新：启动时静默检查，后台下载，退出应用时安装。';
       void dialog.showMessageBox({
         type: 'info',
-        title: '关于 Akso Workbench',
-        message: `Akso Workbench v${app.getVersion()}`,
+        title: '关于 Workbench',
+        message: `Workbench v${app.getVersion()}`,
         detail,
         buttons: ['好'],
         noLink: true,
@@ -469,7 +469,7 @@ function createTray() {
     { type: 'separator' },
     { label: '退出', click: () => app.quit() },
   ]);
-  tray.setToolTip('Akso Workbench');
+  tray.setToolTip('Workbench');
   tray.setContextMenu(menu);
   tray.on('double-click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
 }
@@ -482,14 +482,14 @@ function createTray() {
 function onUpdateState(s) {
   updateState = s;
   shellState.write({
-    app: 'akso-workbench-desktop',
+    app: 'workbench-desktop',
     version: s.currentVersion || app.getVersion(),
     proxy: proxyInfo,
     ...s,
   });
   const hint = updater.trayHint();
   if (tray) {
-    tray.setToolTip(hint ? `Akso Workbench ${s.currentVersion}\n${hint}` : `Akso Workbench ${s.currentVersion}`);
+    tray.setToolTip(hint ? `Workbench ${s.currentVersion}\n${hint}` : `Workbench ${s.currentVersion}`);
   }
   // 渲染层实时刷新（账号中心版本角标），无需等 3s 轮询
   for (const win of BrowserWindow.getAllWindows()) {
@@ -692,7 +692,7 @@ app.on('before-quit', () => {
   if (quitting) return;
   quitting = true;
   globalShortcut.unregisterAll();
-  // 顺序关键：先停 sidecar（释放 AksoServer.exe / 扩展目录的文件句柄），
+  // 顺序关键：先停 sidecar（释放 WorkbenchServer.exe / 扩展目录的文件句柄），
   // 再让 updater 拉起安装器覆盖文件；否则安装器会因文件被占用而失败。
   killServer();
   updater.installOnExit();

@@ -74,7 +74,11 @@ function readPublished() {
  */
 function ownImageNames() {
   const names = new Set([path.basename(process.execPath).toLowerCase()]);
-  if (!process.defaultApp) names.add('aksoworkbench.exe');
+  if (!process.defaultApp) {
+    names.add('workbench.exe');
+    // 更名前（2026-09-16 之前）的映像名：同机可能还跑着旧版实例，别把它误判成"外人"
+    names.add('aksoworkbench.exe');
+  }
   names.add('electron.exe');
   names.add('node.exe');
   return names;
@@ -173,7 +177,7 @@ function clearStale(probe) {
 /** 原子写公布文件（先写临时文件再 rename —— 服务端可能随时来读） */
 function publish(version) {
   const payload = {
-    app: 'AksoWorkbench',
+    app: 'Workbench',
     schemaVersion: 1,
     pid: process.pid,
     version: version || null,
@@ -222,14 +226,14 @@ function describeOccupant(key, prev) {
     const extra = Number.isInteger(theirs) && theirs > 0 && theirs !== port
       ? `（该实例记录自己用的是 ${theirs}）` : '';
     lines.push(
-      `  占用者是一个正在运行的 Akso Workbench 实例：`,
+      `  占用者是一个正在运行的 Workbench 实例：`,
       `  PID ${prev.pid}，版本 ${prev.version || '未知'}，启动于 ${prev.startedAt || '未知'}${extra}`,
       '',
       '请先退出那个实例再启动本程序（托盘图标右键 → 退出）。',
     );
   } else {
     lines.push(
-      '  占用者不是 Akso Workbench 实例（公布文件里没有指向它的记录）。',
+      '  占用者不是 Workbench 实例（公布文件里没有指向它的记录）。',
       '',
       `请先找出占用 ${port} 的程序（管理员 PowerShell：`,
       `  Get-NetTCPConnection -LocalPort ${port} | Select-Object OwningProcess`,

@@ -973,7 +973,7 @@ def _write_step4_drawio(spider: dict[str, Any], output_dir: Path) -> Path | None
         body = "".join(drawio_mod.workflow_cells(graph, axis="col"))
         pages.append((drawio_mod.safe_page_name(name, used), body))
     path = output_dir / "step4-workflows.drawio"
-    path.write_text(drawio_mod.mxfile(pages, host="akso-workbench-spider"), encoding="utf-8")
+    path.write_text(drawio_mod.mxfile(pages, host="workbench-spider"), encoding="utf-8")
     return path
 
 
@@ -1043,7 +1043,7 @@ def write_spider_artifacts(spider: dict[str, Any], output_dir: Path) -> list[Pat
         pages.append((drawio_mod.safe_page_name(f"{node['label']}·状态机", used), "".join(cells)))
     pages.insert(0, (drawio_mod.safe_page_name("总览·对象网络", used), "".join(overview_cells)))
     net_drawio = output_dir / "spider-network.drawio"
-    net_drawio.write_text(drawio_mod.mxfile(pages, host="akso-workbench-spider"), encoding="utf-8")
+    net_drawio.write_text(drawio_mod.mxfile(pages, host="workbench-spider"), encoding="utf-8")
     written.append(net_drawio)
 
     # 第 1/2/3/4 步各自的产物

@@ -16,7 +16,7 @@
   故瘦身必须以显式命令触发。
 - `--trim` 只把 embedding 置空，保留 documents / doc_chunks 的正文（不可再生数据），
   丢弃的是可再生的向量（原 embedding 配置仍在 settings 表内）。
-- `--vacuum` 需要独占写锁：请先关闭 AksoWorkbench 桌面端，否则可能 SQLITE_BUSY。
+- `--vacuum` 需要独占写锁：请先关闭 Workbench 桌面端，否则可能 SQLITE_BUSY。
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def resolve_db_path(explicit: str | None) -> Path:
         return Path(env)
     appdata = os.environ.get("APPDATA")
     base = Path(appdata) if appdata else Path.home()
-    return base / "AksoWorkbench" / "workbench.db"
+    return base / "Workbench" / "workbench.db"
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -166,7 +166,7 @@ def trim(conn: sqlite3.Connection) -> int:
 def vacuum(conn: sqlite3.Connection, path: Path, force: bool) -> None:
     size_before = path.stat().st_size
     if not exclusive_ok(conn):
-        print("当前无法取得独占写锁：请先关闭 AksoWorkbench 桌面端再执行 --vacuum")
+        print("当前无法取得独占写锁：请先关闭 Workbench 桌面端再执行 --vacuum")
         if not force:
             return
         print("--force：仍尝试执行（可能 SQLITE_BUSY）")
@@ -197,7 +197,7 @@ def purge_legacy_settings(conn: sqlite3.Connection) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="数据层维护：诊断 / 备份 / 瘦身")
-    parser.add_argument("--db", help="数据库路径（默认取 WORKBENCH_DB 或 %%APPDATA%%\\AksoWorkbench）")
+    parser.add_argument("--db", help="数据库路径（默认取 WORKBENCH_DB 或 %%APPDATA%%\\Workbench）")
     parser.add_argument("--report", action="store_true", help="只输出诊断（默认行为）")
     parser.add_argument("--backup", action="store_true", help="VACUUM INTO 生成一致性备份")
     parser.add_argument("--trim", action="store_true", help="置空 doc_chunks.embedding（保正文）")

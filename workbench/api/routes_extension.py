@@ -117,7 +117,7 @@ def snapshot() -> dict[str, Any]:
                    ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()[:16]
     return {
-        "format": "akso-workbench-snapshot",
+        "format": "workbench-snapshot",
         "version": 1,
         "generatedAt": now_ms(),
         # 桌面端版本：扩展据此自查「我是不是旧版」（用户定稿：两者版本号同步升版）

@@ -26,7 +26,7 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 > `desktop/ports.js` 的 `PORTS` 与 Python 侧 `workbench/config.py` 的默认值（两者一致性由
 > `tests/test_ports_contract.py` 钉住）。
 > **端口被占时应用报错退出**（说清占用者是谁），而不是换个号继续跑。
-> 想知道当前是谁在服务：打 `GET /api/health` 看 `app` 字段（`AksoWorkbench` 才是我们），
+> 想知道当前是谁在服务：打 `GET /api/health` 看 `app` 字段（`Workbench` 才是我们），
 > 或读 `<数据目录>/runtime/desktop-ports.json`（它记录当前实例的 pid/版本/固定端口）。
 
 **全局约定**
@@ -285,7 +285,7 @@ autologin, has_token, monitoring, monitor_log}`；
 ## 10. Agent 工具层 `/api/agent`（`routes_agent.py`）
 
 > **单一事实源**：工具清单来自**工具插件中枢** `plugin_api.ToolHub`（`workbench/plugins/`
-> 四个插件装配）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
+> 五个插件装配，共 20 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
 > schema、审计三处读的是同一份定义。插件 SDK 契约见 [PLUGIN-SDK.md](PLUGIN-SDK.md)。
 
 | 方法 | 路径 | 请求 | 说明 |
@@ -504,7 +504,7 @@ autologin, has_token, monitoring, monitor_log}`；
 
 ```jsonc
 {
-  "app": "AksoWorkbench",          // ★ 壳的就绪探测核对这个字段
+  "app": "Workbench",          // ★ 壳的就绪探测核对这个字段
   "service": "workbench-server",
   "version": "0.3.5",
   "pid": 21564,

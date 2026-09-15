@@ -76,7 +76,7 @@ Chrome 对**非 Chrome 网上应用店**的扩展有硬限制，逐条查证如�
   - `GET /extension/snapshot` 回传 `desktopVersion`，扩展据此自查版本（并在 SW 控制台留痕）
 - 更新面的接口：
   - `GET /api/update`（Python，18765）→ `{version, shell:{live, phase, availableVersion, percent, updateAvailable}}`；
-    数据源是壳写的 `%APPDATA%\AksoWorkbench\shell-state.json`（壳每 15s 心跳，超 60s 视为陈旧 → `live=false`）
+    数据源是壳写的 `%APPDATA%\Workbench\shell-state.json`（壳每 15s 心跳，超 60s 视为陈旧 → `live=false`）
   - `POST /api/update/check` / `POST /api/update/install` → 代理到壳控制服务
     `POST /update-check` / `POST /update-install`（弹窗与安装动作都由壳执行，服务端只转发结论）
 
@@ -87,7 +87,7 @@ Chrome 对**非 Chrome 网上应用店**的扩展有硬限制，逐条查证如�
 > 也就是说：**发布 Release 仍然有意义**（用户手动下载安装包），但不再有"静默升级"这条路。
 > 发布链路本身没变，见下。
 
-桌面安装版用 `electron-updater` 自动更新（通道 = **GitHub Releases**；策略 = 启动静默检查
+桌面安装版用 `electron-updater` 自动更新（通道 = **GitHub Releases**；开启后的策略 = 启动静默检查
 + 后台静默下载 + 退出应用时安装 + 托盘「检查更新…」手动检查）。**私有仓库不行**——更新器
 匿名读取 Release，仓库必须公开（本仓库即公开）。
 
@@ -122,7 +122,7 @@ npx electron-builder --win nsis --publish always      # 上传安装包 + latest
 
 # 方式 B：不带 token 构建，然后在 GitHub 网页上手动传
 #   仓库 → Releases → Draft a new release → 选 tag（如 v0.3.4）→ 上传
-#   desktop\dist\AksoWorkbench-<版本>-setup.exe、latest.yml、（有则）*.exe.blockmap
+#   desktop\dist\Workbench-<版本>-setup.exe、latest.yml、（有则）*.exe.blockmap
 ```
 
 - 用方式 A 时 **tag 必须与版本号一致**（`npx electron-builder` 会用 `package.json` 的 version

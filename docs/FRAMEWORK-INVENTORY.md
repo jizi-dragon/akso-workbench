@@ -133,9 +133,9 @@
 
 | 标识 | 出现位置 | 建议做法 |
 |---|---|---|
-| 数据目录名 `AksoWorkbench` | `config.py`×2、`shell-state.js`×2、`desktop/package.json`×3、`proxy.js`×1、`blank.html`×1 | 收敛为 `APP_NAME` 常量（Python/JS 各一处，构建期注入） |
-| `akso-workbench` / `akso-workbench-snapshot` | 11 个文件（协议名、备份 format、导入式扫描） | 保留为**协议常量**（协议名不必随产品改名，但要在契约文档里声明"协议名与产品名解耦"） |
-| `com.akso.workbench` / 更新源 `owner` `repo` | `desktop/package.json` | 抽为 electron-builder 的构建参数 |
+| 数据目录名 `Workbench` | `config.py`×2、`shell-state.js`×2、`desktop/package.json`×3、`proxy.js`×1、`blank.html`×1 | 收敛为 `APP_NAME` 常量（Python/JS 各一处，构建期注入） |
+| `workbench` / `workbench-snapshot` | 11 个文件（协议名、备份 format、导入式扫描） | 保留为**协议常量**（协议名不必随产品改名，但要在契约文档里声明"协议名与产品名解耦"） |
+| `com.workbench.app` / 更新源 `owner` `repo` | `desktop/package.json` | 抽为 electron-builder 的构建参数 |
 | 产品名 `Akso`（31 处字符串） | `desktop/main.js`×18、`proxy.js`×4、`updater.js`×6、`shell-state.js`×3 | 抽为品牌配置 |
 | 三个端口 `18765/18766/18767` | 壳、服务、扩展（**扩展里是编译期常量**） | 保留默认值但全部走配置；扩展侧改构建期注入 |
 

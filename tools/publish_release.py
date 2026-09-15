@@ -67,7 +67,8 @@ def api(path: str, method: str = "GET", body: dict | None = None, tok: str | Non
     宁可让用户看到失败再手动重跑（本脚本对同 tag 的 draft 是幂等的）。
     """
     data = json.dumps(body).encode() if body is not None else None
-    opener = build_opener(proxy_of(bool(os.environ.get("AKSO_NO_PROXY"))))
+    opener = build_opener(proxy_of(bool(os.environ.get("WORKBENCH_NO_PROXY")
+                                        or os.environ.get("AKSO_NO_PROXY"))))  # 后者为更名前变量名
 
     def attempt() -> bytes:
         req = urllib.request.Request(
@@ -128,7 +129,8 @@ def proxy_of(force_direct: bool = False) -> str | None:
     """
     if force_direct:
         return None
-    for key in ("AKSO_HTTPS_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+    for key in ("WORKBENCH_HTTPS_PROXY", "AKSO_HTTPS_PROXY",  # 后者为更名前变量名
+                "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
         if os.environ.get(key):
             return os.environ[key]
     try:
@@ -269,12 +271,12 @@ def main() -> int:
     ap.add_argument("--prerelease", action="store_true")
     args = ap.parse_args()
     if args.no_proxy:
-        os.environ["AKSO_NO_PROXY"] = "1"
+        os.environ["WORKBENCH_NO_PROXY"] = "1"
 
     version = args.version or project_version()
     tag = f"v{version}"
-    installer = DIST / f"AksoWorkbench-{version}-setup.exe"
-    blockmap = DIST / f"AksoWorkbench-{version}-setup.exe.blockmap"
+    installer = DIST / f"Workbench-{version}-setup.exe"
+    blockmap = DIST / f"Workbench-{version}-setup.exe.blockmap"
     latest = DIST / "latest.yml"
 
     # 资产必须齐全：latest.yml 少了 → 更新器查不到新版本；blockmap 少了 → 增量更新退化为全量
@@ -289,7 +291,7 @@ def main() -> int:
     checks = {
         "latest.yml 版本号 == 发布版本": f"version: {version}" in yml,
         "latest.yml sha512 == 安装包实际 sha512": local_sha in yml,
-        "latest.yml 指向本次安装包": f"AksoWorkbench-{version}-setup.exe" in yml,
+        "latest.yml 指向本次安装包": f"Workbench-{version}-setup.exe" in yml,
     }
     for name, ok in checks.items():
         print(f"{'PASS' if ok else 'FAIL'}  {name}")
@@ -327,8 +329,8 @@ def main() -> int:
         body={
             "tag_name": tag,
             "target_commitish": "main",
-            "name": f"Akso Workbench {version}",
-            "body": notes or f"Akso Workbench {version}",
+            "name": f"Workbench {version}",
+            "body": notes or f"Workbench {version}",
             "draft": True,
             "prerelease": args.prerelease,
         },

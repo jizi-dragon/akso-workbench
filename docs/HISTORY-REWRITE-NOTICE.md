@@ -100,5 +100,5 @@ AWS `AKIA`、Slack `xox*`、JWT（`eyJ…`）、`BEGIN … PRIVATE KEY`、
 44 位 base64 命中全部是 `package-lock.json` 的 SRI 完整性哈希（`sha512-…`），均非密钥。
 
 > 但仍请自查一次真实凭据是否曾在本机其它地方外传：Fernet 密钥与 API Key 只存放于
-> `%APPDATA%\AksoWorkbench\workbench.db`（**未入库**）。若你曾把 `workbench.db`、
+> `%APPDATA%\Workbench\workbench.db`（**未入库**）。若你曾把 `workbench.db`、
 > 备份 JSON 或 `shell-state.json` 提交到任何地方，请单独处理。

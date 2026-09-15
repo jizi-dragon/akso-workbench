@@ -34,15 +34,15 @@
         msg.textContent = '服务未就绪——主界面无法加载。';
         if (reason === 'wrong-app' || (reason || '').startsWith('wrong-app')) {
           hint.textContent =
-            '这个端口上有其它程序在应答（不是一个可用的 AksoWorkbench 服务）。' +
+            '这个端口上有其它程序在应答（不是一个可用的 Workbench 服务）。' +
             '常见原因：另一个版本的工作台还开着，或该端口被别的软件占用。' +
             '请先退出那个实例 / 释放端口，再重启本程序。';
         } else if (reason === 'no-response' || reason === 'timeout') {
           hint.textContent =
-            '服务端没有应答。请看 %APPDATA%\\AksoWorkbench\\server.log 与 ' +
-            '%APPDATA%\\AksoWorkbench\\runtime\\desktop-ports.json，然后重启 AksoWorkbench。';
+            '服务端没有应答。请看 %APPDATA%\\Workbench\\server.log 与 ' +
+            '%APPDATA%\\Workbench\\runtime\\desktop-ports.json，然后重启 Workbench。';
         } else {
-          hint.textContent = '服务启动异常，请重启 AksoWorkbench 并查看上面的日志文件。';
+          hint.textContent = '服务启动异常，请重启 Workbench 并查看上面的日志文件。';
         }
         detailEl.textContent = raw ? `探测详情：${raw}` : '';
       } else {

@@ -1,5 +1,5 @@
 {
-  // Akso Workbench 工作区配置（本项目提交入库，两个协作人共用同一套口径）
+  // Workbench 工作区配置（本项目提交入库，两个协作人共用同一套口径）
   //
   // 为什么需要这个文件：本机的 uv 与 Python 都是**非常规位置**，VS Code 自动发现会失败
   //   - uv 不在 PATH：它是以 pip 包形式装进项目 .venv 的（.venv\Scripts\uv.exe）

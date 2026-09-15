@@ -6,7 +6,7 @@
 //   b) 误判"端口空闲" → 服务端 bind 失败 → 界面是旧的。
 // 本脚本用**真占用一个端口**的方式复现这些场景。
 //
-// 用法：node tools\verify_port_broker.mjs   （**先退出 Akso Workbench**，见下方前置检查）
+// 用法：node tools\verify_port_broker.mjs   （**先退出 Workbench**，见下方前置检查）
 
 import fs from 'node:fs';
 import net from 'node:net';
@@ -59,8 +59,8 @@ const PORTS = broker.PORTS;
     console.error(
       `✗ 固定端口被占用，无法进行本项验收：${busy.join('、')}\n` +
       '  本脚本用"真占住固定端口"的方式验占用判定，故必须在没有工作台运行时跑。\n' +
-      '  请先退出 Akso Workbench（托盘右键退出，或 taskkill /IM AksoWorkbench.exe /F ' +
-      '/IM AksoServer.exe /F），再重跑本脚本。',
+      '  请先退出 Workbench（托盘右键退出，或 taskkill /IM Workbench.exe /F ' +
+      '/IM WorkbenchServer.exe /F），再重跑本脚本。',
     );
     process.exit(1);
   }
@@ -112,7 +112,7 @@ const PORTS = broker.PORTS;
   check('readPublished 读回同一份端口',
     back && back.ports.server === 18765 && back.ports.cdp === 18766 && back.ports.control === 18767,
     JSON.stringify(back));
-  check('公布文件带 app 标识（供他人核对身份）', back.app === 'AksoWorkbench', JSON.stringify(back));
+  check('公布文件带 app 标识（供他人核对身份）', back.app === 'Workbench', JSON.stringify(back));
   check('公布文件带 pid（供判定"写它的实例还活着吗"）', back.pid === process.pid);
   check('公布文件显式声明"端口固定"（供扩展/工具判断无需探测窗口）', back.fixed === true);
 
@@ -122,7 +122,7 @@ const PORTS = broker.PORTS;
 
 // ---------------------------------------------------------------- 4. 占用者身份判定
 // ⚠ 本节曾有一条用 `System`(pid 4) 当"活着的进程"来验"能识别出另一个实例"——
-// 那其实是**假阳性**：pid 4 是系统进程，不是 AksoWorkbench。Windows 的 pid 会被回收复用，
+// 那其实是**假阳性**：pid 4 是系统进程，不是 Workbench。Windows 的 pid 会被回收复用，
 // 只验"活着"就会永久误报、应用再也起不来（实测踩到过）。故判据已升级为
 // "活着 **且** 映像名是我们"，用例也据此重写。
 {
@@ -179,8 +179,8 @@ const PORTS = broker.PORTS;
   const foreign = broker.describeOccupant('cdp', null);
   check('非本实例占用时如实说明并给出排查命令',
     foreign.includes('18766') && foreign.includes('Get-NetTCPConnection'), foreign);
-  check('非本实例占用时不谎称"是 AksoWorkbench 实例"',
-    !foreign.includes('正在运行的 Akso Workbench 实例'), foreign);
+  check('非本实例占用时不谎称"是 Workbench 实例"',
+    !foreign.includes('正在运行的 Workbench 实例'), foreign);
 
   // 旧版本留下的顺延记录：如实报出来（那是用户要找的进程）
   const legacy = broker.describeOccupant('server', {

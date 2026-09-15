@@ -12,12 +12,12 @@
 | 项 | 值 |
 |---|---|
 | 引擎 | SQLite（WAL + 外键约束） |
-| 默认路径 | `%APPDATA%\AksoWorkbench\workbench.db`（Windows）/ `~/.akso-workbench/workbench.db` |
+| 默认路径 | `%APPDATA%\Workbench\workbench.db`（Windows）/ `~/.workbench/workbench.db` |
 | 覆盖 | 环境变量 `WORKBENCH_DB` / `MOGUL_DB`（见 [CONFIG.md](CONFIG.md) §2） |
 | 访问层 | `workbench/db.py` **唯一入口**（`query` / `query_one` / `execute`），单连接 + `threading.RLock` |
 | 连接参数 | `check_same_thread=False`、`row_factory=sqlite3.Row` |
 | PRAGMA | `journal_mode = WAL`、`foreign_keys = ON`（收拢在 `db._PRAGMAS`） |
-| 旧库接管 | `config.bootstrap_database()`：仅当 `workbench.db` **不存在**时，才从旧 mogul 库（`%APPDATA%\MogulWorkbench\mogul.db` 或 `com.example.mogulsimulator`）复制 |
+| 旧库接管 | `config.bootstrap_database()`：仅当 `workbench.db` **不存在**时，按序尝试 `%APPDATA%\AksoWorkbench\workbench.db`（**2026-09-16 更名前的数据目录**，优先级最高）→ `%APPDATA%\MogulWorkbench\mogul.db` → `com.example.mogulsimulator`。**复制不移动、不覆盖**，连 `-wal`/`-shm` 一起（见 [ADR-0013](adr/0013-brand-neutralization-workbench.md) §D-2） |
 
 **为什么是单连接**：交付形态是单机单人（Electron 壳 + 本机 sidecar，`uvicorn workers=1`），
 单写入进程下 MySQL 相对 SQLite WAL 没有优势。完整论证（含 Redis/MySQL 排除理由与换库触发器）见
@@ -333,7 +333,7 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 
 ```jsonc
 {
-  "format": "akso-workbench-snapshot",
+  "format": "workbench-snapshot",
   "version": 1,                  // 快照格式版本（与项目版本号无关）
   "generatedAt": 1789120603425,
   "snapshotId": "<sha256[:16]>",  // accounts + boxes 的规范 JSON 内容哈希
@@ -364,7 +364,7 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 
 ```jsonc
 {
-  "format": "akso-workbench-backup",
+  "format": "workbench-backup",
   "version": 1,
   "exportedAt": 1789120603425,
   "fernetKey": "<key>",          // ⚠ 密钥随文件走（原 cryptoSeed 语义）

@@ -3,7 +3,7 @@
 _2026-09-15 定稿。锚定 `workbench/plugin_api.py`（`ToolHub`）+ `workbench/plugins/` + `workbench/approvals.py`。_
 
 > **这份文档回答**：工作台三大业务（平台洞察 / 配置工厂 / 快捷登录）是怎么"作为工具插件
-> 挂到 Agent 上"的，以及你新增第四个插件时该动哪几个文件、哪些坑必须绕开。
+> 挂到 Agent 上"的，以及你新增一个插件时该动哪几个文件、哪些坑必须绕开。
 
 ## 0. 一页话结论
 
@@ -136,11 +136,16 @@ def register(hub: pa.ToolHub) -> None:
 
 ---
 
-## 3. 现有四个插件与 19 个工具
+## 3. 现有五个插件与 20 个工具
+
+> 口径：本表以 `get_hub()` 实测为准（`len(hub.plugins)` / `len(hub.specs())`）。
+> 2026-09-15 加自建 `web_search` 时漏改了本节标题与 `builtin` 之外的三处"四个插件"表述——
+> **加插件时请一并改本表与 `plugins/__init__.py` 的模块表**（同一天的两份事实）。
 
 | 插件 | 工具 | 风险 |
 |---|---|---|
 | `builtin`（通用） | `get_current_time` / `read_local_file` / `read_web_page` | read |
+| `websearch`（自建联网检索） | `web_search`（DeepSeek API **没有**内置联网搜索，见 [research](research/deepseek-api-capabilities.md) §2） | read |
 | `insight`（平台洞察） | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
 | `factory`（配置工厂） | `factory_validate_blueprint` / `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
 | | `factory_create` | **dangerous** |
@@ -312,7 +317,7 @@ def load_all(hub):
 |---|---|
 | `workbench/plugin_api.py` | 契约：`ToolHub` / `ToolSpec` / `Risk` / `ToolContext` / `Plugin` |
 | `workbench/approvals.py` | 确认门 + 审计写入器 + 人话摘要 |
-| `workbench/plugins/*.py` | 四个插件的实现 |
+| `workbench/plugins/*.py` | 五个插件的实现（`builtins` / `websearch` / `insight` / `factory` / `accounts`） |
 | `workbench/api/routes_agent.py` | HTTP 面：目录 / 调用 / 待确认 / 审计 / 自检 |
 | `workbench/harness/loop.py` | 对话循环：工具 schema 注入 + 事件流 + 审计 |
 | `tests/test_plugin_api.py` | 契约回归（装配隔离 / 分级 / 令牌一次性 / 审计脱敏） |

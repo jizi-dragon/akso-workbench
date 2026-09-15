@@ -19,7 +19,7 @@ const ASSET =
   'https://github.com/jizi-dragon/akso-mogul/releases/latest/download/latest.yml';
 
 function log(o) {
-  process.stdout.write(`AKSO_PROBE ${JSON.stringify(o)}\n`);
+  process.stdout.write(`WORKBENCH_PROBE ${JSON.stringify(o)}\n`);
 }
 
 async function tryFetch(label, timeoutMs) {

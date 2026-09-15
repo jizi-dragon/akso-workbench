@@ -437,7 +437,7 @@ def export_backup() -> dict[str, Any]:
     """
     key = get_setting(_KEY_SETTING) or ""
     return {
-        "format": "akso-workbench-backup",
+        "format": "workbench-backup",
         "version": 1,
         "exportedAt": now_ms(),
         "fernetKey": key,
@@ -471,8 +471,10 @@ def import_backup(data: dict[str, Any]) -> dict[str, Any]:
     """导入备份：用文件内密钥解密 → 本地密钥重加密 → 同站同名去重。"""
     from cryptography.fernet import Fernet as _F
 
-    if data.get("format") != "akso-workbench-backup" or data.get("version") != 1:
-        raise AccountError("不是有效的 Akso Workbench 备份文件（format/version 不符）")
+    # 更名兼容（2026-09-16）：`akso-workbench-backup` 是旧名，**导入端继续接受**——
+    # 用户手上已有的备份文件不能因为改名而变成"无效文件"。写出端只发新名。
+    if data.get("format") not in ("workbench-backup", "akso-workbench-backup") or data.get("version") != 1:
+        raise AccountError("不是有效的 Workbench 备份文件（format/version 不符）")
     file_key = str(data.get("fernetKey") or "")
     if not file_key:
         raise AccountError("备份缺少密钥（fernetKey）")

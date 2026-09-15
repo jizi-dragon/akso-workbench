@@ -21,7 +21,7 @@
 
 | 端口（固定） | 归属 | 用途 | 谁在监听 |
 |---|---|---|---|
-| **18765** | FastAPI 服务（uvicorn / `AksoServer.exe`） | 全部业务 HTTP + 静态页 + `/extension/*` + `/api/health` | sidecar 进程 |
+| **18765** | FastAPI 服务（uvicorn / `WorkbenchServer.exe`） | 全部业务 HTTP + 静态页 + `/extension/*` + `/api/health` | sidecar 进程 |
 | **18766** | Electron 内置 Chromium | CDP 调试端口，`browser_pool` `connect_over_cdp` 用 | Electron 主进程 |
 | **18767** | Electron 控制服务（Node `http`） | 会话窗开户/聚焦/关窗、更新动作、扩展安装引导、`/whoami` | Electron 主进程 |
 
@@ -31,13 +31,13 @@
 > 的排查命令）。见 [ADR-0012](adr/0012-fixed-ports.md) §D-2。
 >
 > 判"端口上是不是我们的服务"必须核对身份，不能只看"有人应答"：
-> 读 `desktop-ports.json`，或打 `GET /api/health` 看 `app` 字段（`AksoWorkbench` 才是我们）。
+> 读 `desktop-ports.json`，或打 `GET /api/health` 看 `app` 字段（`Workbench` 才是我们）。
 > 壳的就绪探测本身就会核对这个字段。
 
 | 进程 | 开发态 | 打包态 |
 |---|---|---|
-| 服务端入口 | `python -m workbench.main`（**自动开浏览器**） | `AksoServer.exe --server`（**不开浏览器**，日志落 `server.log`） |
-| 壳 | `cd desktop && npm start` | `AksoWorkbench.exe` |
+| 服务端入口 | `python -m workbench.main`（**自动开浏览器**） | `WorkbenchServer.exe --server`（**不开浏览器**，日志落 `server.log`） |
+| 壳 | `cd desktop && npm start` | `Workbench.exe` |
 | 数据库 | 同左（默认 `%APPDATA%`） | 同左 |
 
 > **扩展也不再是编译期常量**（2026-09-14 起）：它会先读缓存、再问壳的 `/whoami`（**核对 `app` 身份**）、
@@ -51,7 +51,7 @@
 
 | 变量 | 默认 | 改了会怎样 |
 |---|---|---|
-| `WORKBENCH_DATA` | `%APPDATA%\AksoWorkbench`（Win）/ `~/.akso-workbench` | 整个数据目录（DB、runtime、storage_state、token 缓存、`shell-state.json` 读取路径）一起迁移。**旧数据不会自动搬**——空目录意味着账号全空 |
+| `WORKBENCH_DATA` | `%APPDATA%\Workbench`（Win）/ `~/.workbench` | 整个数据目录（DB、runtime、storage_state、token 缓存、`shell-state.json` 读取路径）一起迁移。**旧数据不会自动搬**——空目录意味着账号全空。⚠️ 例外：2026-09-16 更名前的 `%APPDATA%\AksoWorkbench` 会在首次启动时被**自动接管**（复制、不覆盖现有库；见 [ADR-0013](adr/0013-brand-neutralization-workbench.md) §D-2） |
 | `MOGUL_DATA` | — | `WORKBENCH_DATA` 的兼容别名（**仅当 `WORKBENCH_DATA` 未设时生效**） |
 | `WORKBENCH_DB` | `<数据目录>/workbench.db` | 单文件指向。测试用（`conftest.py` 指向临时目录）。**指向不存在的路径会新建空库**，表现为「账号全没了」 |
 | `MOGUL_DB` | — | `WORKBENCH_DB` 的兼容别名 |
@@ -70,9 +70,11 @@
 
 | 变量 | 默认 | 改了会怎样 |
 |---|---|---|
-| `AKSO_PROXY` | — | **强制**使用该代理串（最高优先级）。用于「本机代理坏了但环境变量还在」的排查 |
-| `HTTPS_PROXY` / `HTTP_PROXY` | — | 同上（`AKSO_PROXY` 优先）。⚠️ 这两个是**通用变量名**，很多工具会设——壳会因此走代理 |
-| `AKSO_UPDATE_OVERRIDE` | — | 把 `electron-updater` 的 feed 换成 `generic` provider 指向的 URL（本地静态目录）。**只影响更新源，不改判定逻辑**；用于离线跑通整条更新链（`tools/verify_update_flow.py`） |
+| `WORKBENCH_PROXY` | — | **强制**使用该代理串（最高优先级）。用于「本机代理坏了但环境变量还在」的排查。**更名前的 `AKSO_PROXY` 仍然认**（用户手写的启动脚本不该因为改名失效，见 [ADR-0013](adr/0013-brand-neutralization-workbench.md) §D-3） |
+| `HTTPS_PROXY` / `HTTP_PROXY` | — | 同上（`WORKBENCH_PROXY` 优先）。⚠️ 这两个是**通用变量名**，很多工具会设——壳会因此走代理 |
+| `WORKBENCH_UPDATE_OVERRIDE` | — | 把 `electron-updater` 的 feed 换成 `generic` provider 指向的 URL（本地静态目录）。**只影响更新源，不改判定逻辑**；用于离线跑通整条更新链（`tools/verify_update_flow.py`）。更名前的 `AKSO_UPDATE_OVERRIDE` 仍然认 |
+| `WORKBENCH_NO_PROXY` | — | 发布脚本（`tools/publish_release.py`）的**强制直连**开关。更名前的 `AKSO_NO_PROXY` 仍然认；同族的 `AKSO_HTTPS_PROXY` 亦然 |
+| `WORKBENCH_AUTO_UPDATE` | **未设 = 关闭** | **应用会不会自己替换自己**（用户定稿 2026-09-15）。只认 `1`/`true`/`yes`/`on`；未设时不启动定时检查、不静默下载、不在退出时安装，托盘里的手动检查也只回一句「已关闭」。刻意做成**环境变量而非设置项**——它是部署期决定，放运行时设置里迟早被误点。开启方式：设 `WORKBENCH_AUTO_UPDATE=1` 后重启应用 |
 | `ELECTRON_MIRROR` | `https://npmmirror.com/mirrors/electron/`（`build.ps1` 设） | 只影响 electron 二进制下载源 |
 | `GH_TOKEN` | — | 发布到 GitHub Releases 时注入（`--publish always`）；不设则只能手工上传 |
 | `APPDATA` | 系统 | 壳的 `shell-state.js` / `ports.js` 用它解析数据目录，与 Python 侧 `config.DATA_DIR` 必须一致（`desktop-ports.json` 就落在这里的 `runtime/` 下） |
@@ -115,7 +117,7 @@
 | `defaultBoxName` | 字符串 | 空 → 显示「默认盒子」 | 只改默认盒的**显示名**（`box=''` 是存储值，不变） |
 | `ext_cmd_seq` | 整数字符串 | `0` | ⚠️ **指令序号游标**。清空/回退会让扩展持久游标把所有新指令 `seq > after` **永久吞掉**（0.2.4 实锤）。见 [API.md](API.md) §12.3 |
 | `ext_connected_once` | `"1"` | 无 | **一次性闩锁**：写入后账号中心的扩展安装提示条**永久静默**。清掉它会重新弹提示 |
-| `insight_workspace_root` | 绝对路径字符串 | 空 → `我的文档\AksoWorkbench\洞察` | **平台洞察产物的落盘根**（`<root>/<对象code>/<时间戳>/`）。改它只影响**后续**运行，已产出的目录不会被搬动；填相对路径/指向文件/无法创建时接口返回 400。清空即回默认 |
+| `insight_workspace_root` | 绝对路径字符串 | 空 → `我的文档\Workbench\洞察` | **平台洞察产物的落盘根**（`<root>/<对象code>/<时间戳>/`）。改它只影响**后续**运行，已产出的目录不会被搬动；填相对路径/指向文件/无法创建时接口返回 400。清空即回默认 |
 
 ### 3.2 已下线功能的残留键（勿读勿写）
 
@@ -208,7 +210,7 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 
 ## 6. 第四层：数据目录文件（文件级开关）
 
-根目录：`%APPDATA%\AksoWorkbench`（Windows）或 `WORKBENCH_DATA`。
+根目录：`%APPDATA%\Workbench`（Windows）或 `WORKBENCH_DATA`。
 
 | 路径 | 谁写 | 谁读 | 能否手改 |
 |---|---|---|---|
@@ -233,7 +235,7 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | 监听端口 | `WORKBENCH_PORT` + `main.js` 的 `SERVER_PORT` + 扩展 `sync.ts` 的 `DESKTOP` | 三处必须同步，否则扩展静默失联 |
 | 换模型 | 设置页（仅两个选项）或 DB `settings.model` | UI 无自定义输入框 |
 | 加一个新配置项 | 优先放 `settings` 表（`services/settings.py` 集中建模）；环境变量只用于**进程级**旋钮 | 加表列要新增迁移（[SCHEMA.md](SCHEMA.md) §6） |
-| 让更新走固定代理 | `%APPDATA%\AksoWorkbench\proxy.txt` 写一行代理串 | 空文件 = 强制直连 |
+| 让更新走固定代理 | `%APPDATA%\Workbench\proxy.txt` 写一行代理串 | 空文件 = 强制直连 |
 | 让某盒子不出现在轮盘 | `POST /api/accounts/boxes/disable` | 只影响轮盘，不影响账号管理 |
 | 清空某账号的免密登录态 | `POST /api/browser/forget/{account_id}` | 等价于删 `runtime/browser-states/<id>.json` |
 | 关掉「未检测到扩展」提示条 | 它已在首次连接后永久静默（`ext_connected_once`） | 若反复出现，说明该键未落库 → 查 DB 写权限 |

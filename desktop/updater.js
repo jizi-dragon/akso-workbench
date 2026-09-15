@@ -5,7 +5,7 @@
 // 1) 只在打包态启用：开发态（electron . 直跑）没有 app-update.yml，检查必然抛错；
 // 2) 静默下载不打断工作：下载完成不弹窗、不抢焦点，只改托盘提示与账号中心版本角标；
 //    真正安装（会关掉当前应用）交给「用户自己退出时」——即 autoInstallOnAppQuit；
-// 3) 退出时安装必须先断 sidecar：安装器要覆盖 AksoServer.exe / 扩展目录，
+// 3) 退出时安装必须先断 sidecar：安装器要覆盖 WorkbenchServer.exe / 扩展目录，
 //    服务进程还活着会锁文件（main.js 的 drain 回调 → updater.installOnExit）；
 // 4) 手工检查的结论必须落地（弹窗），自动检查失败则完全静默——后台噪音是负价值。
 //
@@ -121,11 +121,13 @@ function wire() {
   autoUpdater.allowPrerelease = false;
   autoUpdater.logger = null;                // 不额外引 electron-log
 
-  // 离线自测通道：AKSO_UPDATE_OVERRIDE=<url> 指向一个静态目录（内含 latest.yml 与安装包），
+  // 离线自测通道：WORKBENCH_UPDATE_OVERRIDE=<url> 指向一个静态目录（内含 latest.yml 与安装包），
   // 用 generic provider 代替 GitHub。为什么需要：验证"检查→下载→就绪→退出时安装"整条链
   // 若必须真的拉一次 350MB 安装包，成本高到没人会做；有了它，本地起个静态服务就能在几十秒内
   // 跑完整条链（tools/verify_update_flow.py 即基于此）。**只影响更新源，不改任何判定逻辑**。
-  const override = (process.env.AKSO_UPDATE_OVERRIDE || '').trim();
+  // AKSO_UPDATE_OVERRIDE = 更名前的变量名，继续认（见 docs/adr/0013）
+  const override = (process.env.WORKBENCH_UPDATE_OVERRIDE
+    || process.env.AKSO_UPDATE_OVERRIDE || '').trim();
   if (override) {
     try {
       autoUpdater.setFeedURL({ provider: 'generic', url: override });
@@ -174,7 +176,7 @@ function wire() {
         .showMessageBox({
           type: 'info',
           title: '更新已就绪',
-          message: `Akso Workbench v${S.availableVersion} 已下载完成`,
+          message: `Workbench v${S.availableVersion} 已下载完成`,
           detail: '将在你退出应用时自动安装（无需再管）。\n也可以现在就重启完成安装。',
           buttons: ['退出时安装（推荐）', '立即重启安装'],
           defaultId: 0,
@@ -257,7 +259,7 @@ async function checkAndReport() {
       message: '自动更新已关闭',
       detail: '本机把自动更新关掉了（应用不会自己检查/下载/替换版本）。\n\n'
         + '如需开启：设置环境变量 WORKBENCH_AUTO_UPDATE=1 后重启应用。\n'
-        + '手动更新：直接运行新下载的 AksoWorkbench-<版本>-setup.exe 覆盖安装。',
+        + '手动更新：直接运行新下载的 Workbench-<版本>-setup.exe 覆盖安装。',
       buttons: ['知道了'],
       noLink: true,
     });
@@ -284,7 +286,7 @@ async function checkAndReport() {
       type: 'info',
       title: '检查更新',
       message: '当前已是最新版本',
-      detail: `Akso Workbench v${app.getVersion()}`,
+      detail: `Workbench v${app.getVersion()}`,
       buttons: ['好'],
       noLink: true,
     });
@@ -317,7 +319,7 @@ async function checkAndReport() {
 
 /**
  * 触发「退出时安装」：调用方（main.js）必须已经停掉 sidecar —— 安装器要覆盖
- * AksoServer.exe 与扩展目录，服务进程持有文件句柄时覆盖会失败。
+ * WorkbenchServer.exe 与扩展目录，服务进程持有文件句柄时覆盖会失败。
  */
 function installOnExit() {
   if (!AUTO_UPDATE_ENABLED) return false;
