@@ -318,11 +318,12 @@ autologin, has_token, monitoring, monitor_log}`；
   令牌**一次性 / 5 分钟 / 绑定工具+参数指纹**（换个参数要重新确认）。
 - 对话链路等价走法：SSE `approval_required` 事件 → 同一套 `/pending/*` 端点 → 让模型重试同一次调用。
 
-**工具清单（19 个，按插件）**：
+**工具清单（20 个工具，按插件）**：
 
 | 插件 | 工具 | 风险 |
 |---|---|---|
 | `builtin` | `get_current_time` / `read_local_file` / `read_web_page` | read |
+| `websearch` | `web_search` | read |
 | `insight` | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
 | `factory` | `factory_validate_blueprint` / `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
 | `factory` | `factory_create` | **dangerous** |
@@ -335,6 +336,10 @@ autologin, has_token, monitoring, monitor_log}`；
 > `ToolHub`，旧工具名不再存在（`read_config` → `insight_read_config`，
 > `run_insight` → `insight_run`，`login_platform` → `accounts_login`，
 > `browser_status` → `accounts_browser_sessions`）。
+
+> **本表只列 core（产品自带）**。用户从共享库安装的 Skill 会出现在同一个
+> `GET /api/agent/tools` 响应里（带 `origin:"installed"`），但**不进本表**——
+> 文档承诺的是"产品自带多少工具"，与用户装了什么无关。两者的分层见 §18。
 
 ## 11. 执行面 `/extension`（`routes_extension.py`）
 
@@ -479,8 +484,13 @@ autologin, has_token, monitoring, monitor_log}`；
 | GET | `/static/*` | `StaticFiles` 挂载 `workbench/static/` |
 
 页面：`index.html`（对话 + 设置）、`pages/insight.html`、`pages/factory.html`、
-`pages/accounts.html`、`pages/wheel-picker.html`（轮盘，`?transparent=1` 供壳的透明窗加载）、
+`pages/accounts.html`、`pages/sandbox.html`（沙箱：策略 / 状态 / 执行审计 / 自检）、
+`pages/skills.html`（Skill 共享库：上传 / 安装 / 卸载 / 停用）、
+`pages/wheel-picker.html`（轮盘，`?transparent=1` 供壳的透明窗加载）、
 `blank.html`（壳的会话窗标记页，`?w=<windowId>`）。
+
+后两页在导航的「**Agent 能力**」分组下（`sandbox.html` / `skills.html`），
+对应下面的 §18。
 
 ## 16. 壳控制服务（Electron 主进程内，非 FastAPI；基准端口 `18767`，可顺延）
 
@@ -529,3 +539,73 @@ autologin, has_token, monitoring, monitor_log}`；
 
 > 不要把探测打到有副作用的端点上——壳每 300ms 探一次，若写库会把"扩展开没开过"的判定污染掉
 > （`tests/test_ports_contract.py` 有一条专门断言本端点无副作用）。
+
+## 18. Agent 能力面：沙箱与 Skill 共享库（`routes_sandbox.py` / `routes_skills.py`）
+
+这两族端点对应导航里的「**Agent 能力**」分组，回答的是**"我的 Agent 现在能做什么、
+它做过的（上传来的）代码跑成什么样"**——与 §10 的"产品自带工具"互补：
+
+| 端点族 | 回答什么 | 谁在变 |
+|---|---|---|
+| `/api/agent/*`（§10） | **产品自带**能力有哪些（`origin=core`） | 随版本走 |
+| `/api/skills/*` | **我上传/安装**了哪些能力（`origin=installed`） | 用户随时改 |
+| `/api/sandbox/*` | 不受信代码**在哪跑、跑过什么、拦住了什么** | 每次执行 |
+
+两边读的是**同一个** `ToolHub`（§10 的单一事实源没变），只是按 `origin` 分开呈现。
+分开的理由是硬的：`tools/gen_tools_doc.py` 断言"文档里的 N 个工具 == 运行期中枢 core"，
+而"用户装了什么"不可能写进文档。
+
+### 18.1 沙箱 `/api/sandbox`（`routes_sandbox.py`）
+
+| 方法 | 路径 | 请求 | 说明 |
+|---|---|---|---|
+| GET | `/api/sandbox/policies` | — | 具名策略及指纹：`{policies:[{name,allow_network,allow_subprocesses,timeout_s,fingerprint,executables…}], default}` |
+| GET | `/api/sandbox/status` | — | 沙箱根、活跃作业数、上限、最近一次执行 |
+| GET | `/api/sandbox/runs?limit=50` | — | 执行审计：策略、退出码、耗时、**是否树杀**、截断标记（上限 500） |
+| GET | `/api/sandbox/selfcheck` | — | 平台能力探测（作业对象可用性、解释器、根目录可写） |
+
+- **刻意没有"通用执行"端点**：`POST /api/sandbox/exec` 这类接口等于给本机开一个
+  "用 HTTP 跑任意命令"的洞（本仓服务端**无认证**，仅靠 127.0.0.1 收敛，见 §0）。
+  要跑代码请走 Skill（§18.2）——那里有准入扫描、固定策略与确认门三道。
+- 策略是**具名白名单**，请求里传策略名而不是参数；未知策略名一律拒，不做"就近取默认"。
+- 执行审计与 §10 的工具审计、§18.2 的 Skill 审计是**三条独立的流水**：
+  这条记"进程怎么跑的"，不记"谁批准了什么"。
+
+### 18.2 Skill 共享库 `/api/skills`（`routes_skills.py`）
+
+| 方法 | 路径 | 请求 | 说明 |
+|---|---|---|---|
+| GET | `/api/skills/summary` | — | `{library[], installed[], counts{library,installed,core_tools,installed_tools}, layout, boundary}` |
+| POST | `/api/skills/upload?allow_warn=false` | multipart `file`（ZIP ≤10 MB） | 成功 `{ok,capability_id,version,verdict,tools[],findings[]}`；失败 **400** + `{detail:{...}}` |
+| POST | `/api/skills/install` | `{capability_id, version?}` | `{capability_id, version, tools[]}`；版本不存在 → 400，形状非法 → 409 |
+| POST | `/api/skills/uninstall` | `{capability_id}` | `{capability_id, removed_plugins[], library_intact:true}` |
+| POST | `/api/skills/delete` | `{capability_id}` | 从**共享库彻底删除**（含所有版本）；已安装则先卸载；不存在 → 404 |
+| POST | `/api/skills/plugins/{plugin_id}/enabled?enabled=true` | — | 启用/禁用任意插件（**含核心插件**）；不存在 → 404 |
+| GET | `/api/skills/audit?limit=50` | — | 能力供给链留痕（上传/安装/卸载/删除，上限 500） |
+| GET | `/api/skills/library/raw/{capability_id}/{version}/{name}` | — | 读库内文本文件，**只允许 `SKILL.md` / `manifest.json` / `scan.json`** |
+
+**上传的两个刻意设计**：
+
+1. **扫描到高危模式不会"点一下上传就入库"**：第一次返回 `verdict:"warn"` + `findings`，
+   **不落库**；调用方看过之后带 `allow_warn=true` 重投才收（`reject` 的东西永远进不来）。
+   理由：准入扫描是**闸门**，不是安全边界（见 [ADR-0014](adr/0014-sandbox-for-untrusted-code.md) §D-1），
+   而闸门要生效就必须卡在"人点确认"这一步上。
+2. **读库文件只开白名单三个名字**，不做通用文件读取——那会变成"用 URL 探数据目录"的洞
+   （服务端无认证；这条与 §12.4 的产物路径守卫同源）。
+
+**工具形态与风险**（`SKILL.md` 里二选一，同时写在上传期就被拒）：
+
+| 形态 | 字段 | 执行 | 风险 |
+|---|---|---|---|
+| 声明式 | `wraps: <已有工具名>` | 转发给那个工具，**走同一个 `hub.execute`**（同一套确认门与审计） | 被包装工具与声明值的**较严**者 |
+| 脚本式 | `script: scripts/x.py` | 在**沙箱子进程**里跑包内 Python 脚本 | **≥ `write`**（只升不降，故每次调用都要过确认门） |
+
+脚本式的入口约定（stdin 收 JSON 入参 → stdout 出 `{"ok":…}` → stderr 只进日志 →
+**退出码优先于 stdout**）与沙箱策略口径见 [PLUGIN-SDK.md](PLUGIN-SDK.md) §1。
+
+**三条硬性质**（都有回归断言）：
+
+- **安装后工具立刻对模型可见**，卸载后**立刻消失**，且 core 工具数不变
+  （这正是 §10 那条文档门禁能继续成立的原因）；
+- **卸载 ≠ 删除**：卸载只断 `current` 指针并摘插件，**共享库里的版本一个都不删**；
+- **核心插件只能禁用、不能卸载**（`capability_id` 为空串的插件会被守卫直接拒）。

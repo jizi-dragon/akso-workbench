@@ -5,7 +5,7 @@ _由 learn-codebase 技能生成；**2026-09-16 复核**，锚定 `c8753ce`（v0
 > **修订轨迹**：`1e82439`（v0.1，pywebview 壳，已被 git 历史取代）→ `2e725a5`（v0.2.2，Electron sidecar 改造）→
 > `d0efa84`（v0.3.5，2026-09-13 全面重写）→ **`c8753ce`（v0.3.12，2026-09-16 复核）。**
 > 上一版锚定 v0.3.5：正文的插件层是新的，但**页头与 Summary 的版本号、代码体量口径、插件与迁移计数**三处已过期。
-> 本轮按代码实测逐条重校（口径见下）：**五插件 / 20 工具**（原写四插件 / 19 工具）、**迁移 1–18**（原写 1–16）、
+> 本轮按代码实测逐条重校（口径见下）：**五插件 / 20 工具**（原写四插件 / 19 工具）、**迁移 1–20**（原写 1–16）、
 > 行数口径全面上修。失效的历史架构文档见 [docs/archive/](archive/README.md)。
 >
 > **2026-09-16 品牌中立化**：产品名 `AksoWorkbench` → **`Workbench`**（包名 `workbench`、数据目录
@@ -13,6 +13,11 @@ _由 learn-codebase 技能生成；**2026-09-16 复核**，锚定 `c8753ce`（v0
 > `akso-cc` / `akso-auto` / `akso-mogul` / `services/egmp`**——那些是上游项目名与平台适配层，**刻意保留**；
 > 也会看到少量 `AKSO_*` / `akso-workbench-*` 字面量，那是**兼容读取**（旧 env / 旧备份格式 / 旧快照格式）。
 > 判断标准与"刻意不改"清单见 [ADR-0013](adr/0013-brand-neutralization-workbench.md)。
+>
+> **2026-09-17 增补（最新）**：新增 **`workbench/sandbox/`**（不受信代码的执行底座，
+> [ADR-0014](adr/0014-sandbox-for-untrusted-code.md)）与 **`workbench/skills/`**
+> （Skill 共享库与安装，含**脚本式 Skill** 的沙箱执行）；迁移 **19（`sandbox_run`）/ 20（`skill_audit`）**
+> 随之落地，本文件的模块表、迁移账、行数口径与端点计数已同步。
 >
 > **承接说明**：`AGENT.md`（原维护者接手手册）已于 2026-09-13 因整体滞后被删除。其可用内容按变更频率拆分承接：
 > §2 代码地图 / §3 六条红线 → 本文件；§4 已知问题台账 → 本文件「风险与毛边」（**编号 C/S/T/B/D 原样保留**）；
@@ -33,11 +38,11 @@ _由 learn-codebase 技能生成；**2026-09-16 复核**，锚定 `c8753ce`（v0
 
 ## Tech stack（技术栈）
 
-- **语言：** Python ≥3.12（服务端全部逻辑，`workbench/**.py` **79 文件 14,175 行**）；TypeScript（扩展，`extensions/quick-login/**/*.ts` **24 文件 5,674 行**，不含 `node_modules`/`dist`）；JavaScript（Electron 主进程，`desktop/*.js` **5 文件 1,540 行**）；原生 ES 模块 + CSS（前端 `workbench/static` **21 个 js/css 文件 7,026 行**，另有 6 个 html + 2 个字体，**无框架、无构建步骤**）
-  > 口径说明：本表行数为**物理行数**（含空行），实测于 2026-09-16 `c8753ce`。用 `Get-Content \| Measure-Object -Line` 统计会漏掉空行（例如 `client.py` 会得 153 而非 197），已删除的原 `AGENT.md` 里的 8,167 行即为此类偏低的计数。**上一版（v0.3.5）的 70 文件 10,172 行 / 24 前端文件 5,947 行 / 4 个壳文件 1,006 行均已过期**——增量主要来自插件层（`plugin_api` 646 + `approvals` 350 + `cache` 287 + `plugins/` 1,374）与新增的前端 `chat-tools.js` / `settings.js`。
+- **语言：** Python ≥3.12（服务端全部逻辑，`workbench/**.py` **94 文件 17,850 行**）；TypeScript（扩展，`extensions/quick-login/**/*.ts` **24 文件 5,674 行**，不含 `node_modules`/`dist`）；JavaScript（Electron 主进程，`desktop/*.js` **5 文件 1,540 行**）；原生 ES 模块 + CSS（前端 `workbench/static` **23 个 js/css 文件 7,466 行**，另有 8 个 html + 2 个字体，**无框架、无构建步骤**）
+  > 口径说明：本表行数为**物理行数**（含空行），`workbench/**` 实测于 2026-09-17（沙箱层与 Skill 共享库落地后）。用 `Get-Content \| Measure-Object -Line` 统计会漏掉空行（例如 `client.py` 会得 153 而非 197），已删除的原 `AGENT.md` 里的 8,167 行即为此类偏低的计数。**上一版（v0.3.5）的 70 文件 10,172 行 / 24 前端文件 5,947 行 / 4 个壳文件 1,006 行均已过期**——增量主要来自插件层（`plugin_api` 646 + `approvals` 350 + `cache` 287 + `plugins/` 1,374）、**不受信代码执行层（`sandbox/` 1,150 + `skills/` 1,775）**，以及新增的前端 `chat-tools.js` / `settings.js` / `sandbox.js` / `skills.js`。
 - **框架 / 运行时：** FastAPI + uvicorn[standard]（REST + SSE + 静态托管）；pydantic v2；**Electron 33** 桌面壳（窗口 / 托盘 / 全局热键 / 更新器 / 出网通道 / sidecar 生命周期）
 - **构建 / 包管理：** uv（`uv.lock`，默认清华镜像 `pyproject.toml:37-39`）；hatchling；ruff（`E4/E7/E9/F/I/B`，line-length 110）；**PyInstaller**（`build` extra，`workbench/server.spec` → `dist/WorkbenchServer/` onedir）；**electron-builder → NSIS**（`tools/build.ps1` 一键出安装包）；esbuild 0.24（扩展打包）；版本真源 `pyproject.toml`
-- **存储 / 外部服务：** SQLite（WAL，**迁移 1–18**）；Playwright chromium；cryptography Fernet；DeepSeek API；networkx；GitHub Releases（electron-updater）
+- **存储 / 外部服务：** SQLite（WAL，**迁移 1–20**）；Playwright chromium；cryptography Fernet；DeepSeek API；networkx；GitHub Releases（electron-updater）
 - **端口：** **固定常量** 18765 服务 · 18766 CDP · 18767 壳控制服务，**不顺延**（[ADR-0012](adr/0012-fixed-ports.md) 取代
   [ADR-0011](adr/0011-port-and-session-negotiation.md) §D-1）。被占则报错退出并说清占用者是谁；
   仍经环境变量下发 + 公布到 `runtime/desktop-ports.json` + 由 `/whoami` 答给扩展（那三条是**身份**手段，与顺延无关）。
@@ -107,16 +112,18 @@ db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 | --- | --- |
 | `workbench/server_entry.py` | 冻结态入口（PyInstaller 顶层脚本，只用绝对导入——`verify_packaging.py` P2 强制） |
 | `workbench/main.py` | Web 模式入口（13 行，起 uvicorn + 开浏览器） |
-| `workbench/api/__init__.py` | `create_app`：fork 路由显式注册 + `_optional_routers` 容错注册 9 个新域 + lifespan(`db.connect`) + 静态托管 |
+| `workbench/api/__init__.py` | `create_app`：fork 路由显式注册 + `_optional_routers` 容错注册 11 个新域（含 `sandbox` / `skills`）+ lifespan(`db.connect` + 沙箱/技能装配) + 静态托管 |
 | `workbench/api/routes_extension.py` | **执行面蓝图**（399 行）：`/snapshot` `/commands`(长轮询) `/ack` `/state` `/health` `/launch-chrome`；指令队列内存态，`ext_cmd_seq` 落 settings |
 | `workbench/services/browser_pool.py` | **专职工作线程**（Playwright sync 单线程单实例约束；操作走队列作业）；headful/headless 双模式；storage_state 持久化；`heal_count≤2` 自愈；CDP 挂接内置 Chromium |
 | `workbench/services/accounts.py` | Fernet 密钥管理、环境/账号/盒子 CRUD、分配池（config/monitor）、备份导出导入（`fernetKey` 随文件下发） |
 | `workbench/services/autologin.py` | 节奏门控五重门（MAIN world JS 注入 + TokenCapture JWT） |
 | `workbench/services/egmp/` | 平台内核：`client`（code==0 信封 / paged_post / 55min token 缓存）、`insight`、`writers`、`orchestrate`、`monitor` |
-| `workbench/db.py` | SQLite + `MIGRATIONS`（**1–18**；13 = `add_created_at_indexes`，14 = 洞察工作区与覆盖度，15 = 模块 id 数据改写，16 = `tool_plugin_layer`（`agent_audit` 加列 + `pending_action`），17 = `agent_cache_layer`，18 = `rename_factory_module_id`）；迁移**只增不改** |
-| `workbench/plugin_api.py` | **插件 SDK 契约**：`ToolHub`（工具注册表/执行器）+ `ToolSpec`（含 `Risk` 分级）+ `ToolContext` + `Plugin`。零领域知识（不 import 插件、不 import `services/egmp`、连 `db` 都不 import） |
+| `workbench/db.py` | SQLite + `MIGRATIONS`（**1–20**；13 = `add_created_at_indexes`，14 = 洞察工作区与覆盖度，15 = 模块 id 数据改写，16 = `tool_plugin_layer`（`agent_audit` 加列 + `pending_action`），17 = `agent_cache_layer`，18 = `rename_factory_module_id`，19 = `sandbox_run`（沙箱执行审计），20 = `skill_audit`（能力供给链留痕））；迁移**只增不改** |
+| `workbench/plugin_api.py` | **插件 SDK 契约**：`ToolHub`（工具注册表/执行器，**分 core / installed 两层**）+ `ToolSpec`（含 `Risk` 分级）+ `ToolContext` + `Plugin`（含 `PluginOrigin`）。零领域知识（不 import 插件、不 import `services/egmp`、连 `db` 都不 import） |
 | `workbench/approvals.py` | **危险操作确认门**（单次令牌 / 5 分钟 / 参数指纹）+ **审计写入器**（唯一入口）+ 人话摘要 |
 | `workbench/plugins/` | 五个工具插件（`builtins` / `websearch` / `insight` / `factory` / `accounts`，共 20 个工具；风险分布：17 read + 2 write + 1 dangerous）。`plugins/__init__.py::_MODULES` 是显式清单，坏插件隔离成 failure |
+| `workbench/sandbox/` | **不受信代码的执行底座**（[ADR-0014](adr/0014-sandbox-for-untrusted-code.md)，6 文件 ≈1150 行）：`layout`（沙箱根/运行目录）、`policy`（**策略 + 环境白名单 + 敏感路径**）、`job`（Windows Job Object 进程树终止）、`runner`（`ExecRequest`/`run`/`run_async`）、`audit`。**不是安全边界**，是限损层（D-3） |
+| `workbench/skills/` | **Skill 共享库与安装**（7 文件 ≈1775 行）：`layout`（库/已安装目录，**不入 git**）、`manifest`（`SKILL.md` 契约，两种工具形态）、`security`（ZIP 准入 + 可疑模式扫描）、`library`（上传/安装/卸载/删除）、`script_runner`（脚本式工具的入口约定）、`audit`。共享库与已安装目录都在 `<DATA_DIR>/skills/` |
 | `workbench/harness/` | 对话 Agent 循环（`loop.py` 事件流）。⚠️ `harness/tools.py` **已降级为兼容垫片**（只剩再导出 + `default_registry()` 转发 `get_hub()`），工具定义全部搬进 `plugins/` |
 | `extensions/quick-login/` | MV3 + TS 扩展源（npm workspace，单包 `packages/extension`）：`src/background/core/parallel-session.ts` 1,606 行（≈28% TS）、`src/content/shield-main.ts` 806 行（MAIN world，平面 1/4/5/6）、`src/content/auto-login.ts` 377 行 |
 | `tools/build.ps1` | 六步打包：bump → 扩展重建 → `uv sync` → release commit/push → PyInstaller → electron-builder NSIS |
@@ -152,10 +159,12 @@ db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 .\.venv\Scripts\python.exe -m workbench.main      # Web 模式
 cd desktop; npm ci; npm start                     # Electron 开发态
 
-# 测试 / 体检（2026-09-17 合并后实测，见下方"验收基线实测"）
-.\.venv\Scripts\python.exe -m pytest              # 382 passed（全绿）
+# 测试 / 体检（2026-09-17 实测，见下方"验收基线实测"）
+.\.venv\Scripts\python.exe -m pytest              # 466 passed（默认跳过 slow 层）
+.\.venv\Scripts\python.exe -m pytest -o addopts=""     # 475 passed（含 slow 层；见下方"两层测试"）
+.\.venv\Scripts\python.exe -m pytest -m slow      # 9 passed（只跑慢层：真起子进程/浏览器那批）
 .\.venv\Scripts\python.exe tools\verify_packaging.py   # 9/9（P4b 需先重建扩展，见下）
-.\.venv\Scripts\python.exe tools\gen_tools_doc.py      # PASS（5 插件 / 20 工具）
+.\.venv\Scripts\python.exe tools\gen_tools_doc.py      # PASS（5 插件 / 20 工具 = core）
 .\.venv\Scripts\uv.exe tool run ruff check .      # All checks passed（venv 内没有 ruff.exe）
 
 # 扩展 / 前端（改扩展时）
@@ -209,9 +218,13 @@ powershell -File tools\build.ps1
 > **口径提醒（真踩过）**：`pyproject.toml` 里 `addopts = "-q"`；**若命令行再加一个 `-q` 会进入 ultra-quiet 模式，
 > 连 `=== 378 passed ===` 汇总行都不打印**，只剩进度点阵，很容易误判成"没跑出结果"。
 > 想看到汇总行用：`python -m pytest -o addopts=""`。
+> **另注**：`addopts` 里还有 `-m 'not slow'`——**默认不跑慢层**（真起子进程/浏览器那批）。
+> 完整跑一遍用 `python -m pytest -o addopts=""`；只跑慢层用 `-m slow`（没有任何慢层用例时 pytest 以 **exit 5** 退出，这是 CI 刻意的守卫，不是故障）。
 
-**代码量实测（2026-09-17）**：`workbench/**.py` **79 文件 14,284 物理行**；`workbench/static` 的 js+css **7,039 行**；
-HTTP 端点 **84 个**（`@router.` 计数）。**这些数字随代码变动，引用前先复核**（`docs/` 里凡写"19 工具 / 4 插件 / 迁移 1–13"的段落均已过期）。
+**代码量实测（2026-09-17）**：`workbench/**.py` **94 文件 17,850 物理行**（含新增的 `sandbox/` 6 文件 1,150 行与 `skills/` 7 文件 1,775 行）；
+`workbench/static` 的 js+css **23 文件 7,466 行**（8 个 html）；
+HTTP 端点 **97 个**（`@router.` 计数）。
+**这些数字随代码变动，引用前先复核**（`docs/` 里凡写"19 工具 / 4 插件 / 迁移 1–13"的段落均已过期）。
 
 ### 历史验收基线（2026-09-13，本机 `d0efa84`）— 保留以留痕
 

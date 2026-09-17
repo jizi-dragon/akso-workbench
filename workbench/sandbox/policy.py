@@ -148,11 +148,17 @@ def looks_like_secret(name: str) -> bool:
                ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "COOKIE", "AUTH"))
 
 
-def build_env(policy: SandboxPolicy, base: dict[str, str] | None = None) -> dict[str, str]:
+def build_env(policy: SandboxPolicy, base: dict[str, str] | None = None,
+              extra: dict[str, str] | None = None) -> dict[str, str]:
     """按策略从宿主环境筛出子进程可见的环境变量。
 
     **这是本模块最重要的一行语义**：`proc.py` 当年写的是 `dict(os.environ)`（全量继承），
     于是子进程默认拿得到宿主的一切。这里反过来——**默认什么都不给，只给白名单**。
+
+    `extra` 是**调用方（我们自己代码）**额外注入的固定值（如 `WORKBENCH_SKILL_ID`），
+    叠加在白名单之后。它不绕过白名单——宿主环境仍然是被筛过的，
+    `extra` 只补几个我们自己算出来的常量（`script_runner` 用它是为了让脚本知道
+    "我是哪个 Skill、哪个工具、包在哪"，否则一个包里的多个脚本没法共享逻辑）。
     """
     src = os.environ if base is None else base
     allowed = {k: v for k, v in src.items()
@@ -162,6 +168,8 @@ def build_env(policy: SandboxPolicy, base: dict[str, str] | None = None) -> dict
             if candidate in src:
                 allowed[key] = src[candidate]
                 break
+    if extra:
+        allowed.update({str(k): str(v) for k, v in extra.items()})
     return allowed
 
 

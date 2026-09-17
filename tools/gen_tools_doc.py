@@ -46,6 +46,16 @@ RISK_ORDER = {"read": 0, "write": 1, "dangerous": 2}
 RISK_LABEL = {"read": "read", "write": "**write**", "dangerous": "**dangerous**"}
 
 
+def _core(catalog: dict, key: str) -> list[dict]:
+    """catalog 里 `origin=core` 的那部分。
+
+    存在理由只有一个：**用户装的 Skill 会不会把文档门禁弄红**。
+    `catalog()` 返回"当前注册的一切"，而本文档只承诺产品自带的能力——
+    过滤集中在函数里，免得每处各写一遍条件（`render` 与计数都得用同一口径）。
+    """
+    return [item for item in catalog.get(key) or [] if item.get("origin") == "core"]
+
+
 def _first_sentence(text: str, limit: int = 96) -> str:
     """工具 description 取首句并限长——清单要能一眼扫，不是文档搬运。"""
     flat = " ".join((text or "").split())
@@ -64,8 +74,16 @@ def _timeout(hub: ToolHub, name: str) -> str:
 
 
 def render(hub: ToolHub, catalog: dict) -> str:
-    plugins = catalog["plugins"]
-    tools = sorted(catalog["tools"], key=lambda t: (t["plugin"], RISK_ORDER.get(t["risk"], 9), t["name"]))
+    """渲染清单块。**只渲染 core（`origin=core`）**。
+
+    过滤不是多余的：`catalog()` 返回的是"当前注册的一切"，用户装了 Skill 之后
+    里面就有 installed 的工具。本文档承诺的是**产品自带**能力（与用户装了什么无关），
+    所以这里显式按 origin 过滤——否则**某台装过 Skill 的机器跑门禁会红**，
+    而红的原因跟文档对不对毫无关系。installed 的数量由 `/api/skills/summary` 实时回答。
+    """
+    plugins = _core(catalog, "plugins")
+    tools = sorted(_core(catalog, "tools"),
+                   key=lambda t: (t["plugin"], RISK_ORDER.get(t["risk"], 9), t["name"]))
     failures = catalog.get("failures") or []
     counts = {"read": 0, "write": 0, "dangerous": 0}
     for tool in tools:
@@ -162,7 +180,7 @@ def main() -> int:
         DOC.write_text(splice_block(text, expected), encoding="utf-8", newline="")
         print(
             f"✓ 已重写 {DOC.relative_to(ROOT)} 的清单块"
-            f"（{len(catalog['plugins'])} 插件 / {len(catalog['tools'])} 工具）"
+            f"（core {len(_core(catalog, 'plugins'))} 插件 / {len(_core(catalog, 'tools'))} 工具）"
         )
         return 0
 
@@ -172,7 +190,9 @@ def main() -> int:
             f"{DOC.relative_to(ROOT)} 的清单块与运行期中枢**不一致**"
             "（跑 `python tools/gen_tools_doc.py --write` 重生成）"
         )
-    problems += _claim_problems(len(catalog["plugins"]), len(catalog["tools"]))
+    core_plugins = len(_core(catalog, "plugins"))
+    core_tools = len(_core(catalog, "tools"))
+    problems += _claim_problems(core_plugins, core_tools)
     missing = verify_required_tools(hub, REQUIRED_TOOLS)
     if missing:
         problems.append(f"REQUIRED_TOOLS 缺失：{missing}（某个插件没装配起来）")
@@ -184,8 +204,8 @@ def main() -> int:
         return 1
 
     print(
-        f"TOOLS_DOC_CHECKS: PASS（{len(catalog['plugins'])} 插件 / {len(catalog['tools'])} 工具；"
-        "文档数字与运行期一致）"
+        f"TOOLS_DOC_CHECKS: PASS（{core_plugins} 插件 / {core_tools} 工具 = core；"
+        f"另有 installed {catalog['counts']['installed_tools']} 个工具不计入文档）"
     )
     return 0
 

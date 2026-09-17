@@ -42,8 +42,56 @@ def test_count_claims_in_active_docs_match_runtime() -> None:
     from workbench.plugin_api import get_hub
 
     catalog = get_hub().catalog()
-    problems = gen._claim_problems(len(catalog["plugins"]), len(catalog["tools"]))
+    # **只比 core**：文档承诺的是产品自带能力，与用户装了什么无关（见 gen._core 的说明）
+    problems = gen._claim_problems(len(gen._core(catalog, "plugins")),
+                                   len(gen._core(catalog, "tools")))
     assert not problems, "文档里的工具/插件数字与实际不符：" + "；".join(problems)
+
+
+def test_installed_skill_never_turns_the_doc_gate_red() -> None:
+    """**目录里多出一个自装 Skill，不该让文档门禁红。**
+
+    这条是那个口径的回归：`catalog()` 返回"当前注册的一切"，而 `render()` 与数字核对
+    只许看 `origin=core`。不这么分的话，**任何装过 Skill 的机器跑门禁都会红**，
+    而红的原因与文档对不对毫无关系——那种门禁会很快被人无视，比没有更糟。
+    """
+    gen = _load_generator()
+    from pydantic import BaseModel
+
+    from workbench.plugin_api import (
+        Plugin,
+        PluginOrigin,
+        Risk,
+        ToolSpec,
+        get_hub,
+        reset_hub,
+    )
+
+    async def _noop(args, ctx):  # pragma: no cover —— 只为凑一个可注册的工具
+        return "{}"
+
+    class _Args(BaseModel):
+        x: str = ""
+
+    try:
+        hub = get_hub()
+        before_block = gen.render(hub, hub.catalog())
+        hub.register_installed(Plugin(
+            id="skill:doc-gate-probe", title="探针", version="1.0.0",
+            tools=[ToolSpec(name="doc_gate_probe", description="探针工具",
+                            args_model=_Args, handler=_noop, risk=Risk.WRITE)],
+            origin=PluginOrigin.INSTALLED, capability_id="doc-gate-probe", removable=True,
+        ))
+        after_catalog = hub.catalog()
+        assert gen.render(hub, after_catalog) == before_block, (
+            "装了 Skill 之后 TOOLS.md 的清单块变了——文档只该反映 core"
+        )
+        problems = gen._claim_problems(len(gen._core(after_catalog, "plugins")),
+                                       len(gen._core(after_catalog, "tools")))
+        assert not problems, "自装 Skill 让文档数字核对失败了：" + "；".join(problems)
+    finally:
+        reset_hub()
+
 
 
 def test_tools_doc_is_idempotent() -> None:

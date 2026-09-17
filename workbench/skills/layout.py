@@ -12,11 +12,19 @@ Skill 是**运行期资产**：同事上传的、来自客户现场的、可能�
         <capability_id>/
           <version>/                 ← 保留历史版本：出问题能回滚，也能对比
             SKILL.md                 ← 原文（人可读）
-            source.zip               ← 上传原件（可复核、可重新解包）
             manifest.json            ← 解析后的规范化清单（解析结果只算一次）
+            source.zip               ← 上传原件（可复核）
+            scripts/…                ← **解压出来的包内容**（脚本式工具跑的就是这份）
       installed/                     ← 已安装（真正生效的那些）
         <capability_id>/
           current                    ← 指向某个版本的指针文件（写纯文本，不用 symlink）
+
+**版本目录是"可执行的权威副本"**：脚本式工具的 handler 从 `library/<id>/<version>/`
+取包、整体复制进沙箱运行目录再执行（`script_runner.prepare_run_dir`）。
+所以解压出来的文件**必须**在库目录里——只存 `source.zip` 的话，库里的包是死的。
+
+`.incoming-*` 是解压暂存目录（`staging_dir`），**不是版本**：`library_versions()`
+会跳过点开头的目录，半成品不会被列成"可安装的版本"。
 
 ## 与"云服务器上的共享库"的关系
 
@@ -29,6 +37,7 @@ Skill 是**运行期资产**：同事上传的、来自客户现场的、可能�
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -68,6 +77,38 @@ def library_version_dir(capability_id: str, version: str, *, create: bool = True
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+#: 解压暂存目录的前缀。**点开头**，且 `library_versions` 会跳过点开头的目录——
+#: 半成品绝不能被当成一个可安装的版本。
+STAGING_PREFIX = ".incoming-"
+
+
+def staging_dir(parent: Path) -> Path:
+    """在 `parent` 下取一个解压暂存目录（与目标同卷，`rename` 才是原子的）。"""
+    return parent / f"{STAGING_PREFIX}{os.getpid()}"
+
+
+def library_versions(capability_id: str) -> list[str]:
+    """库里某个能力的所有版本，按版本号排序。**唯一的枚举入口。**
+
+    两个调用点（`list_library` / `install`）原本各写一份 `iterdir()`，
+    暂存目录一旦漏过滤就会出现"装到一半的版本出现在列表里"。
+    收成一个函数，过滤规则只有一处。
+    """
+    root = LIBRARY_DIR / capability_id
+    if not root.is_dir():
+        return []
+    names = [p.name for p in root.iterdir()
+             if p.is_dir() and not p.name.startswith(".") and VERSION_RE.fullmatch(p.name)]
+    return sorted(names, key=_version_key)
+
+
+def _version_key(version: str) -> tuple[int, int, int]:
+    try:
+        return tuple(int(x) for x in version.split(".")[:3])  # type: ignore[return-value]
+    except ValueError:
+        return (0, 0, 0)
 
 
 def installed_dir(capability_id: str, *, create: bool = True) -> Path:

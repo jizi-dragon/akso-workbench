@@ -49,6 +49,20 @@ _2026-09-15 定稿。锚定 `workbench/plugin_api.py`（`ToolHub`）+ `workbench
 > 文档承诺的是"产品自带多少工具"，与用户装了什么无关；
 > installed 的数量由 `GET /api/skills/summary` 实时回答。
 > 不这么分的话，**每台装过 Skill 的机器都会让那条文档门禁变红**。
+>
+> **installed 层有两种工具形态**（`SKILL.md` 里二选一，同时写会被拒）：
+>
+> | 形态 | 字段 | 执行方式 | 风险 |
+> |---|---|---|---|
+> | **声明式** | `wraps: <已有工具名>` | 转发给那个工具，**走同一个 `hub.execute`**（不绕过中枢，否则成了审计盲区） | 被包装工具与声明值的**较严**者（可 `read`） |
+> | **脚本式** | `script: scripts/x.py` | 在**沙箱子进程**里跑包内 Python 脚本（`script_runner`） | **≥ `write`**，只升不降 |
+>
+> 脚本式的入口约定：stdin 收 JSON 入参 → stdout 出 `{"ok":…}` → stderr 只进日志 →
+> **退出码优先于 stdout**。策略固定 `skill-script`，**不由 Skill 自己挑**
+> （让上传件选策略等于让它给自己发权限）。详见 `workbench/skills/script_runner.py` 模块文档。
+>
+> **"二选一"是刻意的**：`wraps` + `script` 同时写的回退语义（"先转发、失败再跑脚本"）
+> 会让失败路径不可预测，而本仓要的是**失败可见**。
 
 ### 不变量 1：宿主拥有装配权，插件只交声明
 
@@ -332,7 +346,7 @@ def load_all(hub):
 | 不做 | 研究结论 | 重新评估的触发器 |
 |---|---|---|
 | entry_points 自动发现 | "安装即可发现"的价值只在有第三方作者时成立（§0、§A4-6） | 真的要对外分发插件、或插件作者 > 1 人 |
-| 独立进程插件 | 为"不可信第三方"买的崩溃隔离（§A4-3、§A2） | 插件依赖与宿主冲突、或插件来自第三方 |
+| 独立进程**插件** | 为"不可信第三方"买的崩溃隔离（§A4-3、§A2） | 插件依赖与宿主冲突、或插件来自第三方 |
 | 运行时热插拔 | VS Code / Jenkins 量级的投入（§A4-6） | 不存在合理触发器 |
 | 面向第三方的稳定 API 承诺 | Jenkins 到 2015 年才补弃用策略；承诺收不回（§A2、§A5） | 明确要开源 core 并招外部插件作者 |
 | `pluggy` 之类 hook 框架 | 本项目扩展点 2–4 个、插件 1–3 个，收益不抵成本（§A2 补充判断） | 扩展点上到 10+ 个、且需要"多插件对同一动作按序介入" |
@@ -340,6 +354,13 @@ def load_all(hub):
 **另有一条纪律**：插件 API **现在不要承诺稳定性**。第二个插件（本轮的三个业务插件）
 写完之前定契约必然返工——`docs/PLUGIN-UPSTREAM-RESEARCH.md` §R4 的原话是
 "方案 A 完成后先跑 2–4 周真实迭代再定版本号"。
+
+> **两条与 installed 层有关的澄清（免得把上面的"不做"读成"没有"）**：
+> ① **"独立进程插件"仍然不做**——core 插件照旧在宿主进程内。Skill 的**脚本式工具**
+> 确实在独立子进程里跑，但那是**一次性执行**（跑完即走、进程树可终止），
+> 不是"插件宿主 + 常驻进程 + 崩溃隔离"那一整套；
+> ② **热插拔只对 installed 层开放**。core 仍是"导入期一次装配、之后只读"，
+> 因为它的前提（产品自带的代码不会被换掉）没有变。
 
 ---
 
@@ -350,9 +371,17 @@ def load_all(hub):
 | `workbench/plugin_api.py` | 契约：`ToolHub` / `ToolSpec` / `Risk` / `ToolContext` / `Plugin` |
 | `workbench/approvals.py` | 确认门 + 审计写入器 + 人话摘要 |
 | `workbench/plugins/*.py` | 五个插件的实现（`builtins` / `websearch` / `insight` / `factory` / `accounts`） |
+| `workbench/skills/library.py` | installed 层：上传 / 安装 / 卸载 / 从库删除；两种工具形态各自建 `ToolSpec` |
+| `workbench/skills/manifest.py` | `SKILL.md` 契约：两种形态、路径校验、JSON Schema → pydantic |
+| `workbench/skills/script_runner.py` | 脚本式工具的入口约定 + 沙箱调用 + 结果翻译（Fail-Closed） |
+| `workbench/sandbox/` | 执行底座（ADR-0014）：策略 / 作业对象 / 运行器 / 审计 |
 | `workbench/api/routes_agent.py` | HTTP 面：目录 / 调用 / 待确认 / 审计 / 自检 |
+| `workbench/api/routes_skills.py` | HTTP 面：共享库 / 安装 / 卸载 / 停用 / Skill 审计 |
 | `workbench/harness/loop.py` | 对话循环：工具 schema 注入 + 事件流 + 审计 |
 | `tests/test_plugin_api.py` | 契约回归（装配隔离 / 分级 / 令牌一次性 / 审计脱敏） |
+| `tests/test_skills.py` | installed 层回归（格式契约 / ZIP 准入 / 三条不变量） |
+| `tests/test_skill_scripts.py` | 脚本式回归（入口约定 / 路径 / 风险下限 / **真起子进程**的端到端） |
+| `tests/test_sandbox.py` | 沙箱回归（策略 / 环境白名单 / 进程树终止 / 超时） |
 | `tests/test_agent_loop.py` | 循环回归（事件序列 / 回填 / 确认门 / 预算 / 死循环） |
 | `docs/API.md` §10 | 端点契约 |
 | `docs/SCHEMA.md` | `agent_audit` / `pending_action` 表结构 |

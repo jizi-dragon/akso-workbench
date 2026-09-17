@@ -65,9 +65,13 @@ function renderLibrary(rows) {
   tbody.innerHTML = rows.map((r) => `
     <tr>
       <td><b>${esc(r.name)}</b><br /><span class="hint mono">${esc(r.capability_id)}</span>
-        ${r.has_scan_findings ? '<br /><span class="status-badge warn">有扫描发现</span>' : ''}</td>
+        ${r.has_scan_findings ? '<br /><span class="status-badge warn">有扫描发现</span>' : ''}
+        ${(r.script_tools || []).length
+          ? `<br /><span class="status-badge warn" title="这些工具会执行包内 Python 脚本（在沙箱里；风险不低于 write，每次调用需确认）">含脚本 ${r.script_tools.length}</span>`
+          : ''}</td>
       <td class="mono">${esc(r.latest_version)}${r.versions.length > 1 ? `<br /><span class="hint">共 ${r.versions.length} 版</span>` : ''}</td>
-      <td class="mono hint">${r.tools.map(esc).join('<br />') || '—'}</td>
+      <td class="mono hint">${r.tools.map((t) => (r.script_tools || []).includes(t)
+        ? `${esc(t)} <span class="hint">(脚本)</span>` : esc(t)).join('<br />') || '—'}</td>
       <td class="hint">${(r.capabilities || []).map(esc).join('、') || '—'}</td>
       <td>${r.installed
         ? `<span class="status-badge ok">已安装 ${esc(r.installed_version)}</span>`

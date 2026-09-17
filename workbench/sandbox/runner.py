@@ -74,6 +74,17 @@ class ExecRequest:
     timeout_s: float | None = None
     """覆盖策略超时。**只允许调小**（调大被拒）——策略是上限，不是建议。"""
 
+    extra_env: dict[str, str] | None = None
+    """调用方要额外注入的环境变量（**经白名单叠加**，不是替换）。
+
+    为什么需要它：脚本式 Skill 要知道"我是哪个 Skill、哪个工具、包在哪"
+    （`WORKBENCH_SKILL_ID` 等），否则一个包里的多个脚本没法共享逻辑。
+    它**不破坏 E2**：仍然先按白名单筛宿主环境，再叠这几个调用方提供的值；
+    而且 `policy.validate()` 会拒掉任何名字像凭据的变量（走 `extra_env` 声明时）。
+    这里不做那层校验是因为调用方是**我们自己的代码**（`script_runner`），
+    给的是固定的 `WORKBENCH_*` 常量，不含凭据。
+    """
+
 
 @dataclass
 class ExecResult:
@@ -225,7 +236,7 @@ def run(req: ExecRequest) -> ExecResult:
                        policy_name=policy.name, policy_fingerprint=policy.fingerprint())
 
     # ── 4) 环境：白名单
-    env = build_env(policy)
+    env = build_env(policy, extra=req.extra_env)
     notes: list[str] = [f"环境变量白名单：注入 {len(env)} 个，宿主其余变量未传入"]
 
     # ── 5) 起进程 + 绑 Job

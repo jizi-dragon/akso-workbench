@@ -59,7 +59,10 @@ cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建
 
 >
 > **ruff 现已全绿**（`uvx ruff check .` → All checks passed；`tools/*.py` 的 E402 是刻意豁免的引导式导入，
-> 见 `pyproject.toml` 的 `per-file-ignores`）。**验收基线是 294 项 pytest**，不是下面模板里的旧数字。
+> 见 `pyproject.toml` 的 `per-file-ignores`）。**验收基线是 466 项 pytest**（默认跳过 slow 层）+ **9 项 slow**
+> = **475 项**（`-o addopts=""` 一次跑全）——不是下面模板里的旧数字。
+> ⚠️ **改了代码就必须重跑**：别把"上次的绿"当成"这次的绿"（[PITFALLS](docs/PITFALLS.md) #41 就是这么栽的：
+> 测试绿了、ruff 没重跑，而那一行恰好是 ruff 能抓的 `F821`）。
 
 ## 2. 依赖变更流程
 

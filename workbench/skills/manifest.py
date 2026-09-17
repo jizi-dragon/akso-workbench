@@ -4,7 +4,7 @@
 
     skillhub-demo.zip
     └── SKILL.md            ← 必须在**根目录**（不可套一层文件夹）
-        scripts/            ← 可选（本期不执行，见下）
+        scripts/            ← 可选：脚本式工具的实现（在**沙箱里**跑，见 §两种工具形态）
         references/         ← 可选
 
 `SKILL.md` 的 frontmatter：
@@ -21,8 +21,27 @@
         wraps: insight_read_config      # 声明式：复用已有工具
         args:                           # 可选：默认继承被包装工具的 schema
           code: {type: string, description: 对象编码}
+      - name: demo_double
+        description: 把数字加倍
+        script: scripts/double.py       # 脚本式：在沙箱里跑包内脚本
+        args:                           # 脚本式**必填**（无可继承的 schema）
+          n: {type: integer, description: 要加倍的整数}
     ---
     # 正文（写给人看的说明；本期不注入上下文）
+
+## 两种工具形态：`wraps` 与 `script`（**二选一**）
+
+| 形态 | 执行方式 | 是否需要沙箱 |
+|---|---|---|
+| **声明式**（`wraps`） | 转发给一个已有工具（走 `hub.execute`，同一套确认门与审计） | 否 |
+| **脚本式**（`script`） | 在**沙箱子进程**里跑包内 Python 脚本（`script_runner`） | ★ 是 |
+
+脚本式的入口约定写在 `script_runner` 的模块文档里（stdin 收 JSON、stdout 出 JSON、
+退出码优先）。两条硬约束在这里落地：
+
+- **脚本必须在包内**（路径形状 + 段语义两层校验，见 `validate_script_path`）；
+- **脚本式工具的 risk 不得低于 `write`**（不是这里管，是 `library._build_plugin`）——
+  上传的代码无法被静态证明只读，所以默认要过确认门。
 
 ## `capabilities` 与沙箱策略的映射（**最小权限**）
 
@@ -36,17 +55,16 @@
 | `filesystem` | 需要读写沙箱内文件 | 允许（沙箱根内） |
 | `subprocess` | 需要派生进程 | 本期**拒绝**（无消费方） |
 
-## 为什么本期只支持**声明式**工具
+## 依赖方向
 
-用户的路线是"先建沙箱，再接入 skill"。沙箱底座已就绪，但**执行用户脚本**还差
-"把脚本作为工具暴露"这一步，它需要：脚本入口约定、参数如何传给脚本、
-输出如何回灌给模型、失败如何归类。那是独立的一块，混进来会让本期无法收敛。
-**声明式先跑通"上传→安装→生效→卸载"整条链路**，脚本式作为下一期增量。
+本模块**只依赖 stdlib 与 pydantic**，不 import `plugin_api` / `api/` / `sandbox`
+——它是"文本 → 清单"的纯函数层，可单独测试。执行与注册在 `library.py`。
 """
 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -66,6 +84,66 @@ MAX_TOOLS_PER_SKILL = 20
 工具超过约 20 个后模型选错的概率显著上升，而"装一个 Skill 塞 50 个工具"
 是把这个坑从产品自带转移到了用户身上。"""
 
+#: 脚本路径的**字符形状**（是否由合法字符构成）。语义（段结构与后缀）见
+#: `validate_script_path`——**两层是刻意的**。
+#:
+#: ⚠️ 字符类里 `-` 放在**末尾**（`._-`）：放中间会意外构成区间（如 `A-z` 会把
+#: `[ \ ] ^ _` 一起放进来）。这类细节在路径校验上是安全问题，不是风格问题。
+#:
+#: ⚠️ **正则表达不了"段"的语义**：`.` 是合法字符，所以 `a/../../b.py` 会被这个
+#: 正则接受。初版只靠它，于是"不得含 `..`"这句注释是**假的**——只有运行时
+#: `resolve_script` 的包含判断在拦。所以形状与语义分两层，下面两条 assert
+#: 把这件事钉在代码里（免得后人以为一条正则就够了）。
+_SCRIPT_PATH_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*")
+assert not _SCRIPT_PATH_RE.fullmatch("../evil.py"), "首段不得是 . / .."
+assert _SCRIPT_PATH_RE.fullmatch("a/../../b.py"), (
+    "形状正则本就该接受它——**这正说明段语义必须单独校验**（见 validate_script_path）"
+)
+
+#: 路径里**不允许**出现的段。`""` 覆盖 `a//b.py` 与结尾 `/`。
+_FORBIDDEN_SEGMENTS: frozenset[str] = frozenset({"", ".", ".."})
+
+
+def validate_script_path(raw: str, where: str) -> str:
+    """校验并返回脚本路径。**拒绝，而不是清理。**
+
+    初版做的是 `lstrip("/").replace("\\\\", "/")`——把 `/abs/evil.py` 悄悄改成
+    `abs/evil.py` 再放行。后果不算漏洞（解析后仍在包内），但**静默改写用户声明的路径**
+    是错的：它让"我写的是什么"与"实际跑的是什么"不一致，而排障时看的是前者。
+    形状不对就报错，让上传者改对。
+    """
+    if not isinstance(raw, str):
+        raise SkillPackageError(f"{where}.script 必须是字符串")
+    script = raw.strip()
+    if not script:
+        raise SkillPackageError(f"{where}.script 不能为空")
+    if "\\" in script:
+        raise SkillPackageError(
+            f"{where}.script 请用 `/` 分隔路径：{script!r}（反斜杠会被拒，不做替换）"
+        )
+    if script.startswith("/"):
+        raise SkillPackageError(
+            f"{where}.script 必须是**包内相对路径**，不能以 `/` 开头：{script!r}"
+        )
+    if not _SCRIPT_PATH_RE.fullmatch(script):
+        raise SkillPackageError(
+            f"{where}.script 路径不合法：{script!r}"
+            "（只允许字母/数字/._-/，且必须以字母、数字或 _ 开头）"
+        )
+    segments = script.split("/")
+    bad = [s for s in segments if s in _FORBIDDEN_SEGMENTS]
+    if bad:
+        raise SkillPackageError(
+            f"{where}.script 不得含 `.` / `..` / 空段：{script!r}"
+            "——脚本必须位于包目录内部"
+        )
+    if not script.endswith(".py"):
+        raise SkillPackageError(
+            f"{where}.script 本期只支持 Python 脚本（得到 {script!r}）——"
+            "沙箱策略只放行 python/node 解释器，而入口约定先做 Python"
+        )
+    return script
+
 
 class SkillPackageError(ValueError):
     """包不合规。**Fail-Closed**：上传/安装直接失败，不"尽量解析"。"""
@@ -73,14 +151,27 @@ class SkillPackageError(ValueError):
 
 @dataclass
 class SkillTool:
-    """Skill 声明的一个工具。"""
+    """Skill 声明的一个工具。**两种形态，二选一**：
+
+    | 形态 | 字段 | 执行方式 | 是否需要沙箱 |
+    |---|---|---|---|
+    | **声明式** | `wraps` | 转发给一个已有工具（走 `hub.execute`） | 否（复用那个工具的既有链路） |
+    | **脚本式** | `script` | 在**沙箱子进程**里跑包内脚本 | ★ 是（凭据不注入 / 目录不越界 / 进程树可终止） |
+
+    两者互斥：同时写会被拒。理由——"先转给已有工具、转不了再跑脚本"这种回退语义
+    会让失败路径变得不可预测，而 GxP 场景要的是**失败可见**，不是"尽力而为"。
+    """
 
     name: str
     description: str
-    wraps: str
-    """被包装的**已有工具名**。声明式 Skill 的全部能力都来自复用。"""
+    wraps: str = ""
+    script: str = ""
     args_schema: dict[str, Any] = field(default_factory=dict)
-    """参数 JSON Schema。为空 = 继承被包装工具的 schema。"""
+    """参数 JSON Schema。声明式留空 = 继承被包装工具的 schema；脚本式必填。"""
+
+    @property
+    def is_script(self) -> bool:
+        return bool(self.script)
 
 
 @dataclass
@@ -102,7 +193,7 @@ class SkillManifest:
             "description": self.description, "capabilities": list(self.capabilities),
             "tools": [
                 {"name": t.name, "description": t.description, "wraps": t.wraps,
-                 "args": t.args_schema}
+                 "script": t.script, "args": t.args_schema}
                 for t in self.tools
             ],
             "body_chars": len(self.body),
@@ -298,16 +389,36 @@ def parse_skill_md(text: str) -> SkillManifest:
         description = item.get("description")
         if not isinstance(description, str) or not description.strip():
             raise SkillPackageError(f"tools[{index}] 缺少 description（模型靠它选工具）")
-        wraps = item.get("wraps")
-        if not isinstance(wraps, str) or not wraps.strip():
+
+        wraps = item.get("wraps") or ""
+        script = item.get("script") or ""
+        if wraps and script:
             raise SkillPackageError(
-                f"tools[{index}] 缺少 wraps（声明式 Skill 必须声明它复用哪个已有工具）"
+                f"tools[{index}] 同时声明了 wraps 与 script——**二选一**。"
+                "「先转发、失败再跑脚本」这类回退语义会让失败路径不可预测，"
+                "而本仓要的是失败可见（Fail-Closed）"
             )
+        if not wraps and not script:
+            raise SkillPackageError(
+                f"tools[{index}] 必须声明 wraps（复用已有工具）或 script（跑包内脚本）之一"
+            )
+        if wraps and not isinstance(wraps, str):
+            raise SkillPackageError(f"tools[{index}].wraps 必须是字符串")
+        if script:
+            script = validate_script_path(script, f"tools[{index}]")
+
         args_schema = item.get("args") or {}
         if not isinstance(args_schema, dict):
             raise SkillPackageError(f"tools[{index}].args 必须是对象")
+        if script and not args_schema:
+            raise SkillPackageError(
+                f"tools[{index}] 是脚本式工具，**必须**声明 args。"
+                "脚本式没有「被包装工具的 schema」可继承，缺了它模型就不知道该传什么——"
+                "这会让工具变成一个只能瞎试的黑盒"
+            )
         tools.append(SkillTool(name=name, description=description.strip(),
-                               wraps=wraps.strip(), args_schema=args_schema))
+                               wraps=wraps.strip() if wraps else "",
+                               script=script, args_schema=args_schema))
 
     return SkillManifest(
         id=capability_id,

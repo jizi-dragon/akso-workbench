@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
   逐列适配并对未知 `NOT NULL` 无默认值列填中性值，避免接管旧库时 IntegrityError。
 - `checksum` 按 sqlx 语义取迁移 SQL 的 SHA-384 摘要。
 
-### 迁移账（1–18，全部已应用）
+### 迁移账（1–20，全部已应用）
 
 | # | 名称 | 内容 | 血统 |
 |---|---|---|---|
@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | 16 | `tool_plugin_layer` | `agent_audit` 增 `plugin` / `risk` / `meta`；新建 `pending_action`（危险操作确认门留痕）+ 索引 | 工具插件层 |
 | 17 | `agent_cache_layer` | 新建 `conversation_context`（冻结的历史摘要，`summarized_upto` 只前进）与 `deepseek_usage`（token 用量与**缓存命中量**）+ 索引 | Agent 缓存层 |
 | 18 | `rename_factory_module_id` | 数据行改写：`blueprint_jobs.module` 由 `akso-auto` / `egmp-native` 统一为 `factory` | 模块 id 改名 |
+| 19 | `sandbox_run_audit` | 新建 `sandbox_run`（沙箱执行审计：策略/退出码/耗时/**树杀手段**/输出摘要）+ 索引 | 沙箱（[ADR-0014](adr/0014-sandbox-for-untrusted-code.md)） |
+| 20 | `skill_audit` | 新建 `skill_audit`（**能力供给链**留痕：上传/安装/卸载/删除）+ 索引 | Skill 共享库 |
 
 > **迁移 1–6 为 fork 历史，按不可变纪律保留**。其中 `documents` / `doc_chunks` / `qa_metrics`
 > 的知识库相关功能**源码已删**（表仅留存、不再读写）；`knowledge_nodes` / `knowledge_edges` /
@@ -300,7 +302,64 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 > `summary_calls` 单独计是因为摘要调用的输入是历史原文、几乎必然全 miss——
 > 它是"前缀被打断"的直接证据。
 
-### 3.13 已下线但表仍在（勿恢复业务代码）
+### 3.13 `sandbox_run` — 沙箱执行审计（迁移 19）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | TEXT | PK | 本次执行 id |
+| `audit_id` | TEXT | NOT NULL DEFAULT `''` | 与 `agent_audit.id` **同名同义**：工具层与执行层各写一行，用同一个 id 串起来（**刻意不设外键**——沙箱也可能被非工具路径调用，那时没有 `agent_audit` 行） |
+| `label` | TEXT | NOT NULL DEFAULT `''` | 调用方给的标签，如 `skill:<能力id>/<工具名>` |
+| `policy` | TEXT | NOT NULL DEFAULT `''` | 策略名（`strict-readonly` / `skill-script` / `mcp-stdio`） |
+| `policy_fingerprint` | TEXT | NOT NULL DEFAULT `''` | 策略内容指纹——**"当时用的是哪份策略"必须可回溯**，因为策略本身会改 |
+| `cwd` | TEXT | NOT NULL DEFAULT `''` | 工作目录（必须在沙箱根内） |
+| `argv_summary` | TEXT | NOT NULL DEFAULT `''` | 命令行摘要（解释器 + 脚本，**不是全量 argv**） |
+| `code` | INTEGER | NOT NULL DEFAULT `-1` | 退出码；超时/未启动为 `-1` |
+| `ok` | INTEGER | NOT NULL DEFAULT `0` | 是否成功（0/1） |
+| `timed_out` | INTEGER | NOT NULL DEFAULT `0` | 是否超时（0/1） |
+| `duration_ms` | INTEGER | NOT NULL DEFAULT `0` | 耗时 |
+| `stdout_chars` / `stderr_chars` | INTEGER | NOT NULL DEFAULT `0` | 输出**长度**（正文不入库，见下） |
+| `output_truncated` | INTEGER | NOT NULL DEFAULT `0` | 输出是否被上限截断（**模型看到的可能不是全部**） |
+| `tree_kill` | TEXT | NOT NULL DEFAULT `''` | 终止手段（如 `TerminateJobObject`）——"树杀干净没有"的答案 |
+| `notes` | TEXT | NOT NULL DEFAULT `''` | 附注（JSON 数组，如降级/回退说明） |
+| `created_at` | INTEGER | NOT NULL | |
+
+索引：`idx_sandbox_run_created_at`、`idx_sandbox_run_audit`。
+
+**为什么单独一张表而不是并进 `agent_audit`**：`agent_audit` 的主键语义是"一次工具调用"，
+而沙箱执行的粒度更细（一个工具可能跑多个脚本），且沙箱**不只服务工具**。
+并进去会让 `agent_audit` 的语义变浑。
+
+**为什么字段这么细**：这张表的唯一读者是"事后回答三个问题"——
+**谁跑的？当时用的是哪份策略？树杀干净没有？** 所以 `policy_fingerprint` 与 `tree_kill`
+必须在表里，不能只落日志（**日志会被轮转掉**）。
+
+> **只存长度不存正文**：输出可能很大且可能含敏感内容，全量入库会让这张表变成体积主因。
+> 正文留在当次响应的审计里，表的职责是"索引到那一次执行"。
+
+### 3.14 `skill_audit` — 能力供给链留痕（迁移 20）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | TEXT | PK | |
+| `action` | TEXT | NOT NULL | `upload` / `upload_rejected` / `upload_needs_confirm` / `install` / `uninstall` / `delete_from_library` |
+| `capability_id` | TEXT | NOT NULL DEFAULT `''` | 被操作的能力（拒收时可能为空） |
+| `version` | TEXT | NOT NULL DEFAULT `''` | |
+| `verdict` | TEXT | NOT NULL DEFAULT `''` | 准入结论 `ok` / `warn` / `reject` |
+| `detail` | TEXT | NOT NULL DEFAULT `''` | 人话原因（拒绝理由、文件名、摘除的插件…） |
+| `high_findings` | INTEGER | NOT NULL DEFAULT `0` | 本次扫描的高危发现数 |
+| `created_at` | INTEGER | NOT NULL | |
+
+索引：`idx_skill_audit_created_at`、`idx_skill_audit_capability`。
+
+**为什么单独一张表**：它记的是**能力供给链**上的动作，与"某次工具调用"（`agent_audit`）、
+"某次沙箱执行"（`sandbox_run`）是三个不同的时间尺度——供给链一天可能只有几次，
+但它**改变了以后模型能做什么**。出问题时第一个要问的就是
+"这个工具是哪个 Skill 带进来的、什么时候装的"。
+
+> **Skill 文件本身不入库也不入 git**：落在 `<DATA_DIR>/skills/{library,installed}/`。
+> 表里只存"元数据 + 动作"——**文件才是权威**，表被清掉还能靠扫描目录重建，反过来不行。
+
+### 3.15 已下线但表仍在（勿恢复业务代码）
 
 | 表 | 来源迁移 | 现状 |
 |---|---|---|
