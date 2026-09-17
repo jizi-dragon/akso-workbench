@@ -17,6 +17,7 @@ from ..plugin_api import (  # noqa: F401 —— 旧名字的再导出
     Arg,
     Invocation,
     Plugin,
+    PluginOrigin,
     Risk,
     ToolContext,
     ToolHub,
@@ -49,7 +50,7 @@ def tool(description: str, args_model: type, *, name: str | None = None) -> Any:
 
 
 __all__ = [
-    "MAX_RESULT_CHARS", "Arg", "Invocation", "Plugin", "Risk", "ToolContext", "ToolHub",
-    "ToolSpec", "ToolStatus", "Tool", "ToolRegistry", "default_registry", "get_hub", "ok",
-    "split_codes", "tool",
+    "MAX_RESULT_CHARS", "Arg", "Invocation", "Plugin", "PluginOrigin", "Risk", "ToolContext",
+    "ToolHub", "ToolSpec", "ToolStatus", "Tool", "ToolRegistry", "default_registry", "get_hub",
+    "ok", "split_codes", "tool",
 ]

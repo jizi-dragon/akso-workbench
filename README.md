@@ -44,7 +44,8 @@
 |---|---|
 | **现在到底有哪些工具、谁在管、怎么加一个** | **[docs/TOOLS.md](docs/TOOLS.md)**（工具注册表 + 变更纪律 + 机检） |
 | 怎么写一个工具插件、风险分级与确认门语义 | [docs/PLUGIN-SDK.md](docs/PLUGIN-SDK.md) |
-| **不受信代码（将来上传的 Skill）在哪跑、拦得住什么** | **[ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md)** + 工作台「沙箱」页（策略/状态/执行审计） |
+| **不受信代码（上传的 Skill）在哪跑、拦得住什么** | **[ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md)** + 工作台「沙箱」页（策略/状态/执行审计） |
+| **怎么上传 / 安装 / 卸载 Skill** | 工作台「Skill 管理」页 + `docs/TOOLS.md`（工具治理纪律） |
 | 为什么平台相关代码集中在 `services/egmp/` | [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md)、[ADR-0013](docs/adr/0013-brand-neutralization-workbench.md) |
 
 > 工具清单**不靠人记**：`docs/TOOLS.md` 的清单由 `tools/gen_tools_doc.py` 从运行中的工具中枢生成，

@@ -179,6 +179,23 @@ class ToolSpec:
         return problems
 
 
+class PluginOrigin(str, Enum):
+    """插件从哪来。**决定它能不能被卸载**，也决定工具清单文档怎么算。
+
+    `core` 与 `installed` 的区分是 2026-09-17 引入的，动机是一条真实的冲突：
+    `tools/gen_tools_doc.py` 会断言"文档里的 N 个工具 == **运行期**中枢里的工具数"。
+    一旦用户能自己装 Skill，运行期工具数就**因人而异**——那条门禁会在每台装过东西的机器上变红。
+    解法不是放宽门禁，而是**把"产品自带的"与"用户装的"分开统计**：
+    文档只承诺 core 的数量，installed 的数量由 API/界面实时回答。
+    """
+
+    CORE = "core"
+    """产品自带的（`plugins/__init__.py::_MODULES` 显式清单）。**不可卸载**，可在界面上禁用。"""
+
+    INSTALLED = "installed"
+    """用户从共享库安装的（Skill）。**可一键卸载**。"""
+
+
 @dataclass(frozen=True)
 class Plugin:
     """一个插件：id + 标题 + 它贡献的工具集合。"""
@@ -188,6 +205,14 @@ class Plugin:
     tools: list[ToolSpec] = field(default_factory=list)
     version: str = "0.0.0"
     description: str = ""
+    origin: PluginOrigin = PluginOrigin.CORE
+    """来源。默认 `CORE` 是为了不破坏既有 5 个插件的写法（它们都是核心插件）。"""
+
+    capability_id: str = ""
+    """`origin=INSTALLED` 时指向共享库里的能力 id（卸载时按它整批摘除）。"""
+
+    removable: bool = False
+    """能否被卸载。核心插件为 `False`——**产品自带能力不该能被用户删掉**（只能禁用）。"""
 
 
 @runtime_checkable
@@ -242,13 +267,33 @@ class Invocation:
 class ToolHub:
     """工具注册表 + 执行器：Agent 核心的单一能力来源。
 
-    生命周期约定：`ToolHub` 是**进程级单例**（`get_hub()`），装配在导入期完成，
-    之后只读。热插拔**不支持也不做**（研究 §A5：那是为第三方生态付的成本）。
+    ## 生命周期（2026-09-17 修订，务必先读）
+
+    原约定是"装配在导入期完成，之后只读，**热插拔不支持也不做**"。
+    那条约定的前提是"插件全是产品自带的"——**用户能从共享库装 Skill 之后它不再成立**，
+    所以现在分两层：
+
+    | 层 | 谁 | 何时变 | 能否卸载 |
+    |---|---|---|---|
+    | **core** | `plugins/__init__.py::_MODULES` 显式清单 | 导入期一次，之后**只读** | ❌ 不可卸载（可禁用） |
+    | **installed** | 用户从共享库安装的 Skill | **运行期可变** | ✅ 可一键卸载 |
+
+    **core 那条"导入期一次、之后只读"的纪律原样保留**——本类新增的
+    `register_installed` / `deregister_capability` / `set_plugin_enabled` 只作用于 installed 层，
+    且都拒绝改 core 插件（见各自 docstring 的断言）。
+
+    ## `_tools` 是**派生视图**，不是第二个事实源
+
+    这是本次修订最关键的一条：以前 `_tools` 与 `_plugins` 是两份手写同步的字典，
+    一旦支持卸载就会有"摘了插件但工具还在表里"的静默泄漏。
+    现在 `_tools` 一律由 `_rebuild()` 从**启用中的插件**重新推导——
+    **卸载后不可能残留**，因为没有任何代码路径能单独改 `_tools`。
     """
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolSpec] = {}
         self._plugins: dict[str, Plugin] = {}
+        self._disabled: set[str] = set()
         self._failures: list[dict[str, str]] = []
         self._loaded = False
         self._audit_writer: Callable[[dict[str, Any]], None] | None = None
@@ -259,10 +304,108 @@ class ToolHub:
     # ------------------------------------------------------------ 装配
 
     def add_plugin(self, plugin: Plugin) -> None:
-        """装配一个插件。工具名冲突 = 后到的被拒（不是覆盖）。"""
+        """装配一个插件。工具名冲突 = 后到的被拒（不是覆盖）。
+
+        核心插件走这条（`origin` 默认 `CORE`）；用户安装的 Skill 走
+        `register_installed`（它多一层"不能顶掉核心工具"的校验）。
+        """
         if plugin.id in self._plugins:
             raise ValueError(f"插件 id 重复：{plugin.id}")
+        accepted = self._validate_tools(plugin, skip_names=set())
+        self._plugins[plugin.id] = Plugin(
+            id=plugin.id, title=plugin.title, tools=accepted,
+            version=plugin.version, description=plugin.description,
+            origin=plugin.origin, capability_id=plugin.capability_id,
+            removable=plugin.removable,
+        )
+        self._rebuild()
+        logger.info("插件已装配：%s（%d 个工具，origin=%s）",
+                    plugin.id, len(accepted), plugin.origin.value)
+
+    def register_installed(self, plugin: Plugin) -> None:
+        """装配一个**用户安装的**能力（Skill）。与 `add_plugin` 的三点差别：
+
+        1. 强制 `origin=INSTALLED`、`removable=True`——不信任调用方传对；
+        2. **不许顶掉核心工具名**：冲突时直接拒（核心工具是产品面，
+           被一个上传的 Skill 覆盖掉会变成安全事故，不是功能问题）；
+        3. 装配失败**整体回滚**（`_rebuild` 前不留半成品）。
+        """
+        forced = Plugin(
+            id=plugin.id, title=plugin.title, tools=plugin.tools,
+            version=plugin.version, description=plugin.description,
+            origin=PluginOrigin.INSTALLED, capability_id=plugin.capability_id or plugin.id,
+            removable=True,
+        )
+        core_names = {s.name for s in self.specs() if self._plugins[s.plugin_id].origin is PluginOrigin.CORE}
+        clashes = [t.name for t in forced.tools if t.name in core_names]
+        if clashes:
+            raise ValueError(
+                f"安装的能力 {plugin.id} 试图占用核心工具名：{clashes}——"
+                "核心工具是产品面，不允许被安装的能力覆盖或遮蔽"
+            )
+        accepted = self._validate_tools(forced, skip_names=set())
+        self._plugins[forced.id] = Plugin(
+            id=forced.id, title=forced.title, tools=accepted, version=forced.version,
+            description=forced.description, origin=PluginOrigin.INSTALLED,
+            capability_id=forced.capability_id, removable=True,
+        )
+        self._rebuild()
+        logger.info("已安装能力：%s（%d 个工具）", forced.id, len(accepted))
+
+    def deregister_capability(self, capability_id: str) -> list[str]:
+        """卸载某个已安装能力，返回被摘除的插件 id。**核心插件一律拒绝。**
+
+        ## 为什么先查"请求是否合法"再查"是否存在"（实测踩过）
+
+        初版写的是"先按 capability_id 找目标，找不到就 return []"，
+        而**核心插件的 `capability_id` 是空串**——于是 `deregister_capability("")`
+        会把所有核心插件都匹配成"目标"，看起来像可以整批卸载；
+        更糟的是当实现改成"找不到就早返回"时，`""` 反而变成静默无操作，
+        **把守卫整个绕过去了**（测试 `test_core_plugins_cannot_be_uninstalled` 抓到的就是这个）。
+
+        所以现在：**空的 capability_id 直接拒**（它不是合法的能力标识），
+        然后再走"找不到 = 幂等返回空"的正常路径。
+        """
+        if not capability_id or not str(capability_id).strip():
+            raise ValueError(
+                "capability_id 不能为空——核心插件的 capability_id 是空串，"
+                "传空会把它们误判成可卸载目标"
+            )
+        targets = [pid for pid, p in self._plugins.items() if p.capability_id == capability_id]
+        guarded = [pid for pid in targets if not self._plugins[pid].removable]
+        if guarded:
+            raise ValueError(
+                f"拒绝卸载核心插件：{guarded}——它们随产品分发（origin=core），"
+                "只能禁用，不能卸载"
+            )
+        if not targets:
+            return []  # 幂等：卸载一个没装的 Skill 不该报错
+        for pid in targets:
+            self._plugins.pop(pid, None)
+            self._disabled.discard(pid)
+        self._rebuild()
+        logger.info("已卸载能力：%s（摘除插件 %s）", capability_id, targets)
+        return targets
+
+    def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> None:
+        """启用/禁用一个插件（含核心插件）。**禁用是"暂时不给模型看"，不是卸载。**
+
+        与卸载的区别：插件仍在 `plugins` 清单里（界面能显示"已禁用"并一键恢复），
+        只是它的工具不进 `_tools`，因此**模型完全看不到**——这是真正生效的开关，
+        不是 UI 上的灰化。
+        """
+        if plugin_id not in self._plugins:
+            raise ValueError(f"插件不存在：{plugin_id}")
+        if enabled:
+            self._disabled.discard(plugin_id)
+        else:
+            self._disabled.add(plugin_id)
+        self._rebuild()
+
+    def _validate_tools(self, plugin: Plugin, *, skip_names: set[str]) -> list[ToolSpec]:
+        """逐个工具做装配期自检 + 重名检测。返回绑定好 `plugin_id` 的副本。"""
         accepted: list[ToolSpec] = []
+        seen: set[str] = set()
         for spec in plugin.tools:
             if spec.plugin_id and spec.plugin_id != plugin.id:
                 raise ValueError(f"插件 {plugin.id} 的工具 {spec.name} plugin_id 不一致")
@@ -271,23 +414,41 @@ class ToolHub:
                 handler=spec.handler, risk=spec.risk, plugin_id=plugin.id,
                 timeout_s=spec.timeout_s, audit_extra=spec.audit_extra,
             )
-            problems = bound.valid() + self._collision(bound)
+            if bound.name in seen:
+                raise ValueError(f"插件 {plugin.id} 内工具名重复：{bound.name}")
+            seen.add(bound.name)
+            problems = bound.valid()
+            if bound.name not in skip_names:
+                problems += self._collision(bound)
             if problems:
                 raise ValueError(f"插件 {plugin.id} 的工具 {spec.name} 不合格：" + "；".join(problems))
             accepted.append(bound)
-        self._plugins[plugin.id] = Plugin(
-            id=plugin.id, title=plugin.title, tools=accepted,
-            version=plugin.version, description=plugin.description,
-        )
-        for spec in accepted:
-            self._tools[spec.name] = spec
-        logger.info("插件已装配：%s（%d 个工具）", plugin.id, len(accepted))
+        return accepted
 
     def _collision(self, spec: ToolSpec) -> list[str]:
         existing = self._tools.get(spec.name)
         if existing is None:
             return []
         return [f"工具名已被插件 {existing.plugin_id} 占用（工具名是全局唯一键）"]
+
+    def _rebuild(self) -> None:
+        """从**启用中的插件**重新推导 `_tools`。
+
+        **唯一**允许写 `_tools` 的地方。装配、卸载、禁用都走它——
+        所以"摘了插件但工具还在"这类泄漏在结构上不可能发生。
+        """
+        rebuilt: dict[str, ToolSpec] = {}
+        for plugin_id, plugin in self._plugins.items():
+            if plugin_id in self._disabled:
+                continue
+            for spec in plugin.tools:
+                rebuilt[spec.name] = spec
+        collisions = len(rebuilt) != sum(
+            len(p.tools) for pid, p in self._plugins.items() if pid not in self._disabled
+        )
+        if collisions:  # pragma: no cover —— 装配期已逐个查重，这里是最后一道保险
+            raise ValueError("工具名在多个插件间冲突——_rebuild 检测到覆盖，装配逻辑有 bug")
+        self._tools = rebuilt
 
     def load(self, loader: Callable[[ToolHub], None]) -> None:
         """跑一次装配函数，**隔离失败**：坏插件只记不进清单，宿主照常启动。"""
@@ -344,30 +505,66 @@ class ToolHub:
         wanted = set(plugins)
         return [s.to_api() for s in self._tools.values() if s.plugin_id in wanted]
 
+    def core_specs(self) -> list[ToolSpec]:
+        """**产品自带**的工具（`origin=core`）。文档承诺的就是这一部分的数量。
+
+        为什么单列一个方法：`tools/gen_tools_doc.py` 断言"文档里的 N 个工具 == 运行期中枢"。
+        用户能装 Skill 之后运行期数量因人而异，那条门禁会对每台装过东西的机器报红。
+        按 origin 分开之后，文档只承诺 core（**与用户装了什么无关**），
+        installed 的数量由 `GET /api/skills/installed` 实时回答。
+        """
+        return [s for s in self._tools.values()
+                if self._plugins[s.plugin_id].origin is PluginOrigin.CORE]
+
+    def installed_plugins(self) -> list[Plugin]:
+        """用户安装的能力（`origin=installed`）。"""
+        return [p for p in self._plugins.values() if p.origin is PluginOrigin.INSTALLED]
+
+    def is_enabled(self, plugin_id: str) -> bool:
+        return plugin_id in self._plugins and plugin_id not in self._disabled
+
+    @property
+    def disabled(self) -> list[str]:
+        return sorted(self._disabled)
+
     def catalog(self) -> dict:
-        """工具目录（HTTP `/api/agent/tools` 的响应体）。"""
+        """工具目录（HTTP `/api/agent/tools` 的响应体）。
+
+        每个插件带 `origin` / `removable` / `enabled`，工具带 `origin`——
+        界面据此把"产品自带"与"我装的"分开显示，否则用户会以为核心工具也能删。
+        """
+        def _plugin_view(p: Plugin) -> dict:
+            return {
+                "id": p.id,
+                "title": p.title,
+                "version": p.version,
+                "description": p.description,
+                "tools": [s.name for s in p.tools],
+                "origin": p.origin.value,
+                "removable": p.removable,
+                "capability_id": p.capability_id,
+                "enabled": self.is_enabled(p.id),
+            }
+
         return {
-            "plugins": [
-                {
-                    "id": p.id,
-                    "title": p.title,
-                    "version": p.version,
-                    "description": p.description,
-                    "tools": [s.name for s in p.tools],
-                }
-                for p in self._plugins.values()
-            ],
+            "plugins": [_plugin_view(p) for p in self._plugins.values()],
             "tools": [
                 {
                     "name": s.name,
                     "description": s.description,
                     "risk": s.risk.value,
                     "plugin": s.plugin_id,
+                    "origin": self._plugins[s.plugin_id].origin.value,
                     "args": _args_doc(s.args_model),
                 }
                 for s in self._tools.values()
             ],
             "failures": self.failures,
+            "counts": {
+                "core_tools": len(self.core_specs()),
+                "installed_tools": len(self.specs()) - len(self.core_specs()),
+                "disabled_plugins": len(self._disabled),
+            },
         }
 
     # ------------------------------------------------------------ 执行
@@ -492,7 +689,13 @@ def get_hub() -> ToolHub:
 
 
 def reset_hub() -> None:
-    """清空单例（仅测试用；生产路径没有热插拔）。"""
+    """清空单例（仅测试用）。
+
+    ⚠️ 本函数的语义在 2026-09-17 变了：**生产路径现在确实有"运行期增删"了**
+    （用户从共享库安装/卸载 Skill，见 `ToolHub` 类文档的两层表），
+    但那是走 `register_installed` / `deregister_capability`，
+    **不是**走这个函数。这里仍然是"把单例整个丢掉重建"，只给测试隔离用。
+    """
     global _hub
     _hub = None
 

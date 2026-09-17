@@ -340,6 +340,34 @@ CREATE TABLE IF NOT EXISTS sandbox_run (
 CREATE INDEX IF NOT EXISTS idx_sandbox_run_created_at ON sandbox_run(created_at);
 CREATE INDEX IF NOT EXISTS idx_sandbox_run_audit ON sandbox_run(audit_id);
 """),
+    (20, "skill_library_audit", """
+-- Skill 共享库的操作留痕（2026-09-17）。
+--
+-- ## 为什么单独一张表，而不是并进 agent_audit
+--
+-- 这张表记的是**能力供给链**上的动作（上传/安装/卸载/删除），
+-- 与"某次工具调用"（agent_audit）、"某次沙箱执行"（sandbox_run）是三个不同的时间尺度：
+-- 供给链的动作一天可能只有几次，但它**改变了以后模型能做什么**——
+-- 出问题时第一个要问的就是"这个工具是哪个 Skill 带进来的、什么时候装的"。
+--
+-- ## 至于 Skill 文件本身
+--
+-- **不入库也不入 git**：落在 `<DATA_DIR>/skills/{library,installed}/`（用户明确要求）。
+-- 表里只存"元数据 + 动作"，文件是唯一的真源（manifest.json 在同目录下）。
+-- 这样即便表被清掉，也能靠扫描目录重建；反过来则不行——所以文件是权威。
+CREATE TABLE IF NOT EXISTS skill_audit (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    capability_id TEXT NOT NULL DEFAULT '',
+    version TEXT NOT NULL DEFAULT '',
+    verdict TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '',
+    high_findings INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_skill_audit_created_at ON skill_audit(created_at);
+CREATE INDEX IF NOT EXISTS idx_skill_audit_capability ON skill_audit(capability_id);
+"""),
 ]
 
 

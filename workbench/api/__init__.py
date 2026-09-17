@@ -43,6 +43,7 @@ def _optional_routers(app: FastAPI) -> None:
         routes_modules,
         routes_monitor,
         routes_sandbox,
+        routes_skills,
         routes_update,
     )
 
@@ -56,6 +57,7 @@ def _optional_routers(app: FastAPI) -> None:
         ("extension", routes_extension),
         ("monitor", routes_monitor),
         ("sandbox", routes_sandbox),
+        ("skills", routes_skills),
         ("update", routes_update),
     )
     for name, mod in registrations:
@@ -71,8 +73,44 @@ def _optional_routers(app: FastAPI) -> None:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     db.connect()
     _sandbox_setup()
+    _skills_setup()
     _tool_selfcheck()
     yield
+
+
+def _skills_setup() -> None:
+    """Skill 装配：建目录 + 接留痕写入器 + **恢复已安装的能力**。
+
+    最后一条是关键：`installed/<id>/current` 指针是"装过什么"的权威记录，
+    进程重启后必须据此**重新注册**，否则用户会发现"重启一次我装的 Skill 就没了"
+    （而库里还在，看起来像"装了但没生效"——这类静默失效最难查）。
+    """
+    try:
+        from ..skills import audit as skill_audit
+        from ..skills import ensure_dirs, installed_current
+        from ..skills import library as skill_library
+        from ..skills.layout import INSTALLED_DIR
+
+        ensure_dirs()
+        skill_audit.install()
+
+        restored: list[str] = []
+        failed: list[str] = []
+        if INSTALLED_DIR.exists():
+            for entry in sorted(INSTALLED_DIR.iterdir()):
+                if not entry.is_dir() or installed_current(entry.name) is None:
+                    continue
+                try:
+                    skill_library.install(entry.name)
+                    restored.append(entry.name)
+                except Exception as exc:  # noqa: BLE001 —— 单个 Skill 坏了不该拖垮启动
+                    failed.append(f"{entry.name}: {type(exc).__name__}: {exc}")
+        logger.info("Skill 已装配：恢复 %d 个已安装能力%s",
+                    len(restored), f"，失败 {failed}" if failed else "")
+        if failed:
+            logger.warning("以下 Skill 恢复失败（库里的东西还在，可重新安装）：%s", failed)
+    except Exception:  # noqa: BLE001 —— 与沙箱同一纪律：装配失败不阻断启动
+        logger.warning("Skill 库装配失败（Skill 不可用，但应用继续启动）", exc_info=True)
 
 
 def _sandbox_setup() -> None:
