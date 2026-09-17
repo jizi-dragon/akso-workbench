@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 from workbench.services.browser_pool import BrowserPool
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 class _FakePage:
@@ -63,3 +68,38 @@ def test_looks_like_login_never_raises() -> None:
             raise RuntimeError("closed")
 
     assert BrowserPool._looks_like_login(_Boom()) is False  # 自愈判定永不拖垮会话
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 体检探测：不许在日志里留噪声
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_warmup_check_leaves_no_asyncio_noise() -> None:
+    """`warmup_check()` 跑完，进程退出时 **stderr 必须干净**。
+
+    实测：`sync_playwright()` 的起停会留下一个 pending 的 connection task，
+    解释器退出/GC 时打印
+    `Task was destroyed but it is pending!` 与
+    `TargetClosedError: Target page, context or browser has been closed`（never retrieved）。
+    而 `warmup_check()` 是**体检**入口——`/api/modules`（前端模块体检页）与
+    `/api/browser/check`（账号中心）都会反复调用它，sync 版等于往日志里持续灌噪声；
+    噪声会掩盖真错误，而"看得见的失败"正是本仓的纪律。
+
+    **为什么要在子进程里测**：那两句是在**解释器退出阶段**打印的，
+    同进程里断言看不到——只有真跑完一个进程才现形。
+    """
+    proc = subprocess.run(
+        [sys.executable, "-c",
+         "from workbench.services.browser_pool import warmup_check;"
+         "print('probe-ok', warmup_check()['ok'])"],
+        capture_output=True, text=True, timeout=300, cwd=str(ROOT),
+    )
+    assert "probe-ok" in proc.stdout, f"子进程没跑起来：{proc.stdout!r} {proc.stderr!r}"
+    assert "Task was destroyed" not in proc.stderr, (
+        f"体检留下了 pending task（把 sync_playwright 换回 async 版）：{proc.stderr}"
+    )
+    assert "TargetClosedError" not in proc.stderr, (
+        f"体检泄漏了未取回的异常：{proc.stderr}"
+    )
+

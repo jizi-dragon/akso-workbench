@@ -478,15 +478,28 @@ GitHub 仓库 → **Settings → Rules → Rulesets → New ruleset**：
 | 项 | 落点 | 实测 |
 |---|---|---|
 | 自动打 tag | `tools/build.ps1`（release commit 之后，四条守卫：非 `-Bump none`、commit 真产生、commit 真推上去、tag 不重复） | `verify_packaging.py` **9/9 PASS**（P5 的 BOM 检查通过）；PowerShell 语法解析无错 |
-| CI 门禁 | `.github/workflows/ci.yml`（`windows-latest`；扩展构建 → `uv sync` → pytest → `verify_packaging.py` → `gen_tools_doc.py` → ruff） | 本地逐条复现同一命令序列：**468 passed**（+11 slow，`-o addopts=""` 共 **479**）/ **9/9 PASS** / `TOOLS_DOC_CHECKS: PASS（5 插件 / 20 工具 = core）` / ruff `All checks passed` |
+| CI 门禁 | `.github/workflows/ci.yml`（`windows-latest`；扩展构建 → `uv sync` → pytest → `verify_packaging.py` → `gen_tools_doc.py` → ruff） | 本地逐条复现同一命令序列：**480 passed**（含 11 slow）/ **9/9 PASS** / `TOOLS_DOC_CHECKS: PASS（5 插件 / 20 工具 = core）` / ruff `All checks passed`。**另在 py3.12 复现过 CI 环境**（CI 用 3.12 而开发机是 3.14）：`472 passed, 8 skipped`（8 项浏览器验收因 runner 无 chromium 而 skip，见 PITFALLS #43） |
 | 已推送 | `5830da6`（文档+CI+自动打 tag+清理）、`0494ed6`（CI 补工具清单门禁）、`058c1ef`（本轮订正） | `local == origin/main`；推送经本机代理 `127.0.0.1:7890`（直连被重置，`git` 已配 `http.proxy`） |
 
 > ⚠️ **改 `build.ps1` 必须补 BOM**：实测编辑动作会静默丢掉 UTF-8 BOM（P5 立刻掉到 8/9）。
 > 这是环境坑 #37，处置命令在 `docs/PITFALLS.md`。
 > **这也顺带证明了 CI 的价值**：这类"内容看着完全正常、只有字节不对"的问题，只有门禁能拦住。
-> ⚠️ **仍无法在此环境验证的**：GitHub Actions 的实际运行结论（私有仓库的 Actions API 需要认证，
-> 而 `actions:read` 未被当前凭据覆盖）。**请到仓库 Actions 页确认 `verify` 这个 job 是绿的**——
-> 这是"CI 真的跑起来了"的唯一权威判据，本地复现不算。
+>
+> ✅ **订正（2026-09-17）：Actions 的运行结论**是**可以**在本环境读的。
+> 早先记的"actions:read 未被凭据覆盖"只对了一半——用 `git credential fill` 取到的那个 token：
+>
+> | 端点 | 结果 |
+> |---|---|
+> | `GET /repos/{r}/actions/runs` | ✅ **200**（能读运行列表、`conclusion`、`head_sha`、`run_attempt`） |
+> | `GET /repos/{r}/actions/runs/{id}/jobs` | ✅ **200**（能读每个 step 的 `conclusion`） |
+> | `GET /repos/{r}/commits/{sha}/check-runs` + `/annotations` | ✅ 200（但注解只有 "exit code 1"，没有逐条失败——**Actions 不会自动把 pytest 失败变成注解**） |
+> | `GET /repos/{r}/actions/jobs/{id}/logs` | ❌ **401**（job 日志需要额外 scope） |
+>
+> 所以**结论可读、日志不可读**：判"红/绿/被取消"不必再问人，
+> 但要拿到失败栈仍然得本地复现（或去 Actions 页看）。
+> **本次就是这么定案的**：`/actions/runs` 一眼看出"CI 从建立那天起就没绿过"，
+> 而本地 `py312` 复现给出了那 4 个失败（见 PITFALLS #43）。
+> **别再用"我本地跑过了"代替 CI 结论**——那是 §8 第 2 条"无人报错≠链路正常"的同一类错误。
 
 ---
 

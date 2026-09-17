@@ -123,15 +123,13 @@ def _check_playwright_browser() -> dict[str, Any]:
     try:
         # 打包态必须先指向随包分发的 chromium，否则这里会误报「未安装」：
         # playwright 默认找 %LOCALAPPDATA%\ms-playwright，包里那份在 _MEIPASS 下。
-        # 与 browser_pool 的运行期共用同一个单点实现（2026-09-14 打包态实测修复）。
-        from .browser_pool import ensure_bundled_browsers_path
+        # 与 browser_pool 共用**同一个**单点实现（2026-09-14 打包态实测修复）——
+        # 现在连"怎么问 Playwright"也只有一处（async 探测，不留 pending task，
+        # 见 browser_pool.chromium_executable_path 的注释）。
+        from .browser_pool import chromium_executable_path
 
-        ensure_bundled_browsers_path()
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as p:
-            path = p.chromium.executable_path
-            ok = Path(path).exists()
+        path = chromium_executable_path()
+        ok = path.exists()
         return {
             "name": "playwright:chromium",
             "ok": ok,

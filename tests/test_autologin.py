@@ -154,6 +154,16 @@ def server():
 
 @pytest.fixture(scope="module")
 def chromium():
+    # **先做无副作用的体检，再决定要不要起 sync Playwright**：
+    # 原实现是"起了再说，launch 失败就 skip"，那条路径在 CI（没有 chromium）里
+    # 会留下一个 pending 的 connection task，退出时打印
+    # "Task was destroyed but it is pending!" + "TargetClosedError ... never retrieved"，
+    # 把日志搅浑。体检用 async API，不起浏览器、不留残留（见 PITFALLS #43）。
+    from workbench.services.browser_pool import warmup_check
+
+    status = warmup_check()
+    if not status.get("ok"):
+        pytest.skip(f"chromium 不可用：{status.get('detail')}")
     try:
         from playwright.sync_api import sync_playwright
 
@@ -163,8 +173,9 @@ def chromium():
     try:
         browser = pw.chromium.launch(headless=True)
     except Exception as exc:  # noqa: BLE001
+        # 体检说在、真 launch 却失败（驱动与浏览器构建错配等）：仍然是 skip，不是 fail
         pw.stop()
-        pytest.skip(f"chromium 未安装（playwright install chromium）：{exc}")
+        pytest.skip(f"chromium 启动失败（playwright install chromium）：{exc}")
     yield browser
     browser.close()
     pw.stop()

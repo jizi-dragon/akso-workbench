@@ -5,6 +5,56 @@
 
 ## [未发布]
 
+### Fixed
+
+- **CI 从建立那天起就没绿过：4 项 P0 浏览器验收在无 chromium 的 runner 上"失败"而非"跳过"**
+  （2026-09-17，用户发来 CI 截图后定位）。
+
+  **两层原因，都不是它看起来的样子**：
+  1. 截图里的 `KeyboardInterrupt` + `Error: The operation was canceled.` 是
+     `ci.yml` 的 `concurrency: cancel-in-progress: true` 把**上一次 push 的运行顶掉**了——
+     **不是测试失败**。同一 ref 只留最新一次运行是刻意的（旧提交的结论没有价值），
+     现在把这条写进工作流头部的"设计取舍"里，免得下次再被这个显示误导。
+  2. 但**失败是真失败**：`tests/test_browser_parallel.py` 的模块 docstring 写着
+     "需要 chromium，否则整组 skip"——**这句承诺只在注释里**，代码里没有任何守卫。
+     于是这 4 项 P0 验收（多账号并行托管、自愈重登、免密直达）在任何没装浏览器的机器上
+     表现为 failed。`test_autologin.py` 有守卫所以它 skip，这个文件没有所以它红。
+
+  **定位手段**（顺带订正一条旧结论）：`GET /repos/…/actions/runs` 用本机 `git credential fill`
+  取到的 token **能读**（`conclusion` / `head_sha` / 每个 step 的结论都能读），
+  只有 job 日志是 401。一眼就看到**九次运行没有一次 success**——问题不在最近这次改动，
+  而在工作流建立之初。`docs/VERSIONING.md` §7.2 原来记的"Actions 结论无法在本环境验证"已订正为
+  **"结论可读、日志不可读"**。
+
+  **修法**：
+  - `test_browser_parallel.py` 补 `chromium_ready` 守卫，复用既有的**生产**体检入口
+    `browser_pool.warmup_check()`——不自己写一份（打包态浏览器路径只有那一个单点实现，
+    自己写必然在打包态误报，PITFALLS #28）；
+  - CI 的 pytest 命令加 **`-rs`**：**绿灯不等于全跑了**，一项 skip 与一项 pass
+    在界面上只差一行小字，不加 `-rs` 门禁会悄悄退化；
+  - 开发机是 **3.14 而 CI 是 3.12**，用 `uv venv --python 3.12` 复现 CI 环境后
+    `472 passed, 8 skipped`（真绿），耗时也从 71s 降到 19s。
+
+- **体检探测往日志里灌 asyncio 噪声：`sync_playwright()` 起停会留下 pending task**
+  （PITFALLS #44）。
+
+  CI 日志（与用户截图）里那两行 `Task was destroyed but it is pending!` +
+  `TargetClosedError: … has been closed`（never retrieved）**看着像测试崩了，其实测试全过**。
+  根因是 Playwright 的 **sync API** 每次起停都留下一个 pending connection task，
+  进程 GC/退出时才被销毁 → asyncio 处理器把它打出来；**只要起停就会留，不需要 launch**
+  （实测：单独跑一句 `warmup_check()` 就会打；换成 async API 就干净）。
+
+  之所以真要修：`warmup_check()` 是**体检**入口，`/api/modules`（模块体检页）与
+  `/api/browser/check`（账号中心）会**反复调用**它——等于往服务端日志里持续灌噪声，
+  而噪声会掩盖真错误。改动：
+  - `browser_pool.chromium_executable_path()` 新增，改用 **async API** 探测，
+    并跑在**独立线程**里（sync 端点与将来的 async 端点调用都安全；否则 `asyncio.run()`
+    在事件循环里会抛错并被 `except` 吞成"检测失败"——正是最忌讳的静默降级）；
+  - `modules._check_playwright_browser()` 改为复用这**同一个**实现（原先两处各写一份 sync 探测）；
+  - `test_autologin` 的夹具改为"先无副作用体检，再决定要不要起 sync Playwright"，跳过路径不再留噪声；
+  - 回归 `test_warmup_check_leaves_no_asyncio_noise`：**在子进程里**断言 stderr 干净
+    （那两行在解释器退出阶段才打印，同进程断言看不见）。已实测该用例对旧实现 FAIL、对新实现 PASS。
+
 ### Added
 
 > ⚠️ **本节的端口协商/顺延条目已于同日被撤回**——见下方 `### Changed` 的

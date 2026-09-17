@@ -17,6 +17,7 @@ quick-login 能力的全家桶内化：
 
 from __future__ import annotations
 
+import asyncio
 import os
 import queue
 import sys
@@ -37,6 +38,10 @@ from .storage import now_ms
 # Playwright 经 CDP(18766) 反向接管页面；开户窗/聚焦/关窗走壳的控制服务(18767)。
 # local 模式 = 原生 playwright chromium（开发/无壳环境）。
 SESSION_MODE = os.environ.get("WORKBENCH_SESSION_MODE", "local")
+
+#: 体检探测的等待上限。Playwright 驱动启动通常几百毫秒；给足余量但不无限等——
+#: 体检端点卡住比"报未安装"更糟（前者会让页面一直转圈）。
+PROBE_TIMEOUT_S = 60.0
 
 
 def ensure_bundled_browsers_path() -> str | None:
@@ -643,18 +648,61 @@ def get_pool() -> BrowserPool:
         return _pool
 
 
+def chromium_executable_path() -> Path:
+    """Playwright 认为 chromium 的可执行文件在哪（**不 launch、不留残留**）。
+
+    这是**体检**路径的唯一实现（`/api/modules`、`/api/browser/check`、测试夹具）。
+    两件事必须做对，都是实测踩出来的：
+
+    1. **用 async API，不用 `sync_playwright()`**。实测：sync 版的起停会在进程里留下
+       一个 pending 的 connection task，进程 GC/退出时打印
+       `Task was destroyed but it is pending!` 与
+       `TargetClosedError: Target page, context or browser has been closed`（"never retrieved"）。
+       体检会被前端**反复调用**（模块体检页、账号中心），sync 版等于往日志里持续灌噪声
+       ——而噪声会掩盖真错误，这与本仓"失败要看得见"是同一条纪律。
+       `async with` 会 await 完关闭流程，实测 stderr 干净。
+    2. **探测跑在独立线程**。这样从 sync 端点（FastAPI 线程池）与 async 端点（事件循环线程）
+       调用都安全。否则哪天有人把端点改成 `async def`，`asyncio.run()` 会抛
+       "cannot be called from a running event loop"，被调用方的 `except` 吞掉，
+       体检就**静默**变成"检测失败"——正是本仓最忌讳的那种降级。
+
+    返回路径而**不判断存在性**：提示语留给调用方（模块体检与浏览器体检措辞不同）。
+
+    ⚠️ 内部先调 `ensure_bundled_browsers_path()`：它**必须在 Playwright 启动之前**生效，
+    否则打包态会误报「chromium 未安装」（见该函数文档）。
+    """
+    ensure_bundled_browsers_path()
+    box: dict[str, Any] = {}
+
+    def _worker() -> None:
+        try:
+            box["path"] = asyncio.run(_driver_chromium_path())
+        except BaseException as exc:  # noqa: BLE001 —— 原样带回主线程再抛
+            box["error"] = exc
+
+    thread = threading.Thread(target=_worker, name="chromium-probe", daemon=True)
+    thread.start()
+    thread.join(timeout=PROBE_TIMEOUT_S)
+    if thread.is_alive():
+        raise RuntimeError(f"Playwright 驱动探测超时（{PROBE_TIMEOUT_S:g}s）")
+    if "error" in box:
+        raise box["error"]  # type: ignore[misc]
+    return Path(box["path"])
+
+
+async def _driver_chromium_path() -> str:
+    """真正的探测体：只问驱动"chromium 在哪"，**不 launch**。"""
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as pw:
+        return pw.chromium.executable_path
+
+
 def warmup_check() -> dict[str, Any]:
     """依赖体检：chromium 可执行文件是否存在（不真正启动）。"""
     try:
-        # 与运行期同一条解析路径——否则打包态会误报「未安装」（见 ensure_bundled_browsers_path）
-        ensure_bundled_browsers_path()
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as p:
-            path = p.chromium.executable_path
-            from pathlib import Path
-
-            ok = Path(path).exists()
+        path = chromium_executable_path()
+        ok = path.exists()
         return {"ok": ok, "detail": str(path) if ok else "chromium 未安装"}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "detail": f"检测失败：{exc}"}

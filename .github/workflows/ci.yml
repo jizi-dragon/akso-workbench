@@ -7,13 +7,19 @@ name: CI
 # 后果是：一条"源码已 bump、扩展 dist 未重建"的不一致（P4b）能在仓库里潜伏到发版才暴露——
 # 2026-09-17 就实测抓到过一次（详见 CHANGELOG「未发布 · Fixed」）。CI 是这条断点的唯一自动防线。
 #
-# 设计取舍（三条，都有理由，别顺手改）：
+# 设计取舍（四条，都有理由，别顺手改）：
 #   1. **Windows runner**：交付物是 Windows 安装包，P5 检查 `.ps1` 的 UTF-8 BOM。
 #      与环境一致比 runner 便宜更重要——**门禁在"和发版不同的平台"上跑，绿灯不代表能发版**。
 #   2. **不自动发版**：版本决策留在 `tools/bump.py`（方案甲）。CI 只读不写，因此无需任何 secret，
 #      也不存在"CI 误发一版"的风险。
 #   3. **不加 `paths-ignore`**：CI 与分支保护配合时，被跳过的 workflow 会以 pending 卡住合并。
 #      全量跑约 1 分钟，不值得为此引入一类"偶尔卡住 PR"的怪问题。
+#   4. **同一 ref 上只留最新一次运行**（`concurrency.cancel-in-progress`）：连推两次时，
+#      被顶掉的那次会以 **cancelled** 结束，界面上写着 `KeyboardInterrupt` +
+#      `Error: The operation was canceled.`——**那不是测试失败，是它被取消了**
+#      （2026-09-17 用户就被这个显示误导过一次，见 PITFALLS #43）。
+#      留着它是因为"旧提交的结论没有任何价值"，但**判红绿要看最新那次 run**：
+#      去 Actions 页看 run 列表，`cancelled` 与 `failure` 是两回事。
 #
 # 版本管理全貌见 docs/VERSIONING.md。
 
@@ -69,15 +75,18 @@ jobs:
       # --tb=short：CI 失败时只打印每个失败的首个栈帧，既能定位又不会被几千行日志淹没
       # -o addopts=""：**必须**。pyproject 里 addopts = "-q -m 'not slow'"，命令行再加 -q 会进
       #                ultra-quiet，连 `=== 413 passed ===` 汇总行都不打印，CI 界面看着像"没跑出结果"。
+      # -rs：**打印跳过原因**。CI 的 runner 没有 chromium，多账号并行那 4 项 P0 验收会 skip
+      #      （tests/test_browser_parallel.py 的 chromium_ready 守卫）。没有 -rs 时，
+      #      "绿灯"会把这 4 项**没跑**这件事藏起来——门禁必须能看出"哪些没跑"，不只是"有没有红"。
       - name: Run tests (fast layer)
-        run: .venv\Scripts\python.exe -m pytest --tb=short -p no:warnings -o addopts=""
+        run: .venv\Scripts\python.exe -m pytest --tb=short -rs -p no:warnings -o addopts=""
 
       # 沙箱的真实执行层：真起进程、验 Job Object 与"杀整棵进程树"。
       # 默认被 `-m 'not slow'` 排除（否则每次都多花几秒），所以**必须在这里显式补跑**——
       # 那几项恰恰是沙箱存在的理由，不能因为慢就永远不跑。
       # `-m "slow"` 若一个都没收集到，pytest 会以 exit 5 结束，CI 直接红（防止用例被误删标记）。
       - name: Run tests (sandbox execution layer)
-        run: .venv\Scripts\python.exe -m pytest --tb=short -p no:warnings -o addopts="" -m "slow"
+        run: .venv\Scripts\python.exe -m pytest --tb=short -rs -p no:warnings -o addopts="" -m "slow"
 
       - name: Packaging static checks
         run: .venv\Scripts\python.exe tools\verify_packaging.py

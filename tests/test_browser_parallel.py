@@ -145,7 +145,32 @@ def server():
 
 
 @pytest.fixture(scope="module")
-def pool_two(server):
+def chromium_ready() -> None:
+    """chromium 不可用 → **整组 skip**。
+
+    兑现本文件开头那句"需要 chromium，否则整组 skip"——它之前**只是写着**、没有实现，
+    于是这 4 项 P0 验收在任何没装浏览器的机器上（最先撞上的就是 CI）表现为**失败**
+    而不是跳过。CI 从建立那天起就没绿过，根因就是这里（见 PITFALLS #43）。
+
+    ⚠️ **为什么复用 `browser_pool.warmup_check()` 而不是自己写一个**：
+    ① 它是既有的**生产**体检入口（`/api/modules` 与 `/api/browser/check` 都读它），
+       自带 `ensure_bundled_browsers_path()`——打包态要指向随包分发的 chromium；
+       自己写一份必然在打包态误报（PITFALLS #28 就是这个坑）。
+    ② 本文件的 `pool_two` 刻意自持 sync Playwright（与生产同构），**同线程不许两个实例**；
+       `warmup_check()` 用 `with` 起停、**不 launch**，与 Pool 不冲突。
+    ③ 判断是**版本精确**的：它问的是"这份 Playwright 要的那个构建在不在"，
+       而不是"机器上有没有叫 chromium 的目录"（后者在版本错配时给假阳性——
+       本机实测就撞到过：缓存里有 `chromium-1234`，而新装的 Playwright 要 `chromium-1243`）。
+    """
+    from workbench.services.browser_pool import warmup_check
+
+    status = warmup_check()
+    if not status.get("ok"):
+        pytest.skip(f"chromium 不可用：{status.get('detail')}")
+
+
+@pytest.fixture(scope="module")
+def pool_two(server, chromium_ready):
     """两个账号的托管池：a/b 各自独立 context，自动登录到模拟平台。
 
     注意：Pool 自持 sync Playwright（与生产一致）；同线程只允许一个
