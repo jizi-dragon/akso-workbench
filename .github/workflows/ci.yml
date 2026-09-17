@@ -2,7 +2,7 @@ name: CI
 
 # 门禁的目标只有一个：**把"靠人记得跑"变成"不能不跑"**。
 #
-# 为什么需要它（2026-09-17 立）：本仓的 378 项测试与 9 项打包静态核对此前**全靠手工执行**，
+# 为什么需要它（2026-09-17 立）：本仓的 382 项测试与 9 项打包静态核对此前**全靠手工执行**，
 # 而 `tools/verify_packaging.py` **根本没有被 `tools/build.ps1` 调用**（CONTRIBUTING §6 记的已知问题）。
 # 后果是：一条"源码已 bump、扩展 dist 未重建"的不一致（P4b）能在仓库里潜伏到发版才暴露——
 # 2026-09-17 就实测抓到过一次（详见 CHANGELOG「未发布 · Fixed」）。CI 是这条断点的唯一自动防线。
@@ -68,12 +68,19 @@ jobs:
 
       # --tb=short：CI 失败时只打印每个失败的首个栈帧，既能定位又不会被几千行日志淹没
       # -o addopts=""：**必须**。pyproject 里 addopts = "-q"，命令行再加 -q 会进 ultra-quiet，
-      #                连 `=== 378 passed ===` 汇总行都不打印，CI 界面看着像"没跑出结果"。
+      #                连 `=== 382 passed ===` 汇总行都不打印，CI 界面看着像"没跑出结果"。
       - name: Run tests
         run: .venv\Scripts\python.exe -m pytest --tb=short -p no:warnings -o addopts=""
 
       - name: Packaging static checks
         run: .venv\Scripts\python.exe tools\verify_packaging.py
+
+      # 工具清单 / 数字门禁（2026-09-16 随"工具清单治理"引入）：
+      # 核对 docs/TOOLS.md 的清单与"N 个工具/插件"数字 == 运行期 ToolHub。
+      # tests/test_tools_doc.py 也钉了它，所以这条在 pytest 里已覆盖；
+      # 单独再跑一次是为了**让失败原因在 CI 界面上一眼可见**（pytest 里红只会说某个 test 挂了）。
+      - name: Tool-list gate
+        run: .venv\Scripts\python.exe tools\gen_tools_doc.py
 
       # uv tool run 会按需下载 ruff（首次约 10 MB）。这是有意的：
       # 与 CONTRIBUTING §7 记录的本地命令**逐字一致**，本地绿 == CI 绿。
