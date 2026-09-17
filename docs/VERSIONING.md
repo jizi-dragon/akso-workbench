@@ -475,22 +475,28 @@ GitHub 仓库 → **Settings → Rules → Rulesets → New ruleset**：
 > **这是业务决策，我不替你定。**
 
 ### 7.2 ✅ 已完成部分的实测记录
-
 | 项 | 落点 | 实测 |
 |---|---|---|
 | 自动打 tag | `tools/build.ps1`（release commit 之后，四条守卫：非 `-Bump none`、commit 真产生、commit 真推上去、tag 不重复） | `verify_packaging.py` **9/9 PASS**（P5 的 BOM 检查通过）；PowerShell 语法解析无错 |
-| CI 门禁 | `.github/workflows/ci.yml`（`windows-latest`；扩展构建 → `uv sync` → pytest → `verify_packaging.py` → ruff） | 本地逐条复现同一命令序列：**378 passed** / **9/9 PASS** / ruff `All checks passed` |
+| CI 门禁 | `.github/workflows/ci.yml`（`windows-latest`；扩展构建 → `uv sync` → pytest → `verify_packaging.py` → `gen_tools_doc.py` → ruff） | 本地逐条复现同一命令序列：**382 passed** / **9/9 PASS** / `TOOLS_DOC_CHECKS: PASS` / ruff `All checks passed` |
+| 已推送 | `5830da6`（文档+CI+自动打 tag+清理）、`0494ed6`（CI 补工具清单门禁）、`058c1ef`（本轮订正） | `local == origin/main`；推送经本机代理 `127.0.0.1:7890`（直连被重置，`git` 已配 `http.proxy`） |
 
 > ⚠️ **改 `build.ps1` 必须补 BOM**：实测编辑动作会静默丢掉 UTF-8 BOM（P5 立刻掉到 8/9）。
 > 这是环境坑 #37，处置命令在 `docs/PITFALLS.md`。
 > **这也顺带证明了 CI 的价值**：这类"内容看着完全正常、只有字节不对"的问题，只有门禁能拦住。
+> ⚠️ **仍无法在此环境验证的**：GitHub Actions 的实际运行结论（私有仓库的 Actions API 需要认证，
+> 而 `actions:read` 未被当前凭据覆盖）。**请到仓库 Actions 页确认 `verify` 这个 job 是绿的**——
+> 这是"CI 真的跑起来了"的唯一权威判据，本地复现不算。
 
 ---
 
 ## 8. 三个反直觉的结论（值得单独记住）
 
-1. **你真正缺的不是工具，是 tag。** 版本号机制（L1）已经很好，缺的是"版本号 ↔ commit"的锚点。
-   补 tag 是 10 分钟的活，收益却覆盖"可追溯 / 可回滚 / Release 能对上"三件事。
+1. **"看不到"≠"不存在"。** 本项目里这条方法学错误已经出现**两次**：
+   ① 用"某文档页没写"证明"平台没这个能力"（→ 见 `docs/CODEBASE_OVERVIEW.md`）；
+   ② 用"匿名 API 返回 404"证明"没有 Release"（→ 真相是仓库私有，什么都看不到）。
+   **凡是要靠"接口返回 404 / 空"下结论时，先确认自己有权限看到全部数据。**
+   同理，本文的 tag 结论从"要补 9 个"翻转为"一个都不用补"，就是因为补上了权限这一步。
 2. **"无人报错"不等于"链路正常"。** 自动更新默认关闭 + 私有仓库 + 有离线自测通道 = **三个因素叠加成"看起来都测过，线上永远收不到更新"**。
    这类缺陷的共同特征是：**没有任何一方会报错**。所以判据必须是"用户端真的升上去过一次"，不是"我自测通过了"。
 3. **你的提交规范已经是资产了。** 80% 的 Conventional Commits 合规率意味着**将来上自动化不用还债**；
