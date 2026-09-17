@@ -43,7 +43,14 @@ packages = ["workbench"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# `-m 'not slow'`：沙箱的真实执行层用例要起进程、验内核行为（Job Object / 杀进程树），
+# 每次 pytest 都跑会多花十几秒。默认排除以保证快速反馈，
+# **但 CI 里必须显式补一次 `-m slow`**（见 .github/workflows/ci.yml）——
+# 那几项恰恰是沙箱存在的理由，不能因为慢就永远不跑。
+addopts = "-q -m 'not slow'"
+markers = [
+    "slow: 需要真实起进程/浏览器的慢用例（默认排除；用 `-m slow` 或 `-m ''` 跑）",
+]
 
 [tool.ruff]
 line-length = 110

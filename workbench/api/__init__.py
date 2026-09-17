@@ -42,6 +42,7 @@ def _optional_routers(app: FastAPI) -> None:
         routes_insight,
         routes_modules,
         routes_monitor,
+        routes_sandbox,
         routes_update,
     )
 
@@ -54,6 +55,7 @@ def _optional_routers(app: FastAPI) -> None:
         ("agent", routes_agent),
         ("extension", routes_extension),
         ("monitor", routes_monitor),
+        ("sandbox", routes_sandbox),
         ("update", routes_update),
     )
     for name, mod in registrations:
@@ -68,8 +70,25 @@ def _optional_routers(app: FastAPI) -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     db.connect()
+    _sandbox_setup()
     _tool_selfcheck()
     yield
+
+
+def _sandbox_setup() -> None:
+    """沙箱启动期装配：建目录 + 接审计写入器。
+
+    与 `_tool_selfcheck` 同一纪律：**任何失败都不阻断启动**，但必须留下可见记录——
+    "沙箱没装好"比"沙箱不存在"更危险，因为它会给人虚假的安全感。
+    """
+    try:
+        from ..sandbox import audit, ensure_dirs
+
+        ensure_dirs()
+        audit.install_db_writer()
+        logger.info("沙箱已装配：目录就绪，审计写入器已接入 sandbox_run")
+    except Exception:  # noqa: BLE001 —— 沙箱装配失败不能拖垮应用启动
+        logger.warning("沙箱装配失败（沙箱不可用，但应用继续启动）", exc_info=True)
 
 
 def _tool_selfcheck() -> None:

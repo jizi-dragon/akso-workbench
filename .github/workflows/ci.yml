@@ -67,10 +67,17 @@ jobs:
         run: uv sync --extra dev --extra build
 
       # --tb=short：CI 失败时只打印每个失败的首个栈帧，既能定位又不会被几千行日志淹没
-      # -o addopts=""：**必须**。pyproject 里 addopts = "-q"，命令行再加 -q 会进 ultra-quiet，
-      #                连 `=== 382 passed ===` 汇总行都不打印，CI 界面看着像"没跑出结果"。
-      - name: Run tests
+      # -o addopts=""：**必须**。pyproject 里 addopts = "-q -m 'not slow'"，命令行再加 -q 会进
+      #                ultra-quiet，连 `=== 413 passed ===` 汇总行都不打印，CI 界面看着像"没跑出结果"。
+      - name: Run tests (fast layer)
         run: .venv\Scripts\python.exe -m pytest --tb=short -p no:warnings -o addopts=""
+
+      # 沙箱的真实执行层：真起进程、验 Job Object 与"杀整棵进程树"。
+      # 默认被 `-m 'not slow'` 排除（否则每次都多花几秒），所以**必须在这里显式补跑**——
+      # 那几项恰恰是沙箱存在的理由，不能因为慢就永远不跑。
+      # `-m "slow"` 若一个都没收集到，pytest 会以 exit 5 结束，CI 直接红（防止用例被误删标记）。
+      - name: Run tests (sandbox execution layer)
+        run: .venv\Scripts\python.exe -m pytest --tb=short -p no:warnings -o addopts="" -m "slow"
 
       - name: Packaging static checks
         run: .venv\Scripts\python.exe tools\verify_packaging.py

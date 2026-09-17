@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>沙箱 · Workbench</title>
+    <link rel="stylesheet" href="/static/css/tokens.css" />
+    <link rel="stylesheet" href="/static/css/base.css" />
+    <link rel="stylesheet" href="/static/css/modules.css" />
+  </head>
+  <body>
+    <div class="module-shell">
+      <header class="module-topbar">
+        <a class="back" href="/">← 返回工作台</a>
+        <h1>沙箱</h1>
+        <span class="sub">不受信代码的唯一执行底座（策略 / 运行期状态 / 执行审计）</span>
+        <div class="spacer"></div>
+        <button class="mbtn ghost" id="sb-refresh">刷新</button>
+        <span class="status-badge" id="sb-health">检测中…</span>
+      </header>
+
+      <!-- 边界声明放在最上面：不让任何人（包括未来的我自己）把它误读成"跑了就安全" -->
+      <section class="mcard" id="sb-boundary-card">
+        <h2>这个沙箱是什么、不是什么</h2>
+        <p class="hint" id="sb-boundary" style="margin-top:0"></p>
+        <div class="mgrid cols-2" style="margin-top:10px">
+          <div>
+            <h3 style="font-size:12.5px;color:var(--text-2);margin:0 0 6px">✅ 代码强制（拦得住）</h3>
+            <ul class="sb-list" id="sb-enforced"></ul>
+          </div>
+          <div>
+            <h3 style="font-size:12.5px;color:var(--text-2);margin:0 0 6px">⚠️ 只是声明（不构成隔离）</h3>
+            <ul class="sb-list sb-declared" id="sb-declared"></ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="mcard">
+        <h2>策略</h2>
+        <table class="mtable" id="sb-policies">
+          <thead>
+            <tr>
+              <th>策略</th><th>严格度</th><th>超时</th><th>输出上限</th>
+              <th>派生进程</th><th>联网</th><th>说明</th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="7" class="hint">加载中…</td></tr></tbody>
+        </table>
+        <p class="hint">
+          策略是<b>有限具名集合</b>（不是随便填的开关）：新增一条要改代码 + 加测试。
+          未知策略名会被<b>拒绝</b>（Fail-Closed），不会回落到默认策略。
+        </p>
+      </section>
+
+      <section class="mcard">
+        <h2>运行期状态</h2>
+        <div class="mgrid cols-4" id="sb-status"></div>
+      </section>
+
+      <section class="mcard">
+        <h2>执行审计</h2>
+        <table class="mtable" id="sb-runs">
+          <thead>
+            <tr>
+              <th>时间</th><th>标签</th><th>策略</th><th>结果</th>
+              <th>耗时</th><th>终止手段</th><th>命令摘要</th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="7" class="hint">加载中…</td></tr></tbody>
+        </table>
+        <p class="hint">
+          与 <span class="mono">/api/agent/audit</span> 的分工：那边记<b>工具调用</b>（谁调了什么工具），
+          这里记<b>执行</b>（沙箱里跑了什么、用的哪份策略、树杀干净没有）。两层用 <span class="mono">audit_id</span> 串联。
+        </p>
+      </section>
+    </div>
+    <script type="module" src="/static/js/sandbox.js"></script>
+  </body>
+</html>

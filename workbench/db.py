@@ -300,6 +300,46 @@ CREATE INDEX IF NOT EXISTS idx_deepseek_usage_conversation ON deepseek_usage(con
 -- 注意：这**不是**改历史迁移——迁移 1–17 一行未动，本条只改写数据行。
 UPDATE blueprint_jobs SET module = 'factory' WHERE module IN ('akso-auto', 'egmp-native');
 """),
+    (19, "sandbox_run_audit", """
+-- 沙箱执行审计（2026-09-17，决策见 docs/adr/0014-sandbox-for-untrusted-code.md）。
+--
+-- ## 为什么单独一张表，而不是并进 agent_audit
+--
+-- `agent_audit` 是**工具层**的表：主键是"一次工具调用"。而沙箱执行的粒度更细——
+-- 一个工具可能在一次调用里跑多个脚本，且沙箱**不只服务工具**（将来 Skill 安装、
+-- MCP stdio 都走它）。并进去会让 `agent_audit` 的语义变浑。
+--
+-- ## 与 agent_audit 怎么关联
+--
+-- `audit_id` 与 `agent_audit.id` **同名同义**：工具层与执行层各写一行，用同一个 id 串起来。
+-- 不设外键——两层可以独立写入（沙箱可能被非工具路径直接调用，那时没有 agent_audit 行）。
+--
+-- ## 为什么字段这么细
+--
+-- 这张表的唯一读者是"事后回答三个问题"：**谁跑的？当时用的是哪份策略？树杀干净没有？**
+-- 所以 policy_fingerprint 与 tree_kill 必须在表里，不能只落日志——日志会被轮转掉。
+CREATE TABLE IF NOT EXISTS sandbox_run (
+    id TEXT PRIMARY KEY,
+    audit_id TEXT NOT NULL DEFAULT '',
+    label TEXT NOT NULL DEFAULT '',
+    policy TEXT NOT NULL DEFAULT '',
+    policy_fingerprint TEXT NOT NULL DEFAULT '',
+    cwd TEXT NOT NULL DEFAULT '',
+    argv_summary TEXT NOT NULL DEFAULT '',
+    code INTEGER NOT NULL DEFAULT -1,
+    ok INTEGER NOT NULL DEFAULT 0,
+    timed_out INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    stdout_chars INTEGER NOT NULL DEFAULT 0,
+    stderr_chars INTEGER NOT NULL DEFAULT 0,
+    output_truncated INTEGER NOT NULL DEFAULT 0,
+    tree_kill TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sandbox_run_created_at ON sandbox_run(created_at);
+CREATE INDEX IF NOT EXISTS idx_sandbox_run_audit ON sandbox_run(audit_id);
+"""),
 ]
 
 

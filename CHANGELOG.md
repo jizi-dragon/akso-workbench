@@ -7,9 +7,58 @@
 
 ### Added
 
-> ⚠️ **本节第一条（端口协商/顺延）已于同日被撤回国**——见下方 `### Changed` 的
+> ⚠️ **本节的端口协商/顺延条目已于同日被撤回**——见下方 `### Changed` 的
 > [ADR-0012](docs/adr/0012-fixed-ports.md) 条目。保留原文是为了留痕；
 > **现行行为是端口固定、不顺延**，读本条时勿把"顺延"当成现状。
+
+- **沙箱：不受信代码的唯一执行底座**（2026-09-17，决策见 **[ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md)**）。
+  用户定的路线是「**先构建沙箱，优先补充整个项目的沙箱管理，再考虑接入 skill**」——所以本期只做底座，
+  Skill 与 MCP 是它的下一期消费方（MCP 用户明确暂缓）。
+
+  新增 `workbench/sandbox/`（5 模块，依赖方向单向 `runner → {policy, job, layout}`，
+  **`policy` 不依赖本包任何其他模块**，以便在没装依赖的机器上单测）：
+
+  | 模块 | 职责 |
+  |---|---|
+  | `layout.py` | **唯一**决定"什么算沙箱根"的地方（`<DATA_DIR>/sandbox`），防第二套口径 |
+  | `policy.py` | 策略声明与校验（纯数据）：3 条具名策略、环境变量**白名单**、敏感路径拒绝表 |
+  | `job.py` | 进程树的**生命周期强制**：Windows Job Object / POSIX 进程组 |
+  | `runner.py` | 执行器：把四层强制组装起来（E1 生命周期 / E2 环境 / E3 文件系统 / E4 可观测） |
+  | `audit.py` | 留痕：注入式写入器（与 `plugin_api` 对审计的处理同构），落新表 `sandbox_run`（**迁移 19**） |
+
+  **顺带修掉的两个实测缺口**（`services/proc.py` 一直如此，只是此前没人执行不受信代码）：
+  1. **超时只 kill 直接子进程** —— `proc.kill()` 不杀孙进程，`node` 起的服务会残留（占端口/句柄）。
+     现在绑 Job Object，超时 `TerminateJobObject` **杀整棵树**（有真实孙进程的回归断言）。
+  2. **环境全量继承** —— `dict(os.environ)` 把宿主一切交给子进程（含各种 `*_KEY`/`*_TOKEN`）。
+     现在是白名单，且**凭据类变量名一律拒绝注入**（`validate()` 直接抛）。
+
+  **两条实测校准（都是先踩后改，不是拍脑袋）**：
+  - **不用 `CREATE_SUSPENDED`**：教科书写法（挂起→绑 Job→`ResumeThread`）在本机做不干净——
+    `OpenThread(THREAD_SUSPEND_RESUME, False, pid)` 返回 NULL/err=87（它要的是**线程 id**，不是 pid），
+    而不 resume 的后果是**进程永远挂着**（实测 `communicate()` 超时）。改为"正常创建 + 立刻绑定"，
+    竞态窗口在微秒级，且已存在的子进程也会被一并移入 Job。**成本从"一段易失灵的内核代码"降到零。**
+  - **`ActiveProcessLimit` 不取 1，取 10**：**venv 的 `python.exe` 是 launcher，它会 re-exec 真正的解释器**，
+    于是"跑一个脚本"本身占 2 个进程槽。取 1 的实测结果是**脚本根本起不来**（rc=101 + launcher 乱码报错），
+    比不限制更糟。取 10 仍挡得住失控派生，而"杀整棵树"的保证本就不依赖它。
+
+  **诚实边界（写进代码、API 与界面三处，见 ADR-0014 §D-3）**：这**不是**安全边界。
+  它保证"整棵树能停 / 凭据不注入 / 目录不越界 / 输出可截断 / 每次留痕 / 失败即拒"，
+  **不提供**内核级隔离。故界面把「✅ 代码强制」与「⚠️ 只是声明」**分两栏**显示，
+  `/api/sandbox/policies` 单列 `enforced` 字段——避免任何人（包括将来的我）把它读成"跑了就安全"。
+
+  管理面：`GET /api/sandbox/{policies,status,runs,selfcheck}` + 新页面
+  **沙箱**（`/static/pages/sandbox.html`，导航"Agent 能力"分组）。
+  **刻意不提供通用的 `/api/sandbox/exec`**：本仓服务端只监听回环且无认证
+  （`docs/CODEBASE_OVERVIEW.md` R1），开一个"跑任意代码"的接口等于把 R1 从"可读凭据"升级成"可执行任意代码"。
+
+  测试：`tests/test_sandbox.py` 31 项，**分快慢两层**——纯逻辑层 27 项毫秒级每跑必过；
+  真实执行层 4 项打 `slow` 标记（默认 `-m 'not slow'` 排除，**CI 显式补跑 `-m slow`**）。
+  那 4 项恰恰是沙箱存在的理由（真的杀进程树、真的验凭据不泄漏），不能因为慢就永远不跑。
+
+  > **推翻的既有结论**：`PLUGIN-UPSTREAM-RESEARCH.md:189` 与
+  > `core-plugin-separation-research.md:126` 都写着"**不值得做**：进程沙箱"。
+  > 那两条的**前提**是"插件作者只有你自己、全是可信代码"——用户要的"上传 skill"换掉了这个前提。
+  > 所以不是它们错了，是适用范围变了；按本仓 ADR 纪律新增 ADR-0014 **显式取代**，历史结论一字未改。
 
 - **工具插件层：Agent 核心有了唯一的能力扩展面，三大业务以插件形式接入**（用户定稿：先提升核心中枢，
   再把三个工具做成插件与 Agent 关联）。契约见 **[docs/PLUGIN-SDK.md](docs/PLUGIN-SDK.md)**。

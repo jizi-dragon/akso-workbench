@@ -1,0 +1,33 @@
+feat(sandbox): 不受信代码的统一执行底座 + 沙箱管理面
+
+用户定的路线：「先构建沙箱，优先补充整个项目的沙箱管理，再考虑接入 skill」。
+本期只做底座；Skill / MCP 是它的下一期消费方（MCP 用户明确暂缓）。
+
+新增 workbench/sandbox/（5 模块，依赖方向单向 runner -> {policy, job, layout}）：
+- layout.py  唯一决定「什么算沙箱根」的地方，防第二套口径
+- policy.py  策略声明与校验（纯数据，不 import db/services/插件）
+- job.py     进程树的生命周期强制：Windows Job Object / POSIX 进程组
+- runner.py  执行器：四层强制 E1 生命周期 / E2 环境 / E3 文件系统 / E4 可观测
+- audit.py   注入式审计写入器（与 plugin_api 同构），落新表 sandbox_run（迁移 19）
+
+顺带修掉 services/proc.py 一直存在的两个实测缺口：
+1. 超时只 kill 直接子进程 -> 现在绑 Job Object，TerminateJobObject 杀整棵树
+2. dict(os.environ) 全量继承 -> 现在环境变量白名单，凭据类变量名一律拒绝注入
+
+两条实测校准（先踩后改）：
+- 不用 CREATE_SUSPENDED：OpenThread 要的是线程 id 不是 pid（实测 err=87），
+  不 resume 会让进程永远挂着。改为「正常创建 + 立刻绑定」，竞态窗口微秒级。
+- ActiveProcessLimit 取 10 不取 1：venv 的 python.exe 是 launcher 会 re-exec，
+  取 1 会让脚本根本起不来（实测 rc=101）。
+
+诚实边界（写进代码/API/界面三处）：这不是安全边界，不提供内核级隔离。
+界面把「代码强制」与「只是声明」分两栏，/api/sandbox/policies 单列 enforced 字段。
+
+管理面：GET /api/sandbox/{policies,status,runs,selfcheck} + 页面
+/static/pages/sandbox.html（导航「Agent 能力」）。刻意不提供通用 exec 端点
+——本仓服务端只监听回环且无认证，那等于把 R1 升级成「可执行任意代码」。
+
+测试：tests/test_sandbox.py 31 项，分快慢两层；CI 显式补跑 -m slow。
+决策记录：docs/adr/0014-sandbox-for-untrusted-code.md（显式取代
+PLUGIN-UPSTREAM-RESEARCH / core-plugin-separation-research 里
+「不值得做进程沙箱」的前提——那两条的前提是「全是可信代码」）。

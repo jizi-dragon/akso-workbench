@@ -44,6 +44,7 @@
 |---|---|
 | **现在到底有哪些工具、谁在管、怎么加一个** | **[docs/TOOLS.md](docs/TOOLS.md)**（工具注册表 + 变更纪律 + 机检） |
 | 怎么写一个工具插件、风险分级与确认门语义 | [docs/PLUGIN-SDK.md](docs/PLUGIN-SDK.md) |
+| **不受信代码（将来上传的 Skill）在哪跑、拦得住什么** | **[ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md)** + 工作台「沙箱」页（策略/状态/执行审计） |
 | 为什么平台相关代码集中在 `services/egmp/` | [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md)、[ADR-0013](docs/adr/0013-brand-neutralization-workbench.md) |
 
 > 工具清单**不靠人记**：`docs/TOOLS.md` 的清单由 `tools/gen_tools_doc.py` 从运行中的工具中枢生成，
@@ -87,7 +88,7 @@
 | [docs/API.md](docs/API.md) | 要调接口/写脚本的人 | 端点权威契约 + SSE/长轮询/产物下载四类特殊通道 |
 | [docs/CONFIG.md](docs/CONFIG.md) | 现场排障、要调行为的人 | 五层配置全覆盖（环境变量 / settings 键 / 代码参数 / 数据目录文件 / 前端常量） |
 | [docs/SCHEMA.md](docs/SCHEMA.md) | 要改数据层的人 | DB 迁移 1–18、表结构、跨进程数据契约、改表清单 |
-| [docs/adr/](docs/adr/) | 想知道「为什么这么设计」的人 | 13 篇架构决策记录（含被放弃的方案与重新评估的触发器） |
+| [docs/adr/](docs/adr/) | 想知道「为什么这么设计」的人 | **14 篇**架构决策记录（含被放弃的方案与重新评估的触发器） |
 | [docs/EXTENSION-PLANE.md](docs/EXTENSION-PLANE.md) | 要改浏览器扩展的人 | 六平面隔离原理、桌面↔扩展协议、私有改造史、安全边界 |
 | [docs/EXTENSION-INSTALL.md](docs/EXTENSION-INSTALL.md) | 首次装载扩展的人 | 逐步图文 + **为什么不能静默一键装**的实证 |
 | [docs/INSIGHT-SPEC.md](docs/INSIGHT-SPEC.md) | 要发展/扩展平台洞察的人 | **洞察的功能定位与产品能力契约**：能力范围与非目标、平台知识层、产物与存储、已知边界、验收标准 |
@@ -99,7 +100,7 @@
 | [docs/research/deepseek-api-capabilities.md](docs/research/deepseek-api-capabilities.md) | 要调模型/算成本的人 | **DeepSeek API 能力核查**：现行模型名（V4.1-Flash）、**联网搜索到底有没有**（没有）、上下文缓存的命中规则与 50 倍价差 |
 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) | 接手维护的人（含 AI 助手） | 代码地图、架构与数据流、红线与约定、风险台账、验收基线实测 |
 | **[docs/VERSIONING.md](docs/VERSIONING.md)** | **管版本 / 发版 / 想接 GitHub 自动化的人** | **版本管理机制**（三层拆解）、现状实测（tag 缺口、更新链路的公开仓库前提）、GitHub 能帮哪一段、三个方案选型、可直接照抄的 CI 与打 tag 做法 |
-| [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **36 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改） |
+| [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **38 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发者 | 环境搭建、依赖变更、构建发布、代码规约、验收纪律 |
 | [CHANGELOG.md](CHANGELOG.md) | 所有人 | 版本变更明细（含每次事故的根因） |
 | [docs/HISTORY-REWRITE-NOTICE.md](docs/HISTORY-REWRITE-NOTICE.md) | 协作者（受影响者） | 历史重写说明 + 本地副本迁移步骤（勿 merge 旧历史） |

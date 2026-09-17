@@ -357,3 +357,12 @@ dialog#artifact-preview { width: min(1080px, calc(100vw - 64px)); }
 
 /* ———— 其他 ———— */
 .empty { color: var(--text-3); font-size: 13px; text-align: center; padding: 26px 0; }
+
+/* ───────── 沙箱页（sandbox.html）：强制项 / 声明项两栏 ───────── */
+.sb-list { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.9; color: var(--text-2); }
+.sb-list li::marker { color: var(--acc-success); }
+/* 沙箱页（sandbox.html）：强制项 / 声明项两栏。声明项刻意用弱化色——它们不是隔离能力，视觉上不能与强制项等价 */
+.sb-list { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.9; color: var(--text-2); }
+.sb-list li::marker { color: var(--acc-success); }
+.sb-list.sb-declared { color: var(--text-3); }
+.sb-list.sb-declared li::marker { color: var(--acc-warning); }
