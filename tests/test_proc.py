@@ -3,11 +3,25 @@
 from __future__ import annotations
 
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
 
 from workbench.services import proc
+
+
+def _absent_absolute_path(suffix: str) -> str:
+    """一个**保证不存在**的绝对路径，且跨平台都是绝对路径。
+
+    为什么不用 `Z:/...`：`check_spec` 只在 `os.path.isabs(exe)` 成立时才查存在性。
+    POSIX 下 `Z:/…` **不是**绝对路径（不以 `/` 开头），于是它会被当成"走 PATH 的命令名"跳过检查、
+    测试报出的是"没抛 ProcError"——**看着像 proc.py 的 bug，其实是用例不可移植**
+    （同一个坑还有 `test_missing_cwd_diagnosis`：cwd 那条不走 isabs 判断，反而能过）。
+    2026-09-17 为让本套测试可在 Linux 上跑而改。
+    """
+    return str(Path(tempfile.gettempdir()) / f"akso-absent-{uuid.uuid4().hex}" / suffix)
 
 
 def test_node_detection() -> None:
@@ -59,9 +73,12 @@ def test_timeout_kills() -> None:
 
 def test_missing_executable_diagnosis() -> None:
     with pytest.raises(proc.ProcError, match="可执行文件不存在"):
-        proc.run_proc(proc.ProcSpec(argv=[str(Path("Z:/definitely/missing.exe"))]))
+        proc.run_proc(proc.ProcSpec(argv=[_absent_absolute_path("missing.exe")]))
 
 
 def test_missing_cwd_diagnosis() -> None:
     with pytest.raises(proc.ProcError, match="工作目录不存在"):
-        proc.run_proc(proc.ProcSpec(argv=[sys.executable, "-c", "pass"], cwd="Z:/no/such/dir"))
+        proc.run_proc(proc.ProcSpec(
+            argv=[sys.executable, "-c", "pass"],
+            cwd=_absent_absolute_path("no-such-dir"),
+        ))

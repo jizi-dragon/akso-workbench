@@ -63,10 +63,14 @@ Write-Host "[3/6] uv sync…"
 if ($LASTEXITCODE -ne 0) { Write-Host "✗ uv sync 失败" -ForegroundColor Red; exit 1 }
 
 # 3) 版本号入库并推送（release commit：含扩展 manifest/package 与 uv.lock）
+#    + 打 tag（tag 是"这一版对应哪个 commit"的唯一锚点，见 docs/VERSIONING.md §3.2）
 if (-not $SkipPush) {
     git add pyproject.toml workbench\__init__.py desktop\package.json .version.json uv.lock `
         extensions\quick-login\package.json extensions\quick-login\packages\extension\manifest.json
+    # commit 可能因"无改动"返回非 0（例如连续两次 -Bump none 构建）：那种情况不该打 tag
     git commit -m "chore(release): v$version" 2>$null | Out-Null
+    $committed = ($LASTEXITCODE -eq 0)
+
     $pushed = $false
     foreach ($i in 1..3) {
         git -c http.proxy= push 2>&1 | Out-Null
@@ -74,8 +78,34 @@ if (-not $SkipPush) {
         Start-Sleep -Seconds 4
     }
     Write-Host ("[4/6] 版本号推送: " + $(if ($pushed) { "OK" } else { "失败（网络）——稍后手动 git push" }))
+
+    # 打 tag 并单独推送。四条纪律：
+    #   ① **必须在 commit 推送成功之后**——否则 tag 指向一个远端还不存在的 commit，推送必被拒；
+    #   ② 只在 `-Bump build|push` 时打：`-Bump none` 是"沿用当前版本只重出安装包"，
+    #      此时版本号早已发过，再打会撞上已存在的 tag（属于噪音）；
+    #   ③ 先查 tag 是否已存在：重复构建同版本时 `git tag -a` 会报 already exists；
+    #   ④ 失败只告警不改退出码：安装包已经出来了，一个 tag 推不上去不该作废整次构建。
+    # 历史教训：2026-09-17 实测本仓**发布了 12 个版本却只有 3 个 tag**，
+    # 导致 `git checkout v0.3.11` 直接报错、回滚与"用户跑的是哪一版"都没有锚点。
+    if ($Bump -eq 'none') {
+        Write-Host "[4/6] -Bump none：沿用已发布版本，不打 tag"
+    } elseif (-not $committed) {
+        Write-Host "[4/6] 无版本改动（commit 未产生），不打 tag"
+    } elseif (-not $pushed) {
+        Write-Host "[4/6] ⚠ commit 未推上去，跳过打 tag（否则 tag 指向远端不存在的 commit）" -ForegroundColor Yellow
+    } elseif (git rev-parse -q --verify "refs/tags/v$version" 2>$null) {
+        Write-Host "[4/6] tag v$version 已存在，跳过"
+    } else {
+        git tag -a "v$version" -m "Akso Workbench $version"
+        git -c http.proxy= push origin "v$version" 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[4/6] tag v$version 已推送"
+        } else {
+            Write-Host "[4/6] ⚠ tag 推送失败（网络）——稍后手动：git push origin v$version" -ForegroundColor Yellow
+        }
+    }
 } else {
-    Write-Host "[4/6] 跳过推送（-SkipPush）"
+    Write-Host "[4/6] 跳过推送与打 tag（-SkipPush）"
 }
 
 # 4) 服务端 sidecar（PyInstaller onedir，含 chromium）

@@ -104,13 +104,104 @@
     ③ **"没有结果"与"通道挂了"必须分开报**（都返回空列表的话，模型会把通道不可达
     读成"网上没有这东西"然后据此下结论）。
   - `Risk.READ`，不过确认门；工具描述里要求引用条文前用 `read_web_page` 读原文核对。
-  - 验证脚本 `tmp/verify_websearch_fallback.py` 逼工具走兜底通道，断言它只会给出
+  - 验证脚本 `tools/verify_websearch_fallback.py` 逼工具走兜底通道，断言它只会给出
     **两种可接受结局**：可直读的真实链接，或明确报错（**不允许**交出废地址/空列表）。
+    （2026-09-17 由 `tmp/` 迁入 `tools/`——`tmp/` 在 `.gitignore` 里，**验证资产放在那儿等于不入库、迟早丢失**。
+    它此前已被本 CHANGELOG 引用，即"文档引用了一个不受版本控制的文件"。同期 `tmp/diag_search_dual.py` 迁为
+    `tools/verify_websearch_channels.py`，`tmp/` 现已清空。）
 
 - **设置页开放系统提示词编辑**（用户目标 ③）。提示词分基线（代码里的
   `DEFAULT_SYSTEM_PROMPT`）与用户版（`settings.systemPrompt`，空 = 用基线），
   新增 `GET/PUT /api/settings/prompt`；「填入默认内容」只填框不保存，
   保存必须显式点按钮（改提示词会打断一次缓存前缀，得让用户自己决定何时生效）。
+
+- **新增 [docs/VERSIONING.md](docs/VERSIONING.md)：版本管理机制与 GitHub 能帮哪一段**（2026-09-17）。
+  把"版本管理"拆成三层（**L1 版本号 / L2 发布事实 / L3 用户可见**），逐层给出实测现状与选型。三条实测结论：
+  1. **L1 已做得很好**：单一真源（`pyproject.toml`）+ 五写同步 + `bump.py` 两档制，**不需要引入任何工具**。
+  2. **L2 有真缺口**：**发布了 12 个版本却只有 3 个 tag**（`v0.3.3`/`v0.3.4`/一个遗留 tag）。
+     后果是**版本号在 git 里定位不到**——`git checkout v0.3.11` 直接报错，回滚与"用户跑的是哪一版"都无锚点。
+     另：`.github/` **不存在**（无 CI 门禁），无 tag 保护规则，`.git/hooks` 只有 `.sample`。
+  3. **L3 有一条"三方叠加才暴露"的静默缺陷**：更新器**匿名**读 Release ⇒ 要求仓库公开，
+     而 **2026-09-17 匿名探测 `api.github.com/repos/jizi-dragon/akso-mogul` 返回 404**（同 owner 其余仓库均 200 公开）。
+     叠加"自动更新默认关闭（`WORKBENCH_AUTO_UPDATE`）"与"有 `AKSO_UPDATE_OVERRIDE` 离线自测通道"，
+     结果是**自测全绿、线上永远收不到更新，且没有任何一方会报错**。
+     ⚠️ 本 CHANGELOG 早先写的"本仓库即公开"**与现状不符**，已在 `CONTRIBUTING.md` §6 记入已知状态。
+  - 文档同时给出**方案甲（GitHub 只做记录+门禁，版本决策仍归 `bump.py`，推荐）**、
+    方案乙（release-please 接管，**但会与两档制冲突，须先统一版本语义**）、方案丙（只自动化 CHANGELOG）的取舍，
+    以及可直接照抄的 `ci.yml` 与"`build.ps1` 自动打 tag"改法。
+  - **一个有利条件被记下来了**：实测 95 个提交里约 80% 已是 Conventional Commits（`fix` 30 / `feat` 28 / `chore` 13 / `docs` 6，含 `feat(insight)!` 破坏性标记），
+    即"将来上自动化不用还债"。
+
+- **落地"方案甲"：GitHub 只做记录 + 门禁，版本决策仍归 `tools/bump.py`**（2026-09-17 用户选型）。两项：
+  1. **新增 `.github/workflows/ci.yml`**——push / PR 上跑
+     `扩展构建 → uv sync → pytest → verify_packaging.py → ruff`，`windows-latest`，`timeout-minutes: 20`。
+     **这是 `tools/verify_packaging.py` 自诞生以来的第一个自动调用方**（CONTRIBUTING §6 长期记着"未被 build.ps1 调用、无 CI"）。
+     三个设计取舍都写进了 workflow 注释：① **Windows runner**（交付物是 Windows 安装包，且 P5 查 `.ps1` 的 BOM；
+     门禁在"与发版不同的平台"上跑，绿灯不代表能发版）② **不自动发版**（故无需任何 secret，也不存在"CI 误发一版"）
+     ③ **不加 `paths-ignore`**（被跳过的 workflow 在分支保护下会以 pending 卡住合并）。
+     两个"必须照抄"的坑也写在注释里：`-o addopts=""`（否则 ultra-quiet 连汇总行都不打印）、
+     **必须在 pytest 之前 `npm run build`**（`verify_packaging.py` 的 P4b/P4c 读扩展 `dist/`，而它被 gitignore ⇒ 全新 checkout 里不存在）。
+  2. **`tools/build.ps1` 自动打 tag**（release commit 推送成功之后）——补上"标签"这一层缺口。
+     四条守卫都不会打 tag：`-Bump none` / commit 未产生 / **commit 未推上去**（否则 tag 指向远端不存在的 commit）/ tag 已存在；
+     失败只告警不改退出码（安装包已经出来了，一个 tag 推不上去不该作废整次构建）。
+  - **动因**：实测**发布过 12 个版本却只有 3 个 tag**（`v0.3.3`/`v0.3.4`/一个遗留 tag），
+    导致 `git checkout v0.3.11` 直接报错——**回滚与"用户跑的是哪一版"都没有锚点**。
+  - 本地逐条复现 CI 的同一命令序列：**378 passed** / `PACKAGING_CHECKS: 9/9` / ruff `All checks passed`。
+  - 相关文档：新增 [docs/VERSIONING.md](docs/VERSIONING.md)；`CONTRIBUTING.md` 增 §3.3.1（tag 与 CI 纪律）。
+
+### Fixed
+
+- **`tests/test_proc.py` 两处 Windows-only 硬编码路径改为跨平台**（2026-09-17）。
+  `Z:/definitely/missing.exe` 与 `Z:/no/such/dir` 在 POSIX 下**不是绝对路径**，
+  而 `proc.check_spec` 只在 `os.path.isabs(exe)` 成立时才查存在性 ⇒ Linux 上该用例会以
+  "没抛出 `ProcError`"失败——**看着像 `proc.py` 的 bug，其实是用例不可移植**。
+  改为 `_absent_absolute_path()`（`tempfile.gettempdir()` + uuid，保证跨平台都是绝对路径且必然不存在）。
+  > 这条是为 CI 做的准备：**门禁要在和发版一致的环境里跑，但用例本身不该被平台绑死**。
+  > 顺带记一条判据：凡"某用例只在某个平台过"，先怀疑用例而不先怀疑被测代码。
+
+- **打包门禁从 8/9 恢复到 9/9：扩展产物版本落后于项目版本**（2026-09-17 实测发现并修复）。
+  `tools/verify_packaging.py` 的 **P4b** 断言"扩展 manifest 版本 == 项目版本"**失败**：
+  项目 `0.3.12`，而 `extensions/quick-login/dist/manifest.json` 停在 **`0.3.11`**。
+  **根因**：`dist/` 是构建产物（`.gitignore` 已忽略），最后一次 `tools/bump.py` 只改了**源码** manifest，
+  而 `dist/` 是上一次构建留下的——**源码对、产物旧**，正是 P4b 要抓的那类不一致。
+  **修法**：`cd extensions/quick-login && npm run build` 重建 → `PACKAGING_CHECKS: 9/9`。
+  **教训**：`bump` 之后必须重建扩展，否则发出去的安装包里带的是旧版扩展（用户侧表现为"升级了但扩展还是老的"，
+  而仓库里看不出来——因为 `dist/` 不进 git）。
+- **`docs/CODEBASE_OVERVIEW.md` §仓库卫生 整节重写**：原内容已全部失效（声称"两份方向调研文档未提交、
+  `tmp/` 未 ignore"，而前者**从未入库**、后者**自 2026-09-14 起已 ignore**）。新版按实测列出已清理项与仍存在的两处缺口。
+- **`docs/CODEBASE_OVERVIEW.md` C14 条目订正**：它声称已加 `tmp/verify_factory_frontend.py`，但**全库无此文件**。
+  已改为如实标注"**已修但无自动化回归**"（C14 属"页面不报错、测试也不报错"的静默缺陷，恰恰最需要那条断言）。
+
+### Removed
+
+- **删除 `docs/方向调研-平台洞察独立发展.md`**（2026-09-17，用户定稿；**内容已作废，勿从历史里恢复当现状依据**）。
+  废除理由有据可查，不是"看着碍眼"：
+  1. **它 100% 依附两份本仓根本不存在的文档**——正文开头即声明"接续《方向调研-公司级Agent平台.md》与
+     《方向调研-钉钉MCP落地细节.md》"，并多处直接引用后者的 §2/§4.2 结论。**外部依赖缺失使它的结论无法复核**。
+  2. **它的技术前提已被否决**：全文建立在「把能力经钉钉 MCP 供给出去」这一方案上，
+     而该方向已明确不走（钉钉技能中心与 ADP 一样**只接受 SSE / Streamable HTTP、不支持 stdio**，
+     且 2026-09-17 的调研结论是**用 Stream 模式机器人取代 MCP 注册**）。
+  3. 它引用的 §1 数据目录勘查结论（`platform_env` 行数、`insight_runs` 从未在真机落记录等）
+     **已被后续实测推翻**：2026-09-17 实测 `insight_runs` **15 行**、`agent_audit` 1 行、`blueprint_jobs` 1 行，
+     即**已经跑过真实任务**。继续挂着它会让"零真实运行数据"这个错误前提被反复引用。
+  - **不保留副本**：如需追溯，`git show d0efa84:docs/方向调研-平台洞察独立发展.md` 可取回原文。
+  - 同期清理了一批**未跟踪**的 ADP 调研残留（根目录 24 个 `_body_*` / `_cn_*` / `_raw_*` 抓取产物、
+    `adp_research/`、`adp-{api,kb,multiagent-routing}-research.md`、`docs/research/adp-migration-research/`，约 5.8 MB）。
+    这些是过程产物、不属于项目资产，删除不进 git 历史。
+
+- **文档漂移修复（数量类断言，全部按 2026-09-17 实测重写）**。漂移不是笔误，是"能力清单靠人工同步"的必然结果：
+  | 位置 | 原写 | 实测 |
+  |---|---|---|
+  | `README.md` / `CODEBASE_OVERVIEW.md` / `PLUGIN-SDK.md` / `API.md` | 4 插件 19 工具 | **5 插件 20 工具**（漏 `websearch`） |
+  | `README.md` / `CODEBASE_OVERVIEW.md` | 迁移 1–13 | **迁移 1–18**（`SCHEMA.md` 一直是对的，是这两份没跟上） |
+  | `README.md` | 10 篇 ADR | **12 篇**（漏 ADR-0011、ADR-0012） |
+  | `README.md` | 22 条环境坑 | **35 条**（`PITFALLS.md` 本身一直是对的） |
+  | `README.md` | "60+ 端点" | 改为不写死数目（实测 84 个） |
+  | `CODEBASE_OVERVIEW.md` 验收基线 | "63 passed, 1 failed"（2026-09-13） | **378 passed, 0 failed**（2026-09-17）；旧基线移入"历史验收基线"留痕 |
+  - **README 文档地图补入两份被漏掉的跟踪文档**：`docs/FRAMEWORK-INVENTORY.md`、`docs/PLUGIN-UPSTREAM-RESEARCH.md`
+    （此前只能在 `PLUGIN-SDK.md` / `PITFALLS.md` 里被顺带引用，入口处看不到），
+    以及 `docs/research/core-plugin-separation-research.md`（`plugin_api.py` 文件头的依据）。
+  - README 的"它解决什么问题"补了**Agent 工具层**一行（此前只列四大业务，读者看不出本仓有 Agent 能力与确认门）。
 
 ### Changed
 
@@ -747,9 +838,11 @@
   维护规则；其中 #9 网络代理补记 2026-09-13 实测（`build.ps1:71-75` 仍硬编码直连 push，与「直连会被重置」
   的结论相反；`AKSO_PROXY` 到不了 egmp 的 Python 路径），#15 补记 `_next_seq()` 吞掉 DB 写异常会让
   指令序号从 1 重来的残留风险。
-- **新建 [`docs/方向调研-平台洞察独立发展.md`](docs/方向调研-平台洞察独立发展.md)**：平台洞察（insight）
+- ~~**新建 `docs/方向调研-平台洞察独立发展.md`**~~：平台洞察（insight）
   独立发展调研——现状诊断（真实库零运行记录、平台耦合面未验证、产物会「看起来完整」）、准备清单
   （P0 可验证性 / P1 契约化 / P2 能力深化）与九类边缘规则验收清单。**调研文档，不含代码改动。**
+  > **2026-09-17 已删除**（内容作废）：见本文件「未发布 · Removed」。该文引用的两份文档从未入库，
+  > 且其「真实库零运行记录」的诊断**已被实测推翻**（`insight_runs` 现为 15 行）。原文 `git show d0efa84:docs/方向调研-平台洞察独立发展.md`。
 - **文档体系整体重构（v0.3.4 基准，本轮不动代码）**：把「一份自述版本的架构文档」拆成按
   **变更频率**分层的常驻文档，并新建四份此前缺失的文档。
   - **新建** `AGENT.md`：接手手册——项目快照、代码地图、**六条维护红线**、

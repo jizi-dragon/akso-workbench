@@ -1,0 +1,81 @@
+name: CI
+
+# 门禁的目标只有一个：**把"靠人记得跑"变成"不能不跑"**。
+#
+# 为什么需要它（2026-09-17 立）：本仓的 378 项测试与 9 项打包静态核对此前**全靠手工执行**，
+# 而 `tools/verify_packaging.py` **根本没有被 `tools/build.ps1` 调用**（CONTRIBUTING §6 记的已知问题）。
+# 后果是：一条"源码已 bump、扩展 dist 未重建"的不一致（P4b）能在仓库里潜伏到发版才暴露——
+# 2026-09-17 就实测抓到过一次（详见 CHANGELOG「未发布 · Fixed」）。CI 是这条断点的唯一自动防线。
+#
+# 设计取舍（三条，都有理由，别顺手改）：
+#   1. **Windows runner**：交付物是 Windows 安装包，P5 检查 `.ps1` 的 UTF-8 BOM。
+#      与环境一致比 runner 便宜更重要——**门禁在"和发版不同的平台"上跑，绿灯不代表能发版**。
+#   2. **不自动发版**：版本决策留在 `tools/bump.py`（方案甲）。CI 只读不写，因此无需任何 secret，
+#      也不存在"CI 误发一版"的风险。
+#   3. **不加 `paths-ignore`**：CI 与分支保护配合时，被跳过的 workflow 会以 pending 卡住合并。
+#      全量跑约 1 分钟，不值得为此引入一类"偶尔卡住 PR"的怪问题。
+#
+# 版本管理全貌见 docs/VERSIONING.md。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: test + packaging + lint
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    env:
+      # 与 tools/build.ps1 一致：Windows runner 的系统默认编码不是 UTF-8，
+      # 而仓库里全是中文文档与中文输出，统一强制 UTF-8 以免日志乱码掩盖真实错误。
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # 必须在依赖同步**之前**：P4b/P4c 读的是扩展**构建产物** extensions/quick-login/dist/，
+      # 而 dist/ 被 .gitignore 忽略（不进 git）——全新 checkout 里它根本不存在，
+      # 不先构建的话 verify_packaging.py 的 P4b/P4c 必然 FAIL，且会误导成"版本不一致"。
+      - name: Build browser extension
+        working-directory: extensions/quick-login
+        run: |
+          npm ci
+          npm run build
+          node -e "const v=require('./dist/manifest.json').version; console.log('extension dist version =', v)"
+
+      - name: Sync python dependencies
+        run: uv sync --extra dev --extra build
+
+      # --tb=short：CI 失败时只打印每个失败的首个栈帧，既能定位又不会被几千行日志淹没
+      # -o addopts=""：**必须**。pyproject 里 addopts = "-q"，命令行再加 -q 会进 ultra-quiet，
+      #                连 `=== 378 passed ===` 汇总行都不打印，CI 界面看着像"没跑出结果"。
+      - name: Run tests
+        run: .venv\Scripts\python.exe -m pytest --tb=short -p no:warnings -o addopts=""
+
+      - name: Packaging static checks
+        run: .venv\Scripts\python.exe tools\verify_packaging.py
+
+      # uv tool run 会按需下载 ruff（首次约 10 MB）。这是有意的：
+      # 与 CONTRIBUTING §7 记录的本地命令**逐字一致**，本地绿 == CI 绿。
+      - name: Lint (ruff)
+        run: uv tool run ruff check .

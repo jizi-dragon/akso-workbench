@@ -25,10 +25,12 @@ cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建
 > **`--extra build` 不能省**：`uv sync` 不带它会把 PyInstaller 移出环境，
 > 之后 `tools/build.ps1` 的第 5 步（PyInstaller）直接失败。`build.ps1` 内部已带这两个 extra。
 >
-> **`uv` 不在 PATH 时**：2026-09-16 实测**本机 `.venv\Scripts\uv.exe` / `uvx.exe` 都不存在**
-> （PATH 上也没有）——早先"改用 venv 内 uv.exe"的记录已失效。可用的等价命令：
-> lint 走 **`.\.venv\Scripts\ruff.exe check .`**（全绿），依赖同步在**已建好的 venv** 上可跳过
-> （依赖已装齐）；换机器时仍先装 uv（`pip install uv`）。
+> **`uv` 不在 PATH 时**：2026-09-17 实测本机 `.venv\Scripts\` 里**有 `uv.exe` / `uvx.exe` / `uvw.exe`**（走 venv 内的那条可用）；
+> 但**没有 `ruff.exe`**——2026-09-16 记的"走 `.venv\Scripts\ruff.exe check .`"**是错的**（该文件不存在，
+> 报 `CommandNotFoundException`）。**可用的 lint 命令是**：
+> `.\.venv\Scripts\uv.exe tool run ruff check .`（首次会自动下载 ruff 约 10 MB，需要网络；
+> 实测本机 `pypi.org` 偶发 TLS 握手失败——失败时重试或走代理）。CI 里用的就是这条，本地绿 == CI 绿。
+> 依赖同步在**已建好的 venv** 上可跳过（依赖已装齐）；换机器时仍先装 uv（`pip install uv`）。
 
 ### 1.1 本机 Python / uv 的真实位置（**先看这条，再理 VS Code 的报错**）
 
@@ -101,10 +103,28 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 
 > ⚠️ 更新器**匿名**读 Release ⇒ 仓库必须公开。
 > ⚠️ 发布错清单会让**所有客户端**更新失败——所以那三道自查不要跳过。
+> ⚠️ **2026-09-17 实测该前提当前不成立**：匿名探测 `api.github.com/repos/jizi-dragon/akso-mogul` 返回 **404**
+> （同 owner 的 `quick-login` / `akso-cc` / `mogul_simulator` 均 200 = 公开）。
+> 即：**开启自动更新（`WORKBENCH_AUTO_UPDATE=1`）并指向 GitHub 时，更新链路会静默失效**。
+> 三个可选处置见 [docs/VERSIONING.md](docs/VERSIONING.md) §3.1。
+
+### 3.3.1 tag 与 CI（2026-09-17 起）
+
+- **tag 由 `build.ps1` 自动打**：release commit 推送成功后执行 `git tag -a v<版本>` 并推送。
+  四条守卫（`-Bump none` / commit 未产生 / commit 未推上去 / tag 已存在）都不会打 tag。
+  > **为什么必须打**：实测本仓**发布过 12 个版本却只有 3 个 tag**，导致 `git checkout v0.3.11` 直接报错——
+  > 回滚与"用户跑的是哪一版"都没有锚点。tag 是"版本号 ↔ commit"的唯一连接。
+- **CI 门禁**：`.github/workflows/ci.yml` 在 push/PR 上跑
+  `扩展构建 → uv sync → pytest → verify_packaging.py → ruff`（`windows-latest`）。
+  **它是 `verify_packaging.py` 的第一个自动调用方**（此前该工具无人调用，见 §6）。
+  > ⚠️ 改 CI 时别加 `paths-ignore`：被跳过的 workflow 在分支保护下会以 pending 卡住合并。
+  > ⚠️ **改 `tools/build.ps1` 后必须补 UTF-8 BOM**（编辑会静默丢它，P5 立刻掉到 8/9）——
+  > 处置命令见 [PITFALLS.md](docs/PITFALLS.md) 环境坑 #37。
 
 ### 3.4 构建前的秒级体检（必跑）
 
 ```powershell
+.\.venv\Scripts\python.exe tools\verify_packaging.py   # 9 项静态核对，当前 9/9 PASS
 .\.venv\Scripts\python.exe tools\verify_packaging.py   # 9 项静态核对，当前 9/9 PASS
 .\.venv\Scripts\python.exe tools\gen_tools_doc.py      # 工具清单/数字门禁，当前 PASS
 ```
@@ -114,8 +134,13 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 壳新增 `.js` 忘了进 electron-builder 的 `files` 白名单、**工具插件漏登记 `hiddenimports`（P7）**。
 
 > ⚠️ **`verify_packaging.py` 目前没有被 `build.ps1` 自动调用**（已知问题，见 §6）——请手动跑。
+> ✅ **2026-09-17 起由 CI 自动调用**（`.github/workflows/ci.yml`）：漏跑的代价从"潜伏到发版"
+> 降为"push 后 CI 报红"；**本机裸跑 `build.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑）。
 > ⚠️ **P4b 红了先看"扩展是不是没重建"**：它比对的是**构建产物** `extensions/quick-login/dist/manifest.json`
-> 与项目版本；`git pull` 之后、`npm run build` 之前必然红（2026-09-16 实测踩过）。
+> 与项目版本；`git pull` 之后、`npm run build` 之前必然红。2026-09-16 实测踩过；
+> 2026-09-17 在写 CI 时又确认一次——**CI 必须在 pytest 之前 `npm run build`**，
+> 否则全新 checkout 里 `dist/` 根本不存在 → P4b/P4c 必然红。
+> 这条恰好证明 §3.5 那条"扩展重建必须在 bump 之后"不是理论洁癖：**手工漏一次，门禁就是唯一防线。**
 > ⚠️ **改了扩展源码（TS）必须重建 + 重载**：`cd extensions\quick-login; npm run build`，
 > 并在 `chrome://extensions` 点一次「重新加载」（`tools/verify_extension_sync.mjs` 需要服务在 18765 上跑）。
 
@@ -174,13 +199,13 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 
 | 项 | 现状 | 影响 |
 |---|---|---|
-| ~~`uvx ruff check .`~~ | ~~9 条违规~~ → **2026-09-14 已清零（All checks passed）**：F821（`routes_insight.py` 的 `Any` 未导入）、B017 裸 `Exception` 断言、4 处未用导入、6 处排序、B007 循环变量全部修掉；`tools/*.py` 的 E402 在 `pyproject.toml` 里**刻意豁免**（验证脚本必须先 reconfigure stdout、拉起服务再 import playwright） | ✅ 门禁恢复；**2026-09-16 实测本机 `uv`/`uvx` 既不在 PATH、也不在 `.venv\Scripts\`**，须走 `.\.venv\Scripts\ruff.exe check .`（见 §1） |
-| `tools/verify_packaging.py` | **9/9 PASS**（2026-09-16 新增 P7 插件登记对账），但**未被 `build.ps1` 调用**、无 CI | 断点仍可能在构建数分钟后才暴露 |
+| `tools/verify_packaging.py` | **9/9 PASS**（2026-09-16 新增 P7 插件登记对账）；**2026-09-17 起由 CI 自动调用**（`.github/workflows/ci.yml`），但 `build.ps1` 仍**不**调用它 | 构建链路上的断点已由 CI 兜住；**本机裸跑 `build.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑） |
 | 文档里的工具/插件数字 | **已上机检**：`tools/gen_tools_doc.py` + `tests/test_tools_doc.py` 核对 `docs/TOOLS.md` 与运行期中枢，并扫活跃文档里的"N 个工具/插件" | 2026-09-15 曾四处文档同时写旧数字且由用户先发现（[docs/TOOLS.md](docs/TOOLS.md) §7） |
 | `desktop/package-lock.json` | version `0.2.1`（`package.json` 已 `0.3.12`）——`bump.py` 五写不含它 | `npm install` 会改写它，发布后工作区变脏；安装包命名不受影响（electron-builder 读 `package.json`） |
 | ~~`extensions/quick-login/package-lock.json`~~ | ~~version `0.2.20`~~ → **2026-09-13 实测已是 `0.3.5`，本条已失效** | 同上 |
 | ~~`tools/setup.ps1` §5~~ | ~~仍把 **Node** 当必检项并说「洞察/工厂功能不可用」~~ → **2026-09-14 已改为 `INFO` 信息项**（不计入失败），文案改为「仅影响 desktop/ 与 extensions/ 的构建（运行时不需要）」 | ✅ 口径已对齐 [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md) |
 | `tests/test_proc.py`（7 项） | 仍在测 Node 子进程封装 | 它测的是**遗留封装本身**，不代表运行时链路 |
+| ⚠️ **仓库可见性** | **2026-09-17 匿名探测：`api.github.com/repos/jizi-dragon/akso-mogul` → 404**（同一 owner 的 `quick-login` / `akso-cc` / `mogul_simulator` 均 200 = 公开）。而 §3.3 与 `publish_release.py` 都要求**仓库公开** | **一旦开启自动更新（`WORKBENCH_AUTO_UPDATE=1`）并指向 GitHub，更新链路会失效**（更新器匿名读 Release）。详见 [docs/VERSIONING.md](docs/VERSIONING.md) §3 |
 | `adapters/*.json` 的 `$schema` | 原指向已删除的 `docs/模块契约.md#adapters` | ✅ 本轮已改为 `docs/SCHEMA.md`（仅此字段） |
 
 > 完整清单（含代码级缺陷与安全风险）见 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) 的风险台账。
@@ -188,10 +213,10 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 ## 7. 验收纪律
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest          # 382 项（2026-09-16 实测全绿；含新增的 test_plugin_api/test_cache/test_agent_loop/test_tools_doc）
-.\.venv\Scripts\python.exe tools\gen_tools_doc.py   # 工具清单与数字门禁
+.\.venv\Scripts\python.exe -m pytest          # 382 项（2026-09-17 合并后实测全绿；含 test_plugin_api/test_cache/test_agent_loop/test_tools_doc）
+.\.venv\Scripts\python.exe tools\gen_tools_doc.py   # 工具清单与数字门禁（PASS：5 插件 / 20 工具）
 node tools\verify_port_broker.mjs             # 固定端口 + 占用判定（离线，不需要 Electron；**须先退出工作台**——它靠真占固定端口验判定）
-.\.venv\Scripts\ruff.exe check .              # All checks passed（uv/uvx 本机都没有，走 venv 内的 ruff.exe）
+.\.venv\Scripts\uv.exe tool run ruff check .  # All checks passed（venv 内**没有** ruff.exe，必须走 uv tool run）
 .\.venv\Scripts\python.exe tools\verify_packaging.py   # 9/9
 ```
 

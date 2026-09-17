@@ -37,7 +37,7 @@ _由 learn-codebase 技能生成；**2026-09-16 复核**，锚定 `c8753ce`（v0
   > 口径说明：本表行数为**物理行数**（含空行），实测于 2026-09-16 `c8753ce`。用 `Get-Content \| Measure-Object -Line` 统计会漏掉空行（例如 `client.py` 会得 153 而非 197），已删除的原 `AGENT.md` 里的 8,167 行即为此类偏低的计数。**上一版（v0.3.5）的 70 文件 10,172 行 / 24 前端文件 5,947 行 / 4 个壳文件 1,006 行均已过期**——增量主要来自插件层（`plugin_api` 646 + `approvals` 350 + `cache` 287 + `plugins/` 1,374）与新增的前端 `chat-tools.js` / `settings.js`。
 - **框架 / 运行时：** FastAPI + uvicorn[standard]（REST + SSE + 静态托管）；pydantic v2；**Electron 33** 桌面壳（窗口 / 托盘 / 全局热键 / 更新器 / 出网通道 / sidecar 生命周期）
 - **构建 / 包管理：** uv（`uv.lock`，默认清华镜像 `pyproject.toml:37-39`）；hatchling；ruff（`E4/E7/E9/F/I/B`，line-length 110）；**PyInstaller**（`build` extra，`workbench/server.spec` → `dist/WorkbenchServer/` onedir）；**electron-builder → NSIS**（`tools/build.ps1` 一键出安装包）；esbuild 0.24（扩展打包）；版本真源 `pyproject.toml`
-- **存储 / 外部服务：** SQLite（WAL，**迁移 1–13**）；Playwright chromium；cryptography Fernet；DeepSeek API；networkx；GitHub Releases（electron-updater）
+- **存储 / 外部服务：** SQLite（WAL，**迁移 1–18**）；Playwright chromium；cryptography Fernet；DeepSeek API；networkx；GitHub Releases（electron-updater）
 - **端口：** **固定常量** 18765 服务 · 18766 CDP · 18767 壳控制服务，**不顺延**（[ADR-0012](adr/0012-fixed-ports.md) 取代
   [ADR-0011](adr/0011-port-and-session-negotiation.md) §D-1）。被占则报错退出并说清占用者是谁；
   仍经环境变量下发 + 公布到 `runtime/desktop-ports.json` + 由 `/whoami` 答给扩展（那三条是**身份**手段，与顺延无关）。
@@ -88,11 +88,12 @@ harness/（对话 Agent 循环：loop 事件流 · tools **已降级为兼容垫
 db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 ```
 
-> **2026-09-15 变更（工具插件层）**：新增 `plugin_api.py` / `approvals.py` / `plugins/`（4 插件 19 工具）。
+> **2026-09-15 变更（工具插件层）**：新增 `plugin_api.py` / `approvals.py` / `plugins/`（**5 插件 20 工具**）。
 > 动因是**两套工具表并存**：`harness/tools.py` 有三个基础工具、`api/routes_agent.py` 有四个域工具，
 > 两套互不可见 → 对话里的模型看不到任何平台能力。现已收口为 `ToolHub` 单一事实源；
 > `harness/tools.py` 只剩再导出，`@tool` 装饰器下线。契约与三个真踩过的坑见
 > **[PLUGIN-SDK.md](PLUGIN-SDK.md)**；环境坑见 PITFALLS #32–#34。
+> （`websearch` 插件为 2026-09-15 之后加入的第 5 个插件——**文档里凡写"4 插件 19 工具"处均为过期**，以 `GET /api/agent/selfcheck` 为准。）
 
 > **2026-09-14 变更**：`insight/` 从 12 文件 1,766 行降到 **6 文件 1,145 行**——`inventory` / `understand`
 > 下线，`assemble.py` / `annotate.py` / `flowgraph.py` / `relations.py` / `render.py` / `understand.py`
@@ -151,10 +152,11 @@ db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 .\.venv\Scripts\python.exe -m workbench.main      # Web 模式
 cd desktop; npm ci; npm start                     # Electron 开发态
 
-# 测试 / 体检（2026-09-16 实测，见下方“验收基线实测”）
-.\.venv\Scripts\python.exe -m pytest              # 378 passed（全绿，exit 0）
+# 测试 / 体检（2026-09-17 合并后实测，见下方"验收基线实测"）
+.\.venv\Scripts\python.exe -m pytest              # 382 passed（全绿）
 .\.venv\Scripts\python.exe tools\verify_packaging.py   # 9/9（P4b 需先重建扩展，见下）
-.\.venv\Scripts\ruff.exe check .                  # 全绿（用 venv 内的 ruff.exe；uv/uvx 本机没有）
+.\.venv\Scripts\python.exe tools\gen_tools_doc.py      # PASS（5 插件 / 20 工具）
+.\.venv\Scripts\uv.exe tool run ruff check .      # All checks passed（venv 内没有 ruff.exe）
 
 # 扩展 / 前端（改扩展时）
 cd extensions\quick-login; npm run build; npm run typecheck
@@ -179,7 +181,7 @@ powershell -File tools\build.ps1
 |---|---|---|---|
 | `python -m pytest` | 63 passed / 1 failed | **378 passed，exit 0**（19 个测试文件 292 个测试函数，参数化后 378 项） | ✅ 本仓首次全绿 |
 | `tools\verify_packaging.py` | 8/8 PASS | **8/9 → 重建扩展后 9/9** | ⚠️→✅ 见下 |
-| `ruff check .` | 无法执行（无 uv/uvx） | **All checks passed!**（等价命令：`.\.venv\Scripts\ruff.exe check .`） | ✅ 门禁在本机成立 |
+| `ruff check .` | 无法执行 | **All checks passed!**（正确命令：`.\.venv\Scripts\uv.exe tool run ruff check .`） | ✅ 门禁在本机成立 |
 
 - **P4b 的红是「拉取后未重建扩展」，不是代码错**：`extensions/quick-login/dist/manifest.json` 是**构建产物**，
   拉取只更新了源 `packages/extension/manifest.json`（0.3.12）→ dist 仍是上一轮本机构建的 0.3.11。
@@ -187,15 +189,33 @@ powershell -File tools\build.ps1
   注释写明"必须在 bump 之后，否则打进安装包的扩展 manifest 版本号会停在上一版"）。
   **教训**：`verify_packaging.py` 的 P4b 检的是"**产物与版本号一致**"，所以**每次 `git pull` 后先重建扩展**再跑体检，
   否则你会看到一个只反映本地构建残留、与上游无关的红项。
-- **`uv` / `uvx` 在本机不存在**（2026-09-16 复测：`.venv\Scripts\uv.exe`、`uvx.exe` 均无，PATH 上也没有）——
-  **上一轮"uv 现在可用"的记录有误**，请以本行为准。但 lint 门禁**成立**：venv 内有 `ruff.exe`，
-  等价命令 `.\.venv\Scripts\ruff.exe check .` 全绿。`CONTRIBUTING.md` 里 `uv sync` 的写法在**已建好的 venv**
-  上可以跳过（依赖已装齐），换机器时仍需先装 uv。
+- **`uv` / `uvx` / `ruff.exe` 的现状（2026-09-17 实测，此为准确口径）**：
+  `.venv\Scripts\` 里**有** `uv.exe` / `uvx.exe` / `uvw.exe`，**没有** `ruff.exe`。
+  所以——**2026-09-16 记的"venv 内有 `ruff.exe`"是错的**（该文件不存在，直接调用报 `CommandNotFoundException`），
+  同时"`uv.exe` 不存在"也是错的。**可用且唯一正确的 lint 命令**：
+  `.\.venv\Scripts\uv.exe tool run ruff check .`（首次会下载 ruff 约 10 MB，需要网络；
+  若 `pypi.org` TLS 握手失败则重试或走代理）。CI 用的就是这条，**本地绿 == CI 绿**。
+  `CONTRIBUTING.md` 里 `uv sync` 的写法在**已建好的 venv** 上可跳过（依赖已装齐），换机器时仍需先装 uv。
 
 
 ### 验收基线实测（2026-09-13，本机 `d0efa84`）—— 留痕，现状见上一节
 
-| 命令 | 原 `AGENT.md` 声称 | 本轮实测 | 判定 |
+| 命令 | 实测 | 判定 |
+|---|---|---|
+| `.\.venv\Scripts\python.exe -m pytest` | **378 passed, 0 failed**（43.7s） | ✅ **全绿** |
+| `.\.venv\Scripts\python.exe tools\verify_packaging.py` | 8/8 PASS（2026-09-13 实测，未重跑） | ✅ |
+| `uv tool run ruff check .` | ❌ **本机不可执行**：`uv` 需要联网取 ruff，当前 `pypi.org` TLS 握手失败（`Request failed after 3 retries`） | ⚠️ 环境依赖，非代码问题 |
+
+> **口径提醒（真踩过）**：`pyproject.toml` 里 `addopts = "-q"`；**若命令行再加一个 `-q` 会进入 ultra-quiet 模式，
+> 连 `=== 378 passed ===` 汇总行都不打印**，只剩进度点阵，很容易误判成"没跑出结果"。
+> 想看到汇总行用：`python -m pytest -o addopts=""`。
+
+**代码量实测（2026-09-17）**：`workbench/**.py` **79 文件 14,284 物理行**；`workbench/static` 的 js+css **7,039 行**；
+HTTP 端点 **84 个**（`@router.` 计数）。**这些数字随代码变动，引用前先复核**（`docs/` 里凡写"19 工具 / 4 插件 / 迁移 1–13"的段落均已过期）。
+
+### 历史验收基线（2026-09-13，本机 `d0efa84`）— 保留以留痕
+
+| 命令 | 原 `AGENT.md` 声称 | 当时实测 | 判定 |
 |---|---|---|---|
 | `python -m pytest` | 64 passed | **63 passed, 1 failed** | ⚠️ 唯一失败是环境依赖（见下） |
 | `uvx ruff check .` | 9 条违规 | **无法执行**：`.venv\Scripts\uvx.exe` / `uv.exe` 不存在，venv 内也无 `ruff` 模块，PATH 上无 ruff | ❌ 门禁在本机不成立 |
@@ -204,8 +224,9 @@ powershell -File tools\build.ps1
 - **pytest 唯一失败（2026-09-15 已修）**：`tests/test_modules.py::test_adapter_paths_exist` —— `AssertionError: akso-auto repoPath 无效：D:\ai_assistant\akso-auto`。该断言校验只读存档指向的原仓库**在不在**，而 `adapters/*.json` 的 `mode` 已是 `native-python-internalized` + `frozen: true`——**能力全部内化，运行时零依赖原仓库**。把"原仓库目录存在"当断言，等于给一个已经不需要它的系统加一道环境门禁：没克隆那四个仓库的机器上测试就红，而**功能完全正常**。
   **修法**：拆成两条守"契约"而不是守"环境"的断言——`test_frozen_adapters_do_not_require_the_upstream_repo`（路径口径解析得出且与存档声明一致）+ `test_missing_upstream_repo_is_reported_as_info_not_failure`（缺失时报信息项、模块状态不变红）。**不要**改回 `assert repo.exists()`。
 - **`uv` 现在可用**（2026-09-15 实测）：`.venv\Scripts\uv.exe` 存在，`uv tool run ruff check .` 全绿。本节早先"本机无 uv/ruff、lint 门禁不成立"的记录**已过期**（保留原文是为了留痕）。
-  > ⚠️ **2026-09-16 更正**：本条**有误**——`.venv\Scripts\uv.exe` / `uvx.exe` 实际都不存在（PATH 上也没有），
-  > 复测命令见上一节。**唯一成立的是 lint 门禁本身**：venv 内有 `ruff.exe`，`.\.venv\Scripts\ruff.exe check .` 全绿。
+  > ⚠️ **2026-09-16 曾"更正"说本条有误，那次更正本身也是错的**——2026-09-17 实测：`.venv\Scripts\uv.exe` **存在**
+  > （本条原判断正确），而 `ruff.exe` **不存在**（2026-09-16 那条更正错在这里）。
+  > **准确口径见上一节的"`uv` / `uvx` / `ruff.exe` 的现状"，那里是唯一权威版本。**
 - **沙箱影响**：在默认 `workspace-write` 沙箱下 pytest 表现为 `38 passed / 7 failed / 19 errors`，全部由 `PermissionError: [WinError 5]` 引起（`conftest.py:12` 用 `tempfile.mkdtemp()` 在系统临时目录建隔离数据目录，且测试需要创建子进程管道）。**在放开临时目录与管道限制后复跑即得上表的 63/1**。据此判断：**仓库的测试基线本身是健康的，已删除的原 `AGENT.md` 记录的“64 passed”与实测只差上述 1 项环境失败**。
 - **原 `AGENT.md` §8 的依赖纪律已过期**（该文档于 2026-09-13 因整体滞后被删除）：它称“`uv` / `ruff` 不在 PATH，可用的是 `.venv\Scripts\uv.exe` / `uvx.exe`”——**这两个文件在本机并不存在**（`pyvenv.cfg` 记录 `uv = 0.12.10`，但 venv 已不再内置这两个 shim）。因此 `CONTRIBUTING.md` 里的 lint 门禁与 `uv sync` 命令在本机都需要先装 uv。
 
@@ -304,13 +325,20 @@ powershell -File tools\build.ps1
 | T6 | **工具插件的真实平台路径无自动化回归**（`insight_run`/`factory_create`/`accounts_browser_open` 只能真机手验） | 契约层（分级/确认门/审计/schema）已有 `tests/test_plugin_api.py` 钉住；"调下去真的对"仍靠真机冒烟 |
 | T7 | 前端工具卡片（`chat.js` 的 action/observation/approval 渲染）无自动化回归 | 与 `accounts.js` 同一处境：靠人工看。事件契约本身在 `tests/test_agent_loop.py` 里钉住了，前端只消费它 |
 
-### 仓库卫生（2026-09-16 复核）
+### 仓库卫生（**2026-09-17 重写**）
 
-- **工作区干净**：`git status --porcelain` 只剩本轮文档改动（`docs/CODEBASE_OVERVIEW.md`、`docs/PLUGIN-SDK.md`、`docs/API.md`、`README.md`、`CHANGELOG.md`）。
-  上一轮记录的"未提交内容"已随 `58a8248`（`chore: 忽略 /tmp/`）与后续提交收口：`tmp/` 已进 `.gitignore`（`/tmp/`，含带凭据的 DB 备份与探针脚本，注释写明"`git add -A` 会把它一起提交"），
-  两份方向调研文档也已入库或移入 `docs/research/`。
-- **构建产物不算脏**：`build/`、`dist/`、`extensions/quick-login/dist/` 均在 `.gitignore` 内——本轮重建扩展（`npm run build`）后 `git status` 依然干净。
-- **仍未处理**：`workbench/api/__pycache__/` 下还留着 `routes_knowledge.cpython-312.pyc` / `routes_sync.cpython-312.pyc`（源码已按产品方向删除；迁移 1–6 保留历史不可变）。字节码在 ignore 内，不影响仓库，但**会误导 grep/静态检索**。
+上一版本节的内容已全部失效（它写"两份新方向调研文档未提交、`tmp/` 未 ignore"——前者从未入库、后者早已 ignore）。以下是**经实测**的现状：
+
+- **已清理（2026-09-17）**：
+  - 删除 `docs/方向调研-平台洞察独立发展.md`（**内容已作废**）。它引用的两份文档（《方向调研-公司级Agent平台.md》《方向调研-钉钉MCP落地细节.md》）**从未在本仓存在**，
+    其技术前提「钉钉MCP」已否决（改用 Stream 模式机器人）。原文可取回：`git show d0efa84:docs/方向调研-平台洞察独立发展.md`。
+  - 清理未跟踪的 ADP 调研残留（根目录 `_body_*` / `_cn_*` / `_raw_*` 抓取产物、`adp_research/`、`adp-{api,kb,multiagent-routing}-research.md`、
+    `docs/research/adp-migration-research/`），约 5.8 MB；并删除过期构建产物 `dist/` + `build/`（948 MB，`tools/build.ps1` 可重建）。
+  - **修正过期数字**：本文件与 `README.md` / `PLUGIN-SDK.md` / `API.md` 里"4 插件 19 工具 / 迁移 1–13 / 10 篇 ADR / 22 条环境坑"全部按实测重写（详见 CHANGELOG「未发布」）。
+- **仍存在的两处卫生缺口**（未修，需你决定）：
+  - **C14 引用的验证脚本不存在**：正文写"并加 `tmp/verify_factory_frontend.py`"，但**全库无此文件**（`tmp/` 现只剩两个 websearch 探针）。
+    C14 是一条"页面不报错、测试也不报错"的静默缺陷，**它恰恰是最需要那条断言的一类**。→ 要么补一个 `tools/verify_factory_frontend.py`（真实后端返回 → 真实前端渲染函数，字段改名即红），要么把 C14 里的引用删掉、改为"已修但无自动化回归"。
+  - **删除模块的残留 `.pyc`**：`workbench/api/__pycache__/` 下仍有 `routes_knowledge` / `routes_sync` 的字节码，对应源码已按产品方向删除（迁移 1–6 保留历史不可变）。**影响仅限目录整洁**，不影响运行；`.gitignore` 已忽略 `__pycache__/`。
 
 ## Glossary / where to look next（术语与入口阅读）
 

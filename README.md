@@ -16,6 +16,12 @@
 | 同时以 3 个账号登录同一平台（管理员 + 普通用户） | 开多份浏览器 profile，反复退出登录 | **一个 Chrome 窗口内多账号并行**，桌面端 `Alt+Q` 轮盘切换身份，账号间存储/鉴权/Cookie/缓存/IDB 全链路隔离 |
 | 记住十几个测试账号的口令 | 明文表格 / 记事本 | **统一账号库**：环境 + 账号 + 盒子分组，口令 Fernet 加密存本机，可备份迁移 |
 | 搞清「这个操作在平台上到底发了什么请求」 | 手抄 Network 面板 | **监听录制**（内置 Chromium）→ 三级降噪 → 分段解读 + 复现计划 |
+| 让 Agent 替你跑这些活 | 每件事都得自己点 | **对话 Agent + 20 个工具**：工具由 `ToolHub` 单一定义，**危险操作有确认门**（单次令牌，无令牌不执行），每次调用**进审计表** |
+
+> **本仓最该被看见的不是功能清单，而是它的工程纪律**：能力以「工具插件」形式接入，
+> `ToolHub` 是**唯一扩展面**（不是 router、不是模块清单）；工具定义**只有一处**，
+> 对话的 function calling、HTTP 调用面、审计表三处都从它读。契约与三个真踩过的坑见
+> [docs/PLUGIN-SDK.md](docs/PLUGIN-SDK.md)。
 
 ## 四个来源项目的沉淀
 
@@ -78,7 +84,7 @@
 | 文档 | 给谁看 | 内容 |
 |---|---|---|
 | **[docs/USER-MANUAL.md](docs/USER-MANUAL.md)** | **使用者** | 功能详解、操作步骤、常见问题、数据与安全须知 |
-| [docs/API.md](docs/API.md) | 要调接口/写脚本的人 | 60+ 端点权威契约 + SSE/长轮询/产物下载四类特殊通道 |
+| [docs/API.md](docs/API.md) | 要调接口/写脚本的人 | 端点权威契约 + SSE/长轮询/产物下载四类特殊通道 |
 | [docs/CONFIG.md](docs/CONFIG.md) | 现场排障、要调行为的人 | 五层配置全覆盖（环境变量 / settings 键 / 代码参数 / 数据目录文件 / 前端常量） |
 | [docs/SCHEMA.md](docs/SCHEMA.md) | 要改数据层的人 | DB 迁移 1–18、表结构、跨进程数据契约、改表清单 |
 | [docs/adr/](docs/adr/) | 想知道「为什么这么设计」的人 | 13 篇架构决策记录（含被放弃的方案与重新评估的触发器） |
@@ -87,8 +93,12 @@
 | [docs/INSIGHT-SPEC.md](docs/INSIGHT-SPEC.md) | 要发展/扩展平台洞察的人 | **洞察的功能定位与产品能力契约**：能力范围与非目标、平台知识层、产物与存储、已知边界、验收标准 |
 | **[docs/TOOLS.md](docs/TOOLS.md)** | **要给 Agent 加工具 / 想知道有哪些工具的人** | **工具注册表与治理**：全量清单（插件 × 风险 × 确认门）、加一个工具要动的文件、机检命令、历史漂移教训 |
 | **[docs/PLUGIN-SDK.md](docs/PLUGIN-SDK.md)** | **要给 Agent 加工具的人** | **插件 SDK 契约**：`ToolHub` 唯一公开面、怎么写一个工具插件、风险分级与危险操作确认门、审计、启动自检、三个真踩过的坑 |
+| [docs/FRAMEWORK-INVENTORY.md](docs/FRAMEWORK-INVENTORY.md) | 要复用本仓、或要把业务与框架切开的人 | **框架清单与判据**：换一个目标平台后哪些文件不需要改、业务耦合点在哪几处、特征词扫描门禁 |
+| [docs/PLUGIN-UPSTREAM-RESEARCH.md](docs/PLUGIN-UPSTREAM-RESEARCH.md) | 要动宿主/插件边界的人 | 宿主与插件分离的先例、可行性判断、POC 验证与陷阱清单（`FRAMEWORK-INVENTORY` 的姊妹篇） |
+| [docs/research/core-plugin-separation-research.md](docs/research/core-plugin-separation-research.md) | 想知道「插件 API 为什么长这样」的人 | 插件扩展面的可行性研究与**权利边界**论证（`plugin_api.py` 文件头的依据） |
 | [docs/research/deepseek-api-capabilities.md](docs/research/deepseek-api-capabilities.md) | 要调模型/算成本的人 | **DeepSeek API 能力核查**：现行模型名（V4.1-Flash）、**联网搜索到底有没有**（没有）、上下文缓存的命中规则与 50 倍价差 |
 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) | 接手维护的人（含 AI 助手） | 代码地图、架构与数据流、红线与约定、风险台账、验收基线实测 |
+| **[docs/VERSIONING.md](docs/VERSIONING.md)** | **管版本 / 发版 / 想接 GitHub 自动化的人** | **版本管理机制**（三层拆解）、现状实测（tag 缺口、更新链路的公开仓库前提）、GitHub 能帮哪一段、三个方案选型、可直接照抄的 CI 与打 tag 做法 |
 | [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **36 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发者 | 环境搭建、依赖变更、构建发布、代码规约、验收纪律 |
 | [CHANGELOG.md](CHANGELOG.md) | 所有人 | 版本变更明细（含每次事故的根因） |

@@ -138,9 +138,10 @@ def register(hub: pa.ToolHub) -> None:
 
 ## 3. 现有五个插件与 20 个工具
 
-> 口径：本表以 `get_hub()` 实测为准（`len(hub.plugins)` / `len(hub.specs())`）。
-> 2026-09-15 加自建 `web_search` 时漏改了本节标题与 `builtin` 之外的三处"四个插件"表述——
-> **加插件时请一并改本表与 `plugins/__init__.py` 的模块表**（同一天的两份事实）。
+> 实时清单以运行期 `get_hub()` 实例为准（`len(hub.plugins)` / `len(hub.specs())`），
+> 或直接看 **[docs/TOOLS.md](TOOLS.md)**（由 `tools/gen_tools_doc.py` 从运行期生成，`tests/test_tools_doc.py` 钉住）。
+> 2026-09-15 引入 `web_search` 时曾漏把它写进本表（`builtin` 之外），故此后**以运行期为准**；
+> 本表为 2026-09-17 快照。
 
 | 插件 | 工具 | 风险 |
 |---|---|---|
@@ -152,7 +153,16 @@ def register(hub: pa.ToolHub) -> None:
 | `accounts`（快捷登录） | `accounts_list` / `accounts_login` / `accounts_browser_sessions` | read |
 | | `accounts_browser_open` / `accounts_browser_close` | **write** |
 
+统计：3 + 1 + 6 + 5 + 5 = **20 个工具 / 5 个插件**。
+
 实时清单：`GET /api/agent/tools`（含参数说明与风险）；插件维度：`GET /api/agent/plugins`。
+
+### `websearch` 为什么是独立插件（而不是并进 `builtin`）
+
+DeepSeek API **没有**内置联网检索（见 [research/deepseek-api-capabilities.md](research/deepseek-api-capabilities.md)），
+所以 `web_search` 是自建能力，且**自带外部依赖与失败模式**（检索源不可用、结果需要降级）。
+把它与"读时间/读文件"这类零依赖工具放在同一个插件里，会让"检索坏了"和"通用工具坏了"难以区分。
+**插件边界按"依赖与失败域"划，不按"看起来像不像一类"划。**
 
 ### 三个业务插件的设计取舍（都踩过或刻意避开了坑）
 
