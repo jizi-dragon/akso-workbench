@@ -52,35 +52,38 @@
 
 ### 1.2 L2：发布事实 ⚠️ —— **这是真正的缺口**
 
-实测命令与结果：
+> **2026-09-17 带 token 复核后修正**：本节初稿用**匿名**探测得出"发布了 12 个版本却只有 3 个 tag"，
+> 并据此推断有 9 个 tag 待补。**带 token 查证后这个推断是错的**——真实情况见下表。
+> 教训与 `04-未证实项` 里的方法学一致：**匿名 404 既可能是"不存在"，也可能是"不可见"**，
+> 两者在私有仓库上无法区分，必须带权限复核。
 
-```powershell
-git tag --sort=-creatordate
-#   before-pull-cd5e19d      ← 一个不像版本号的遗留 tag
-#   v0.3.4
-#   v0.3.3
-# (git tag).Count → 3
+**带 token 查到的真实状态**（`api.github.com`，2026-09-17）：
 
-git log --oneline | Select-String 'chore\(release\)'
-#   → 出现 12 次（v0.3.9 / v0.3.11 / …）
-```
+| 事实 | 值 |
+|---|---|
+| 仓库可见性 | **`private=True` / `visibility=private`** |
+| 已发布的 **Release** | **只有 2 个**：`v0.3.3`、`v0.3.4`（均 2026-09-11，各带 3 个资产 = `setup.exe` + `.blockmap` + `latest.yml`） |
+| 远端 **tag** | `v0.3.4`、`v0.3.3`（**与 Release 一一对应，无缺口**） |
+| 本地 tag | `v0.3.3`、`v0.3.4`、`before-pull-cd5e19d`（最后一个是不像版本号的遗留 tag） |
+| `chore(release)` 提交 | **12 次** |
 
-**结论：发布了 12 个版本，却只有 3 个 tag。tag 严重落后于实际发布。**
+**结论：不进位的版本不是"漏了 tag"，而是"从来没发布过"。** 那 12 次 `chore(release)` 是本地版本演进
+（`bump.py`），但只在 **2 次**真正走完了 `publish_release.py`。所以：
 
-为什么这是问题（三条，都不是洁癖）：
+- ❌ **不需要补历史 tag**（初稿的"补齐 9 个 tag"作废）——给没发布过的版本补 tag 会制造假历史；
+- ✅ **真正要建的习惯是"发布才打 tag"**，而这正是 `build.ps1` 新增的自动打 tag 在做的**反面**：
+  它在**构建**时就打 tag，而 release 是之后手工跑 `publish_release.py`。
+  > ⚠️ **这留下一个待你决定的不一致**：自动 tag 打的是"构建过的版本"，而 Release 可能永远不发。
+  > 两种立场都成立——**tag = "我构建并标注了这个版本"**（当前实现），或
+  > **tag = "我对外发布了这个版本"**（则应把打 tag 移到 `publish_release.py`）。
+  > 当前实现选的是前者（因为 `build.ps1` 是唯一有版本号的自动入口）。
 
-1. **GitHub Releases 依赖 tag**。没有 tag，就没有"这一版发了什么"的可追溯记录。
-2. **无法回答"用户在跑哪一版、那一版的代码是什么"**。`v0.3.11` 这个数字**在 git 里不可定位**——
-   你只能靠翻提交信息去猜它对应哪个 commit。
-3. **回滚没有锚点**。要回退到"用户反馈有问题的那一版"，你得先知道那一版的 commit 是哪个。
-   `git checkout v0.3.11` 现在会直接报错。
-
-另外两项 L2 缺口：
+其余两项 L2 缺口（实测确认）：
 
 | 缺口 | 实测证据 | 后果 |
 |---|---|---|
-| **无 CI 门禁** | `.github/` 目录**不存在** | 378 项测试与 9 项打包核对全靠**手工记得跑**；`build.ps1` 也**不调用** `verify_packaging.py` |
-| **无 tag 保护** | 无 ruleset、无 hooks（`.git/hooks` 只有 `.sample`） | tag 可被误删/强推覆盖 |
+| **无 CI 门禁** | 初稿时 `.github/` **不存在** | 382 项测试与 9 项打包核对全靠**手工记得跑**；`build.ps1` 也**不调用** `verify_packaging.py`。**2026-09-17 已加 `.github/workflows/ci.yml`**（见 §5.1） |
+| **Rulesets 用不了** ⚠️ | `GET /repos/.../rulesets` → **403 `Upgrade to GitHub Pro or make this repository public to enable this feature`** | ★ **§5.2 那一步在"免费版 + 私有仓库"上做不了**。要保护 main/tag，三选一：① 仓库转公开 ② 升级 GitHub Pro ③ 放弃（靠流程自律） |
 
 ### 1.3 L3：用户可见性 ⚠️ —— 有一个**硬前提没满足**
 
@@ -160,47 +163,45 @@ const AUTO_UPDATE_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.WORKBEN
 
 | 选项 | 做法 | 代价 | 适合 |
 |---|---|---|---|
-| **A. 仓库改回公开** | GitHub 仓库 Settings → 可见性改为 Public | 代码公开（但历史已做过脱敏重写——见 `HISTORY-REWRITE-NOTICE.md`，客户域名/账号名已替换为占位值） | ★ **若你本来就要分发安装包给他人**，这是最省事的一条 |
-| **B. 保持私有，更新源换掉** | 把 `latest.yml` + 安装包放到**你自己的 HTTPS 静态目录**（对象存储 / CVM / 内网共享），`desktop/package.json` 的 `publish.provider` 改为 `generic` + `url` | 需要自己维护一个静态托管 + 证书 | ★ **若安装包只在公司内网分发**，这条更合规 |
-| **C. 保持私有且继续用 GitHub** | ✖ **不可行**——更新器匿名读，私有仓库必然 404 | — | 不要选 |
+| **A. 仓库改回公开** | GitHub 仓库 Settings → 可见性改为 Public | 代码公开（但历史已做过脱敏重写——见 `HISTORY-REWRITE-NOTICE.md`，客户域名/账号名已替换为占位值） | ★ **一次解决两件事**：修好自动更新 **+ 解锁 Rulesets**（见 §7.1③）。若你本来就要分发安装包给他人，这是最省事的一条 |
+| **B. 保持私有，更新源换掉** | 把 `latest.yml` + 安装包放到**你自己的 HTTPS 静态目录**（对象存储 / CVM / 内网共享），`desktop/package.json` 的 `publish.provider` 改为 `generic` + `url` | 需要自己维护一个静态托管 + 证书 | ★ **若安装包只在公司内网分发**，这条更合规；但**拿不到 Rulesets**（除非升级 GitHub Pro） |
+| **C. 保持私有，且不做自动更新** | 什么都不改，保持 `WORKBENCH_AUTO_UPDATE` 关闭 | 用户需手工下载新版 | ★ **若从没打算对外分发**，这条最省事——把精力放在已落地的 CI 门禁上 |
+| ~~**D. 保持私有且继续用 GitHub Release 做更新源**~~ | ✖ **不可行**——更新器匿名读，私有仓库必然 404 | — | 不要选 |
+
+> **实测依据**（2026-09-17 带 token）：仓库 `private=True`；
+> **已发布的 Release 只有 `v0.3.3` / `v0.3.4` 两个**（各 3 个资产）；
+> `GET /repos/.../rulesets` → **403 "Upgrade to GitHub Pro or make this repository public"**。
+> 也就是说：**自动更新在这条链路上从来没真正生效过**（因为仓库是私有的），
+> 而"最新版本 0.3.12"与"最后一个 Release 0.3.4"之间差了 8 个版本、**从未发布**。
 
 > ⚠️ **无论选哪个，先把 `WORKBENCH_AUTO_UPDATE` 的现状写清楚**：它现在默认 `0`（关闭）。
 > 也就是说**这个问题当前不会暴露**——一旦有人开启它，才会以"用户永远收不到更新、日志里也看不出错"的形式出现。
 > 建议在 `desktop/updater.js` 的关闭分支日志里补一句"当前更新源要求公开仓库，本仓为私有，开启前请先处理"，把坑写在会被读到的地方。
 
-### 3.2 再补 tag（**这是投入产出比最高的一步，10 分钟**）
+### 3.2 tag 的真实状态（**2026-09-17 结案：不需要补**）
 
-`publish_release.py` 在创建 Release 时传了 `tag_name: v{version}`。GitHub 会在**创建 Release 时自动创建该 tag**——
-所以**已经发过的 Release 应该自带 tag**。实测 `git tag` 只有 3 个，说明两种可能之一：
+初稿在这里推断"发布了 12 个版本却只有 3 个 tag，要给 9 个版本补 tag"。**带 token 复核后该推断作废。**
 
-1. 大部分版本**从没走过 `publish_release.py`**（只构建、没发布）；或
-2. 发布过但 **Release 是 draft / 被删**，tag 未落地。
+**为什么初稿会错**：我用**匿名** API 查 `/releases`，拿到 **404**，读成了"没有 Release"。
+而真实原因是**仓库私有**——匿名看不到任何东西。**在私有仓库上，"不存在"与"不可见"都表现为 404，无法区分。**
 
-**先查清是哪一种**（用带 token 的 `GH_TOKEN` 跑）：
+**带 token 查到的真实状态**：
 
-```powershell
-$env:GH_TOKEN = "github_pat_..."
-.\.venv\Scripts\python.exe tools\publish_release.py --dry-run          # 看它认为当前版本要发什么
-# 再直接问 API（可匿名的那部分要看仓库可见性）：
-curl -H "Authorization: Bearer $env:GH_TOKEN" `
-  https://api.github.com/repos/jizi-dragon/akso-mogul/releases
-```
+| 事实 | 值 |
+|---|---|
+| 仓库可见性 | `private=True` |
+| 已发布 **Release** | **只有 2 个**：`v0.3.3`、`v0.3.4`（2026-09-11，各带 3 个资产） |
+| 远端 **tag** | `v0.3.3`、`v0.3.4` —— **与 Release 一一对应，无缺口** |
+| `chore(release)` 提交 | 12 次 —— 但这些只是**本地版本演进**，其中 **10 次从未发布** |
 
-**然后给"已发布但无 tag"的版本补 tag**（把 `<sha>` 换成实际的 release commit）：
+**结论**：不进位的版本是**从来没发布过**，不是**漏了 tag**。
+给没发布过的版本补 tag 会制造假历史 → **不补**。
 
-```powershell
-# 找到每个 release commit
-git log --oneline --grep='chore(release): v0.3.11'
+**那"怎么做才对"**：不补历史，改为**让今后不再遗漏**——已在 `build.ps1` 落地（release commit 推送成功后自动 `git tag -a v$version` + 推送，四条守卫见 §7.2）。
 
-# 补 tag（带注释，便于以后 git describe）
-git tag -a v0.3.11 <sha> -m "Akso Workbench 0.3.11"
-git push origin v0.3.11
-```
-
-**并让 `bump.py` 之后不再遗漏**——两个做法，任选：
-
-- **轻**：在 `build.ps1` 的 release commit 之后加一行 `git tag -a v$version -m "..."` + `git push origin v$version`；
-- **重**：让 CI 在检测到 `chore(release): vX.Y.Z` 提交时自动打 tag（见 §4 的 Workflow 2）。
+> **方法学教训（比结论更重要）**：**凡是要靠"接口返回 404 / 空"下结论时，先确认自己有权限看到全部数据。**
+> 同类错误在本仓出现过两次——一次是"用某文档页没写证明平台没这能力"，
+> 一次就是这里"用匿名 404 证明没有 Release"。两次都是**把"我没看到"当成了"它不存在"**。
 
 ---
 
@@ -321,14 +322,20 @@ jobs:
 > 这条是本次新增的：**2026-09-17 实测 P4b 曾因"源码已 bump、dist 未重建"而 FAIL**。
 > 在 CI 里必须保证构建顺序 = `bump → npm run build`，与 `build.ps1` 一致。
 
-### 5.2 第二步：保护 main 与 tag（5 分钟）
+### 5.2 第二步：保护 main 与 tag —— ❌ **当前做不了**（免费版 + 私有仓库）
+
+**实测 `GET /repos/jizi-dragon/akso-mogul/rulesets` 返回 403**：
+
+> `Upgrade to GitHub Pro or make this repository public to enable this feature.`
+
+所以这一步**先卡在可见性/套餐上**，三选一见 §7.1③。**下面留着是为了将来仓库转公开或升级后照做。**
 
 GitHub 仓库 → **Settings → Rules → Rulesets**：
 
 | 规则 | 设置 |
 |---|---|
 | Target | `main` |
-| 要求状态检查 | 勾选 `verify`（上一步的 job） |
+| 要求状态检查 | 勾选 `verify`（上一步的 job 名：`test + packaging + lint`） |
 | 禁止强推 | ✅ |
 | 禁止删除 | ✅ |
 | 新增一条 Tag ruleset | Target `v*`，**禁止删除、禁止强推** |
@@ -336,10 +343,11 @@ GitHub 仓库 → **Settings → Rules → Rulesets**：
 > 这一步的价值：**tag 一旦是"版本的可定位锚点"，它就不能是可被误删的东西**。
 > 你刚经历过一次 `git filter-repo` 全历史重写（`HISTORY-REWRITE-NOTICE.md`），
 > 那次连 tag 都得重打——保护规则防不了重写，但能防日常误操作。
+> **但要注意**：单人开发时 Rulesets 会挡住你自己，记得配 bypass。
 
-### 5.3 第三步：补齐 tag 并让 `build.ps1` 不再遗漏（10 分钟）
+### 5.3 第三步：`build.ps1` 自动打 tag（✅ 已落地）
 
-在 `tools/build.ps1` 的 release commit 段之后（约第 69 行 `git commit -m "chore(release): v$version"` 之后）插入：
+在 `tools/build.ps1` 的 release commit 段之后（`git commit -m "chore(release): v$version"` 之后）插入：
 
 ```powershell
     # 打 tag 并推送：tag 是"这一版对应哪个 commit"的唯一锚点。
@@ -384,16 +392,16 @@ L3 用户可见         更新器读 Release（匿名）
 | # | 事项 | 判据 | 估时 | 状态 |
 |---|---|---|---|---|
 | **1** | **决定更新源**：仓库改公开 / 换自托管 / 明确"暂不用自动更新" | 用 `AKSO_UPDATE_OVERRIDE` 或真实环境跑通一次"检测到新版本" | 决策 5 分钟 | ⬜ **待你决策**（§3.1） |
-| **2** | 查清"12 版本为何只有 3 tag"，并补齐历史 tag | `git tag` 数量 == `chore(release)` 提交数 | 30 分钟 | ⬜ 待办（需能访问远端） |
+| **2** | ~~查清 tag 缺口并补齐~~ | — | — | ✅ **已结案**：带 token 查明只发布过 2 版、tag 无缺口，**不需要补**（§7.1②） |
 | **3** | `build.ps1` 加自动打 tag | 下一次构建后 `git ls-remote --tags origin` 能看到新 tag | — | ✅ **已完成** |
 | **4** | 加 `.github/workflows/ci.yml` | push/PR 上出现 `verify` 检查，且能拦住一次故意失败 | — | ✅ **已完成**（§5.1） |
-| **5** | 保护 main 与 `v*` tag | 尝试强推 tag 被拒 | 5 分钟 | ⬜ **待你操作**（§5.2，网页设置） |
+| **5** | 保护 main 与 `v*` tag | 尝试强推 tag 被拒 | — | ❌ **当前不可用**：免费版+私有仓库无 Rulesets（403），需先选 A/B/C（§7.1③） |
 | **6** | （可选）统一版本语义，再考虑 release-please | 决策：是否放弃两档制 | 决策 5 分钟 | ⬜ 可选 |
 | **7** | （可选）`git-cliff` 替代手工解析 Unreleased 段 | 生成的 notes 与现有一致 | 1 小时 | ⬜ 可选 |
 
 **1 和 2 是"不做事就会埋雷"的两条**；3–5 是"顺手做完，长期受益"；6–7 是想更省手工时再说。
 
-### 7.1 ⬜ 待你操作：两条需要 GitHub 访问权限的步骤
+### 7.1 ⬜ 待你操作 / 已结案的核查项
 
 #### ① 保护 main 与 `v*` tag（网页设置，5 分钟）
 
@@ -420,53 +428,51 @@ GitHub 仓库 → **Settings → Rules → Rulesets → New ruleset**：
 > 备选（不想点网页）：有 `gh` CLI 且已登录时可用 API 建 ruleset。但**首次配置建议走网页**——
 > 状态检查的名称必须和 CI 实际产生的一致，网页上有下拉可选，写 JSON 容易拼错。
 
-#### ② 补齐历史 tag（需要能访问远端，约 30 分钟）
+#### ② ~~补齐历史 tag~~ → **已查清：不需要补**（2026-09-17 结案）
 
-**先查清事实**——`git` 里的信息**不足以**推断，因为实测发现
-`v0.3.4` **有 tag 但没有对应的 `chore(release)` 提交**（tag 直接打在某个功能提交上），
-说明不能只靠提交信息回填。真正的依据是 **GitHub 上实际发布过的 Release 列表**：
+初稿根据**匿名**探测推断"发布了 12 版却只有 3 个 tag"，计划补 9 个。**带 token 复核后该计划作废**：
 
-```powershell
-$env:GH_TOKEN = "github_pat_..."     # 需要 Contents: Read（只读即可）
-.\.venv\Scripts\python.exe - <<'PY'
-import json, os, urllib.request
-req = urllib.request.Request(
-    "https://api.github.com/repos/jizi-dragon/akso-mogul/releases?per_page=100",
-    headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-             "Accept": "application/vnd.github+json", "User-Agent": "audit"})
-rel = json.loads(urllib.request.urlopen(req, timeout=60).read())
-print(f"共 {len(rel)} 个 Release")
-for r in rel:
-    print(f"  {r['tag_name']:10} draft={r['draft']!s:5} prerelease={r['prerelease']!s:5} "
-          f"assets={len(r['assets'])} published={r.get('published_at')}")
-PY
-```
+| 带 token 查到的真实状态 | 值 |
+|---|---|
+| 仓库可见性 | `private=True` |
+| 已发布 Release | **只有 2 个**：`v0.3.3`、`v0.3.4`（2026-09-11，各 3 个资产） |
+| 远端 tag | `v0.3.3`、`v0.3.4` —— **与 Release 一一对应，无缺口** |
+| `chore(release)` 提交 | 12 次（但这些只是**本地版本演进**，多数**从未发布**） |
 
-**本地已知的缺口（供对照）**——`git log --grep='chore(release):'` 能看到的版本：
+**结论**：不进位的版本是**从来没发布过**，不是**漏了 tag**。
+给没发布过的版本补 tag 会制造假历史，**所以不补**。
 
-| 版本 | 提交 | 有 tag 吗 |
+> ⚠️ **方法学教训（比结论本身更重要）**：匿名 API 的 **404 既可能表示"不存在"，也可能表示"不可见"**。
+> 在私有仓库上这两者无法区分，我当时却把 404 读成了"没有 Release"。
+> **凡是要靠"某接口返回空/404"下结论时，先确认自己有权限看到全部数据。**
+> 同类错误在本仓已出现过一次：早期用「某文档页没写」证明「平台没有这个能力」（见 `docs/CODEBASE_OVERVIEW.md` 的方法学注记）。
+
+**取而代之要做的（唯一一件）**：确认 `build.ps1` 的自动打 tag 生效——
+下一次 `-Bump build|push` 构建后，`git ls-remote --tags origin` 应能看到新 tag。
+
+> **一个待你决定的不一致**：当前 `build.ps1` 在**构建**时打 tag，而 Release 由之后手工执行
+> `publish_release.py` 才产生。于是会出现"有 tag 但没有 Release"的版本。
+> 两种立场都成立——**tag = 我构建并标注了这一版**（当前实现，因为 `build.ps1` 是唯一自动拿到版本号的入口），
+> 或 **tag = 我对外发布了这一版**（那应把打 tag 移进 `publish_release.py`）。**要改的话告诉我。**
+
+#### ③ Rulesets 保护：★ **当前账号/可见性下做不了**
+
+实测 `GET /repos/jizi-dragon/akso-mogul/rulesets` → **403**：
+
+> `Upgrade to GitHub Pro or make this repository public to enable this feature.`
+
+**即"免费版 + 私有仓库"不提供 Rulesets。** 要保护 `main` 与 `v*` tag，三选一：
+
+| 选项 | 代价 | 说明 |
 |---|---|---|
-| `v0.3.11` | `51bf2f6` (2026-09-15) | ❌ 缺 |
-| `v0.3.9` | `b831141` (2026-09-14) | ❌ 缺 |
-| `v0.3.4` | 无 release 提交（tag 打在别处） | ✅ 有 |
-| `v0.3.3` | `e4a2140` (2026-09-11) | ✅ 有 |
-| `v0.3.2` | `aca5e72` (2026-09-11) | ❌ 缺 |
-| `v0.3.1` | `f0c2110` (2026-09-11) | ❌ 缺 |
-| `v0.1.1` | `76cdefd` (2026-09-09) | ❌ 缺 |
-| `v0.0.1` | `21b52aa` (2026-09-09) | ❌ 缺 |
-| **`v0.3.12`（当前版本）** | 无 release 提交 | ❌ 缺 |
+| **A. 仓库转公开** | 代码公开 | 历史已做过脱敏重写（`HISTORY-REWRITE-NOTICE.md`：客户域名/账号名已替换为占位值）；**且顺带修好自动更新**（更新器正是要求公开仓库） |
+| **B. 升级 GitHub Pro** | 约 $4/月 | 保留私有 + 拿到 Rulesets。**但自动更新仍不可用**（它要求匿名可读） |
+| **C. 放弃自动保护** | 零成本 | 单人开发时 Rulesets 的收益本就有限；靠"改 `build.ps1` 后必跑 `verify_packaging.py`"+ CI 兜底 |
 
-**补 tag**（对上面确认"发布过但缺 tag"的版本逐个执行；`<sha>` 取该版本发布时的提交）：
-
-```powershell
-git tag -a v0.3.11 51bf2f6 -m "Akso Workbench 0.3.11"
-git push origin v0.3.11
-```
-
-> **两个提醒**：
-> - **先确认那一版真的发布过**（Release 列表里有），再补 tag。给一个从没发布的版本补 tag 会制造假历史。
-> - **当前版本 `v0.3.12` 也没有 tag**。它要么本来就还没发布（那就等下次 `build.ps1` 自动打），
->   要么已发布但漏了（那就手工补）。**这是判断"自动打 tag 是否已生效"的第一个观测点。**
+> **判断建议**：如果你**从没打算把安装包发给外部用户**，那自动更新（L3）整条线本来就不需要，
+> 选 **C** 最省事，把精力放在 CI 门禁（已落地）上；
+> 如果要对外分发，**A** 一次解决"保护规则 + 自动更新"两件事，但要接受代码公开。
+> **这是业务决策，我不替你定。**
 
 ### 7.2 ✅ 已完成部分的实测记录
 

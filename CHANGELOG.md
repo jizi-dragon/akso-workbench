@@ -144,12 +144,48 @@
   2. **`tools/build.ps1` 自动打 tag**（release commit 推送成功之后）——补上"标签"这一层缺口。
      四条守卫都不会打 tag：`-Bump none` / commit 未产生 / **commit 未推上去**（否则 tag 指向远端不存在的 commit）/ tag 已存在；
      失败只告警不改退出码（安装包已经出来了，一个 tag 推不上去不该作废整次构建）。
-  - **动因**：实测**发布过 12 个版本却只有 3 个 tag**（`v0.3.3`/`v0.3.4`/一个遗留 tag），
-    导致 `git checkout v0.3.11` 直接报错——**回滚与"用户跑的是哪一版"都没有锚点**。
-  - 本地逐条复现 CI 的同一命令序列：**378 passed** / `PACKAGING_CHECKS: 9/9` / ruff `All checks passed`。
+  - **动因**（**2026-09-17 带 token 复核后已更正**）：初稿据匿名探测称"发布过 12 个版本却只有 3 个 tag"，
+    需给 9 个版本补 tag。**带 token 查明这是错的**——只发布过 **2 个 Release**（`v0.3.3`/`v0.3.4`），
+    tag 与 Release **一一对应、无缺口**；那 12 次 `chore(release)` 是**本地版本演进，其中 10 次从未发布**。
+    所以**不补历史 tag**（补了会制造假历史）。自动打 tag 的意义相应改为"**今后构建即留锚点**"。
+  - 本地逐条复现 CI 的同一命令序列：`pytest` 全绿 / `PACKAGING_CHECKS: 9/9` / ruff `All checks passed`。
   - 相关文档：新增 [docs/VERSIONING.md](docs/VERSIONING.md)；`CONTRIBUTING.md` 增 §3.3.1（tag 与 CI 纪律）。
 
 ### Fixed
+
+- **文档订正：仓库可见性与 Release 现状（2026-09-17 带 token 复核）**。三处基于**匿名探测**的结论是错的：
+  | 位置 | 错误结论 | 带 token 查到的真相 |
+  |---|---|---|
+  | `docs/VERSIONING.md` §1.2/§3.2 | "发布了 12 个版本却只有 3 个 tag，需补 9 个 tag" | **只发布过 2 个 Release**（`v0.3.3`/`v0.3.4`，各 3 个资产），tag 与 Release **一一对应、无缺口** → **不需要补 tag** |
+  | `docs/VERSIONING.md` §5.2/§7.1 | "配 Rulesets 保护 main 与 tag（5 分钟）" | `GET /repos/.../rulesets` → **403 `Upgrade to GitHub Pro or make this repository public`**。**免费版 + 私有仓库不提供 Rulesets**，该步骤**做不了** |
+  | `CONTRIBUTING.md` §6 | "仓库必须是公开的"（作为要求） | 实测 `private=True`——**该要求从未被满足**，故**自动更新在这条链路上从未真正生效过**（更新器匿名读 Release） |
+  - **根因是一条方法学错误，值得记下来**：匿名 API 的 **404 既可能表示"不存在"，也可能表示"不可见"**；
+    私有仓库上两者无法区分，我却把 404 读成了"没有 Release"。
+    **凡是要靠"接口返回 404 / 空"下结论时，必须先确认自己有权限看到全部数据。**
+    本仓同类错误已出现两次（另一次是"用某文档页没写证明平台没此能力"）。
+  - `docs/VERSIONING.md` §3.1 现在明确给出 **A/B/C 三个更新源选项及代价**
+    （A 转公开 = 一次解决自动更新 + Rulesets；B 自托管更新源；C 不做自动更新）。
+    **仓库转公开是业务决策，文档只列事实与代价，不替用户决定。**
+- **修正 lint 命令口径（2026-09-17 实测）**：`CONTRIBUTING.md` §1/§7 与 `docs/CODEBASE_OVERVIEW.md`
+  多处写着 lint 走 `.\.venv\Scripts\ruff.exe check .`——**该文件不存在**（直接调用报 `CommandNotFoundException`）。
+  实测 `.venv\Scripts\` 里**有** `uv.exe` / `uvx.exe` / `uvw.exe`，**没有** `ruff.exe`。
+  正确且唯一可用的命令是 **`.\.venv\Scripts\uv.exe tool run ruff check .`**（首次下载 ruff 约 10 MB，需联网）。
+  > 这条尤其值得记：**2026-09-16 那次"更正"把两个事实都搞反了**——它说 `uv.exe` 不存在（其实存在）、
+  > `ruff.exe` 存在（其实不存在）。已改为唯一权威口径，并在历史条目上标注"那次更正本身也是错的"。
+- **`tests/test_proc.py` 两处 Windows-only 硬编码路径改为跨平台**（2026-09-17）。
+  `Z:/definitely/missing.exe` 与 `Z:/no/such/dir` 在 POSIX 下**不是绝对路径**，
+  而 `proc.check_spec` 只在 `os.path.isabs(exe)` 成立时才查存在性 ⇒ Linux 上该用例会以
+  "没抛出 `ProcError`"失败——**看着像 `proc.py` 的 bug，其实是用例不可移植**。
+  改为 `_absent_absolute_path()`（`tempfile.gettempdir()` + uuid，保证跨平台都是绝对路径且必然不存在）。
+  > 这是为 CI 做的准备：**门禁要在和发版一致的环境里跑，但用例本身不该被平台绑死**。
+  > 顺带记一条判据：凡"某用例只在某个平台过"，先怀疑用例而不先怀疑被测代码。
+
+- **CI 补入工具清单门禁**（2026-09-17）。`.github/workflows/ci.yml` 在 `verify_packaging.py` 之后增加
+  `tools/gen_tools_doc.py`（2026-09-16 随"工具清单治理"引入的"文档清单 == 运行期 ToolHub"门禁）。
+  `tests/test_tools_doc.py` 已覆盖它，但**单独跑一次能让失败原因在 CI 界面上一眼可见**。
+  CI 最终 10 步：checkout → python → node → uv → **扩展构建** → uv sync → pytest → verify_packaging → gen_tools_doc → ruff。
+- **本轮已推送**：`5830da6`（文档漂移 + CI + 自动打 tag + 清理）、`0494ed6`（CI 补工具清单门禁）、
+  以及本条的文档订正。推送经由本机代理 `127.0.0.1:7890`（直连被重置；`git` 已配 `http.proxy`）。
 
 - **`tests/test_proc.py` 两处 Windows-only 硬编码路径改为跨平台**（2026-09-17）。
   `Z:/definitely/missing.exe` 与 `Z:/no/such/dir` 在 POSIX 下**不是绝对路径**，
