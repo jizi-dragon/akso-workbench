@@ -478,7 +478,7 @@ GitHub 仓库 → **Settings → Rules → Rulesets → New ruleset**：
 | 项 | 落点 | 实测 |
 |---|---|---|
 | 自动打 tag | `tools/build.ps1`（release commit 之后，四条守卫：非 `-Bump none`、commit 真产生、commit 真推上去、tag 不重复） | `verify_packaging.py` **9/9 PASS**（P5 的 BOM 检查通过）；PowerShell 语法解析无错 |
-| CI 门禁 | `.github/workflows/ci.yml`（`windows-latest`；扩展构建 → `uv sync` → pytest → `verify_packaging.py` → `gen_tools_doc.py` → ruff） | 本地逐条复现同一命令序列：**480 passed**（含 11 slow）/ **9/9 PASS** / `TOOLS_DOC_CHECKS: PASS（5 插件 / 20 工具 = core）` / ruff `All checks passed`。**另在 py3.12 复现过 CI 环境**（CI 用 3.12 而开发机是 3.14）：`472 passed, 8 skipped`（8 项浏览器验收因 runner 无 chromium 而 skip，见 PITFALLS #43） |
+| CI 门禁 | `.github/workflows/ci.yml`（`windows-latest`；扩展构建 → `uv sync` → pytest → `verify_packaging.py` → `gen_tools_doc.py` → ruff） | ✅ **run #10（`be3b59f`）`conclusion=success`，12 个 step 全绿**——这是本仓**首次**绿（前 9 次：5 次 cancelled、4 次 failure，根因见 PITFALLS #43）。本地另逐条复现：**480 passed**（含 11 slow）/ **9/9 PASS** / `TOOLS_DOC_CHECKS: PASS（5 插件 / 20 工具 = core）` / ruff `All checks passed`；并在 **py3.12**（= CI 的 Python，开发机是 3.14）复现过 `472 passed, 8 skipped` |
 | 已推送 | `5830da6`（文档+CI+自动打 tag+清理）、`0494ed6`（CI 补工具清单门禁）、`058c1ef`（本轮订正） | `local == origin/main`；推送经本机代理 `127.0.0.1:7890`（直连被重置，`git` 已配 `http.proxy`） |
 
 > ⚠️ **改 `build.ps1` 必须补 BOM**：实测编辑动作会静默丢掉 UTF-8 BOM（P5 立刻掉到 8/9）。
