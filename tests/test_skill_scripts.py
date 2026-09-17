@@ -378,3 +378,114 @@ def test_uploaded_binary_is_still_rejected_for_script_skills(clean_hub) -> None:
     report = S.inspect_zip(buf.getvalue())
     assert report.verdict == "reject"
     assert L.upload(buf.getvalue()).ok is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HTTP 端到端：走真实路由把上传的脚本跑起来
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.slow
+def test_script_skill_end_to_end_through_http(clean_hub) -> None:
+    """**整条链路走真实 HTTP**：上传 → 装 → 模型看得到 → 过确认门 → 真的跑出结果。
+
+    这条测试是为 PITFALLS #39 补的：上一轮的 32 项 Skill 测试全部走 `library.upload()`
+    这类**函数级**入口，验到"安装成功、工具可见"就收尾，于是"库目录里根本没有脚本
+    文件、一调用必然失败"这个**整条功能是死的**的缺陷，一个测试都没碰到。
+    教训不是"多写测试"，而是：**引入了新形态的执行路径，就必须有一条走完全程的测试**
+    ——注册成功与执行成功是两件独立的事。
+
+    顺带把"脚本式工具风险 ≥ write ⇒ 必须过确认门"这条也在 HTTP 面上钉住：
+    第一次调用**必须** 409（不是直接跑）。
+    """
+    from fastapi.testclient import TestClient
+
+    from workbench import approvals
+    from workbench.api import app
+
+    approvals.reset_store()
+    # ⚠️ **必须用 `with`**：沙箱与 Skill 的审计写入器是 lifespan 里注入的
+    # （`_sandbox_setup` / `_skills_setup`），不用 `with` 就不会跑 lifespan，
+    # 审计变成空表——那是**测试没走到真实路径**，不是产品不写审计。
+    with TestClient(app) as client:
+        # 1) 上传（走 multipart，和界面同一条路径）
+        uploaded = client.post(
+            "/api/skills/upload",
+            files={"file": ("script-demo.zip", make_zip(), "application/zip")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        body = uploaded.json()
+        assert body["capability_id"] == "script-demo"
+        assert body["tools"] == ["script_double"]
+
+        # 2) 概览里能看出它是**脚本式**（界面靠这个字段标「含脚本」）
+        summary = client.get("/api/skills/summary").json()
+        entry = next(x for x in summary["library"] if x["capability_id"] == "script-demo")
+        assert entry["script_tools"] == ["script_double"]
+        assert entry["installed"] is False
+        assert "沙箱" in summary["boundary"], "边界文案必须提到沙箱是真实强制层"
+
+        # 3) 安装 → 工具立刻出现在模型可见的工具表里，且风险是 write
+        assert client.post("/api/skills/install",
+                           json={"capability_id": "script-demo"}).status_code == 200
+        tools = client.get("/api/agent/tools").json()["tools"]
+        spec = next(t for t in tools if t["name"] == "script_double")
+        assert spec["risk"] == "write", f"脚本式工具不得低于 write，得到 {spec['risk']}"
+        assert spec["origin"] == "installed"
+
+        # 4) 直接调用 → **必须**被确认门拦下（写风险不许自己动手）
+        first = client.post("/api/agent/invoke",
+                            json={"tool": "script_double", "args": {"n": 21}})
+        assert first.status_code == 409, first.text
+        pending_id = first.json()["detail"]["pendingId"]
+
+        # 5) 批准 → 重投 → **真的把脚本跑起来并拿到结果**
+        token = client.post(
+            f"/api/agent/pending/{pending_id}/approve").json()["approvalToken"]
+        ran = client.post("/api/agent/invoke", json={
+            "tool": "script_double", "args": {"n": 21}, "approvalToken": token,
+        })
+        assert ran.status_code == 200, ran.text
+        # `result` 回来的已经是解析好的对象（HTTP 面把工具正文还原成 JSON）
+        assert ran.json()["result"] == {"doubled": 42}, ran.text
+
+        # 6) 沙箱审计里留下了一次执行（含策略指纹与退出码）
+        runs = client.get("/api/sandbox/runs").json()["runs"]
+        this_run = next(r for r in runs if "script-demo" in (r.get("label") or ""))
+        assert this_run["code"] == 0
+        from workbench.skills.script_runner import SCRIPT_POLICY
+
+        assert this_run["policy"] == SCRIPT_POLICY, (
+            f"沙箱策略必须固定为 {SCRIPT_POLICY}（不由 Skill 自选），得到 {this_run['policy']}"
+        )
+        assert this_run["policy_fingerprint"], "策略指纹必须留痕——否则'当时用的哪份策略'无法回溯"
+
+        # 7) 卸载 ≠ 删除：工具立刻消失，但库里那份还在（且能再装回来）
+        assert client.post("/api/skills/uninstall",
+                           json={"capability_id": "script-demo"}).status_code == 200
+        assert "script_double" not in [t["name"]
+                                       for t in client.get("/api/agent/tools").json()["tools"]]
+        after = client.get("/api/skills/summary").json()
+        still_there = next(x for x in after["library"] if x["capability_id"] == "script-demo")
+        assert still_there["installed"] is False
+        assert still_there["versions"] == ["1.0.0"]
+
+        # 8) 从库删除 = 真正销毁
+        assert client.post("/api/skills/delete",
+                           json={"capability_id": "script-demo"}).status_code == 200
+        gone = client.get("/api/skills/summary").json()["library"]
+        assert not [x for x in gone if x["capability_id"] == "script-demo"]
+
+
+def test_upload_http_rejects_bad_package_with_400(clean_hub) -> None:
+    """坏包走 HTTP 是 **400**（调用方能自己修），不是 500。"""
+    from fastapi.testclient import TestClient
+
+    from workbench.api import app
+
+    client = TestClient(app)
+    bad = make_zip(SCRIPT_SKILL.replace("    script: scripts/double.py", "    script: ../evil.py"))
+    resp = client.post("/api/skills/upload",
+                       files={"file": ("bad.zip", bad, "application/zip")})
+    assert resp.status_code == 400, resp.text
+    assert "script" in str(resp.json()["detail"]).lower()

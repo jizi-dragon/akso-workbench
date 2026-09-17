@@ -198,7 +198,30 @@ class _CappedReader:
 
 
 def run(req: ExecRequest) -> ExecResult:
-    """同步执行一次沙箱任务。**任何失败都转成 ExecResult，不向调用方抛。**"""
+    """同步执行一次沙箱任务。**任何失败都转成 ExecResult，不向调用方抛。**
+
+    ## 审计（E4）在这里落，**不在调用方**
+
+    这是本模块唯一的对外执行入口，所以把 `audit.record` 放在这一层意味着
+    **每一条返回路径都会被记录**——包括各种"被拒"（策略不存在、可执行文件不在名单、
+    cwd 越界、启动失败）。`_run` 里有 7 处 `return`，靠调用方逐个记得写审计，
+    迟早漏一个：**实测就漏了全部**——`audit.record` 一度没有任何调用方，
+    于是 `/api/sandbox/runs` 永远是空表、管理页的"执行审计"永远没内容，
+    而 ADR-0014 D-2 的 E4 层在文档上写着"已实现"。放在扼流点上，这类"漏"在结构上不可能发生。
+
+    审计失败**绝不影响执行结果**（`audit.record` 自己吞异常），
+    这与 `plugin_api` / `skills.library` 的留痕纪律一致：
+    **留痕是义务，不是执行的前置条件**。
+    """
+    result = _run(req)
+    from . import audit  # 本地导入：让 policy/layout 仍可独立单测，且避免循环
+
+    audit.record(result, label=req.label, argv=req.argv)
+    return result
+
+
+def _run(req: ExecRequest) -> ExecResult:
+    """真正的执行体。**只被 `run` 调用**，以免绕过审计。"""
     # ── 1) 策略
     try:
         policy: SandboxPolicy = get_policy(req.policy_name)

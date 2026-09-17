@@ -14,6 +14,7 @@ CI 里应显式跑一次 `-m slow`（见 `.github/workflows/ci.yml`）。
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 
@@ -335,3 +336,74 @@ def test_audit_writer_failure_does_not_raise() -> None:
         assert audit.record(ExecResult(ok=True, code=0), label="x", argv=["python"]) == ""
     finally:
         audit.reset()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 审计必须由 run() 自己落——**不是靠调用方记得写**
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_run_records_audit_even_when_rejected() -> None:
+    """**被拒也要留痕**：E4 说的是"每次执行落审计"，被拒同样是一次执行尝试。
+
+    这条钉的是**调用链**而不是函数：`audit.record` 一度**没有任何调用方**
+    （三条既有审计测试全是直接调 `audit.record(...)` / `audit.install(...)`，
+    函数级全绿、链路级全空），后果是 `/api/sandbox/runs` 永远是空表、
+    管理页的"执行审计"永远没内容，而 ADR-0014 的 E4 层在文档上写着"已实现"。
+    修法是把 `audit.record` 放进 `run()` 这个**唯一执行入口**，于是 7 条
+    `return` 路径没有一条能绕过它。这条测试就是那个修法的回归。
+    """
+    from workbench.sandbox import audit
+
+    captured: list[dict] = []
+    audit.install(captured.append)
+    try:
+        # 未知策略 → 走 `_reject` 的早返回路径（不起进程）
+        result = run(ExecRequest(argv=[sys.executable, "-c", "print(1)"],
+                                 policy_name="no-such-policy",
+                                 cwd=layout.SANDBOX_ROOT, label="rejected-probe"))
+    finally:
+        audit.reset()
+
+    assert not result.ok
+    assert len(captured) == 1, "被拒的执行没有被审计——run() 的某条 return 绕过了审计"
+    row = captured[0]
+    assert row["label"] == "rejected-probe"
+    assert row["ok"] == 0
+    assert row["code"] == -1
+    assert "拒绝执行" in row["notes"]
+
+
+@pytest.mark.slow
+def test_run_records_audit_on_success_and_keeps_label() -> None:
+    """成功路径同样留痕，且 `label` / 策略指纹 / 退出码都进得了审计表。
+
+    `label` 是"这次执行是谁发起的"的唯一线索（如 `skill:<能力id>/<工具名>`）——
+    没有它，排查时看到的就是一堆无法归属的执行记录。
+    """
+    from workbench.sandbox import audit
+
+    layout.ensure_dirs()
+    work = layout.run_dir(layout.new_run_id())
+    captured: list[dict] = []
+    audit.install(captured.append)
+    # 输出刻意与命令行里的字面量不同：才能区分"存了正文"与"只存了长度"
+    body = "M" * 9
+    try:
+        result = run(ExecRequest(argv=[sys.executable, "-c", "print('M'*9)"],
+                                 policy_name="skill-script", cwd=work,
+                                 label="skill:demo/tool_x"))
+    finally:
+        audit.reset()
+
+    assert result.ok, f"未成功：{result.error} {result.stderr}"
+    assert len(captured) == 1, "成功执行没有被审计"
+    row = captured[0]
+    assert row["label"] == "skill:demo/tool_x"
+    assert row["ok"] == 1
+    assert row["code"] == 0
+    assert row["policy"] == "skill-script"
+    assert row["policy_fingerprint"] == result.policy_fingerprint
+    # 只存长度不存正文（输出可能含敏感内容，且会让审计表变成体积主因）
+    assert row["stdout_chars"] == len(body)
+    assert body not in json.dumps(row, ensure_ascii=False), "审计表里存了输出正文"

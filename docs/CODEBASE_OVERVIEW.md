@@ -160,9 +160,9 @@ db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 cd desktop; npm ci; npm start                     # Electron 开发态
 
 # 测试 / 体检（2026-09-17 实测，见下方"验收基线实测"）
-.\.venv\Scripts\python.exe -m pytest              # 466 passed（默认跳过 slow 层）
-.\.venv\Scripts\python.exe -m pytest -o addopts=""     # 475 passed（含 slow 层；见下方"两层测试"）
-.\.venv\Scripts\python.exe -m pytest -m slow      # 9 passed（只跑慢层：真起子进程/浏览器那批）
+.\.venv\Scripts\python.exe -m pytest              # 468 passed（默认跳过 slow 层）
+.\.venv\Scripts\python.exe -m pytest -o addopts=""     # 479 passed（含 slow 层；见下方"两层测试"）
+.\.venv\Scripts\python.exe -m pytest -m slow      # 11 passed（只跑慢层：真起子进程/浏览器那批）
 .\.venv\Scripts\python.exe tools\verify_packaging.py   # 9/9（P4b 需先重建扩展，见下）
 .\.venv\Scripts\python.exe tools\gen_tools_doc.py      # PASS（5 插件 / 20 工具 = core）
 .\.venv\Scripts\uv.exe tool run ruff check .      # All checks passed（venv 内没有 ruff.exe）
