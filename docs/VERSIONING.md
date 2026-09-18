@@ -481,6 +481,19 @@ GitHub 仓库 → **Settings → Rules → Rulesets → New ruleset**：
 | CI 门禁 | `.github/workflows/ci.yml`（`windows-latest`；扩展构建 → `uv sync` → pytest → `verify_packaging.py` → `gen_tools_doc.py` → ruff） | ✅ **run #10（`be3b59f`）`conclusion=success`，12 个 step 全绿**——这是本仓**首次**绿（前 9 次：5 次 cancelled、4 次 failure，根因见 PITFALLS #43）。本地另逐条复现：**480 passed**（含 11 slow）/ **9/9 PASS** / `TOOLS_DOC_CHECKS: PASS（5 插件 / 20 工具 = core）` / ruff `All checks passed`；并在 **py3.12**（= CI 的 Python，开发机是 3.14）复现过 `472 passed, 8 skipped` |
 | 已推送 | `5830da6`（文档+CI+自动打 tag+清理）、`0494ed6`（CI 补工具清单门禁）、`058c1ef`（本轮订正） | `local == origin/main`；推送经本机代理 `127.0.0.1:7890`（直连被重置，`git` 已配 `http.proxy`） |
 
+> **2026-09-18 更新（本节多条已过期，以此为准）**
+>
+> | 项 | 现状 |
+> |---|---|
+> | **版本演进默认值** | `build.ps1` 的 `-Bump` **默认 `none`**（原来默认 `build` = MINOR+1）。升版必须显式写 `-Bump push\|build`。**理由**：版本号不可回收，而"默认帮用户升版"是在替用户做不可逆决策——实测两次失败构建烧掉了 `0.4.0` 与 `0.5.0`，把 0.3.12 一路顶到 0.6.1 |
+> | **bump 的位置** | 从**第 1 步**降到**第 3 步**（`uv sync` → 静态体检 → **bump** → 扩展重建 → 推送 → sidecar → 复检 → NSIS）。前两步失败**不再消耗版本号** |
+> | **日常升小版本** | **不需要 `build.ps1`**：`python tools\bump.py push`（PATCH+1）后提交推送即可。要出安装包时才用 `build.ps1` |
+> | **CI 门禁** | 已增至 **13 步**，含 `Interpreter version contract`（断言 `.python-version` == CI 的 `python-version`）。**run #18（`6294814`）success** |
+> | **打包体检** | **13/13**（原 9 项 → 新增 P8/P8b/P9/P10）。⚠ 注意 **P8b 是环境事实**，只在 `WORKBENCH_REQUIRE_CHROMIUM=1`（`build.ps1` 设）时参与断言——CI 不设；早先把它当无条件的判据，导致 CI 首次被判红（run #17） |
+> | **发布** | `publish_release.py` 的**出网通道改为探测**（直连/环境变量/git 配置/常见端口，挑实测能通的）。`--no-proxy` 现在是"强制直连、跳过探测" |
+> | **已发布的 Release** | `v0.3.3`、`v0.3.4`（2026-09-11）、**`v0.3.12`（2026-09-18）**。误发的 `v0.6.1` 已连同 tag 删除 |
+>
+
 > ⚠️ **改 `build.ps1` 必须补 BOM**：实测编辑动作会静默丢掉 UTF-8 BOM（P5 立刻掉到 8/9）。
 > 这是环境坑 #37，处置命令在 `docs/PITFALLS.md`。
 > **这也顺带证明了 CI 的价值**：这类"内容看着完全正常、只有字节不对"的问题，只有门禁能拦住。
