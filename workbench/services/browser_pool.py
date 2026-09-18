@@ -269,7 +269,13 @@ class BrowserPool:
 
     @staticmethod
     def _close_entry(entry: SessionEntry) -> None:
-        if entry.status == "online":
+        # ⚠ 必须在改写 status **之前**取快照：旧实现是
+        #     entry.status = "stopped"
+        #     entry.detail = "...已保存" if entry.restored or entry.status == "online" else "..."
+        #   赋值之后才判断 `== "online"` → 该分支**恒假**，于是"关窗时登录态已落盘"
+        #   这件事永远传不到 UI（用户看到的是含糊的「已关闭」）。C1，2026-09-17 修。
+        was_online = entry.status == "online"
+        if was_online:
             BrowserPool._save_state(entry)
         if SESSION_MODE == "cdp":
             # 关壳的会话窗（分区持久化由 Electron 自管）
@@ -283,7 +289,7 @@ class BrowserPool:
         entry.context = None
         entry.page = None
         entry.status = "stopped"
-        entry.detail = "已关闭（登录态已保存）" if entry.restored or entry.status == "online" else "已关闭"
+        entry.detail = "已关闭（登录态已保存）" if entry.restored or was_online else "已关闭"
 
     def _do_open(self, pw: Any, browsers: dict[bool, Any], sessions: dict[str, SessionEntry],
                  account_id: str, headful: bool) -> dict[str, Any]:
