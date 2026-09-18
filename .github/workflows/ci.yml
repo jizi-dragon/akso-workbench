@@ -72,6 +72,19 @@ jobs:
       - name: Sync python dependencies
         run: uv sync --extra dev --extra build
 
+      # 解释器版本契约（2026-09-17 加）。**必须在 uv sync 之后**：那一步才建出 .venv。
+      #
+      # 动因：本机 .venv 是 conda 的 3.14.6，CI 是 3.12，两边**跳过项与语义都不同**——
+      # 3.14 起 `from __future__ import annotations` 不再于运行时求值，于是"注解里写了
+      # 未导入的名字"这类错误**只在 3.12 上炸**（这正是 CHANGELOG 里"CI 建起来就没绿过"
+      # 那起事故被掩盖九次运行的机制之一）。
+      # tests/test_python_version_contract.py 在 pytest 里也钉了这条（守 .python-version == CI），
+      # 这里单独再跑一次并**打印实际解释器版本**，是为了让"哪个版本在跑"在 CI 界面上一眼可见。
+      - name: Interpreter version contract
+        run: |
+          .venv\Scripts\python.exe -c "import sys; print('runner python =', sys.version)"
+          .venv\Scripts\python.exe -m pytest tests/test_python_version_contract.py -o addopts="" -rs
+
       # --tb=short：CI 失败时只打印每个失败的首个栈帧，既能定位又不会被几千行日志淹没
       # -o addopts=""：**必须**。pyproject 里 addopts = "-q -m 'not slow'"，命令行再加 -q 会进
       #                ultra-quiet，连 `=== 413 passed ===` 汇总行都不打印，CI 界面看着像"没跑出结果"。

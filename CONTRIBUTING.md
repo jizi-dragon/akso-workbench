@@ -56,11 +56,51 @@ cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建
 > **本机 venv 是 Python 3.14.6，项目要求 `>=3.12`** —— 满足要求，但要注意 3.14 上
 > `from __future__ import annotations` 的注解已不再于运行时求值，所以「注解里写了未导入的名字」
 > 这类错误不会在运行时暴露（`routes_insight.py` 的 `Any` 就是这么潜藏的）。ruff 的 F821 是唯一防线。
+>
+> ⚠️ **但这不只是"注解求值"一件事（P0-5，2026-09-17 补）**：本机 3.14 与 CI 的 3.12
+> **跑出来的结论可以不同**——CI 的 runner 没有 chromium，`tests/test_browser_parallel.py`
+> 的 4 项 P0 浏览器验收在那里是 **skip**，本机是 **pass**。CHANGELOG 里"CI 从建立那天起
+> 就没绿过"那起事故，就是被这个差集掩盖了**九次运行**。
+> 所以本仓现在有一个明确的解释器口径：**`.python-version`（= `3.12`）是唯一真源**，
+> `tests/test_python_version_contract.py` 会断言它与 `.github/workflows/ci.yml` 的
+> `python-version` **逐字一致**（两处分居文本与 YAML，没有别的机制保证同步）。
+>
+> **想在本地按 CI 的口径复现**（强烈建议在"CI 红了但本地绿"时先做这一步）：
+>
+> ```powershell
+> # 独立目录，**不动**你的主力 .venv（3.14 仍可继续日常开发）
+> .\.venv\Scripts\uv.exe venv .venv312 --python 3.12
+> .\.venv\Scripts\uv.exe pip install --python .venv312\Scripts\python.exe -e ".[dev]"
+> .\.venv312\Scripts\python.exe -m pytest -o addopts="" -q -rs    # -rs 打印跳过原因
+> ```
+>
+> **2026-09-17 实测**这套口径：`.venv312`（3.12.14）→ **493 passed, 8 skipped**；
+> 主力 `.venv`（3.14.6，加 `-o addopts=""` 含 slow 层）→ **501 passed, 0 skipped**。
+> 差的正是那 8 项浏览器验收（slow 层由 CI 单独一步显式跑）。
+>
+> ⚠️ **那 8 项跳过的根因是 Playwright 版本，不是解释器版本**——`.venv312` 里 `uv pip install -e .`
+> 会解出**更新的 playwright**（实测它找 `chromium-1243`），而本机 `%LOCALAPPDATA%\ms-playwright`
+> 里只有主力环境那版（`chromium-1234`）→ 体检如实报"chromium 未安装"、8 项 skip。
+> 这也**恰好复刻了 CI runner**（那里一份浏览器都没有，同样 8 项 skip）。
+> **要在这套环境里也真跑浏览器那 8 项**，补一句即可（下载约 150MB）：
+>
+> ```powershell
+> .\.venv312\Scripts\python.exe -m playwright install chromium
+> ```
+>
+> 结果与主力环境一致（`0 skipped`）就说明**没有环境相关的差异**；若两边都是绿但 skip 数不同，
+> 请把 skip 行当结论的一部分读——**这才是 `-rs` 的意义**。
+>
+> `.venv312/` 已在 `.gitignore` 中忽略。**3.14 是合法的开发环境**（`requires-python` 允许），
+> 本仓不禁止它；被禁止的是"两边版本不同步却以为结论一样"。
 
 >
 > **ruff 现已全绿**（`uvx ruff check .` → All checks passed；`tools/*.py` 的 E402 是刻意豁免的引导式导入，
-> 见 `pyproject.toml` 的 `per-file-ignores`）。**验收基线是 468 项 pytest**（默认跳过 slow 层）+ **11 项 slow**
-> = **479 项**（`-o addopts=""` 一次跑全）——不是下面模板里的旧数字。
+> 见 `pyproject.toml` 的 `per-file-ignores`）。**验收基线是 493 项 pytest**（默认跳过 slow 层）+ **8 项 slow**
+> = **501 项**（`-o addopts=""` 一次跑全；2026-09-17 实测）——不是下面模板里的旧数字。
+> ⚠️ **`uv tool run ruff` 要联网取 ruff**：PyPI 直连 TLS 失败时（本机实测过
+> `tls handshake eof`）改用清华镜像——`uv tool run --index https://pypi.tuna.tsinghua.edu.cn/simple ruff check .`
+> （`pyproject.toml` 里那条镜像只对**项目依赖**生效，`uv tool run` 取的是工具，不吃它）。
 > ⚠️ **改了代码就必须重跑**：别把"上次的绿"当成"这次的绿"（[PITFALLS](docs/PITFALLS.md) #41 就是这么栽的：
 > 测试绿了、ruff 没重跑，而那一行恰好是 ruff 能抓的 `F821`）。
 
