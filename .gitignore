@@ -1,10 +1,11 @@
 # Python
 __pycache__/
 *.py[cod]
-.venv/
-# CI 口径的备用解释器环境（.python-version = 3.12；见 CONTRIBUTING §1.1）：
-# 主力 .venv 可能是 3.14，它是"CI 红了但本地绿"时用来复现的唯一手段，故不入库。
-.venv312/
+# 虚拟环境：`.venv` 是主力（**版本由 .python-version 决定 = 3.12**，与 CI 同口径）。
+# 通配 `.venv*` 而不是逐个列：2026-09-17 实测踩过——当时只忽略 `.venv/` 与 `.venv312/`，
+# 而重建主力 venv 时把旧的改名成 `.venv314/` 做回滚位，它立刻变成一个 40MB 的未跟踪目录，
+# `git status` 里赫然一条 `?? .venv314/`，一不小心就会被 `git add -A` 收进仓库。
+.venv*
 *.egg-info/
 .pytest_cache/
 dist/
