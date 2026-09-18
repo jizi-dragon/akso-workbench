@@ -12,7 +12,9 @@
   P5 tools/build.ps1 具备 UTF-8 BOM（PS5.1 约定；编辑后极易丢失）
   P6 桌面壳的每个源文件都在 electron-builder 的 files 白名单里
   P7 工具插件清单（`plugins/__init__.py::_MODULES`）全部进了 server.spec 的 hiddenimports
-  P8 chromium 内核可打包（缺失会让安装包**没有浏览器**，且旧实现静默通过）
+  P8 server.spec 有「缺 chromium 就失败」的守卫（**静态契约，任何环境都查**）
+  P8b 本机 chromium 已安装（**环境事实**：`WORKBENCH_REQUIRE_CHROMIUM=1` 时必查 = 构建机；
+      CI 不要求——runner 上没有浏览器也不打包，那条判据在 CI 里永远修不好）
   P9 版本五写同步（复用 tools/bump.py check，不另写一份正则）
   P10 `/extension/*` 访问令牌边界（P0-1：中间件已装 + 豁免面最小 + UI 端点已迁出该前缀）
 
@@ -153,21 +155,52 @@ def main() -> int:
     if undeclared:
         details.append(f"   缺：{undeclared}（打包后这些插件静默消失）")
 
-    # P8 chromium 必须可打包 —— 拦在 PyInstaller（数分钟）之前
-    # 为什么必须查（2026-09-17）：旧实现的 `server.spec` 是 `if ms_pw.exists():` —— 机器上没装
-    # 浏览器时它既不收集**也不报错**，于是打出一个"成功"的、**没有浏览器**的安装包，
+    # P8 chromium 守卫（静态契约）+ P8b 本机已装（环境事实）—— 拦在 PyInstaller（数分钟）之前
+    #
+    # ## 为什么必须查（2026-09-17）
+    # 旧实现的 `server.spec` 是 `if ms_pw.exists():` —— 机器上没装浏览器时它
+    # 既不收集**也不报错**，于是打出一个"成功"的、**没有浏览器**的安装包，
     # 问题只在客户运行期暴露（Monitor 录制 / 免密直达 / 自愈重登全废）。
-    # 本项与 `server.spec` 内的 SystemExit 构成双保险：这里省掉一次几分钟的 PyInstaller。
+    #
+    # ## 为什么分两半查（2026-09-18 修：它把 CI 判红了）
+    # 原实现**只看本机有没有装 chromium**，于是**在没有浏览器的 CI runner 上必然 FAIL** ——
+    # 而 CI 什么都不打包，它根本没这个环境，也不可能"修好"。一个在 CI 里永远修不好的红项，
+    # 等于把整条门禁变成噪声（首次红就是这个原因，见 run #17）。
+    #
+    # 这里把两件事分开，各自放在它能被判定的地方：
+    #   ① **静态契约**（任何环境都能查）：`server.spec` 里**有**那道"缺 chromium 就炸"的守卫。
+    #      这才是代码正确性——守卫在，构建机上一个浏览器都没有时，打包会**明确失败**而不是静默产出坏包。
+    #   ② **环境事实**（只有构建机说得清）：本机 chromium 真的在。
+    #      由 `WORKBENCH_REQUIRE_CHROMIUM=1` 打开，`build.ps1` 会设它。
+    spec_has_guard = (
+        "chromium_dirs" in spec_text
+        and "raise SystemExit" in spec_text
+        and 'ms_pw.glob("chromium*")' in spec_text
+    )
+    checks["P8 server.spec 有「缺 chromium 就失败」的守卫（静态契约）"] = spec_has_guard
+    if not spec_has_guard:
+        details.append("   server.spec 里找不到 chromium 守卫 → 缺浏览器时会静默打出坏包（回退到 2026-09-17 的形态）")
+
     ms_pw = Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright"
     chromium_dirs = sorted(d.name for d in ms_pw.glob("chromium*") if d.is_dir()) if ms_pw.exists() else []
-    checks["P8 chromium 内核可打包（缺失会让安装包没有浏览器）"] = bool(chromium_dirs)
     if chromium_dirs:
         details.append(f"   chromium = {chromium_dirs}（{ms_pw}）")
     else:
         details.append(
-            f"   缺：{ms_pw} 下无 chromium* 目录"
-            " → 跑 .venv\\Scripts\\python.exe -m playwright install chromium"
+            f"   本机无 chromium（{ms_pw}）→ 跑 .venv\\Scripts\\python.exe -m playwright install chromium"
         )
+    # `expect` 的语义：**这台机器所扮演的角色是否要求它有 chromium**。
+    #   - 构建机（`WORKBENCH_REQUIRE_CHROMIUM=1`，由 build.ps1 设）：**必须真有**——
+    #     缺了这次打包就会产出没有浏览器的安装包；
+    #   - 其他环境（CI runner、开发机）：**不做要求** → 无论有没有都算 PASS。
+    #
+    # ⚠ 别把它写成 `present == expect`：那等于"不要求时必须**没有**"，
+    # 于是有浏览器的开发机反而会被判红（本次实测踩到）。
+    # 这一项**始终存在且始终参与计数**，所以两种环境下都是稳定的 13/13。
+    expect_chromium = os.environ.get("WORKBENCH_REQUIRE_CHROMIUM") == "1"
+    checks["P8b 本机 chromium 已安装（构建机必须；其他环境不要求）"] = (
+        bool(chromium_dirs) if expect_chromium else True
+    )
 
     # P9 版本五写同步（pyproject / __init__ / desktop pkg / 扩展 manifest+package / .version.json）
     # 为什么必须查：手改单一文件是**已发生过**的事故形态——安装包命名（读 pyproject）、

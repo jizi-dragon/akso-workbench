@@ -75,8 +75,13 @@ if ($LASTEXITCODE -ne 0) { Write-Host "✗ uv sync 失败（版本号未消耗�
 #    `verify_packaging.py` 此前只在 CI 里跑，本地发版可以完全绕过它——
 #    而它守的正是"打包态才会暴露"的那一类（见 P8：缺 chromium 时会打出没有浏览器的包）。
 #    放在 bump 之前有两个作用：① 体检红的时候工作区还没被改过、安装包还没生成，返工最便宜；
-#    ② **失败不消耗版本号**（体检里的 P8「chromium 可打包」是本机最容易缺的前置条件）。
+#    ② **失败不消耗版本号**（P8b「本机 chromium 已装」是本机最容易缺的前置条件）。
+#
+#    ⚠ `WORKBENCH_REQUIRE_CHROMIUM=1` 是**构建机的声明**：它让 P8b（本机真有浏览器）参与判定。
+#    CI 不设它——runner 上本来就没有浏览器、也不负责打包，那条判据在 CI 里**永远修不好**，
+#    只会把整条门禁变成噪声（2026-09-18 首次 CI 红就是这个原因）。
 Write-Host "[2/8] 打包静态体检（verify_packaging.py）…"
+$env:WORKBENCH_REQUIRE_CHROMIUM = "1"
 & python tools\verify_packaging.py 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "✗ 打包静态体检未通过——跑 python tools\verify_packaging.py 看逐项结果" -ForegroundColor Red

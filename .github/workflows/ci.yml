@@ -101,6 +101,14 @@ jobs:
       - name: Run tests (sandbox execution layer)
         run: .venv\Scripts\python.exe -m pytest --tb=short -rs -p no:warnings -o addopts="" -m "slow"
 
+      # 打包静态核对。**刻意不设 `WORKBENCH_REQUIRE_CHROMIUM`**：
+      # 本步骤的 P8b 是"本机装没装 chromium"这条**环境事实**，只在构建机上才有意义
+      # （`tools/build.ps1` 会设该变量）。runner 上没有浏览器、也不负责打包，
+      # 那条判据在这里**永远修不好**，只会把整条门禁变成噪声——
+      # 2026-09-18 首次把 CI 判红的就是它（run #17：P8 FAIL，11/12）。
+      # 现在 P8 查**静态契约**（`server.spec` 里有没有那道守卫），任何环境都能判定；
+      # P8b 只在这台机器**被要求**有浏览器时才参与断言（不要求 = 恒 PASS），
+      # 所以两种环境下项数都是稳定的 13/13。
       - name: Packaging static checks
         run: .venv\Scripts\python.exe tools\verify_packaging.py
 

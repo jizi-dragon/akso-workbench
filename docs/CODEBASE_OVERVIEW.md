@@ -200,7 +200,7 @@ powershell -File tools\build.ps1
 |---|---|---|
 | `.\.venv\Scripts\python.exe -m pytest -o addopts=""` | **501 passed, 0 skipped**（3.14.6，52.7s） | ✅ 含 slow 层 |
 | `.\.venv312\Scripts\python.exe -m pytest -o addopts=""` | **493 passed, 8 skipped**（3.12.14，19.3s） | ✅ **CI 的解释器口径**；8 项跳过是浏览器验收（CI runner 同样跳过） |
-| `tools\verify_packaging.py` | **11/11 PASS**（新增 P8 chromium、P9 版本五写同步） | ✅ |
+| `tools\verify_packaging.py` | **13/13 PASS**。**2026-09-18 修正**：原 **P8「chromium 内核可打包」查的是"本机装没装浏览器"**——那是**环境事实**，在没装浏览器的 CI runner 上**必然 FAIL 且永远修不好**，首次把 CI 判红的就是它（run #17）。现拆成两项且**项数在两环境下都稳定 13/13**：**P8**（静态契约：`server.spec` 里**有**"缺 chromium 就失败"的守卫——任何环境都能判定）+ **P8b**（本机真有 chromium，**仅当这台机器被角色要求时**才断言；`build.ps1` 设 `WORKBENCH_REQUIRE_CHROMIUM=1` 声明自己是构建机）。⚠ P8b 的判据是"按角色要求"，**不是** `present == expect`——后者会要求"不要求时必须没有"，把有浏览器的开发机判红（实测踩到） | ✅ |
 | `tools\gen_tools_doc.py` | `TOOLS_DOC_CHECKS: PASS（5 插件 / 20 工具 = core）` | ✅ |
 | `tools\bump.py check` | `0.3.12`（stdout 只有版本号；明细在 stderr） | ✅ |
 | `uv tool run ruff check .` | `All checks passed!` | ✅（**注意**：PyPI 直连 TLS 失败时用 `--index https://pypi.tuna.tsinghua.edu.cn/simple`） |
