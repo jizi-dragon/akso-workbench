@@ -1,0 +1,14 @@
+# 行尾策略（**只声明"行尾是语义"的那些文件**，其余交给 core.autocrlf）
+#
+# 为什么需要这个文件（2026-09-17 实测确认，不是假想）：
+# 本机 `core.autocrlf=true`，而 `.editorconfig` 的 `end_of_line = lf` **不是 git 的强制机制**。
+# 实测：克隆本仓库后 `.python-version` 的字节是 `3.12\r\n` —— 而这个文件的内容是
+# **uv / pyenv 的版本表达式**，多出来的 `\r` 会让版本匹配失败或行为不确定。
+# `.python-version` 在仓库里是 LF、在 checkout 后变 CRLF，就是"同一个文件两种字节"。
+#
+# 判据（本仓纪律同源：凡"编码/换行/BOM 属于语义"的文件，看字节而不是看内容 —— PITFALLS #37）：
+#   只有"内容被别的程序当**标识**读"的文件才列进来；普通源码交给 autocrlf 无妨。
+#
+# `.ps1` 的 CRLF 由 .editorconfig 声明（PS5.1 约定），其 BOM 由 verify_packaging.py P5 守着；
+# 这里不重复声明，避免两处规则打架。
+.python-version  text eol=lf
