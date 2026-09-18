@@ -64,14 +64,18 @@ Electron 壳 desktop/（只做壳：sidecar 生命周期 / 窗口 / 托盘 / 热
 服务端分层（`workbench/`）：
 
 ```
-api/（12 个路由域 = 3 个 fork 直挂 + 9 个容错注册 + lifespan + 静态托管，见 api/__init__.py:34-65）
+api/（13 个路由域 = 3 个 fork 直挂 + 10 个容错注册 + lifespan + 静态托管，见 api/__init__.py:34-65）
   ├─ fork 存量：routes_conversations / routes_settings / routes_chat(SSE)
   ├─ 聚合层：routes_modules（模块注册表 + 依赖体检）
   ├─ egmp 原生：routes_insight（洞察两命令 login/spider）/ routes_factory（蓝图/创建/编排）
   ├─ 账号中心：routes_accounts + routes_browser（托管浏览器）
-  ├─ 执行面蓝图：routes_extension（快照 + 指令长轮询 + 状态）
+  ├─ 执行面蓝图：routes_extension（快照 + 指令长轮询 + 状态）**整段需访问令牌**
+  ├─ 壳协作面：routes_shell（/api/shell/*：拉起 Chrome / 安装引导 / 读更新状态；**不碰凭据、不需令牌**）
   ├─ 监听：routes_monitor　│　更新：routes_update（读壳状态文件）
   └─ Agent：routes_agent（**工具目录/调用/待确认/审计/自检**，全部转发给 plugin_api）
+extension_auth.py（**`/extension/*` 访问令牌**：ASGI 中间件按前缀守备 + 自举端点 + 宽限期）
+  ├─ 为什么用中间件而不是逐路由 Depends：漏加一条依赖就静默开一个口子，而按前缀守是结构保证
+  └─ 豁免面只有两条（/extension/hello 自举、/extension/health 徽标判据），有测试与 P10 机检钉住
 plugin_api.py（**插件 SDK 契约**：ToolHub / ToolSpec / Risk / ToolContext / Plugin）
   ├─ 唯一的能力扩展面；不 import 任何插件、不给插件暴露 app
   └─ 审计写入器与确认门由 approvals.install(hub) 注入（故本文件连 db 都不 import）
@@ -113,7 +117,9 @@ db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 | `workbench/server_entry.py` | 冻结态入口（PyInstaller 顶层脚本，只用绝对导入——`verify_packaging.py` P2 强制） |
 | `workbench/main.py` | Web 模式入口（13 行，起 uvicorn + 开浏览器） |
 | `workbench/api/__init__.py` | `create_app`：fork 路由显式注册 + `_optional_routers` 容错注册 11 个新域（含 `sandbox` / `skills`）+ lifespan(`db.connect` + 沙箱/技能装配) + 静态托管 |
-| `workbench/api/routes_extension.py` | **执行面蓝图**（399 行）：`/snapshot` `/commands`(长轮询) `/ack` `/state` `/health` `/launch-chrome`；指令队列内存态，`ext_cmd_seq` 落 settings |
+| `workbench/api/routes_extension.py` | **执行面蓝图**：`/snapshot` `/commands`(长轮询) `/ack` `/state` `/health`。**整段前缀需访问令牌**（见下条）。⚠ 本模块**只放"扩展 ↔ 桌面"的数据与指令通道**——给桌面 UI 用、且不碰凭据的端点放 `routes_shell.py`，否则它们拿不到令牌、只能靠开豁免 |
+| `workbench/api/extension_auth.py` | **`/extension/*` 访问令牌**（[ADR-0015](adr/0015-extension-access-token.md)）：按**前缀**守备的 ASGI 中间件 + `/extension/hello` 自举端点 + 24h 宽限期 + 无令牌访问的可见性（`authBlocked`）。**它挡不住"能读 `%APPDATA%` 的本机进程"**——令牌就在同一张 `settings` 表里；详见该模块文档串的分层表 |
+| `workbench/api/routes_shell.py` | **壳协作面** `/api/shell/*`：`launch-chrome` / `update-state` / `setup-helper`。**不碰凭据**，故无需令牌（边界判据见该模块文档串） |
 | `workbench/services/browser_pool.py` | **专职工作线程**（Playwright sync 单线程单实例约束；操作走队列作业）；headful/headless 双模式；storage_state 持久化；`heal_count≤2` 自愈；CDP 挂接内置 Chromium |
 | `workbench/services/accounts.py` | Fernet 密钥管理、环境/账号/盒子 CRUD、分配池（config/monitor）、备份导出导入（`fernetKey` 随文件下发） |
 | `workbench/services/autologin.py` | 节奏门控五重门（MAIN world JS 注入 + TokenCapture JWT） |
@@ -160,12 +166,16 @@ db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 cd desktop; npm ci; npm start                     # Electron 开发态
 
 # 测试 / 体检（2026-09-17 实测，见下方"验收基线实测"）
-.\.venv\Scripts\python.exe -m pytest              # 468 passed（默认跳过 slow 层）
-.\.venv\Scripts\python.exe -m pytest -o addopts=""     # 479 passed（含 slow 层；见下方"两层测试"）
-.\.venv\Scripts\python.exe -m pytest -m slow      # 11 passed（只跑慢层：真起子进程/浏览器那批）
-.\.venv\Scripts\python.exe tools\verify_packaging.py   # 9/9（P4b 需先重建扩展，见下）
+.\.venv\Scripts\python.exe -m pytest              # 493 passed（默认跳过 slow 层）
+.\.venv\Scripts\python.exe -m pytest -o addopts=""     # 501 passed（含 slow 层；见下方"两层测试"）
+.\.venv\Scripts\python.exe -m pytest -m slow      # 8 passed（只跑慢层：真起子进程/浏览器那批）
+.\.venv\Scripts\python.exe tools\verify_packaging.py   # 11/11（P4b 需先重建扩展，见下）
 .\.venv\Scripts\python.exe tools\gen_tools_doc.py      # PASS（5 插件 / 20 工具 = core）
 .\.venv\Scripts\uv.exe tool run ruff check .      # All checks passed（venv 内没有 ruff.exe）
+.\.venv\Scripts\python.exe tools\bump.py check    # 五写版本同步自查（stdout 只有版本号）
+
+# 按 CI 的解释器口径复现（3.12；见 CONTRIBUTING §1.1）
+.\.venv312\Scripts\python.exe -m pytest -o addopts="" -q -rs   # 493 passed, 8 skipped
 
 # 扩展 / 前端（改扩展时）
 cd extensions\quick-login; npm run build; npm run typecheck
@@ -182,7 +192,25 @@ powershell -File tools\build.ps1
 > `git -c http.proxy=http://127.0.0.1:7890 pull`。**"哪个通道通"随时刻变化**（PITFALLS #9），
 > 失败时先 `Get-NetTCPConnection -LocalPort 7890 -State Listen` 探测，别把上一次的成功当依据。
 
-### 验收基线实测（2026-09-16，本机 `c8753ce` = v0.3.12）
+### 验收基线实测（2026-09-17，本机 `main` = v0.3.12 + P0-2/3/4/5 与 C1/C4 修复）
+
+**本节为当前权威基线**；下面两节（2026-09-16 / 2026-09-13）保留以留痕。
+
+| 命令 | 实测 | 判定 |
+|---|---|---|
+| `.\.venv\Scripts\python.exe -m pytest -o addopts=""` | **501 passed, 0 skipped**（3.14.6，52.7s） | ✅ 含 slow 层 |
+| `.\.venv312\Scripts\python.exe -m pytest -o addopts=""` | **493 passed, 8 skipped**（3.12.14，19.3s） | ✅ **CI 的解释器口径**；8 项跳过是浏览器验收（CI runner 同样跳过） |
+| `tools\verify_packaging.py` | **11/11 PASS**（新增 P8 chromium、P9 版本五写同步） | ✅ |
+| `tools\gen_tools_doc.py` | `TOOLS_DOC_CHECKS: PASS（5 插件 / 20 工具 = core）` | ✅ |
+| `tools\bump.py check` | `0.3.12`（stdout 只有版本号；明细在 stderr） | ✅ |
+| `uv tool run ruff check .` | `All checks passed!` | ✅（**注意**：PyPI 直连 TLS 失败时用 `--index https://pypi.tuna.tsinghua.edu.cn/simple`） |
+| `extensions/quick-login`: `npm run typecheck` + `npm run build` | 无错误 / `BUILD_OK` | ✅ P0-2 的扩展侧改动 |
+
+> **两个口径的差集是刻意的**：3.14 有浏览器（0 skipped），3.12 环境里的 playwright 版本更新、
+> 而本机没有那版 chromium（8 skipped）。**"skip 数"必须和"passed 数"一起读**——
+> 这正是 CI 要求 `-rs` 的原因（PITFALLS #43）。
+
+### 验收基线实测（2026-09-16，本机 `c8753ce` = v0.3.12）— 留痕，现状见上一节
 
 拉取上游 `c8753ce` 后重跑一遍，**三项全绿**（此前的红项均已消失）：
 
@@ -246,6 +274,13 @@ HTTP 端点 **97 个**（`@router.` 计数）。
 ## Conventions（约定）
 
 - **路由注册**：新路由在 `api/__init__.py` 显式登记（fork 域直挂，新域走 `_optional_routers` 容错表，单域装配失败不拖垮应用）。
+- **`/extension/*` 整段需要访问令牌**（[ADR-0015](adr/0015-extension-access-token.md)）：新增端点前先问
+  **「它碰凭据吗？」**——碰 → 放 `routes_extension.py`（令牌自动生效，因为是按**前缀**守的）；
+  不碰且是给**桌面 UI** 用的 → 放 `routes_shell.py`（`/api/shell/*`，UI 拿不到令牌）。
+  **不要在 `/extension/*` 下加"给 UI 用"的端点**：那只能靠 `EXEMPT_PATHS` 开豁免，
+  而豁免一开，"整个前缀需要令牌"就退化成人工维护的清单。豁免面由
+  `tests/test_extension_auth.py::test_exempt_surface_is_minimal` 与 `verify_packaging.py` 的 **P10** 双重钉住。
+  改扩展侧协议（`desktop-auth.ts` / 令牌头名）必须同步 `extension_auth.TOKEN_HEADER` 与各 `tools/verify_*` 脚本。
 - **工具只有一个定义处**：新工具写进 `workbench/plugins/*.py` 的 `ToolSpec`（**必须显式声明 `risk`**），
   经 `plugins/__init__.py::_MODULES` 装配。**不要在 `routes_agent.py` 或 `harness/` 里另建工具表**——
   2026-09-15 之前那两套并存，后果是"对话里的模型看不到任何平台能力"。同时记得同步
@@ -281,8 +316,9 @@ HTTP 端点 **97 个**（`@router.` 计数）。
 
 | # | 问题 | 证据 |
 |---|---|---|
-| **R1** | **`/extension/*` 与 `/api/*` 全无认证**：本机任意进程可拉快照（快照里**同时含 Fernet 密钥与全部密文口令**，等于直接拿到所有测试账号明文）、可下发指令、可读导出备份 | `routes_extension.py:26`；`accounts.py:432-464` |
-| **R2** | **明文凭据可达未绑定页面**：待登录凭据仅以 `tabId` 为键、`getPendingAutoLogin` **读后不删**（60s 内可重复取）、SW 处理器不校验发送方 URL 也不校验绑定、`unbindTab` 不清该条目，而 `auto-login.js` 以 `all_frames` 注入 `<all_urls>`，子帧回退会填**任意**密码框 —— 绑定标签页在 60s 内导航到非绑定源，口令会被打进该页 DOM | `pending-login.ts:37-44`、`service-worker.ts:161-174`、`parallel-session.ts:1037-1052`、`manifest.json:57-61`、`auto-login.ts:319-330` |
+| **R1** | ~~**`/extension/*` 与 `/api/*` 全无认证**：本机任意进程可拉快照（快照里**同时含 Fernet 密钥与全部密文口令**，等于直接拿到所有测试账号明文）、可下发指令、可读导出备份~~ | → **`/extension/*` 已于 2026-09-17 修复**（P0-1，[ADR-0015](adr/0015-extension-access-token.md)）：整段前缀由 `api/extension_auth.py` 的 **ASGI 中间件**统一要求 `X-Workbench-Token`（按**前缀**守而非逐路由 `Depends` → "新增路由自动被守住"是结构保证）；令牌落 `settings.extension_access_token`（跨重启稳定），扩展经 `POST /extension/hello` 自举领取；豁免面只有 `/extension/hello`（只回令牌与版本号）与 `/extension/health`（只读徽标判据），有测试钉住。**为什么中间件而不是来源校验**：扩展 SW 的 `Origin` 头行为无法在本机实证，不能把安全建立在没验证过的浏览器行为上 |
+| **R1b** | **`/api/*`（95 个端点）仍无认证**——含 `GET /api/accounts/export`（导出备份，**随文件下发 Fernet 密钥**）与 `GET /api/browser/sessions/{id}/token`。它们与 `/extension/snapshot` 同属敏感面 | **2026-09-17 有意保留**（ADR-0015 **D-7**）：这些端点**同源**——桌面 UI 就是本服务加载的页面，加令牌要么在页面里放令牌（等于没加），要么改页面引导流程（净增复杂度、收益低于本 ADR）。**如实记录**：R1 的"零知识一次 GET"已在 `/extension/*` 上关闭；`/api/*` 仍依赖"只监听回环 + 无 CORS 授权"这一层。重新评估的触发器见 ADR-0015 §7 |
+| **R2** | ~~**明文凭据可达未绑定页面**：待登录凭据仅以 `tabId` 为键、`getPendingAutoLogin` **读后不删**（60s 内可重复取）、SW 处理器不校验发送方 URL 也不校验绑定、`unbindTab` 不清该条目，而 `auto-login.js` 以 `all_frames` 注入 `<all_urls>`，子帧回退会填**任意**密码框 —— 绑定标签页在 60s 内导航到非绑定源，口令会被打进该页 DOM~~ → **2026-09-17 已修**（P0-2）：三条一起收口——① `claimPendingAutoLogin(tabId, url)` **先删后判**（任何早退路径都不留可复取的条目）；② pending 条目**自带 `host`**，索取方 `sender.url` 必须与它 `hostRelated()`（含端口身份口径，与页签绑定/DNR 同一把尺子）；③ `unbindTab` 同时 `clearPendingAutoLogin`。**刻意不按 `sender.frameId === 0` 收口**：`auto-login.ts` 的子 frame 也会各自索取并兜底填表（跨域 SSO 登录框靠这条），按 frame 收口会打死合法路径。验证：`extensions/quick-login && npm run typecheck` + `npm run build` 通过；`manifest` 权限面**未动**（仍是 `<all_urls>`，见 R3） |
 | **R3** | 扩展 `host_permissions: ["<all_urls>"]` 权限面宽于功能所需 | `manifest.json:35` |
 | **R4** | 扩展端落盘密钥 `sb:encryptionSeed` 是**明文 `randomUUID()`** 存在同一 `storage.local`，PBKDF2-100k + 硬编码盐派生 → 只是设备绑定混淆；且每次加解密都重跑 PBKDF2，无缓存 | `credentials.ts:10-42,74-90` |
 | **R5** | `settings.account_fernet_key` **密钥轮换无实现**：手改它会让扩展静默丢弃全部账号（接口仍能读） | ADR-0007 后果 |
@@ -291,10 +327,10 @@ HTTP 端点 **97 个**（`@router.` 计数）。
 
 | # | 位置 | 问题 |
 |---|---|---|
-| **C1** | `browser_pool.py:280-281`（原 247-248） | 状态判断写反：先置 `entry.status="stopped"`，再判断 `== "online"` → 该分支恒假，首次登录后关窗误报「已关闭」。**2026-09-16 复核：仍在**（仅行号随插件层下沉而位移） |
+| **C1** | `browser_pool.py:280-281`（原 247-248） | ~~状态判断写反：先置 `entry.status="stopped"`，再判断 `== "online"` → 该分支恒假，首次登录后关窗误报「已关闭」。~~ → **2026-09-17 已修**：改为关窗前先取 `was_online = entry.status == "online"`，再用它决定 `detail`。回归 `tests/test_browser_state.py::test_close_entry_reports_saved_state_when_session_was_online`（**已实测对旧实现 FAIL**） |
 | **C2** | `routes_insight.py:318-321` | ~~产物路径守卫用**纯字符串前缀**（未补分隔符）：`.../insight/abc` 会“包含” `.../insight/abc_evil` → 应改 `Path.is_relative_to()`~~ → **2026-09-16 复核：已修**（现为 `candidate = (root / name).resolve()` + `candidate.is_relative_to(root) and candidate.is_file()`） |
 | **C3** | `routes_agent.py:173` | ~~`GET /api/agent/audit` 用 `SELECT *` 全列回吐，含 `args` 原始 JSON（可能含凭据）~~ → **2026-09-15 已修**：列表只回摘要列，细节走新增的 `GET /api/agent/audit/{audit_id}`；`args` 里的凭据键在写入时即被打码（`approvals.write_audit` + `plugin_api.redact_args`），有回归断言 |
-| **C4** | `routes_extension.py:240-242` | ack 回收是「全部 ack 才清」：一条指令永不被 ack 则队列既不回收也不前进，`_acked` 只增不减（且客户端只 ack 最大 cursor，`sync.ts:229-235` → **实际上永不排空**）。**2026-09-16 复核：仍在**（`_acked: set[int] = set()` 在 `:34`，清空条件仍在 `:240-242`） |
+| **C4** | `routes_extension.py:240-242` | ~~ack 回收是「全部 ack 才清」：一条指令永不被 ack 则队列既不回收也不前进，`_acked` 只增不减（且客户端只 ack 最大 cursor，`sync.ts:229-235` → **实际上永不排空**）。~~ → **2026-09-17 已修**：`_acked: set[int]` 换成**水位线** `_ack_watermark = max(acked)`，按 `seq <= watermark` 回收、队列空则归零（水位线只增不减）；返回体加 `watermark`/`pending` 便于断言。回归 `tests/test_extension_blueprint.py::test_ack_watermark_drains_queue_even_when_client_acks_a_prefix`（**已实测对旧实现 FAIL**）+ `test_ack_watermark_never_goes_backwards` |
 | **C14** | `static/js/factory.js` 的 `run()` | **工厂执行日志从来什么都不显示**：前端读 `result.stdout_tail` / `stderr_tail` / `code` / `duration_s`，而 `POST /api/factory/run` 返回的是 `{job_id,status,result,log_tail}`——那四个字段是 `services/proc.py` 的进程结果形状，原生化后**没有进程了**。表现为"点执行、转一圈、日志区还是空的、收尾行写着 `exit=undefined`"，且**页面不报错、测试也不报错**。→ **2026-09-15 已修**：渲染 `log_tail` + 逐对象 `steps` + `manualItems` + `checkpoint.completedCount`，并加 `tmp/verify_factory_frontend.py`（真实后端返回 → 真实前端渲染函数，两侧字段任何一边改名立刻红） |
 | C5–C7, C10–C13 | `services/modules.py:145`、`routes_factory.py:47,63`、`routes_agent.py:78`、`static/js/app.js:78`、`static/css/wheel.css`、`browser_pool.py` 的 `_close_entry` / `_submit` | ~~`status` 映射语义反了（全挂 = `degraded`、部分挂 = `missing`）~~ → **2026-09-15 已修**（改为显式三态：空=missing / 全通过=ok / 部分=degraded / 全挂=missing）/ `native_orchestrate_imported_validate` 定义在调用点之后 / `routes_agent` 跨模块调用 `routes_insight` 私有函数（**已随工具插件化消除**：`insight_run` 改为经 `ToolHub` 调 `routes_insight.run`）/ `app.js:78` 死分支 / `wheel.css` 是无引用死文件 / 关窗不停监听、多数浏览器作业无超时 |
 | **C15** | `services/modules.py::module_status` | **按 id 硬解析适配器**：`mod = adapter or {}` 只认调用方显式传进来的存档，于是 `GET /api/modules/<id>` 这条路径对任何**适配器模块**都返回空清单 + `status=missing`。2026-09-15 把 `akso-auto` 改名 `factory` 时暴露：体检项整片消失、状态变 missing，而代码一处都没错——**这层耦合会把"改名"变成静默故障**。→ **已修**：缺省时自己 `get_adapter(mod_id)`，并加回归 `test_module_status_resolves_adapter_without_being_handed_one` |
@@ -303,15 +339,16 @@ HTTP 端点 **97 个**（`@router.` 计数）。
 
 | # | 问题 | 证据 |
 |---|---|---|
-| **B-a** | **chromium 静默不打包**：`server.spec` 仅在 `%LOCALAPPDATA%\ms-playwright\chromium*` **存在时**收集，无 else 无报错 → 缺它的机器会打出一个“成功”的**没有浏览器**的安装包，只在运行期暴露；`build.ps1` 与 `verify_packaging.py` **都不做前置检查** | `server.spec:44-48`；ADR-0009:46-47 |
-| **B-b** | `dist/WorkbenchServer` 从不清理却被整目录拷进安装包 → 陈旧 chromium 目录累积膨胀（≈350MB 量级），且可能发出旧浏览器 | `desktop/package.json:35-37` |
-| **B-c** | `git add` 全有全无 + `git commit` 的 stderr 被 `2>$null` 吞掉 + `git push` 三次失败后**仅打印一行并继续** → 可能出现「安装包标着 vX 但树里不是 vX」 | `build.ps1:67-79`。<br>**2026-09-16 实测又加一层**：那三次重试写的是 `git -c http.proxy= push`（**强制直连**，`build.ps1:72`），而本机当日**直连 GitHub 超时/重置、只有系统代理 `127.0.0.1:7890` 通**（FlClash 在听；`Invoke-WebRequest` 走系统代理能 200，`git` 无 `http.proxy` 就走直连）→ 发布提交**必然三次全败并静默跳过**。这与 PITFALLS #9「哪个通道通是随时刻变化的」同源，处置应当是**发布前探测通道**，而不是把 `-c http.proxy=` 写死成常量 |
-| **B-d** | `bump.py` 退出码未检查（`build.ps1:36,39`）→ 失败时 `$version` 为空或混入错误文本，一路流到产物命名 | `build.ps1:35-41`（未校验 `$LASTEXITCODE` 与版本号格式） |
-| **B-e** | `bump.py` 的扩展侧写盘是**非锚定**正则 `("version"\s*:\s*")` `count=1`（首个命中即改）；pyproject 用无 `count` 的 `re.sub` 而 `_read` 只取首个匹配 → 存在改错键/读写分歧的余地；文件缺失时**静默跳过**（B8）；递增**不幂等**（B9：手工 `bump push` 后再 `build.ps1 -Bump push` 连跳两版） | `bump.py:45,52,63,66,72,83-85` |
-| **B-f** | `desktop/package-lock.json` 版本仍是 **0.2.1**（`package.json` = 0.3.5），`bump.py` 不写它 → 发布提交后 `npm install` 立刻把工作区弄脏。（注：已删除的原 `AGENT.md` B7 与 `CONTRIBUTING.md` 均称扩展 `package-lock.json` 停在 0.2.20 —— **该说法已过期**，实测已是 0.3.5） | `desktop/package-lock.json`、`extensions/quick-login/package-lock.json` |
-| **B-g** | 桌面壳 `files` 白名单**不含 `desktop/icon.ico`**，而托盘要读它、失败被 `catch` 吞掉 → 打包态很可能**没有托盘图标**；`verify_packaging.py` P6 只 glob `*.js`，**非 JS 资源无人守**。（本机无 `desktop/dist`，未实机复验）<br>**2026-09-14 印证**：P6 对 `.js` 是有效的——本轮新增 `desktop/ports.js` 时忘了加白名单，P6 立刻报红（否则会在打包态以 `require` 失败的形式炸）。但它确实管不到 `icon.ico` 这类资源 | `desktop/package.json` 的 `files`、`main.js` 托盘图标读取、`verify_packaging.py` P6 |
-| **B-h** | `verify_update_flow.py:40` 硬编码 `%APPDATA%\Workbench\shell-state.json` 且忽略 `WORKBENCH_DATA`，而 `shell-state.js:16` 是认这个变量的 → 设了该变量时该流程**必然超时**，且会写进真实用户数据目录 | 两处 |
-| **B-i** | **仓库无 CI**：无 `.github` 目录、无任何 pipeline YAML、**无 git hook**（`bump.py:13` 提到的 pre-push hook 是空想）。验收全靠本地手工纪律 | 全仓库搜索确认 |
+| **B-a** | ~~**chromium 静默不打包**：`server.spec` 仅在 `%LOCALAPPDATA%\ms-playwright\chromium*` **存在时**收集，无 else 无报错 → 缺它的机器会打出一个“成功”的**没有浏览器**的安装包，只在运行期暴露；`build.ps1` 与 `verify_packaging.py` **都不做前置检查**~~ → **2026-09-17 已修**（P0-3，双保险）：`server.spec` 缺 chromium 直接 `raise SystemExit`（带 `playwright install chromium` 处置），`verify_packaging.py` 新增 **P8** 在 PyInstaller **之前**拦（省掉一次几分钟的打包），且 `build.ps1` 第 4 步已接入 `verify_packaging.py` | ~~`server.spec:44-48`；ADR-0009:46-47~~ 已修 |
+| **B-b** | **`dist/WorkbenchServer` 从不清理却被整目录拷进安装包** → 陈旧 chromium 目录累积膨胀（≈350MB 量级），且可能发出旧浏览器 | `desktop/package.json:35-37`。<br>**2026-09-17 复核：仍未修**——清理会与"增量打包提速"冲突，需单独决策；`server.spec` 的 `chromium*` 通配收集会把历史残留一并打进包（PITFALLS #28 已量化：清理旧代后 561MB → 350MB） |
+| **B-c** | ~~`git add` 全有全无 + `git commit` 的 stderr 被 `2>$null` 吞掉 + `git push` 三次失败后**仅打印一行并继续** → 可能出现「安装包标着 vX 但树里不是 vX」~~ → **2026-09-17 已修**（P0-3）：① 推送通道改为**探测**（直连 / 注册表 `ProxyServer` / 7890·7897·10809，各试一次 `ls-remote`），不再写死 `-c http.proxy=`；② 探测全败或推送 3 次仍败 → **中止构建**；③ commit 的 stderr 保留，并把"无改动可提交"与"真失败（如 git 身份未配）"区分开，后者 `exit 1`。见 PITFALLS #45 | 已修 |
+| **B-d** | ~~`bump.py` 退出码未检查（`build.ps1:36,39`）→ 失败时 `$version` 为空或混入错误文本，一路流到产物命名~~ → **2026-09-17 已修**（P0-3）：`build.ps1` 校验 `$LASTEXITCODE` + `^\d+\.\d+\.\d+$` 格式；**根因同时修在源头**——`bump.py` 的诊断/错误全部改走 **stderr**（stdout 只允许出现版本号本身），并新增 `bump.py check` 做五写同步只读自查（`verify_packaging.py` 的 **P9** 复用它）。见 PITFALLS #47 | 已修 |
+| **B-e** | `bump.py` 的扩展侧写盘是**非锚定**正则 `("version"\s*:\s*")` `count=1`（首个命中即改）；pyproject 用无 `count` 的 `re.sub` 而 `_read` 只取首个匹配 → 存在改错键/读写分歧的余地；~~文件缺失时**静默跳过**（B8）~~；递增**不幂等**（B9：手工 `bump push` 后再 `build.ps1 -Bump push` 连跳两版） | `bump.py:45,52,63,66,72,83-85`。<br>**2026-09-17 部分已修**：扩展两个文件缺失时不再静默跳过（`_die`：缺文件 = 扩展版本无法同步，直接失败）；非锚定正则与递增不幂等**仍未修**（属"手滑才会撞上"，且 `bump.py check` 现在能把不同步暴露出来） |
+| **B-f** | `desktop/package-lock.json` 版本仍是 **0.2.1**（`package.json` = 0.3.12），`bump.py` 不写它 → 发布提交后 `npm install` 立刻把工作区弄脏。（注：已删除的原 `AGENT.md` B7 与 `CONTRIBUTING.md` 均称扩展 `package-lock.json` 停在 0.2.20 —— **该说法已过期**，实测扩展侧已是 0.3.5） | `desktop/package-lock.json`、`extensions/quick-login/package-lock.json`。<br>**2026-09-17 复核：仍未修**（安装包命名与产物校验都不读它，影响是"工作区变脏"而非产物错） |
+| **B-g** | 桌面壳 `files` 白名单**不含 `desktop/icon.ico`**，而托盘要读它、失败被 `catch` 吞掉 → 打包态很可能**没有托盘图标**；`verify_packaging.py` P6 只 glob `*.js`，**非 JS 资源无人守**。（本机无 `desktop/dist`，未实机复验）<br>**2026-09-14 印证**：P6 对 `.js` 是有效的——本轮新增 `desktop/ports.js` 时忘了加白名单，P6 立刻报红（否则会在打包态以 `require` 失败的形式炸）。但它确实管不到 `icon.ico` 这类资源 | `desktop/package.json` 的 `files`、`main.js` 托盘图标读取、`verify_packaging.py` P6。<br>**2026-09-17 复核：仍未修**（`files` 仍只列 6 个 `.js`+`package.json`，无 `icon.ico`；P6 的 glob 也仍只管 `.js`） |
+| **B-h** | `verify_update_flow.py:40` 硬编码 `%APPDATA%\Workbench\shell-state.json` 且忽略 `WORKBENCH_DATA`，而 `shell-state.js:16` 是认这个变量的 → 设了该变量时该流程**必然超时**，且会写进真实用户数据目录 | 两处。**2026-09-17 复核：仍未修** |
+| **B-i** | ~~**仓库无 CI**：无 `.github` 目录、无任何 pipeline YAML、**无 git hook**（`bump.py:13` 提到的 pre-push hook 是空想）。验收全靠本地手工纪律~~ | → **已修**：`.github/workflows/ci.yml` 已存在并跑 `test + packaging + lint`（12 步）。**但"无 git hook"仍未变**——发布前的版本自查靠 `build.ps1` 调用 `bump.py check`，不靠 hook。<br>**2026-09-17 追加**：CI 新增 `Interpreter version contract` 步骤（打印实际解释器版本并跑 `tests/test_python_version_contract.py`），见 **P0-5 / B-j** |
+| **B-j** | **开发机 3.14 / CI 3.12 的假信号**（2026-09-17 新记，P0-5）：仓库**没有 `.python-version`**，本机 `.venv` 是 conda 的 **3.14.6** 而 CI 钉 **3.12**，两边**跳过项与语义都不同** → "本地全绿"推不出"CI 全绿"。实测差集：3.14 = `501 passed, 0 skipped`（含 slow 层）；3.12 = `493 passed, **8 skipped**` | → **2026-09-17 已修**：新增 **`.python-version`（= 3.12，唯一真源）** + `tests/test_python_version_contract.py`（断言它与 CI 的 `python-version` **逐字一致**、是具体版本而非范围、未被 gitignore）+ CI 新增版本契约步骤。复现手法与"8 项 skip 的根因是 Playwright 版本而非解释器"一并写入 CONTRIBUTING §1.1 |
 
 ### 扩展隔离面的实际边界（本轮子代理对码复核）
 
@@ -330,7 +367,7 @@ HTTP 端点 **97 个**（`@router.` 计数）。
 
 | # | 缺口 | 影响 |
 |---|---|---|
-| T1 | `/extension/*` 蓝图**无 pytest 覆盖** | 唯一回归是 `node tools/verify_extension_sync.mjs`——改该蓝图必跑 |
+| T1 | ~~`/extension/*` 蓝图**无 pytest 覆盖**~~ → **2026-09-17 已修**（P0-4 + P0-1）：新增 `tests/test_extension_blueprint.py`（12 项）与 `tests/test_extension_auth.py`（20 项）——快照契约（字段名逐条钉住，`passwordEnc` 驼峰写错会让扩展**静默丢弃全部账号**）、`snapshotId` 内容哈希语义、游标过滤、**序号跨重启单调递增**、ack 水位线（C4 回归，已实测对旧实现 FAIL）、`/health` 四态与 `extStale`、`/state` 的 TTL、**访问令牌门禁**（严格模式真拦 / 豁免面最小 / 宽限期语义 / 401 带机器可读 code / 静默故障可见性）。<br>原「R1 无鉴权」哨兵断言**已按设计翻转成守卫**（中间件必须在 app 上、豁免面只允许 health）。<br>**仍未覆盖**：`node tools/verify_extension_sync.mjs` 仍不可进 CI（它要起真实服务读真实账号库），改该蓝图**仍必跑它**——但它已改为**复刻扩展的令牌自举流程**，验的是同一条协议 |
 | T2 | Monitor 的 **DANGEROUS 分类正确性无断言** | 不验「危险操作不会被放进可执行步骤」这一安全属性 |
 | T3 | `browser_pool` 的**事件回调纪律无法被测试拦住** | 违规表现为运行期死锁，不是断言失败 |
 | T4 | 扩展端**无单测框架**（in-tree 无测试） | 依赖 3 个 verify 工具 + 人工装载 |

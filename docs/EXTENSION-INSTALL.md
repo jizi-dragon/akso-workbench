@@ -67,12 +67,16 @@ Chrome 对**非 Chrome 网上应用店**的扩展有硬限制，逐条查证如�
 - 打包产物校验：`desktop/dist/win-unpacked/resources/extension/manifest.json` 的 `version`
   应等于本次发布版本号。
 - 安装引导的接口：
-  - `POST /extension/setup-helper`（Python，18765）→ 转发给桌面壳控制服务；`body={"mode":"reload"}`
-    走"重新加载"文案（安装 vs 重载共用同一套壳能力）
+  - `POST /api/shell/setup-helper`（Python，18765）→ 转发给桌面壳控制服务；`body={"mode":"reload"}`
+    走"重新加载"文案（安装 vs 重载共用同一套壳能力）。
+    ⚠ 2026-09-17 起路径是 `/api/shell/*`（原 `/extension/setup-helper`）——[ADR-0015](adr/0015-extension-access-token.md)
+    给 `/extension/*` 加了访问令牌，而令牌只发给扩展、桌面 UI 拿不到，
+    故"给 UI 用、不碰凭据"的端点已迁出该前缀。
   - `POST /extension-setup`（Electron 主进程，18767）→ 打开 `chrome://extensions` + 扩展目录 + 步骤弹窗
-  - `GET /extension/health` → `{connected, everConnected, extVersion, desktopVersion, extStale}`
+  - `GET /extension/health`（**免令牌**）→ `{connected, everConnected, extVersion, desktopVersion, extStale, authBlocked, tokenlessRequests}`
     （`connected` = TTL 60s 内是否有执行面上报；`everConnected` = 本安装实例是否连上过 ≥1 次；
-    `extStale` = Chrome 里的扩展版本 < 桌面端版本 → 账号中心提示条据此显示"需重新加载"）
+    `extStale` = Chrome 里的扩展版本 < 桌面端版本；**`authBlocked`** = 有人在**不带访问令牌**访问
+    `/extension/*`，即 Chrome 里那份扩展还没重新加载——同样触发账号中心的"需重新加载"提示条）
   - `GET /extension/snapshot` 回传 `desktopVersion`，扩展据此自查版本（并在 SW 控制台留痕）
 - 更新面的接口：
   - `GET /api/update`（Python，18765）→ `{version, shell:{live, phase, availableVersion, percent, updateAvailable}}`；

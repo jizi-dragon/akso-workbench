@@ -5,7 +5,195 @@
 
 ## [未发布]
 
+> **提交归属说明（2026-09-17，如实记录）**：本批改动按主题拆了 6 个提交，
+> 但**扩展侧的 P0-2 改动（`pending-login.ts` / `service-worker.ts` / `parallel-session.ts`）
+> 被一并卷进了 P0-1 的提交**（当时按目录 `git add extensions/.../src` 暂存，
+> 而这两个主题都改了同一个目录）。后果是 `security(extension): /extension/* 加访问令牌`
+> 那个提交里同时含 P0-1 与 P0-2 的代码改动，而紧随其后
+> `security(extension)!: 待登录凭据改为一次性宿主校验（P0-2）` 实际只含测试文件。
+> **代码内容与验证都是完整的**，只是 `git log` 的归因不准。
+> 不重写历史（本仓 2026-09-14 已做过一次历史重写并留下
+> [HISTORY-REWRITE-NOTICE](docs/HISTORY-REWRITE-NOTICE.md)；再改一次会让协作者的本地副本
+> 又要做一次迁移，代价大于归因不准本身）。**教训**：按主题拆提交时，
+> `git add` 要落到**文件**而不是目录——目录会把"同目录下的另一个主题"一起吞掉。
+
+### Security
+
+- **`/extension/*` 无鉴权：本机任意进程一次 GET 拿到全部账号明文（P0-1 / R1）**
+  （2026-09-17，[ADR-0015](docs/adr/0015-extension-access-token.md)）。
+
+  `GET /extension/snapshot` 会**同时**下发 `fernetKey`（密钥本体）与每个账号的 `passwordEnc`——
+  密钥与密文一起给出去，**等于明文口令**。而整条 `/extension/*` 此前**没有任何鉴权**，
+  唯一屏障是"服务只监听 `127.0.0.1`"。于是本机**任何**代码都能敲门：
+  用户浏览器里的任意网页（读不到响应但**能注入指令**——`POST /extension/commands` 可触发
+  扩展去打开页签并自动填口令）、任意本机进程、别的应用里的 WebView。
+
+  **这条在台账里挂了很久没修，原因是它没有症状**：功能一切正常，注入的指令也能跑。
+
+  **修法**：整段前缀由 `workbench/api/extension_auth.py` 的 **ASGI 中间件**统一要求
+  `X-Workbench-Token`。
+
+  | 决策 | 内容 |
+  |---|---|
+  | **按前缀守，不逐路由 `Depends`** | 逐路由漏加一条就静默开一个口子；按前缀守让"新增路由自动被守住"成为**结构保证** |
+  | **令牌落库** | `settings.extension_access_token`（`secrets.token_hex(32)`），**跨重启稳定**——每次重启换令牌会让 Chrome 里的扩展狂刷 401，看起来像"扩展坏了" |
+  | **自举端点** | `POST /extension/hello` **免令牌**（否则死锁），**只回** `{format, version, token, desktopVersion, header}` |
+  | **宽限期 24h** | 令牌是新协议要求，已装的**旧扩展不会带它**；硬失败 = "快捷登录静默失灵"。窗口起点**落库且只记一次**（放内存态会被每次重启重置 = 永久开窗）。`WORKBENCH_EXTENSION_AUTH_GRACE=0` = 严格模式 |
+  | **豁免面只有两条** | `/extension/hello`（自举）与 `/extension/health`（只读徽标判据），由测试与 **P10** 机检双重钉住 |
+
+  **为什么不用"校验 `Origin`"代替令牌**：扩展 service worker 发跨源 `fetch` 时是否带 `Origin`，
+  取决于浏览器实现与请求模式，**本机无法实证**——不能把安全建立在没验证过的浏览器行为上。
+  来源允许清单实现为**可选**的第二层（`WORKBENCH_EXTENSION_ORIGIN`），主防线是令牌。
+
+  **这一层挡不住什么（如实记录）**：能读 `%APPDATA%\Workbench\workbench.db` 的本机进程
+  **总能**拿到令牌（它就在同一张 `settings` 表里，与 Fernet 密钥同处）。
+  令牌把攻击面从"任何能发 HTTP 的东西"收窄到"愿意读我们数据库或调自举端点的进程"，
+  **消灭的是"零知识的一次 GET"，不是"本机已被攻陷"**。完整分层表见
+  `extension_auth.py` 的模块文档串。
+
+- **加守备时发现的冲突：桌面 UI 自己也在调 `/extension/*`**
+  （PITFALLS #48）。
+
+  账号中心的 `POST /extension/commands`（Alt+Q 轮盘选人）、`POST /extension/launch-chrome`、
+  `POST /extension/setup-helper`、`GET /extension/state` 全在这个前缀下，而**令牌只发给扩展**——
+  UI 拿不到也不该拿到（页面里放令牌等于交给任何能读 DOM 的东西）。
+  给它们开豁免的话，"整个前缀需要令牌"就退化成一份人工维护的清单。
+
+  **按"碰不碰凭据"重划边界**：`/extension/*` 只留"扩展 ↔ 桌面"的数据与指令通道；
+  三条"给 UI 用、不碰凭据"的端点搬到 **`/api/shell/*`**（新模块 `routes_shell.py`）。
+  于是"这个前缀整段需要令牌"才真的成立、且可机检（`verify_packaging.py` 新增 **P10**）。
+  前端两处路径已同步（`accounts.js` / `wheel-picker.html`）。
+
+- **防静默故障：401 必须可诊断，且"没重新加载扩展"要能被看见**（PITFALLS #49）。
+
+  宽限期结束后，没重新加载扩展的用户会开始收 401——而扩展侧对失败的纪律是**静默吞掉**
+  （`sync.ts` 的离线回退：桌面不可达是常态）→ 用户只会看到"快捷登录不灵了"，
+  没有任何线索指向"去点一次『重新加载』"。两条对策：
+  - **401 带机器可读 `code: "extension_auth_required"`**：扩展端据此"作废令牌 → 重新握手 →
+    **重试一次**"（新增 `background/core/desktop-auth.ts::authFetch`，`sync.ts` 全部请求改走它）。
+    只回 HTTP 语义的话，401 会被当普通网络错误吞掉；
+  - **`/extension/health` 新增 `authBlocked` / `tokenlessRequests`**：中间件把"本该带令牌的端点
+    被无令牌访问"记数（= Chrome 里那份扩展还没重新加载），账号中心复用既有的
+    「扩展版本过旧」提示条引导用户重新加载。
+    ⚠ 豁免路径**不计入**——`/extension/health` 是 UI 每 3s 打一次的徽标判据，
+    算进去会让提示条被 UI 自己的轮询永久点亮（实测踩到，已写成回归用例）。
+
+  **兼容矩阵**：新桌面+新扩展 = 自举令牌；新桌面+旧扩展 = 宽限期内可用、过后 401 且 UI 提示；
+  旧桌面+新扩展 = `/extension/hello` 返回 404/405 → 视为"不需要令牌"，照常发请求；
+  桌面不可达 = 离线回退（既有纪律）。
+
 ### Fixed
+
+- **明文口令可被投递到"已导航走的绑定页签"：读后不删 + 不校验索取方 + 解绑不清（P0-2）**
+  （2026-09-17，逐条对码确认，CODEBASE_OVERVIEW R2）。
+
+  **三个条件同时成立，构成一条真实可利用的凭据泄漏路径**，而它**没有任何报错、没有任何日志**：
+  1. `pending-login.ts` 的 `getPendingAutoLogin` **读后不删** → 60s TTL 内可**重复取**；
+  2. `service-worker.ts` 只取 `sender.tab?.id`，**不校验发送方 URL、不校验绑定关系**；
+  3. `parallel-session.ts::unbindTab` **不清**该条目。
+
+  而 `manifest.json` 是 `host_permissions: ["<all_urls>"]` + 4 个内容脚本全 `all_frames: true`——
+  于是绑定页签在 60s 内导航到**任意站点**（或该站点的任意 iframe 索取），
+  就能拿到该账号**明文口令**并打进其 DOM。
+
+  **修法**（三处一起收口，`pending-login.ts` 成为唯一真源）：
+  - `getPendingAutoLogin` → **`claimPendingAutoLogin(tabId, url)`**：**先删后判**，
+    任何早退路径都不会留下可复取的条目（"一次性"是结构保证，不是调用约定）；
+  - pending 条目**自带 `host`**（下发时由 `parallel-session.open()` 传入 `account.siteHost`），
+    索取方 `sender.url` 必须与它 `hostRelated()`——**含端口身份口径**，与页签绑定/DNR 同一把尺子，
+    同主机不同端口视为不同站点；
+  - `unbindTab` 同时 `clearPendingAutoLogin(tabId)`（解绑后该页签导航去向不可控）。
+
+  > ⚠️ **刻意不按"只信顶层 frame（`sender.frameId === 0`）"收口**：实测 `auto-login.ts` 的
+  > **子 frame 也会各自索取并兜底填表**（模块末尾无条件 `void requestCredentials()`，
+  > `runIframeFlow` 填自身 frame 内的密码框，**跨域 SSO 登录框正靠这条路径**）——
+  > 按 frame 收口会把合法的跨域登录 iframe 一起打死，**必须按宿主身份收口**。
+
+  验证：`npm run typecheck` + `npm run build` 通过。**`manifest` 权限面未动**（仍是 `<all_urls>`，即 R3 仍开放）。
+
+- **发版链路会在"不报错"的情况下产出坏安装包（P0-3）**（2026-09-17，逐条实测确认）。
+
+  这一批的共同形态是**"看起来成功"**——每一步单看都无害，合起来把"发布"变成赌博：
+
+  | 缺陷 | 后果 |
+  |---|---|
+  | `server.spec` 是 `if ms_pw.exists():`（无 else 无报错） | 缺 chromium 的机器打出**没有浏览器**的"成功"安装包，只在客户运行期暴露 |
+  | `build.ps1` 的推送写死 `git -c http.proxy=`（**强制直连**） | 本机"直连被重置、只有系统代理通"的时段 → **必然三次全败并仅打印一行继续** |
+  | `build.ps1` 不查 `bump.py` 的退出码、不校验格式 | `bump.py` 的错误文本（它在 **stdout**）被当成版本号，一路流到产物命名 |
+  | `verify_packaging.py` **从未被 `build.ps1` 调用**（只在 CI 跑） | 本地发版可绕过全部静态核对 |
+  | `git commit` 的 stderr 被 `2>$null` 吞掉 | "git 身份没配"被伪装成"无改动可提交" → 随后静默跳过打 tag |
+
+  **修法**（每一环都给显式失败出口）：
+  - **`bump.py` 的 stdout 是机器接口**：成功路径只输出版本号一行，一切诊断/错误走 **stderr**（`_die()` 统一）；
+    新增 **`bump.py check`**（只读核对五写同步，不同步 exit 1）；
+  - `build.ps1` 第 1 步校验 `$LASTEXITCODE` + `^\d+\.\d+\.\d+$` 格式 + 跑 `bump.py check`；
+  - `build.ps1` 新增**第 4 步**接入 `verify_packaging.py`（放在提交与打包**之前**，返工最便宜）；
+  - `server.spec` 缺 chromium 直接 `raise SystemExit`（带 `playwright install chromium` 的处置），
+    与 `verify_packaging.py` 新增的 **P8** 构成**双保险**；
+  - **推送通道改为探测**（`Get-PushProbeArgs` / `Test-GitChannel`）：直连与代理各试一次 `ls-remote`，
+    用实测能通的那条；**探测全败或推送失败即中止构建**；
+  - commit 的 stderr 保留，并把"无改动"与"真失败"分开（后者 `exit 1`）。
+
+  `verify_packaging.py` 另新增 **P9**（版本五写同步，复用 `bump.py check`，不另写一份正则）——
+  体检项从 9 项增至 **11 项**。见 PITFALLS #45 / #47。
+
+  > **顺带**：编辑 `build.ps1` 会丢 UTF-8 BOM（本轮实测丢了两次），P5 立刻报红。
+  > 这正是 P5 存在的理由——**改完 `build.ps1` 必须重跑体检**（PITFALLS #37）。
+
+- **C1 与 C4：两处"恒假分支"级的确定性缺陷**（2026-09-17，均为本次对码确认仍在）。
+
+  - **C1（`browser_pool._close_entry`）**：先 `entry.status = "stopped"`，**再**判断
+    `entry.status == "online"` → 该分支**恒假**，于是"关窗时登录态已落盘"这件事**永远传不到 UI**
+    （用户只看到含糊的「已关闭」）。改为关窗前先取 `was_online`，再用它决定 `detail`。
+  - **C4（`routes_extension` 的指令队列永不排空）**：回收条件是"队列内**每一条**都在已 ack 集合里"，
+    而扩展端（`sync.ts:241-243`）**只上报最大 cursor**（`{"seqs": [cursor]}`）→
+    `_commands.clear()` **恒不执行**：队列与 `_acked` 只增不减，每次 `/commands` 都要重扫全部历史指令。
+    改为**水位线** `_ack_watermark = max(acked)`，按 `seq <= watermark` 回收、队列空则归零。
+    语义依据：客户端 cursor 是**单调推进**的（`Math.max`），达到某个 seq 即意味着它及之前都已处理过。
+
+  **两条回归都实测过"对旧实现 FAIL"**：
+  `test_close_entry_reports_saved_state_when_session_was_online`、
+  `test_ack_watermark_drains_queue_even_when_client_acks_a_prefix`。
+
+- **最该被自动化的两个模块恰恰最没被自动化（P0-4）**（2026-09-17）。
+
+  `routes_extension.py` 是**桌面 ↔ 扩展**的唯一数据与指令通道，同时是
+  **凭据下发口（快照里带 Fernet 密钥）**、指令队列宿主、以及"扩展是否需要重新加载"的判定源——
+  却**没有任何 pytest 覆盖**（全仓仅 3 处测试提及），唯一回归 `node tools/verify_extension_sync.mjs`
+  还要起真实服务读真实账号库，**进不了 CI**。上面 C4 能在仓库里躺这么久，根因就是这条。
+
+  新增 `tests/test_extension_blueprint.py`（**12 项**）：快照契约（字段名逐条钉住——
+  `passwordEnc` 驼峰写错会让扩展**静默丢弃全部账号**，0.2.3 实锤断点）、`snapshotId` 的内容哈希语义、
+  游标过滤、**序号跨重启单调递增**、ack 水位线（C4 回归）、`/health` 四态与 `extStale`、`/state` 的 TTL。
+  另有一条**记录 R1 现状**的断言（`/extension/*` 无鉴权，注释写明"**加鉴权时必须让它失败**"）。
+
+  另为 C1 补 `tests/test_browser_state.py` 的 4 项（含"落盘必须发生在 `context = None` 之前"）。
+  测试总数 **501 项**（3.12 口径为 493 项——差的 8 项是 slow 层，CI 分两步显式跑）。
+
+- **开发机 3.14 / CI 3.12 的假信号（P0-5）**（2026-09-17）。
+
+  仓库**没有 `.python-version`**：本机主力 `.venv` 是 conda 的 **3.14.6**，而 CI 钉 **3.12**。
+  两边**跳过项与语义都不同**，于是"本地全绿"推不出"CI 全绿"——CHANGELOG 上一条记的
+  "CI 从建立那天起就没绿过"那起事故，正是被这个差集掩盖了**九次运行**。
+  3.14 起 `from __future__ import annotations` 的注解不再于运行时求值，
+  所以"注解里写了未导入的名字"这类错误**只在 3.12 上炸**（`routes_insight.py` 的 `Any` 就是这么潜藏的）。
+
+  **本轮实测差集**（同一份代码、同一台机器）：
+  | 解释器 | 命令 | 结果 |
+  |---|---|---|
+  | `.venv`（3.14.6） | `pytest -o addopts=""`（含 slow 层） | **501 passed, 0 skipped** |
+  | `.venv312`（3.12.14） | `pytest -o addopts=""`（默认 `-m 'not slow'`） | **493 passed, 8 skipped** |
+
+  **修法**：新增 **`.python-version`（= `3.12`）作为唯一真源** +
+  `tests/test_python_version_contract.py`（断言它与 `.github/workflows/ci.yml` 的 `python-version`
+  **逐字一致**、必须是具体版本而非范围表达式、且未被 gitignore）+ CI 新增
+  `Interpreter version contract` 步骤（**打印实际解释器版本**并跑该文件）。
+  CONTRIBUTING §1.1 补上本地复现 CI 的完整命令与**"那 8 项 skip 的根因是 Playwright 版本而非解释器"**的说明。
+
+  > **不**断言"当前解释器必须是 3.12"：3.14 是**合法**的开发环境（`requires-python = ">=3.12"`），
+  > 判红会惩罚合法环境。被禁止的是"两边版本不同步却以为结论一样"。
+
+### Added
 
 - **CI 从建立那天起就没绿过：4 项 P0 浏览器验收在无 chromium 的 runner 上"失败"而非"跳过"**
   （2026-09-17，用户发来 CI 截图后定位）。

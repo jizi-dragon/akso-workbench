@@ -76,9 +76,15 @@
 | `WORKBENCH_UPDATE_OVERRIDE` | — | 把 `electron-updater` 的 feed 换成 `generic` provider 指向的 URL（本地静态目录）。**只影响更新源，不改判定逻辑**；用于离线跑通整条更新链（`tools/verify_update_flow.py`）。更名前的 `AKSO_UPDATE_OVERRIDE` 仍然认 |
 | `WORKBENCH_NO_PROXY` | — | 发布脚本（`tools/publish_release.py`）的**强制直连**开关。更名前的 `AKSO_NO_PROXY` 仍然认；同族的 `AKSO_HTTPS_PROXY` 亦然 |
 | `WORKBENCH_AUTO_UPDATE` | **未设 = 关闭** | **应用会不会自己替换自己**（用户定稿 2026-09-15）。只认 `1`/`true`/`yes`/`on`；未设时不启动定时检查、不静默下载、不在退出时安装，托盘里的手动检查也只回一句「已关闭」。刻意做成**环境变量而非设置项**——它是部署期决定，放运行时设置里迟早被误点。开启方式：设 `WORKBENCH_AUTO_UPDATE=1` 后重启应用 |
+| `WORKBENCH_EXTENSION_AUTH_GRACE` | `86400`（24h） | `/extension/*` 访问令牌的**宽限期**（秒），[ADR-0015](adr/0015-extension-access-token.md) D-5。令牌是新协议要求，已装的**旧扩展不会带它**；窗口内无令牌照常放行并留 warning，窗口过后 401（且 `/extension/health` 的 `authBlocked` 会让账号中心提示"重新加载扩展"）。**`0` = 严格模式**：现场排障时用来分诊"扩展连不上"是不是令牌问题。⚠ 非整数时回落默认值并留 warning |
+| `WORKBENCH_EXTENSION_ORIGIN` | 空（= 不做来源校验） | 逗号分隔的 `Origin` 允许清单，**配了就强制校验**（ADR-0015 D-7 的可选加固层）。留空的理由：桌面壳目前不声明扩展 id（用户手装的扩展 id 由 manifest 公钥决定、跨机一致，但不在本仓配置里）。**主防线是令牌，不是它**——本机进程可以任意伪造 `Origin` 头 |
 | `ELECTRON_MIRROR` | `https://npmmirror.com/mirrors/electron/`（`build.ps1` 设） | 只影响 electron 二进制下载源 |
 | `GH_TOKEN` | — | 发布到 GitHub Releases 时注入（`--publish always`）；不设则只能手工上传 |
 | `APPDATA` | 系统 | 壳的 `shell-state.js` / `ports.js` 用它解析数据目录，与 Python 侧 `config.DATA_DIR` 必须一致（`desktop-ports.json` 就落在这里的 `runtime/` 下） |
+
+> **令牌本身不是环境变量**：它由服务端生成并落 `settings.extension_access_token`
+> （跨重启稳定——否则每次重启都会让 Chrome 里的扩展拿旧令牌狂刷 401）。
+> 扩展经 `POST /extension/hello` 自举领取，见 [API.md](API.md) §11。
 
 ### 2.3 适配器声明的变量（`adapters/*.json`）
 

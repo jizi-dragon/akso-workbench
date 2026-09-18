@@ -33,12 +33,12 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 
 | 项 | 约定 |
 |---|---|
-| 绑定 | `127.0.0.1` 回环，**无认证、无 CSRF、无 CORS 配置**——信任边界 = 本机 |
+| 绑定 | `127.0.0.1` 回环。**`/extension/*` 需要访问令牌**（[ADR-0015](adr/0015-extension-access-token.md)，见 §11）；其余 `/api/*` 无认证、无 CSRF、无 CORS 配置——信任边界 = 本机（该取舍的理由见 ADR-0015 D-7） |
 | 时间戳 | 毫秒整数（`storage.now_ms()`） |
 | 字段命名 | 请求/响应默认 **camelCase**（`routes_settings` 用 pydantic alias 转换）；`account`/`env` 行**原样返回 snake_case 表列** + JOIN 出的 `env_name` / `env_base_url`，仅 `password_enc` 被剔除 |
-| 路径前缀 | `/api/*` 为业务面；`/extension/*` 为执行面 |
+| 路径前缀 | `/api/*` 为业务面（`/api/shell/*` = 壳协作面，见 §11.2）；`/extension/*` 为执行面（**需令牌**） |
 | pydantic 陷阱 | `BaseModel` **默认忽略多余字段**——请求体必须显式建模，否则字段静默丢失（`AccountPatch` 漏 `box` 的事故） |
-| 错误体 | 全为 `{"detail": "<中文说明>"}`（FastAPI `HTTPException` 默认形态） |
+| 错误体 | 业务错误为 `{"detail": "<中文说明>"}`（FastAPI `HTTPException` 默认形态）；**401 与之不同**：`{"detail", "code", "hello", "action"}`，`code` 是机器可读的 `extension_auth_required` |
 | 内容协商 | 无；产物接口用 `?download=true` 或后缀判断 |
 
 **错误码语义**
@@ -46,8 +46,9 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 | 码 | 用途 |
 |---|---|
 | 400 | 参数/业务规则错误（`AccountError`、空字段、未知命令、缺少必填项） |
+| 401 | **`/extension/*` 缺/错访问令牌**（`code: "extension_auth_required"`）——见 §11 |
 | 404 | 资源不存在（账号/环境/任务/产物/会话） |
-| 405 | 路由存在但方法不符（如 `GET /extension/setup-helper`） |
+| 405 | 路由存在但方法不符 |
 | 409 | 状态冲突（受管会话不可用、环境未确认、监听未启动、**风险工具待确认**——见 §10） |
 | 413 | 上传超限（蓝图 > 10 MB） |
 | 502 | 上游失败（egmp 平台/工具执行/工厂执行） |
@@ -343,23 +344,53 @@ autologin, has_token, monitoring, monitor_log}`；
 
 ## 11. 执行面 `/extension`（`routes_extension.py`）
 
+> 🔐 **整段前缀需要访问令牌**（[ADR-0015](adr/0015-extension-access-token.md)，2026-09-17）。
+> 每个请求带 `X-Workbench-Token: <token>`；缺失/错误 → **401**，响应体带机器可读的
+> `code: "extension_auth_required"`（扩展端据此重新握手并重试一次）。
+> 令牌经 `POST /extension/hello` 自举领取，落 `settings.extension_access_token`（跨重启稳定）。
+> **桌面 UI 不要调这些端点**——它拿不到令牌；请壳干活的端点已迁到 §11.2 的 `/api/shell/*`。
+
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
-| GET | `/extension/snapshot` | — | 数据面快照（见 [SCHEMA.md](SCHEMA.md) §5.1）；`snapshotId` 为内容哈希 |
+| POST | `/extension/hello` | —（无请求体） | **免令牌**。自举：`{format, version, token, desktopVersion, header}`。**只回令牌与版本号，不含任何账号数据** |
+| GET | `/extension/snapshot` | — | 数据面快照（含 `fernetKey` + `passwordEnc`，见 [SCHEMA.md](SCHEMA.md) §5.1）；`snapshotId` 为内容哈希 |
 | GET | `/extension/commands?after=N&wait=S` | — | 拉指令（**长轮询**，见 §12.3）；`cursor` + `longPoll` 标志 |
-| POST | `/extension/commands` | `{type:"par.open"\|"wheel.toggle", payload?}` | 桌面入队 → `{seq, accepted:true}`；未知 type → 400 |
-| POST | `/extension/launch-chrome` | — | 确保用户 Chrome 在运行（未运行则拉起）；`{launched, running, path?}` |
-| POST | `/extension/ack` | `{seqs:[int]}` | `{acked:[...]}`；全部未回收指令都已 ack 时清空队列 |
+| POST | `/extension/commands` | `{type:"par.open"\|"wheel.toggle", payload?}` | 入队 → `{seq, accepted:true}`；未知 type → 400 |
+| POST | `/extension/ack` | `{seqs:[int]}` | `{acked, watermark, pending}`；按**水位线** `max(acked)` 回收 `seq <= watermark` |
 | POST | `/extension/state` | `{items:[{desktopId,tabs,hasToken}], extVersion, desktopVersion}` | `{accepted:n}`；`_STATE` TTL 60s |
-| GET | `/extension/health` | — | `{connected, reportedAccounts, everConnected, desktopVersion, extVersion, extStale}` |
-| POST | `/extension/update-state` | —（无请求体） | `{version, shell:{...}}`；与 `GET /api/update` **同源同结构**（`read_shell_state()`），放在扩展蓝图内是为了让「壳 ↔ 扩展 ↔ UI」三者运行态信息集中一处 |
-| POST | `/extension/setup-helper` | `{mode:"install"\|"reload"}` | 代理到壳控制服务 `/extension-setup`（基准 `:18767`，实际端口读 `config.CONTROL_PORT`；打开扩展目录 + `chrome://extensions` + 步骤弹窗） |
+| GET | `/extension/health` | — | **免令牌**（只读徽标判据）。`{connected, reportedAccounts, everConnected, desktopVersion, extVersion, extStale, authBlocked, tokenlessRequests}` |
 
 **`/extension/health` 判定链**（账号中心提示条数据源）：
 `connected` = 60s 内收到过状态上报；`everConnected` = `settings.ext_connected_once` 闩锁
 （**一次即永久静默**——用户定稿：连上过一次就不再提示）；
-`extStale` = 上报的 `extVersion` ≠ `desktopVersion`；
-提示条仅在 `!connected && !everConnected` 或 `extStale` 时出现。
+`extStale` = 上报的 `extVersion` < `desktopVersion`；
+`authBlocked` = 有人在**不带令牌**访问受保护端点（= Chrome 里那份扩展还没重新加载，
+新扩展会自动自举令牌）——它是"防静默故障"的一环：扩展侧对失败是静默吞掉的，
+不显式暴露的话用户只会看到"快捷登录不灵了"、没有任何线索；
+提示条在 `!connected && !everConnected`、`extStale`、或 `authBlocked` 时出现。
+（⚠ `authBlocked` **不统计** `/extension/health` 自身——UI 每 3s 打一次它，
+算进去会让提示条永远关不掉。）
+
+**兼容窗口**：令牌是新协议要求，已装的旧扩展不会带它。故服务端有 **grace 宽限期**
+（默认 24h，`WORKBENCH_EXTENSION_AUTH_GRACE=0` 可切严格模式）——窗口内无令牌照常放行并留 warning。
+窗口起点落 `settings.extension_auth_grace_started_at`、**只记一次**（放内存态会被每次重启重置 = 永久开窗）。
+
+### 11.2 壳协作面 `/api/shell`（`routes_shell.py`）
+
+> 这三条**不碰凭据**，是"桌面 UI 请桌面壳干活"，因此**不在**需要令牌的 `/extension/*` 下。
+> 边界判据见 `routes_shell.py` 模块文档串：**新增端点前先问「它碰凭据吗？」**
+
+| 方法 | 路径 | 请求 | 说明 |
+|---|---|---|---|
+| POST | `/api/shell/launch-chrome` | — | 确保用户 Chrome 在运行（未运行则拉起）；`{launched, running, path?}`。探测带缓存（正 10s / 负 2s） |
+| POST | `/api/shell/update-state` | —（无请求体） | `{version, shell:{...}}`；与 `GET /api/update` **同源同结构**（`read_shell_state()`） |
+| POST | `/api/shell/setup-helper` | `{mode:"install"\|"reload"}` | 代理到壳控制服务 `/extension-setup`（基准 `:18767`，实际端口读 `config.CONTROL_PORT`；打开扩展目录 + `chrome://extensions` + 步骤弹窗） |
+
+> **迁移留痕**：这三条原先挂在 `/extension/*`（`launch-chrome` / `update-state` / `setup-helper`）。
+> 加令牌后它们与"UI 拿不到令牌"冲突，只能靠开豁免——而豁免一开，
+> "整个前缀需要令牌"就退化成人工维护的清单（[ADR-0015](adr/0015-extension-access-token.md) D-6）。
+> 旧路径**已不存在**（该前缀现在被中间件统一守备，访问旧路径会得到 401 而非 404）。
+
 
 ## 12. 特殊通道专章
 
@@ -472,7 +503,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - `shell` 结构固定不缺键；**TTL 60s**（壳每 15s 心跳）：超过即 `live:false` + `phase:"inactive"` +
   `label:"桌面壳未运行"`（损坏/缺失文件走同一条降级路径）。
 - `POST` 代理到壳控制服务（基准 `:18767`，实际端口读 `config.CONTROL_PORT`；`check` 超时 60s、`install` 8s）；
-  **壳不可用时返回 `ok:false` 而非报错**（UI 退化为文字提示，与 `/extension/setup-helper` 同一套降级哲学）。
+  **壳不可用时返回 `ok:false` 而非报错**（UI 退化为文字提示，与 `/api/shell/setup-helper` 同一套降级哲学）。
 - 未知 action 返回 `{ok:false, error:"未知动作：..."}`——**HTTP 200，不是 4xx**（前端据此判 `ok`）。
 - `updateAvailable` 用 `version_tuple()` 比较（非数字段按 0 处理）。
 
