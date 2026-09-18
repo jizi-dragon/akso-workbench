@@ -78,7 +78,17 @@ if (-not (Select-String -Path $extManifest -Pattern "`"version`": `"$version`"" 
 # 2) 依赖（**必须在 release commit 之前**：uv sync 会把项目版本写进 uv.lock，
 #    顺序反了则 commit 里的 lock 立刻过期、工作区再次变脏——0.3.2 构建实测踩到）
 Write-Host "[3/7] uv sync…"
-& python -m uv sync --extra dev --extra build 2>&1 | Out-Null
+# 行的存在理由（2026-09-17 实测）：`uv` 在本机有**两种互斥形态**，而 `python -m uv` 只认其中一种：
+#   - exe 形态：`.venv\Scripts\uv.exe`（本仓一直用它跑 lint，见 CONTRIBUTING §1.1）；
+#   - pip 包形态：`site-packages\uv`，此时 `python -m uv` 可用。
+# 旧实现在 36/39 行用 `python -m uv`、在文档里用 `uv.exe`，于是**重建过一次 venv 之后**
+# 包形态消失 → 构建在第 3 步以一个看不出原因的方式失败。两种都认，谁也拦不住。
+$uvExe = Join-Path $root ".venv\Scripts\uv.exe"
+if (Test-Path $uvExe) {
+    & $uvExe sync --extra dev --extra build 2>&1 | Out-Null
+} else {
+    & python -m uv sync --extra dev --extra build 2>&1 | Out-Null
+}
 if ($LASTEXITCODE -ne 0) { Write-Host "✗ uv sync 失败" -ForegroundColor Red; exit 1 }
 
 # 2.5) 产物静态体检（**必须在提交与打包之前**）
