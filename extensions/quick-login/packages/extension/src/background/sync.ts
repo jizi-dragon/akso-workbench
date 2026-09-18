@@ -13,7 +13,8 @@
 
 import { LOCAL_KEYS, extVersion } from '../shared/constants';
 import { credentials } from './core/credentials';
-import { desktopBase, desktopServerPort, invalidateDesktopEndpoint } from './core/desktop-endpoint';
+import { authFetch } from './core/desktop-auth';
+import { desktopServerPort, invalidateDesktopEndpoint } from './core/desktop-endpoint';
 import { parallelSession, registerDesktopSyncPort } from './core/parallel-session';
 import { parallelStore } from './core/parallel-store';
 import { toggleAccountWheel } from './account-wheel';
@@ -73,8 +74,15 @@ async function fernetDecrypt(tokenB64: string, keyB64: string): Promise<string> 
 }
 
 async function getJson(path: string): Promise<any | null> {
+  // 经 authFetch 发（P0-1）：它会带上访问令牌，并在收到 `extension_auth_required`
+  // 时自动"作废令牌 → 重新握手 → 重试一次"——不这么做的话，桌面端换令牌后的 401
+  // 会被下面的 catch 当普通网络错误吞掉，表现为"快捷登录莫名失灵"。
   try {
-    const resp = await fetch(`${await desktopBase()}${path}`, { cache: 'no-store' });
+    const resp = await authFetch(path, { cache: 'no-store' });
+    if (!resp) {
+      invalidateDesktopEndpoint(); // 连接失败：下次重新发现
+      return null; // 桌面不可达 → 离线回退
+    }
     if (!resp.ok) {
       // 404/502 = 端口上可能不是我们的服务（或桌面端刚重启换了端口）→ 让发现缓存失效，
       // 下一次调用重新问壳的 /whoami（ADR-0011 §D-5）。
@@ -83,8 +91,8 @@ async function getJson(path: string): Promise<any | null> {
     }
     return await resp.json();
   } catch {
-    invalidateDesktopEndpoint(); // 连接失败同因：下次重新发现
-    return null; // 桌面不可达 → 离线回退
+    invalidateDesktopEndpoint();
+    return null;
   }
 }
 
@@ -238,7 +246,7 @@ async function applyCommands(commands: any[], after: number): Promise<void> {
   }
   if (cursor !== after) {
     await chrome.storage.local.set({ [CMD_CURSOR_KEY]: cursor });
-    await fetch(`${await desktopBase()}/extension/ack`, {
+    await authFetch('/extension/ack', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ seqs: [cursor] }),
     }).catch(() => undefined);
@@ -355,7 +363,7 @@ async function reportState(): Promise<void> {
       });
     }
   }
-  await fetch(`${await desktopBase()}/extension/state`, {
+  await authFetch('/extension/state', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ items, extVersion: extVersion(), desktopVersion }),

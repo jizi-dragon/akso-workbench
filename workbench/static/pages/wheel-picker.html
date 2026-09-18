@@ -151,7 +151,7 @@
         });
       }
       async function launchChrome() {
-        await fetch('/extension/launch-chrome', { method: 'POST' }).catch(() => undefined);
+        await fetch('/api/shell/launch-chrome', { method: 'POST' }).catch(() => undefined);
       }
       async function pick(accountId) {
         // 两者并行：launch-chrome 内含 tasklist 子进程探测（~200ms，服务端已加 10s 缓存），

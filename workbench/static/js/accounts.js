@@ -269,7 +269,7 @@ el('wheel-overlay')?.addEventListener('wheel', (e) => {
 async function quickLogin(accountId) {
   // 并行发起：launch-chrome 内含 tasklist 探测（~200ms，服务端已加缓存），
   // 不该挡住指令入队——「点击 → 浏览器打开」的延迟里它是纯粹的白等。
-  const launching = api('/extension/launch-chrome', { method: 'POST' }).catch(() => undefined);
+  const launching = api('/api/shell/launch-chrome', { method: 'POST' }).catch(() => undefined);
   await postExtCommand('par.open', { accountId });
   await launching;
 }
@@ -299,7 +299,7 @@ document.getElementById('btn-ext-dismiss')?.addEventListener('click', () => {
 document.getElementById('btn-ext-setup')?.addEventListener('click', () => {
   void (async () => {
     try {
-      const r = await api('/extension/setup-helper', { method: 'POST' });
+      const r = await api('/api/shell/setup-helper', { method: 'POST' });
       if (!r || r.ok === false) {
         alert(
           '桌面壳未响应，请手动安装：\n' +
@@ -315,9 +315,13 @@ document.getElementById('btn-ext-setup')?.addEventListener('click', () => {
   })();
 });
 
-/* ———————————————— 扩展版本过旧提示（桌面端升版后一次性） ————————————————
- * 判据（用户定稿）：桌面安装包与扩展版本同号升版。`/extension/health` 的
- * extStale = 执行面自报版本 < 当前桌面版本 ⇒ Chrome 里加载的仍是旧扩展目录内容。
+/* ———————————————— 扩展需要重新加载提示（桌面端升版后 / 扩展未自举令牌） ————————————————
+ * 两个判据，同一个提示条（两者处置完全相同：点一次「重新加载」）：
+ *  ① `extStale`：执行面自报版本 < 当前桌面版本 ⇒ Chrome 里加载的仍是旧扩展目录内容。
+ *  ② `authBlocked`（P0-1）：有人在**不带访问令牌**访问 `/extension/*`。
+ *     新扩展会经 `POST /extension/hello` 自动自举令牌；还在裸打的必然是**没重新加载的旧扩展**。
+ *     为什么必须显式提示：扩展侧对失败是**静默吞掉**的（离线回退是常态），
+ *     所以 grace 窗口过后用户只会看到"快捷登录不灵了"，没有任何线索指向重新加载。
  * 为什么不自动 chrome.runtime.reload()：重载会掐断进行中的自动登录，风险不可控——
  * 改为提示用户点一次「重新加载」（扩展随安装包更新，无需重装）。 */
 
@@ -326,13 +330,16 @@ let extStaleDismissed = false;
 function updateExtStaleBanner(health) {
   const el = document.getElementById('ext-stale');
   if (!el) return;
-  const show = Boolean(health.extStale) && !extStaleDismissed;
+  const needReload = Boolean(health.extStale) || Boolean(health.authBlocked);
+  const show = needReload && !extStaleDismissed;
   if (show) {
     const d = document.getElementById('ext-stale-detail');
     if (d) {
-      d.textContent =
-        `Chrome 里加载的是扩展 v${health.extVersion || '?'}，当前桌面端为 v${health.desktopVersion || '?'}。` +
-        '请在 chrome://extensions 点一次该扩展的「重新加载」（↻），数据不会丢。';
+      d.textContent = health.authBlocked && !health.extStale
+        ? `检测到浏览器扩展仍在使用旧版通信方式（已拦截 ${health.tokenlessRequests || 0} 次无凭据访问）。`
+          + '请在 chrome://extensions 点一次该扩展的「重新加载」（↻），数据不会丢。'
+        : `Chrome 里加载的是扩展 v${health.extVersion || '?'}，当前桌面端为 v${health.desktopVersion || '?'}。`
+          + '请在 chrome://extensions 点一次该扩展的「重新加载」（↻），数据不会丢。';
     }
   }
   el.classList.toggle('hidden', !show);
@@ -348,7 +355,7 @@ document.getElementById('btn-ext-reload')?.addEventListener('click', () => { voi
 /** 请桌面壳引导「重新加载扩展」（打开 chrome://extensions + 步骤说明） */
 async function reloadExtension() {
   try {
-    const r = await api('/extension/setup-helper', { method: 'POST', body: { mode: 'reload' } });
+    const r = await api('/api/shell/setup-helper', { method: 'POST', body: { mode: 'reload' } });
     if (!r || r.ok === false) {
       alert('请手动重新加载：\n1) 打开 chrome://extensions\n2) 找到本扩展\n3) 点「重新加载」（↻）');
     }

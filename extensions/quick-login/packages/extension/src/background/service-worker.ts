@@ -1,7 +1,7 @@
 import type { RuntimeRequest, RuntimeResponse, Result } from '../shared/messages';
 import type { BridgeUpPayload } from '../shared/types';
 import { CONTENT_MESSAGE, extVersion } from '../shared/constants';
-import { getPendingAutoLogin, registerPendingLoginHandlers } from './core/pending-login';
+import { claimPendingAutoLogin, registerPendingLoginHandlers } from './core/pending-login';
 import {
   forensics,
   handleOpenError,
@@ -159,6 +159,9 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
   }
 
   // 1. auto-login 内容脚本就绪后主动索取自动登录凭证
+  //    ⚠ 必须传 `sender.url`：凭据是**明文口令**，只按 tabId 发放等于"任何注入到该
+  //    页签的源都能拿"——页签 60s 内导航到非绑定源即可拖走口令。校验与消费都在
+  //    `claimPendingAutoLogin` 内闭环（条目自带宿主 + 读后即删 + 解绑即清）。
   if (
     req &&
     typeof req === 'object' &&
@@ -169,7 +172,7 @@ chrome.runtime.onMessage.addListener((req: unknown, sender, sendResponse) => {
       sendResponse(null);
       return true;
     }
-    void getPendingAutoLogin(tabId).then((creds) => sendResponse(creds));
+    void claimPendingAutoLogin(tabId, sender.url ?? '').then((creds) => sendResponse(creds));
     return true;
   }
 

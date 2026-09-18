@@ -115,7 +115,7 @@ def update_action(action: str) -> dict[str, Any]:
     """代理「检查更新 / 立即安装」到桌面壳。
 
     action: `check` | `install`。壳不在时返回 ok=false —— UI 退化为文字提示
-    （与 /extension/setup-helper 同一套降级哲学）。
+    （与 /api/shell/setup-helper 同一套降级哲学）。
     """
     if action not in {"check", "install"}:
         return {"ok": False, "error": f"未知动作：{action}"}

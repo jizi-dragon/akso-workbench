@@ -14,12 +14,11 @@ import hashlib
 import json
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
 
-from .. import __version__, config
+from .. import __version__
 from ..services import accounts as accounts_svc
 from ..services.storage import get_setting, now_ms, set_setting
 
@@ -31,7 +30,20 @@ _cond = threading.Condition(_lock)
 _seq: int | None = None  # 惰性从 settings 表恢复（跨进程重启单调递增）
 _seq_SEQ_KEY = "ext_cmd_seq"
 _commands: list[dict[str, Any]] = []
-_acked: set[int] = set()
+# 已确认消费到的**序号水位线**（等价于 `max(acked seqs)`）。
+#
+# 为什么是水位线而不是"逐条 ack 的集合"（C4，2026-09-17 修）：
+# 旧实现用 `_acked: set[int]`，回收条件是"**所有**队列内指令都在集合里"，而扩展端
+# （`sync.ts:241-243`）**只上报最大 cursor**（`{"seqs": [cursor]}`）。当队列里同时存在
+# seq 1 与 seq 2 时，客户端若先只消费到 1（下一条还没取到就 ack）→ 集合里只有 {1}，
+# `all(...)` 恒假 → `_commands.clear()` **永不执行**：队列与集合只增不减，
+# 每次 `/commands` 都要重扫全部历史指令。
+#
+# 语义依据：客户端的 cursor 是**单调推进**的（`cursor = Math.max(cursor, seq)`），
+# 且逐条隔离——达到某个 seq 就意味着 seq 及之前都已处理过（失败的单条也会被跳过并推进，
+# 见 sync.ts 的注释"单条失败不得阻塞后继指令，更不能阻止 cursor 持久化 + ack"）。
+# 所以"ack 到 N"= "N 及之前全部可以回收"，这正是水位线语义。
+_ack_watermark = 0
 # 执行面状态回传（desktopId → 状态快照），供账号中心四态徽标；带 TTL 淘汰
 _STATE: dict[str, dict[str, Any]] = {}
 _STATE_TTL_MS = 60_000
@@ -39,11 +51,12 @@ _STATE_TTL_MS = 60_000
 # 执行面元信息（扩展自身版本）：与 _STATE 同寿命，供「扩展是否需要重新加载」判定
 _ext_meta: dict[str, Any] = {"extVersion": "", "desktopVersionSeen": "", "at": 0.0}
 
-# Chrome 运行状态探测缓存：tasklist 是一次子进程（实测 ~200ms），点击路径不该每次都付
-# 这个代价（它是「桌面点击 → 打开浏览器」链路上除轮询外的第二笔固定开销）。
-_PROBE_TTL_RUNNING_MS = 10_000  # 正结果 10s（Chrome 不会无声消失）
-_PROBE_TTL_STOPPED_MS = 2_000  # 负结果只信 2s（刚退出时仍要能拉起）
-_chrome_probe: dict[str, Any] = {"running": False, "at": 0.0}
+# ⚠ 本模块**只有**"扩展 ↔ 桌面"的数据与指令通道，整段 `/extension/*` 需要访问令牌
+# （`extension_auth.py`，P0-1）。因此这里**不得**再放"给桌面 UI 用、且不碰凭据"的端点——
+# 那类端点会因为拿不到令牌而必须开豁免，而豁免一开，
+# "这个前缀整段需要令牌"就退化成一份需要人工维护的清单。
+# 2026-09-17 已把 `/launch-chrome`、`/update-state`、`/setup-helper` 搬到 `routes_shell.py`
+# （`/api/shell/*`），见该模块文档串。新增端点前先问：**它碰凭据吗？**
 
 
 def _next_seq() -> int:
@@ -145,7 +158,7 @@ def commands(after: int = 0, wait: float = 0) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     with _cond:
         while True:
-            pending = [c for c in _commands if c["seq"] > after and c["seq"] not in _acked]
+            pending = [c for c in _commands if c["seq"] > after]
             cursor = max((c["seq"] for c in _commands), default=after)
             if pending or timeout <= 0:
                 # longPoll 显式告知客户端「本次是否真的挂起过」：旧版服务端不认 wait 参数，
@@ -169,78 +182,38 @@ def push_command(body: dict[str, Any]) -> dict[str, Any]:
     return {"seq": cmd["seq"], "accepted": True}
 
 
-def _probe_chrome_running() -> bool:
-    """tasklist 探测 Chrome 是否在运行（子进程，实测 ~200ms）。"""
-    import subprocess
-
-    try:
-        out = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq chrome.exe"],
-            capture_output=True, text=True, timeout=10,
-        )
-        return "chrome.exe" in (out.stdout or "")
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def _chrome_running_cached() -> bool:
-    """带缓存的探测：它位于「点击 → 打开浏览器」的关键路径上，不该每次都付 200ms。"""
-    now = time.monotonic() * 1000
-    age = now - float(_chrome_probe["at"])
-    ttl = _PROBE_TTL_RUNNING_MS if _chrome_probe["running"] else _PROBE_TTL_STOPPED_MS
-    if age < ttl:
-        return bool(_chrome_probe["running"])
-    running = _probe_chrome_running()
-    _chrome_probe.update({"running": running, "at": now})
-    return running
-
-
-@router.post("/launch-chrome")
-def launch_chrome() -> dict[str, Any]:
-    """确保 Chrome 正在运行（扩展在用户默认 profile 里；未运行则拉起）。
-
-    关键约束：Chrome 未运行时，扩展 SW 不会轮询指令——此时点击轮盘选人，
-    指令会滞留队列。故桌面在派发前先探测/拉起 Chrome。
-    """
-    if _chrome_running_cached():
-        return {"launched": False, "running": True}
-
-    candidates = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    ]
-    try:
-        import winreg
-
-        with winreg.OpenKey(
-            winreg.HKEY_LOCAL_MACHINE,
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
-        ) as key:
-            candidates.insert(0, winreg.QueryValueEx(key, "")[0])
-    except OSError:
-        pass
-
-    for path in candidates:
-        if Path(path).exists():
-            import subprocess
-
-            subprocess.Popen([path])
-            # 立即标记「运行中」：Chrome 启动期间连点不应再拉起第二个实例/多开窗口
-            _chrome_probe.update({"running": True, "at": time.monotonic() * 1000})
-            return {"launched": True, "running": True, "path": path}
-    return {"launched": False, "running": False, "detail": "未找到 chrome.exe"}
-
-
 @router.post("/ack")
 def ack(body: dict[str, Any]) -> dict[str, Any]:
+    """确认指令已消费（扩展端每次消费后上报**本轮推进到的最大 cursor**）。
+
+    按**水位线**回收：`seq <= max(acked)` 的指令一律出队（语义见 `_ack_watermark` 的说明）。
+    客户端可能只 ack 一个比自己已取的更小的值（乱序/重试），故水位线**只增不减**。
+    """
+    global _ack_watermark
     seqs = [int(s) for s in body.get("seqs") or []]
     with _lock:
-        _acked.update(seqs)
-        # 回收：所有未回收指令均已被 ack 且 ack 序号 ≥ 全部 → 清空队列
-        if _commands and all(c["seq"] in _acked for c in _commands):
-            _commands.clear()
-            _acked.clear()
-    return {"acked": seqs}
+        if seqs:
+            _ack_watermark = max(_ack_watermark, max(seqs))
+        if _commands:
+            _commands[:] = [c for c in _commands if c["seq"] > _ack_watermark]
+        if not _commands:
+            # 队列空了就把水位线归零：它是"队内进度"而不是"历史进度"，
+            # 归零后 seq 仍由 settings 表单调递增，不会与游标比较产生歧义。
+            _ack_watermark = 0
+    return {"acked": seqs, "watermark": _ack_watermark, "pending": len(_commands)}
+
+
+def _reset_command_queue_for_tests() -> None:
+    """清空指令队列与水位线（**仅供测试**：模块级内存态在用例间会串）。
+
+    `_seq` 一并清掉，逼 `_next_seq()` 重新从 settings 表恢复——
+    这样"跨重启单调递增"这条契约在测试里是真的被验证，而不是被内存缓存掩盖。
+    """
+    global _seq, _ack_watermark
+    with _lock:
+        _commands.clear()
+        _ack_watermark = 0
+        _seq = None
 
 
 @router.post("/state")
@@ -288,12 +261,6 @@ def get_state() -> dict[str, Any]:
     return {"items": items}
 
 
-# 桌面壳的会话控制服务（Electron 主进程内）：扩展安装引导走它执行。
-# 端口经 config 单点声明（ADR-0011 §D-2）——壳会把实际选中的端口下发到
-# WORKBENCH_CONTROL_PORT，故此处在调用时读，**不做模块级常量快照**。
-def control_base() -> str:
-    return f"http://127.0.0.1:{config.CONTROL_PORT}"
-
 # 「曾成功连接过一次」的一次性闩锁（安装引导提示条据此永久静默）。
 # 为什么必须落库：早期实现把它放在浏览器内存里，刷新页面/重启应用即复位 →
 # 每次打开账号中心都重新弹「未检测到浏览器扩展」（用户实测反馈）。
@@ -335,7 +302,13 @@ def health() -> dict[str, Any]:
     版本面（用户定稿：桌面安装包与扩展版本同号升版）：
     `extVersion` < `desktopVersion` ⇒ Chrome 里加载的仍是旧扩展目录内容，
     需要用户在 chrome://extensions 点一次「重新加载」（扩展随安装包更新，见 docs/EXTENSION-INSTALL.md）。
+
+    认证面（P0-1）：`authBlocked` / `tokenlessRequests` 回答"有没有人在**不带访问令牌**敲门"。
+    这是**防静默故障**的关键一环——grace 窗口过后，没重新加载扩展的用户会开始收到 401，
+    而扩展侧对失败是静默吞掉的（离线回退是常态）→ 用户只会看到"快捷登录不灵了"。
+    把这件事经本端点（免鉴权）告诉桌面 UI，账号中心就能复用既有的提示条引导用户重新加载。
     """
+    from .extension_auth import auth_gap_stats
     from .routes_update import version_tuple
 
     cutoff = now_ms() - _STATE_TTL_MS
@@ -349,6 +322,7 @@ def health() -> dict[str, Any]:
         _mark_ever_connected()
     # 扩展未上报版本（旧版扩展 / 尚未上报）时不做旧版判定——避免误报打扰用户
     ext_stale = bool(ext_version) and version_tuple(ext_version) < version_tuple(__version__)
+    gap = auth_gap_stats()
     return {
         "connected": connected,
         "reportedAccounts": len(fresh),
@@ -356,46 +330,7 @@ def health() -> dict[str, Any]:
         "desktopVersion": __version__,
         "extVersion": ext_version,
         "extStale": ext_stale,
+        # 有人在无令牌访问 = Chrome 里那份扩展还没重新加载（新扩展会自动自举令牌）
+        "authBlocked": gap["active"],
+        "tokenlessRequests": gap["tokenlessRequests"],
     }
-
-
-@router.post("/update-state")
-def update_state() -> dict[str, Any]:
-    """读桌面壳落盘的更新状态（见 desktop/shell-state.js）。
-
-    为什么回环读文件而不是 HTTP 探壳：账号中心每 3s 刷新一次，读本地文件更便宜；
-    壳没运行时 `live=false`，UI 优雅降级为「只显示版本号」。
-    该路由放在扩展蓝图内，是为了让「壳 ↔ 扩展 ↔ UI」三者的运行态信息集中在一处。
-    """
-    from .routes_update import read_shell_state
-
-    return {"version": __version__, "shell": read_shell_state()}
-
-
-@router.post("/setup-helper")
-def setup_helper(body: dict[str, Any] | None = None) -> dict[str, Any]:
-    """请桌面壳执行扩展安装引导：打开 chrome://extensions + 打开随包扩展目录 + 弹步骤说明。
-
-    为什么不是「一键装好」：Chrome 在 Windows 上禁止非商店扩展直接安装，策略强制安装
-    （ExtensionInstallForcelist）在 HKCU 下普遍不生效、自托管 update_url 亦常见失败，
-    且本仓库无签名私钥 → 用户必须亲手点「加载已解压的扩展程序」。详见 docs/EXTENSION-INSTALL.md。
-
-    `mode="reload"`：桌面端升版后，扩展文件被安装包覆盖但 Chrome 仍持有旧版内存镜像，
-    此时引导用户点一次「重新加载」（同一套壳能力，仅文案不同）。
-    壳不在时返回 ok=false，UI 退化为纯文字指引。
-    """
-    import urllib.request
-
-    mode = str((body or {}).get("mode") or "install")
-    try:
-        req = urllib.request.Request(
-            f"{control_base()}/extension-setup",
-            data=json.dumps({"mode": mode}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            payload = json.loads(resp.read() or b"{}")
-        return {"ok": True, "helper": payload}
-    except Exception as exc:  # noqa: BLE001 —— 壳不可用时 UI 退化为文字指引
-        return {"ok": False, "error": f"桌面壳未响应：{exc}"}

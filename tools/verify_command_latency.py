@@ -31,12 +31,26 @@ BASE = f"http://127.0.0.1:{PORT}"
 BENCH = Path(os.environ.get("TEMP", "/tmp")) / "ql_lat_bench"
 DB = BENCH / "bench.db"
 
+# P0-1（2026-09-17）：`/extension/*` 需要访问令牌。本脚本复刻扩展的自举流程
+# （`POST /extension/hello` 领令牌 → 每个请求带 `X-Workbench-Token`），
+# 于是它验的与扩展真跑的是同一条协议；拿不到令牌会立刻抛错而不是静默 401。
+_TOKEN: str | None = None
+
+
+def _token() -> str:
+    global _TOKEN
+    if _TOKEN is None:
+        req = urllib.request.Request(BASE + "/extension/hello", data=b"{}", method="POST")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            _TOKEN = json.loads(r.read())["token"]
+    return _TOKEN
+
 
 def post(path: str, body: dict | None = None) -> tuple[dict, float]:
     req = urllib.request.Request(
         BASE + path,
         data=json.dumps(body or {}).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "X-Workbench-Token": _token()},
     )
     t0 = time.perf_counter()
     with urllib.request.urlopen(req, timeout=30) as r:
@@ -46,7 +60,8 @@ def post(path: str, body: dict | None = None) -> tuple[dict, float]:
 
 def get(path: str) -> tuple[dict, float]:
     t0 = time.perf_counter()
-    with urllib.request.urlopen(BASE + path, timeout=40) as r:
+    req = urllib.request.Request(BASE + path, headers={"X-Workbench-Token": _token()})
+    with urllib.request.urlopen(req, timeout=40) as r:
         data = json.loads(r.read())
     return data, (time.perf_counter() - t0) * 1000
 

@@ -1,9 +1,25 @@
 // 模拟扩展端 sync.ts 消费逻辑的离线验收：快照过滤/映射/指令解析
 // 通过标准：2 个账号全部通过 host 过滤进入映射；par.open 能解析出扩展 accountId
+//
+// ⚠ P0-1（2026-09-17）：`/extension/*` 现在**需要访问令牌**。本脚本复刻扩展的自举流程
+// （`POST /extension/hello` 领令牌 → 每个请求带 `X-Workbench-Token`），
+// 这样它验的就和扩展真跑的是同一条协议；令牌拿不到会直接报错而不是静默 401。
 const DESKTOP = 'http://127.0.0.1:18765';
+const TOKEN_HEADER = 'X-Workbench-Token';
+
+const token = await (async () => {
+  const resp = await fetch(`${DESKTOP}/extension/hello`, { method: 'POST', cache: 'no-store' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} /extension/hello（桌面端是否已启动？）`);
+  const data = await resp.json();
+  if (!data.token) throw new Error('/extension/hello 未返回 token');
+  console.log(`令牌已领取（${data.token.length} 字符，桌面端 v${data.desktopVersion}）`);
+  return data.token;
+})();
+
+const authHeaders = (extra = {}) => ({ ...extra, [TOKEN_HEADER]: token });
 
 const getJson = async (path) => {
-  const resp = await fetch(`${DESKTOP}${path}`, { cache: 'no-store' });
+  const resp = await fetch(`${DESKTOP}${path}`, { cache: 'no-store', headers: authHeaders() });
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${path}`);
   return resp.json();
 };
@@ -26,7 +42,7 @@ if (Object.keys(map).length !== snap.accounts.length) throw new Error('有账号
 
 // —— 复刻 pollCommands 的 par.open 解析（第 173-176 行语义）——
 await fetch(`${DESKTOP}/extension/commands`, {
-  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
   body: JSON.stringify({ type: 'par.open', payload: { accountId: Object.keys(map)[0] } }),
 });
 const data = await getJson('/extension/commands?after=0');
@@ -37,7 +53,7 @@ if (!extId) throw new Error(`par.open accountId=${open.payload?.accountId} 无�
 // 输出脱敏：extId 形如 `ext:<用户名>`，直接打印会把真机账号泄进终端/CI 日志
 console.log(`par.open 解析: desktopId=${open.payload.accountId} → ${mask(extId)} ✓`);
 await fetch(`${DESKTOP}/extension/ack`, {
-  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
   body: JSON.stringify({ seqs: [open.seq] }),
 });
-console.log('SIMULATION_OK：数据面 → 指令面全通');
+console.log('SIMULATION_OK：数据面 → 指令面全通（含访问令牌自举）');

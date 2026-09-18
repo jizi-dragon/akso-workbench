@@ -1,7 +1,11 @@
 // Node 逐步复刻 sync.ts fernetDecrypt，定位失败步骤
+// ⚠ P0-1：`/extension/snapshot` 需要访问令牌（先经 /extension/hello 自举领取）
 const BASE = 'http://127.0.0.1:18765';
 
-const snap = await (await fetch(`${BASE}/extension/snapshot`)).json();
+const hello = await (await fetch(`${BASE}/extension/hello`, { method: 'POST' })).json();
+const snap = await (
+  await fetch(`${BASE}/extension/snapshot`, { headers: { 'X-Workbench-Token': hello.token } })
+).json();
 
 async function fernetDecryptDebug(tokenB64, keyB64, verbose = false) {
   const b64u = tokenB64.replace(/-/g, '+').replace(/_/g, '/');

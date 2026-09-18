@@ -43,6 +43,7 @@ def _optional_routers(app: FastAPI) -> None:
         routes_modules,
         routes_monitor,
         routes_sandbox,
+        routes_shell,
         routes_skills,
         routes_update,
     )
@@ -55,6 +56,7 @@ def _optional_routers(app: FastAPI) -> None:
         ("browser", routes_browser),
         ("agent", routes_agent),
         ("extension", routes_extension),
+        ("shell", routes_shell),
         ("monitor", routes_monitor),
         ("sandbox", routes_sandbox),
         ("skills", routes_skills),
@@ -154,6 +156,15 @@ def _tool_selfcheck() -> None:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Workbench", version=__version__, lifespan=lifespan)
+
+    # `/extension/*` 的访问令牌（P0-1，见 api/extension_auth.py）。
+    # ⚠ 必须**在 include_router 之前** add_middleware：Starlette 的中间件栈是"后加的在最外层"，
+    # 但这不影响路由匹配——中间件在任何路由之前运行，与路由注册顺序无关。
+    # 放在此处是为了让它离 create_app 最近，避免有人在下面插一条中间件时把它挤到内层
+    # （内层也能工作，但"谁先看到请求"会变得难以推理）。
+    from .extension_auth import ExtensionAuthMiddleware
+
+    app.add_middleware(ExtensionAuthMiddleware)
 
     @app.middleware("http")
     async def _no_store_static(request, call_next):

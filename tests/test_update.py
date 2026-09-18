@@ -22,6 +22,27 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _reset_auth_state():
+    """清访问令牌与宽限窗口起点（P0-1）。
+
+    两者都落库、而 db 是会话级共享：某个用例先跑过一次"无令牌 + 宽限开着"的请求后，
+    窗口起点就留在库里，后续用例即便把 `grace_seconds()` 设成 24h，
+    `grace_active()` 也会因"起点在很久以前"返回 False → 本该 200 的变成 401。
+    这类失败看着像鉴权坏了，其实是测试互相污染（实测踩过）。
+    """
+    from workbench import db
+    from workbench.api import extension_auth as auth
+
+    def _reset() -> None:
+        for key in (auth.GRACE_STARTED_KEY, auth.TOKEN_SETTING_KEY):
+            db.execute("DELETE FROM settings WHERE key = ?", (key,))
+
+    _reset()
+    yield
+    _reset()
+
+
 @pytest.fixture()
 def fresh_ext_meta(monkeypatch: pytest.MonkeyPatch):
     """每个用例从空元信息开始（模块级 _ext_meta 是进程态，会跨用例串味）。"""

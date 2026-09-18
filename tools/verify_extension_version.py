@@ -50,8 +50,21 @@ def port_busy() -> bool:
         return s.connect_ex(("127.0.0.1", PORT)) == 0
 
 
+_AUTH: dict[str, str] = {}
+
+
+def _headers() -> dict[str, str]:
+    """P0-1：`/extension/*` 需要访问令牌——复刻扩展的自举流程（hello → 令牌）。"""
+    if "X-Workbench-Token" not in _AUTH:
+        req = urllib.request.Request(BASE + "/extension/hello", data=b"{}", method="POST")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            _AUTH["X-Workbench-Token"] = json.loads(r.read() or b"{}")["token"]
+    return _AUTH
+
+
 def get(path: str, timeout: float = 40) -> dict:
-    with urllib.request.urlopen(BASE + path, timeout=timeout) as r:
+    req = urllib.request.Request(BASE + path, headers=_headers())
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read() or b"{}")
 
 

@@ -12,7 +12,7 @@ import type { Scheme } from './site-auth';
 import type { BridgeDownPayload, BridgeUpPayload, ParallelAccount } from '../../shared/types';
 import { credentials } from './credentials';
 import { applyTitle } from '../tabs/tab-title';
-import { setPendingAutoLogin } from './pending-login';
+import { clearPendingAutoLogin, setPendingAutoLogin } from './pending-login';
 import { parallelStore } from './parallel-store';
 import { hostNoPortOf, hostRelated, parentDomainOf, urlHostOf } from './host';
 import { tabRules } from './tab-rules';
@@ -1024,7 +1024,8 @@ export const parallelSession = {
     if (account.credentials) {
       try {
         const creds = await credentials.decryptCredentials(account.credentials);
-        await setPendingAutoLogin(tabId, creds.username, creds.password);
+        // host 必须一起下发：内容是凭据交接通道校验索取方 URL 的唯一依据（见 pending-login.ts）
+        await setPendingAutoLogin(tabId, creds.username, creds.password, account.siteHost);
         void diag(`open(${accountId}) 凭证解密并下发待登录`);
       } catch (e) {
         // 凭证损坏不应阻断网络平面安装（原实现会让 open() 在此中断）
@@ -1056,6 +1057,9 @@ export const parallelSession = {
     if (bindings.delete(tabId)) {
       await persistBindings();
     }
+    // 解绑即回收待登录凭据：解绑后该页签不再受本扩展约束（导航去向不可控），
+    // 留着的明文口令等于给"未绑定页签仍可索取"留后门（见 pending-login.ts 安全语义）
+    await clearPendingAutoLogin(tabId);
     await tabRules.clearTab(tabId);
     try {
       await pushDown(tabId, { op: 'unbound' });

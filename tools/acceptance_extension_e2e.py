@@ -39,12 +39,28 @@ def wait_server(proc: subprocess.Popen, timeout: float = 30.0) -> None:
     raise SystemExit("服务端未就绪")
 
 
+_AUTH: dict[str, str] = {"Content-Type": "application/json"}
+
+
+def _ensure_token() -> None:
+    """P0-1：`/extension/*` 需要访问令牌——复刻扩展的自举流程（hello → 令牌）。
+
+    拿不到就抛错，而不是让后续请求静默 401 变成"账号数为 0"之类的误导性结论。
+    """
+    if "X-Workbench-Token" in _AUTH:
+        return
+    req = urllib.request.Request(BASE + "/extension/hello", data=b"{}", method="POST")
+    with urllib.request.urlopen(req, timeout=10) as r:
+        _AUTH["X-Workbench-Token"] = json.loads(r.read().decode())["token"]
+
+
 def http_json(method: str, path: str, body: dict | None = None) -> dict:
+    _ensure_token()
     req = urllib.request.Request(
         BASE + path,
         data=json.dumps(body).encode() if body is not None else None,
         method=method,
-        headers={"Content-Type": "application/json"},
+        headers=_AUTH,
     )
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read().decode())

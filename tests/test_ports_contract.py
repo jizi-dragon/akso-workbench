@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from workbench import config
 from workbench.api import app
 from workbench.api import routes_extension as ext
+from workbench.api import routes_shell as sh
 from workbench.api import routes_update as upd
 
 
@@ -157,9 +158,14 @@ def test_health_has_no_side_effects(client: TestClient, no_ports_file) -> None:
 
 
 def test_control_base_follows_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    """路由里的壳控制服务地址**不能是模块级常量**：壳会把实际端口下发到环境变量。"""
+    """路由里的壳控制服务地址**不能是模块级常量**：壳会把实际端口下发到环境变量。
+
+    2026-09-17（P0-1）：`control_base` 随 `/launch-chrome`、`/setup-helper`、`/update-state`
+    一起从 `routes_extension.py` 搬到了 `routes_shell.py`（`/api/shell/*`）——
+    那三条是给**桌面 UI** 用的、不碰凭据，留在需要令牌的 `/extension/*` 下只能靠开豁免。
+    """
     monkeypatch.setattr(config, "CONTROL_PORT", 18888)
-    assert ext.control_base() == "http://127.0.0.1:18888"
+    assert sh.control_base() == "http://127.0.0.1:18888"
     assert upd.control_base() == "http://127.0.0.1:18888"
 
 

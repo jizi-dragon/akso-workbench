@@ -46,6 +46,12 @@ export const LOCAL_KEYS = {
   siteSchemes: 'ql:siteSchemes',
   /** 登录失败现场取证环形缓冲（v3.12.2：生命周期 + 自动填表逐事件） */
   forensics: 'ql:forensics',
+  /**
+   * `/extension/*` 访问令牌（P0-1）。由 `background/core/desktop-auth.ts` 经
+   * `POST /extension/hello` 领取后落盘，随每个 `/extension/*` 请求以
+   * `X-Workbench-Token` 头发出。服务端把它存在 `settings.extension_access_token`。
+   */
+  desktopToken: 'ql:desktopToken',
 } as const;
 
 /** background 向内容脚本下发的消息 type */
