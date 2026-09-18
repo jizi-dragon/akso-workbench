@@ -20,6 +20,26 @@
 
 ## [Unreleased]
 
+### Added
+
+- **首次用 `tools/publish_release.py` 发出正式 Release：v0.6.1**（2026-09-18）。
+
+  https://github.com/jizi-dragon/akso-mogul/releases/tag/v0.6.1 ——
+  资产三项齐全（`setup.exe` 348.2 MB + `.blockmap` + `latest.yml`），
+  说明 4118 字符（取自 CHANGELOG）。流程 `draft → 上传 → 校验 → 转正` 全程走通。
+
+  **两处实测确认的事实（写进文档，免得下次重踩）**：
+
+  1. **发布说明一开始是空的**：`notes_from_changelog()` 逐字查找 `## [Unreleased]`，
+     而本仓正文写的是中文「未发布」→ 它静默 `return ""`、**不报错**。
+     修法与"为什么中间不能插任何东西"见本文件顶部的注释。**是靠 `--dry-run`
+     打出"说明长度：0 字符"才发现的** —— 又一条"看起来成功"的静默链（PITFALLS #47 同族）。
+  2. **匿名校验必然失败（本仓是私有仓库）**：脚本末尾"校验 latest.yml 可匿名读取"报
+     `HTTP 404`，这是**预期**而非故障——GitHub 对私有仓库的未认证请求一律回 404。
+     后果是一条**既有限制**：`electron-updater` 是**匿名**读取 Release 的（`desktop/updater.js`），
+     故**私有仓库下自动更新静默失效**。当前无实际影响——`AUTO_UPDATE` 本就默认关闭
+     （用户定稿 2026-09-15），安装包靠手工下载。**要开自动更新，前提是仓库转为公开。**
+
 > **提交归属说明（2026-09-17，如实记录）**：本批改动按主题拆了 6 个提交，
 > 但**扩展侧的 P0-2 改动（`pending-login.ts` / `service-worker.ts` / `parallel-session.ts`）
 > 被一并卷进了 P0-1 的提交**（当时按目录 `git add extensions/.../src` 暂存，
@@ -31,8 +51,6 @@
 > [HISTORY-REWRITE-NOTICE](docs/HISTORY-REWRITE-NOTICE.md)；再改一次会让协作者的本地副本
 > 又要做一次迁移，代价大于归因不准本身）。**教训**：按主题拆提交时，
 > `git add` 要落到**文件**而不是目录——目录会把"同目录下的另一个主题"一起吞掉。
-
-### Security
 
 - **`/extension/*` 无鉴权：本机任意进程一次 GET 拿到全部账号明文（P0-1 / R1）**
   （2026-09-17，[ADR-0015](docs/adr/0015-extension-access-token.md)）。
