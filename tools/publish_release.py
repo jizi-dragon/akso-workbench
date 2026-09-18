@@ -210,20 +210,47 @@ def sha512_b64(path: Path) -> str:
 
 
 def notes_from_changelog(version: str = "") -> str:
-    """取 CHANGELOG 的 [Unreleased] 段作为发布说明。
+    """取 CHANGELOG 的发布说明。
 
-    两条纪律：
+    ## 从哪一段取（2026-09-18 修）
+
+    原实现**无条件**从 `## [Unreleased]` 开始读，遇到下一个 `## ` 就停。
+    但发布有两种时机，而这个行为只照顾了其中一种：
+
+    | 时机 | 应该读的段 | 原实现的结果 |
+    |---|---|---|
+    | 发版**前**（改动都还在 Unreleased 里） | `## [Unreleased]` | ✅ 正确 |
+    | 发版**后**（已把 Unreleased 定版为 `## [0.3.12]`） | `## [0.3.12]` | ❌ 读到的是 Unreleased 里的**残留说明**，而真正的该版内容在下面够不着 |
+
+    第二种情形下 `--version` 形同虚设，Release 说明会退化成 Unreleased 里那几行元信息。
+    故：**给定 `version` 时优先精确定位 `## [<version>]` 段**，找不到再回落到
+    `## [Unreleased]`（发版前的写法）。回落是为了不破坏"先写 Unreleased、再定版"的既有流程。
+
+    ## 两条既有纪律（勿改）
+
     - 按**条目**截断（顶层 `- ` 起算），不按字符硬切——半句话的发布说明比没有更糟；
-    - 给定 `version` 时，只保留**属于该版本**的条目：本仓库的写法是在条目里标 `（0.3.3，…）`，
+    - 未给定 version 时，只保留**属于当前开发版**的条目：本仓库的写法是在条目里标 `（0.3.3，…）`，
       故从头收集、遇到第一个含"更低版本号"的条目就停 —— 否则首次发布会把历史版本的
       修复说明也贴进 0.3.3 的 Release 里（用户读到的是"这一版改了什么"）。
     """
     text = CHANGELOG.read_text(encoding="utf-8")
     lines = text.splitlines()
-    try:
-        start = next(i for i, l in enumerate(lines) if l.strip() == "## [Unreleased]")
-    except StopIteration:
-        return ""
+
+    def _section_heading(v: str) -> int | None:
+        prefix = f"## [{v}]"
+        for i, line in enumerate(lines):
+            if line.startswith(prefix):
+                return i
+        return None
+
+    start: int | None = None
+    if version:
+        start = _section_heading(version)
+    if start is None:
+        try:
+            start = next(i for i, l in enumerate(lines) if l.strip() == "## [Unreleased]")
+        except StopIteration:
+            return ""
 
     blocks: list[list[str]] = []
     for line in lines[start + 1:]:

@@ -1,15 +1,33 @@
-﻿# Workbench 一键构建 v3（Electron 壳）
-# 用法：powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none] [-SkipPush]
+﻿# Workbench 一键构建 v4（Electron 壳）
+#
+# 用法：powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump push|build|none] [-SkipPush]
 # 产物：desktop\dist\Workbench-<ver>-setup.exe（NSIS；内含 WorkbenchServer sidecar + chromium + 浏览器扩展）
 #
-# 链路：
-#   1. 版本演进（-Bump：build=MINOR+1 / push=PATCH+1 / none=沿用当前）+ 五写同步自查
-#   2. 重建浏览器扩展并校验版本一致（安装包会携带它）
-#   3. uv sync（确保 PyInstaller —— 必须在 release commit 之前，否则 uv.lock 立刻过期）
-#   4. 打包静态体检（verify_packaging.py；含"chromium 必须可打包"这一条前置检查）
+# ## 版本号怎么管（**先读这段，2026-09-18 重排**）
+#
+# 真源是 `tools/bump.py`（唯一真源 = pyproject.toml 的 version），本脚本**只是它的一个调用方**。
+# 只想升版本号、不出安装包时，根本不需要本脚本：
+#     python tools\bump.py push     # PATCH+1（日常小改动/修复）→ 提交推送即可
+#     python tools\bump.py build    # MINOR+1 且 PATCH=1（大版本）
+#
+# `-Bump` 语义：
+#   none（**默认**）= 沿用当前版本，只出安装包。**默认不升版**是刻意的：
+#                    构建的失败方式很多（网络/依赖/浏览器内核/打包），
+#                    若默认升版，每次失败都会白白吃掉一个版本号且无从察觉
+#                    ——2026-09-17 实测：两次失败烧掉 0.4.0 与 0.5.0，版本号从 0.3.12 直接跳到 0.6.1。
+#   push           = PATCH+1，补丁发布
+#   build          = MINOR+1 且 PATCH=1，正式发布
+# 构建失败后**用同一条命令重跑**即可（默认 none 幂等，不会再吃号）。
+#
+# ## 链路（bump 刻意排在第 3 步：前两步失败不该消耗版本号）
+#   1. uv sync（依赖，最常因网络失败）
+#   2. 打包静态体检（verify_packaging.py：缺 chromium / 缺 BOM / 插件漏打，都在这里拦）
+#   3. 版本演进（-Bump）+ 五写同步自查
+#   4. 重建浏览器扩展并校验版本一致（**必须在 bump 之后**，否则包内扩展版本停在上一版）
 #   5. 探测出网通道（直连 / 系统代理）→ release commit + push + 打 tag
 #   6. PyInstaller 打包服务端 sidecar（workbench/server.spec → dist/WorkbenchServer）
-#   7. electron-builder（NSIS 安装包；extraResources 带 sidecar 与扩展；updater 产物 latest.yml）
+#   7. 打包后复检（bump 改了版本文件，再确认一次产物与版本号一致）
+#   8. electron-builder（NSIS 安装包；extraResources 带 sidecar 与扩展；updater 产物 latest.yml）
 #
 # 失败原则：**任何一步失败都要中止构建**，不做"打一行告警然后继续"——
 # 那会产出"标签没入库 / 版本号是错误文本 / 包里没有浏览器"的安装包，
@@ -23,9 +41,9 @@
 
 param(
     [switch]$SkipPush,
-    # 版本演进方式：build = MINOR+1 的正式发布（默认）；push = PATCH+1 的补丁发布；
-    # none = 沿用当前版本号只重出安装包。此前只有 MINOR 一条路，补丁修复也会被抬成 MINOR。
-    [ValidateSet('build', 'push', 'none')][string]$Bump = 'build'
+    # 版本演进方式。**默认 none**（沿用当前版本）——理由见上方「版本号怎么管」。
+    # 想升版必须显式写出来，这是刻意的：版本号是稀缺的、不可回收的资产。
+    [ValidateSet('push', 'build', 'none')][string]$Bump = 'none'
 )
 
 # 注意：不要用 $ErrorActionPreference="Stop"——PS5.1 会把 git/npm 写到 stderr 的
@@ -36,13 +54,43 @@ Set-Location $root
 $env:Path = (Join-Path $root ".venv\Scripts") + ";" + $env:Path
 $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
 
-# 1) 版本演进（build：MINOR+1 且 PATCH=1；push：PATCH+1；none：沿用当前版本）
+# 1) 依赖（**必须在 release commit 之前**：uv sync 会把项目版本写进 uv.lock，
+#    顺序反了则 commit 里的 lock 立刻过期、工作区再次变脏——0.3.2 构建实测踩到）
+#    ⚠ 排在 bump **之前**：这是最常失败的一步（网络/PyPI TLS），失败时不该消耗版本号。
+Write-Host "[1/8] uv sync…"
+# 行的存在理由（2026-09-17 实测）：`uv` 在本机有**两种互斥形态**，而 `python -m uv` 只认其中一种：
+#   - exe 形态：`.venv\Scripts\uv.exe`（本仓一直用它跑 lint，见 CONTRIBUTING §1.1）；
+#   - pip 包形态：`site-packages\uv`，此时 `python -m uv` 可用。
+# 旧实现在 36/39 行用 `python -m uv`、在文档里用 `uv.exe`，于是**重建过一次 venv 之后**
+# 包形态消失 → 构建以一个看不出原因的方式失败。两种都认，谁也拦不住。
+$uvExe = Join-Path $root ".venv\Scripts\uv.exe"
+if (Test-Path $uvExe) {
+    & $uvExe sync --extra dev --extra build 2>&1 | Out-Null
+} else {
+    & python -m uv sync --extra dev --extra build 2>&1 | Out-Null
+}
+if ($LASTEXITCODE -ne 0) { Write-Host "✗ uv sync 失败（版本号未消耗，修好后原样重跑即可）" -ForegroundColor Red; exit 1 }
+
+# 2) 打包静态体检（**必须在 bump 与打包之前**）
+#    `verify_packaging.py` 此前只在 CI 里跑，本地发版可以完全绕过它——
+#    而它守的正是"打包态才会暴露"的那一类（见 P8：缺 chromium 时会打出没有浏览器的包）。
+#    放在 bump 之前有两个作用：① 体检红的时候工作区还没被改过、安装包还没生成，返工最便宜；
+#    ② **失败不消耗版本号**（体检里的 P8「chromium 可打包」是本机最容易缺的前置条件）。
+Write-Host "[2/8] 打包静态体检（verify_packaging.py）…"
+& python tools\verify_packaging.py 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "✗ 打包静态体检未通过——跑 python tools\verify_packaging.py 看逐项结果" -ForegroundColor Red
+    Write-Host "  （版本号未消耗，修好后原样重跑即可）" -ForegroundColor DarkGray
+    exit 1
+}
+
+# 3) 版本演进（push：PATCH+1；build：MINOR+1 且 PATCH=1；none：沿用当前版本）
 if ($Bump -eq 'none') {
     $version = (& python tools\bump.py show).Trim()
-    Write-Host "[1/7] 沿用当前版本 → v$version（-Bump none）"
+    Write-Host "[3/8] 沿用当前版本 → v$version（-Bump none，默认）"
 } else {
     $version = (& python tools\bump.py $Bump).Trim()
-    Write-Host "[1/7] 版本演进（$Bump）→ v$version"
+    Write-Host "[3/8] 版本演进（$Bump）→ v$version"
 }
 # **必须校验**：旧实现不查 $LASTEXITCODE 也不查格式，bump.py 失败时 stdout 里的
 # 错误文本会被当成版本号，一路流到扩展校验、产物命名与 latest.yml（实测形态：
@@ -59,9 +107,9 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 1.5) 重建浏览器扩展（安装包会携带它：desktop/package.json 的 extraResources → resources/extension）
-#      必须在 bump 之后——否则打进安装包的扩展 manifest 版本号会停在上一版
-Write-Host "[2/7] 浏览器扩展重建中…"
+# 4) 重建浏览器扩展（安装包会携带它：desktop/package.json 的 extraResources → resources/extension）
+#    **必须在 bump 之后**——否则打进安装包的扩展 manifest 版本号会停在上一版
+Write-Host "[4/8] 浏览器扩展重建中…"
 Push-Location (Join-Path $root "extensions\quick-login")
 try {
     & npm run build 2>&1 | Out-Null
@@ -73,33 +121,6 @@ $extManifest = Join-Path $root "extensions\quick-login\dist\manifest.json"
 if (-not (Test-Path $extManifest)) { Write-Host "✗ 未找到扩展构建产物" -ForegroundColor Red; exit 1 }
 if (-not (Select-String -Path $extManifest -Pattern "`"version`": `"$version`"" -Quiet)) {
     Write-Host "✗ 扩展产物版本号与本次发布不一致（$extManifest）" -ForegroundColor Red; exit 1
-}
-
-# 2) 依赖（**必须在 release commit 之前**：uv sync 会把项目版本写进 uv.lock，
-#    顺序反了则 commit 里的 lock 立刻过期、工作区再次变脏——0.3.2 构建实测踩到）
-Write-Host "[3/7] uv sync…"
-# 行的存在理由（2026-09-17 实测）：`uv` 在本机有**两种互斥形态**，而 `python -m uv` 只认其中一种：
-#   - exe 形态：`.venv\Scripts\uv.exe`（本仓一直用它跑 lint，见 CONTRIBUTING §1.1）；
-#   - pip 包形态：`site-packages\uv`，此时 `python -m uv` 可用。
-# 旧实现在 36/39 行用 `python -m uv`、在文档里用 `uv.exe`，于是**重建过一次 venv 之后**
-# 包形态消失 → 构建在第 3 步以一个看不出原因的方式失败。两种都认，谁也拦不住。
-$uvExe = Join-Path $root ".venv\Scripts\uv.exe"
-if (Test-Path $uvExe) {
-    & $uvExe sync --extra dev --extra build 2>&1 | Out-Null
-} else {
-    & python -m uv sync --extra dev --extra build 2>&1 | Out-Null
-}
-if ($LASTEXITCODE -ne 0) { Write-Host "✗ uv sync 失败" -ForegroundColor Red; exit 1 }
-
-# 2.5) 产物静态体检（**必须在提交与打包之前**）
-#      `verify_packaging.py` 此前只在 CI 里跑，本地发版可以完全绕过它——
-#      而它守的正是"打包态才会暴露"的那一类（见 P8：缺 chromium 时会打出没有浏览器的包）。
-#      放在这里而不是打包之后：体检红的时候，工作区还没提交、安装包还没生成，返工最便宜。
-Write-Host "[4/7] 打包静态体检（verify_packaging.py）…"
-& python tools\verify_packaging.py 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "✗ 打包静态体检未通过——跑 python tools\verify_packaging.py 看逐项结果" -ForegroundColor Red
-    exit 1
 }
 
 # 3) 版本号入库并推送（release commit：含扩展 manifest/package 与 uv.lock）
@@ -147,7 +168,7 @@ $proxies += @('http://127.0.0.1:7890', 'http://127.0.0.1:7897', 'http://127.0.0.
 $proxies = $proxies | Select-Object -Unique
 
 if (-not $SkipPush) {
-    Write-Host "[5/7] 探测出网通道…"
+    Write-Host "[5/8] 探测出网通道…"
     if (Test-GitChannel '') {
         $channel = '直连'
         Write-Host "    ✓ 直连可用" -ForegroundColor Green
@@ -198,7 +219,7 @@ if (-not $SkipPush) {
         Write-Host "  安装包尚未生成，仓库状态未被留在半途；处置后重跑即可。" -ForegroundColor Yellow
         exit 1
     }
-    Write-Host "[5/7] 版本号推送: OK（$channel）"
+    Write-Host "[5/8] 版本号推送: OK（$channel）"
 
     # 打 tag 并单独推送。四条纪律：
     #   ① **必须在 commit 推送成功之后**——否则 tag 指向一个远端还不存在的 commit，推送必被拒；
@@ -209,31 +230,44 @@ if (-not $SkipPush) {
     # 历史教训：2026-09-17 实测本仓**发布了 12 个版本却只有 3 个 tag**，
     # 导致 `git checkout v0.3.11` 直接报错、回滚与"用户跑的是哪一版"都没有锚点。
     if ($Bump -eq 'none') {
-        Write-Host "[5/7] -Bump none：沿用已发布版本，不打 tag"
+        Write-Host "[5/8] -Bump none：沿用已发布版本，不打 tag"
     } elseif (-not $committed) {
-        Write-Host "[5/7] 无版本改动（commit 未产生），不打 tag"
+        Write-Host "[5/8] 无版本改动（commit 未产生），不打 tag"
     } elseif (git rev-parse -q --verify "refs/tags/v$version" 2>$null) {
-        Write-Host "[5/7] tag v$version 已存在，跳过"
+        Write-Host "[5/8] tag v$version 已存在，跳过"
     } else {
         git tag -a "v$version" -m "Akso Workbench $version"
         & git @pushArgs push origin "v$version" 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "[5/7] tag v$version 已推送"
+            Write-Host "[5/8] tag v$version 已推送"
         } else {
-            Write-Host "[5/7] ⚠ tag 推送失败（$channel）——稍后手动：git push origin v$version" -ForegroundColor Yellow
+            Write-Host "[5/8] ⚠ tag 推送失败（$channel）——稍后手动：git push origin v$version" -ForegroundColor Yellow
         }
     }
 } else {
-    Write-Host "[5/7] 跳过推送与打 tag（-SkipPush）"
+    Write-Host "[5/8] 跳过推送与打 tag（-SkipPush）"
 }
 
-# 4) 服务端 sidecar（PyInstaller onedir，含 chromium）
-Write-Host "[6/7] WorkbenchServer sidecar 打包中（数分钟）…"
+# 6) 服务端 sidecar（PyInstaller onedir，含 chromium）
+Write-Host "[6/8] WorkbenchServer sidecar 打包中（数分钟）…"
 & python -m PyInstaller workbench\server.spec --noconfirm --distpath dist --workpath build 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Host "✗ WorkbenchServer 打包失败" -ForegroundColor Red; exit 1 }
 
-# 5) Electron 壳（NSIS 安装包）
-Write-Host "[7/7] electron-builder 打包中…"
+# 7) 打包后复检（**为什么不省**：第 2 步的体检是在 bump **之前**跑的，
+#    而 bump 改了 5 个版本文件 + 扩展 manifest 是第 4 步重建的。
+#    这一步确认"改动之后仍然自洽"——尤其 P4b（扩展 manifest 版本 == 项目版本）
+#    与 P9（五写同步），它们正是 bump 影响的那两项，也是发出去错版本号的两条路。
+#    秒级成本，换"安装包与版本号一致"这条断言，值得。）
+Write-Host "[7/8] 打包后复检（版本一致性）…"
+& python tools\verify_packaging.py 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "✗ 打包后复检未通过——产物与版本号可能不一致，**先别发布**" -ForegroundColor Red
+    Write-Host "  跑 python tools\verify_packaging.py 看逐项结果" -ForegroundColor DarkGray
+    exit 1
+}
+
+# 8) Electron 壳（NSIS 安装包）
+Write-Host "[8/8] electron-builder 打包中…"
 Push-Location desktop
 try {
     & npx electron-builder --win nsis --publish never 2>&1 | Out-Null
