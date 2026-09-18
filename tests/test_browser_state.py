@@ -71,6 +71,70 @@ def test_looks_like_login_never_raises() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# C1 回归：关窗时的状态判断曾经恒假 → "登录态已保存"永远传不到 UI
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _FakeContext:
+    """最小 context 桩：只记录 storage_state 被写到了哪。"""
+
+    def __init__(self) -> None:
+        self.saved_to: list[str] = []
+        self.closed = False
+
+    def storage_state(self, path: str) -> None:
+        self.saved_to.append(path)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _entry(status: str, restored: bool = False) -> Any:
+    from workbench.services.browser_pool import SessionEntry
+
+    return SessionEntry(account_id="acc-c1", context=_FakeContext(), status=status, restored=restored)
+
+
+def test_close_entry_reports_saved_state_when_session_was_online() -> None:
+    """**C1 回归**（2026-09-17 修）。
+
+    旧实现先 `entry.status = "stopped"` 再判断 `entry.status == "online"` ——
+    赋值之后才比较，该分支**恒假**，于是"关窗时登录态已落盘"这件事永远传不到 UI，
+    用户只看到含糊的「已关闭」。本用例在修复前于 `detail` 断言上 FAIL。
+    """
+    entry = _entry("online")
+    BrowserPool._close_entry(entry)
+
+    assert entry.status == "stopped"
+    assert entry.detail == "已关闭（登录态已保存）", "在线会话关窗必须说明登录态已保存"
+    assert entry.context is None and entry.page is None
+
+
+def test_close_entry_saves_storage_state_before_clearing_context() -> None:
+    """落盘必须发生在 `context = None` **之前**，否则免密直达的持久化会静默消失。"""
+    entry = _entry("online")
+    context = entry.context
+    BrowserPool._close_entry(entry)
+    assert len(context.saved_to) == 1, "在线会话关窗时必须落盘一次 storage_state"
+    assert context.saved_to[0].endswith("acc-c1.json")
+
+
+def test_close_entry_offline_session_has_plain_detail() -> None:
+    """没登录过（launching/stopped）的会话关窗不该谎称"登录态已保存"。"""
+    entry = _entry("launching")
+    BrowserPool._close_entry(entry)
+    assert entry.status == "stopped"
+    assert entry.detail == "已关闭"
+
+
+def test_close_entry_restored_session_reports_saved_state() -> None:
+    """`restored`（从磁盘恢复的持久会话）同样应报"已保存"——旧实现里这条分支是唯一活的。"""
+    entry = _entry("logging_in", restored=True)
+    BrowserPool._close_entry(entry)
+    assert entry.detail == "已关闭（登录态已保存）"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 体检探测：不许在日志里留噪声
 # ─────────────────────────────────────────────────────────────────────────────
 
