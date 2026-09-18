@@ -56,10 +56,21 @@ hiddenimports = [
 ]
 
 ms_pw = Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright"
-if ms_pw.exists():
-    for browser_dir in sorted(ms_pw.glob("chromium*")):
-        if browser_dir.is_dir():
-            datas.append((str(browser_dir), f"ms-playwright/{browser_dir.name}"))
+# ⚠ **chromium 缺失必须炸，不能静默跳过**（2026-09-17 加固）。
+# 旧实现是 `if ms_pw.exists():` —— 机器上没装浏览器时它既不收集**也不报错**，
+# 于是打出一个"成功"的、**没有浏览器**的安装包，问题只在客户运行期暴露
+# （Monitor 录制 / 免密直达 / 自愈重登全废）。这里与 tools/verify_packaging.py 的 P8
+# 构成**双保险**：P8 在打包前拦（省掉一次几分钟的 PyInstaller），这里在 PyInstaller
+# 内部兜底（有人绕过 build.ps1 直接跑 spec 时仍然拦得住）。
+chromium_dirs = [d for d in sorted(ms_pw.glob("chromium*")) if d.is_dir()] if ms_pw.exists() else []
+if not chromium_dirs:
+    raise SystemExit(
+        f"打包中止：{ms_pw} 下没有任何 chromium* 目录，安装包会缺少浏览器内核。\n"
+        "  处置： .\\.venv\\Scripts\\python.exe -m playwright install chromium\n"
+        "  （原因与后果见 docs/adr/0009-*.md 与 tools/verify_packaging.py 的 P8）"
+    )
+for browser_dir in chromium_dirs:
+    datas.append((str(browser_dir), f"ms-playwright/{browser_dir.name}"))
 
 for pkg in ("playwright",):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)

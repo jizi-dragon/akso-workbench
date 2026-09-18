@@ -12,6 +12,9 @@
   P5 tools/build.ps1 具备 UTF-8 BOM（PS5.1 约定；编辑后极易丢失）
   P6 桌面壳的每个源文件都在 electron-builder 的 files 白名单里
   P7 工具插件清单（`plugins/__init__.py::_MODULES`）全部进了 server.spec 的 hiddenimports
+  P8 chromium 内核可打包（缺失会让安装包**没有浏览器**，且旧实现静默通过）
+  P9 版本五写同步（复用 tools/bump.py check，不另写一份正则）
+  P10 `/extension/*` 访问令牌边界（P0-1：中间件已装 + 豁免面最小 + UI 端点已迁出该前缀）
 
 用法：
     .venv\\Scripts\\python.exe tools\\verify_packaging.py
@@ -20,7 +23,9 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -147,6 +152,60 @@ def main() -> int:
     details.append(f"   插件清单（plugins/__init__.py::_MODULES）= {declared_plugins or '读取失败'}")
     if undeclared:
         details.append(f"   缺：{undeclared}（打包后这些插件静默消失）")
+
+    # P8 chromium 必须可打包 —— 拦在 PyInstaller（数分钟）之前
+    # 为什么必须查（2026-09-17）：旧实现的 `server.spec` 是 `if ms_pw.exists():` —— 机器上没装
+    # 浏览器时它既不收集**也不报错**，于是打出一个"成功"的、**没有浏览器**的安装包，
+    # 问题只在客户运行期暴露（Monitor 录制 / 免密直达 / 自愈重登全废）。
+    # 本项与 `server.spec` 内的 SystemExit 构成双保险：这里省掉一次几分钟的 PyInstaller。
+    ms_pw = Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright"
+    chromium_dirs = sorted(d.name for d in ms_pw.glob("chromium*") if d.is_dir()) if ms_pw.exists() else []
+    checks["P8 chromium 内核可打包（缺失会让安装包没有浏览器）"] = bool(chromium_dirs)
+    if chromium_dirs:
+        details.append(f"   chromium = {chromium_dirs}（{ms_pw}）")
+    else:
+        details.append(
+            f"   缺：{ms_pw} 下无 chromium* 目录"
+            " → 跑 .venv\\Scripts\\python.exe -m playwright install chromium"
+        )
+
+    # P9 版本五写同步（pyproject / __init__ / desktop pkg / 扩展 manifest+package / .version.json）
+    # 为什么必须查：手改单一文件是**已发生过**的事故形态——安装包命名（读 pyproject）、
+    # 壳内显示版本（读 package.json）、扩展弹窗版本（读 manifest）会各说各话；
+    # 而 build.ps1 第 1 步的 bump 自查只在构建路径上生效，拉取后直接打包就绕过了。
+    # 判据复用 bump.py check 的同一套逻辑（单一真源），此处不另写一份正则。
+    check_proc = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "bump.py"), "check"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    checks["P9 版本五写同步（bump.py check）"] = check_proc.returncode == 0
+    if check_proc.returncode != 0:
+        details.append("   " + (check_proc.stderr or check_proc.stdout or "").strip().replace("\n", "\n   "))
+
+    # P10 `/extension/*` 的访问令牌边界（P0-1）
+    # 为什么必须查：这不是"某条路由忘了加依赖"，而是**整段前缀**的安全姿态。
+    # 它靠三件事同时成立：① 中间件真的被 create_app 装上；② 桌面 UI 用的那几条
+    # "不碰凭据"的端点**不在**受保护前缀里（否则它们只能靠开豁免，而豁免一开，
+    # "整个前缀需要令牌"就退化成人工维护的清单）；③ 自举端点仍然存在（否则扩展死锁）。
+    api_init = (ROOT / "workbench" / "api" / "__init__.py").read_text(encoding="utf-8")
+    auth_src = (ROOT / "workbench" / "api" / "extension_auth.py").read_text(encoding="utf-8")
+    shell_src = (ROOT / "workbench" / "api" / "routes_shell.py").read_text(encoding="utf-8")
+    middleware_installed = "ExtensionAuthMiddleware" in api_init and "add_middleware" in api_init
+    shell_registered = "routes_shell" in api_init
+    hello_defined = 'HELLO_PATH = "/extension/hello"' in auth_src
+    exempt_ok = 'EXEMPT_PATHS = frozenset({HELLO_PATH, "/extension/health"})' in auth_src
+    ui_routes_relocated = all(
+        f'@router.post("/{name}")' in shell_src for name in ("launch-chrome", "update-state", "setup-helper")
+    )
+    checks["P10 /extension/* 访问令牌边界（中间件+豁免面+UI 端点已迁出）"] = (
+        middleware_installed and shell_registered and hello_defined and exempt_ok and ui_routes_relocated
+    )
+    if not all((middleware_installed, shell_registered, hello_defined, exempt_ok, ui_routes_relocated)):
+        details.append(
+            f"   中间件={middleware_installed} 壳路由注册={shell_registered} 自举端点={hello_defined} "
+            f"豁免面={exempt_ok} UI 端点已迁出={ui_routes_relocated}"
+            " → /extension/* 可能又变回无鉴权（CODEBASE_OVERVIEW R1）"
+        )
 
     print("\n".join(details))
     print()

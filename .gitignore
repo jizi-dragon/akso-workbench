@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 .venv/
+# CI 口径的备用解释器环境（.python-version = 3.12；见 CONTRIBUTING §1.1）：
+# 主力 .venv 可能是 3.14，它是"CI 红了但本地绿"时用来复现的唯一手段，故不入库。
+.venv312/
 *.egg-info/
 .pytest_cache/
 dist/
