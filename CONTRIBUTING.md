@@ -406,9 +406,10 @@ curl.exe -s "http://127.0.0.1:18765/api/logs/tail?level=WARNING&n=50"
 #    界面响应头里的 X-Trace-Id → 还原整条链路
 curl.exe -s "http://127.0.0.1:18765/api/logs/trace/<traceId>"
 
-# ⑤ 改完代码：重跑 ②；动了日志/确认门/敏感表再跑这两条
+# ⑤ 改完代码：重跑 ②；动了日志/确认门/敏感表再跑这三条
 .\.venv\Scripts\python.exe tools\verify_logging.py           # 36/36（自起服务，不必退出工作台）
-.\.venv\Scripts\python.exe tools\verify_regression_tests.py  # 6/6 反证
+.\.venv\Scripts\python.exe tools\verify_confirmation.py      # 19/19（同上，端口 18795）
+.\.venv\Scripts\python.exe tools\verify_regression_tests.py  # 11/11 反证
 
 # ⑥ 发版前：打一次包，走 §8.3 清单
 powershell -ExecutionPolicy Bypass -File tools\build.ps1

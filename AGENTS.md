@@ -11,8 +11,8 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（55 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
-> | 不再变的决策（15 篇 ADR） | [docs/adr/](docs/adr/) |
+> | 真机环境坑（57 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 不再变的决策（16 篇 ADR） | [docs/adr/](docs/adr/) |
 > | 核心 Agent 架构与分层契约 | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
 > | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
 > | 人的协作规范 | [CONTRIBUTING.md](CONTRIBUTING.md) |
@@ -56,6 +56,9 @@
 | 10 | **工具名必须匹配 `[A-Za-z0-9_-]{1,64}` 且是 ASCII**。中文工具名会被 DeepSeek/OpenAI **在请求侧拒绝**，本地校验发现不了 |
 | 11 | **工具异常 = 观测，不是异常。** `execute()` 里任何失败都要转成 `ToolStatus`，让它成为模型可自我纠正的观测，不要抛出去打断循环 |
 | 12 | **同步阻塞调用一律 `asyncio.to_thread`**（`egmp.client` / `browser_pool` / `proc` / `sandbox.run` 都是同步的）。否则表现是**整个服务卡住**，不是报错 |
+| 33 | **模型发起的确认（`needs_confirmation`）不是安全边界**，它买的是"模型可以先问再做"，`Risk` 买的是"不做就不能做"（[ADR-0016](docs/adr/0016-model-initiated-confirmation.md) §5）。**不要**把它写成"高风险操作的批准环节"，**不要**因为它存在而放宽任何 `Risk` 分级。判据：`grep -rn "needs_confirmation=True" workbench/plugins/` 里每一个的 `risk` 都必须是 `READ`（`ToolSpec.valid()` 在装配期强制） |
+| 34 | **不要在工具 handler 里等用户**。`execute()` 一旦 `await`，调用它的异步生成器就挂起了，事件发不出去 → 界面不知道有东西要确认 → 用户永远点不了。跨"通知 → 等答复 → 继续"的交互**必须把等待放在循环层**（`harness/loop.py` 发完 `confirm_required` 再 `await registry.await_confirmation`）。这条不是偏好，是架构约束（[ADR-0016](docs/adr/0016-model-initiated-confirmation.md) §D-2） |
+| 35 | **"发通知 → 等对方回 → 我再登记等待"的形状，接收端必须提前建好**。对方（用户/子进程/worker）的响应会比你开始等更早到达，晚建的 `Future` 接不住它 → 表现为"对方明明答复了，我方干等满一个超时"（PITFALLS #57 实测：实时确认卡了整整一个 `timeoutS`）。判据：`pytest tests/test_user_confirmation.py -o addopts=""`——它**在 `confirm_required` 事件的回调里**就答复，命中这个时序；挂起不返回 = 本条复发 |
 
 ### 沙箱与技能
 
@@ -135,11 +138,11 @@
 | `workbench/plugins/**` | `tools\gen_tools_doc.py --write`（重生成 [docs/TOOLS.md](docs/TOOLS.md) 清单块）**+** 确认 `server.spec` 的 `hiddenimports` 有该模块 **+** `REQUIRED_TOOLS` |
 | `workbench/sandbox/**` | `pytest tests/test_sandbox.py -o addopts=""`（含 slow 层：真起进程、验 Job Object 树杀） |
 | `workbench/skills/**` | `pytest tests/test_skills.py tests/test_skill_scripts.py -o addopts=""` |
-| `workbench/harness/**`、`cache.py`、`plugin_api.py`、`approvals.py` | `pytest tests/test_cache.py tests/test_agent_loop.py tests/test_agent_approval.py`（**前缀稳定性 + 确认门两条通道**都在这里） |
+| `workbench/harness/**`、`cache.py`、`plugin_api.py`、`approvals.py` | `pytest tests/test_cache.py tests/test_agent_loop.py tests/test_agent_approval.py tests/test_user_confirmation.py`（**前缀稳定性 + 确认门两条通道 + 模型发起的实时确认**都在这里）<br>★ 动了实时确认（`needs_confirmation` / `confirm_required` / `pending_action`）还要跑 `python tools\verify_confirmation.py`——**19 项**端到端：真起生产入口、真发 HTTP、真拉三个静态文件（"打包/静态目录漏收"只在这里现形） |
 | `workbench/logging_setup.py`、`api/routes_logs.py`、任何 `logger.*` | `pytest tests/test_logging.py`（落盘/幂等/脱敏/关联 ID/滚动/检索/失败隔离）<br>★ 动了日志系统还要跑 `python tools\verify_logging.py`——它**真起服务、真发请求、真读日志文件**，**36 项**端到端检查（含**两条启动路径**：生产入口与开发态裸 uvicorn）。组件测试证明不了链路，PITFALLS #53 就是这么栽的 |
 | `config.SENSITIVE_PATH_PARTS`、`plugins/builtins.py`、`sandbox/policy.py` | `pytest tests/test_sensitive_paths.py`（**唯一事实源 + 只读工具的边界**） |
 | `workbench/lifecycle.py`、`api/__init__.py` 的 lifespan、`desktop/main.js`（stderr/stdio/菜单） | `pytest tests/test_lifecycle.py -o addopts=""`（**含 slow 层**：真起父子进程验"父死子退"）+ `node --check desktop\main.js` |
-| ★ 动了上面任一处 | 还要跑 `python tools\verify_regression_tests.py`——它**反证**那 **7 条**断言真的会红（手动诊断用，不进 CI，会临时改写源码并在结束时字节级还原；含一条 28 秒的 slow 项） |
+| ★ 动了上面任一处 | 还要跑 `python tools\verify_regression_tests.py`——它**反证**那 **11 条**断言真的会红（手动诊断用，不进 CI，会临时改写源码并在结束时字节级还原；含一条 29 秒的 slow 项）。**它按单条 120 秒超时收口**：缺陷版的失败形态可能是"挂住"而不是"断言红"，没有这个超时，一次失误会让上层把脚本杀掉，`finally` 的还原**跑不到**——2026-09-20 实测留下过一份缺陷代码 |
 | `workbench/api/extension_auth.py` 或 `/extension/**` 蓝图 | `node tools\verify_extension_sync.mjs`（该蓝图**无 pytest 覆盖**） |
 | `extensions/quick-login/**`（TS） | `npm run typecheck` + `npm run build`，再跑 `verify_extension_boot.py` + `verify_extension_isolation.py` + `node tools\verify_host_logic.mjs` |
 | `tools/build.ps1` | **立刻补 UTF-8 BOM**，再跑 `verify_packaging.py`（P5 就是为这件事存在的，PITFALLS #37） |

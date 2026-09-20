@@ -28,6 +28,8 @@ SSE / WebSocket / 测试断言都直接消费同一事件序列。
     action           发起工具调用 {call, tool:{name,risk,plugin}, auditId}
     observation      工具结果   {result:{ok,summary,...}, invocation:{status,pendingId,...}}
     approval_required 风险工具被确认门拦下 {pendingId, tool, risk, summary}
+    confirm_required  模型主动请求实时确认 {pendingId, question, details, target, timeoutS}
+    confirm_resolved  实时确认拿到答复 {pendingId, approved, expired, answer}
     usage             本轮 token 用量与**缓存命中量**（一次回答只发一条，收尾时）
     final            最终回答
     error            终止性错误
@@ -39,6 +41,8 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import replace
+from typing import Any
 
 from .. import cache, logging_setup
 from ..plugin_api import Risk, ToolContext, ToolHub, ToolStatus
@@ -246,7 +250,39 @@ async def _one_model_turn(
                 )
                 safety.consume_step()
 
-                if invocation.status is ToolStatus.NEEDS_APPROVAL:
+                if invocation.status is ToolStatus.NEEDS_CONFIRMATION:
+                    # 实时确认：**本轮对话就地暂停**，等用户点「同意 / 拒绝」。
+                    #
+                    # 为什么要在这里等、而不是在 `ToolHub.execute` 里等：
+                    # `execute` 一旦 `await`，这个异步生成器就挂起了，下面的
+                    # `confirm_required` 事件根本发不出去——界面不知道有东西要确认，
+                    # 用户也就永远没法点。所以 execute 只登记（返回 NEEDS_CONFIRMATION），
+                    # 事件发出去之后再等。这是本模块唯一一处"工具调用横跨两次 yield"。
+                    yield make_event(
+                        "confirm_required",
+                        auditId=invocation.audit_id,
+                        tool=invocation.tool,
+                        **invocation.confirm,
+                    )
+                    outcome = await registry.await_confirmation(
+                        invocation.pending_id,
+                        float(invocation.confirm.get("timeoutS") or 0),
+                    )
+                    logger.info("实时确认有答复：%s → %s（approved=%s expired=%s）",
+                                invocation.pending_id, invocation.tool,
+                                outcome.approved, outcome.expired)
+                    # 答复立刻回给界面：确认卡要就地变成「已同意 / 已拒绝」，
+                    # 不能等到下一条 observation（那时用户已经在看别的东西了）
+                    yield make_event(
+                        "confirm_resolved",
+                        pendingId=invocation.pending_id,
+                        approved=outcome.approved,
+                        expired=outcome.expired,
+                        answer=outcome.answer,
+                    )
+                    invocation = _apply_confirmation(invocation, outcome)
+
+                elif invocation.status is ToolStatus.NEEDS_APPROVAL:
                     # 确认门被触发是"用户接下来该做点什么"的信号，
                     # 也是排查"为什么危险工具没执行"的第一现场
                     logger.warning("工具被确认门拦下：%s（pendingId=%s）",
@@ -301,6 +337,36 @@ def _summarize_result(invocation) -> str:
     if len(text) > 220:
         text = text[:220] + "…"
     return text
+
+
+def _apply_confirmation(invocation, outcome) -> Any:
+    """把用户的答复变成这次工具调用的**终态**。
+
+    `request_user_confirmation` 的 handler 从头到尾**不会被调用**——它没有"执行"这回事，
+    用户的答复本身就是结果。所以这里直接替换掉 invocation：
+
+    | 答复 | status | 模型的观测 |
+    |---|---|---|
+    | 同意 | `OK` | "现在可以调用 `X`，参数必须一致" |
+    | 拒绝 | `REJECTED` | "用户拒绝了，不要重试，也别绕过去" |
+    | 超时/中断 | `TIMEOUT` | "没等到答复，按未同意处理" |
+
+    三种都**不是** `is_error` 之外的含糊状态：模型必须能从观测里分辨
+    "再问一次也没用"（拒绝）和"用户可能只是没看见"（超时）。
+    """
+    if outcome.approved:
+        status = ToolStatus.OK
+    elif outcome.expired:
+        status = ToolStatus.TIMEOUT
+    else:
+        status = ToolStatus.REJECTED
+    return replace(
+        invocation,
+        status=status,
+        content=outcome.answer or invocation.content,
+        error="" if outcome.approved else (outcome.answer or "未获同意"),
+        pending_id=invocation.pending_id,
+    )
 
 
 async def _summarize(client: DeepSeekClient, messages: list[dict], meter: UsageMeter) -> str:

@@ -172,16 +172,17 @@ def register(hub: pa.ToolHub) -> None:
 
 ---
 
-## 3. 现有五个插件与 20 个工具
+## 3. 现有五个插件与 21 个工具
 
 > 实时清单以运行期 `get_hub()` 实例为准（`len(hub.plugins)` / `len(hub.specs())`），
 > 或直接看 **[docs/TOOLS.md](TOOLS.md)**（由 `tools/gen_tools_doc.py` 从运行期生成，`tests/test_tools_doc.py` 钉住）。
 > 2026-09-15 引入 `web_search` 时曾漏把它写进本表（`builtin` 之外），故此后**以运行期为准**；
-> 本表为 2026-09-17 快照。
+> 本表为 2026-09-17 快照 + 2026-09-20 补 `request_user_confirmation`。
 
 | 插件 | 工具 | 风险 |
 |---|---|---|
 | `builtin`（通用） | `get_current_time` / `read_local_file` / `read_web_page` | read |
+| | `request_user_confirmation`（**模型主动请求实时确认**，见下方专节） | read（但会**暂停对话**等用户答复） |
 | `websearch`（自建联网检索） | `web_search`（DeepSeek API **没有**内置联网搜索，见 [research](research/deepseek-api-capabilities.md) §2） | read |
 | `insight`（平台洞察） | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
 | `factory`（配置工厂） | `factory_validate_blueprint` / `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
@@ -189,7 +190,7 @@ def register(hub: pa.ToolHub) -> None:
 | `accounts`（快捷登录） | `accounts_list` / `accounts_login` / `accounts_browser_sessions` | read |
 | | `accounts_browser_open` / `accounts_browser_close` | **write** |
 
-统计：3 + 1 + 6 + 5 + 5 = **20 个工具 / 5 个插件**。
+统计：4 + 1 + 6 + 5 + 5 = **21 个工具 / 5 个插件**。
 
 实时清单：`GET /api/agent/tools`（含参数说明与风险）；插件维度：`GET /api/agent/plugins`。
 
@@ -260,6 +261,57 @@ CODEBASE_OVERVIEW 的红线是「端点常量必须实证来源，不许凭观�
 权威状态在内存（`PendingStore._items`），DB 的 `pending_action` 表只做**留痕**。
 应用重启时把上一进程遗留的 `pending`/`approved` 行标成 `expired`，**不恢复**——
 用户重启了应用，凭什么还替他记住一个未确认的写操作？这条是刻意的，别"顺手"改成恢复。
+
+### 4.1 `needs_confirmation`：**模型**发起的实时确认（与上面的门是两套东西）
+
+上面那套的发起者是**宿主**（按 `risk` 声明自动拦）。`needs_confirmation` 的发起者是**模型**
+——它主动调用 `request_user_confirmation` 来问用户。完整的决策与外部参照见
+[ADR-0016](adr/0016-model-initiated-confirmation.md)，这里只讲**怎么用**。
+
+```python
+class MyConfirmArgs(BaseModel):
+    question: str = pa.Arg("要向用户确认的问题")
+    target_tool: str = pa.Arg("将要执行的工具名", default="")
+    target_args: dict[str, Any] = pa.Arg("传给它的参数", default_factory=dict)
+
+
+def my_payload(args: MyConfirmArgs) -> dict[str, Any]:
+    """从参数里抽出**给用户看的**内容（可含 targetTool / targetArgs / timeoutS）。"""
+    return {"question": args.question,
+            "targetTool": args.target_tool, "targetArgs": args.target_args}
+
+
+pa.ToolSpec(
+    name="my_confirm",  # 名字随意，只要满足工具名规则
+    description="……",
+    args_model=MyConfirmArgs,
+    handler=some_handler,       # ⚠️ **永远不会被调用**，见下
+    risk=pa.Risk.READ,          # ⚠️ **必须**是 read，装配期强制
+    needs_confirmation=True,
+    confirm_payload=my_payload,
+)
+```
+
+**四条必须知道的规矩**：
+
+1. **`risk` 必须是 `read`**。否则它会先过自己的确认门 → 用户被问"要不要问你要不要确认" → 无限递归。
+   `ToolSpec.valid()` 在**装配期**就拒（不是运行期才发现）。
+2. **`handler` 永远不会被调用**。`needs_confirmation=True` 的工具由 `ToolHub.execute` 直接拦下，
+   用户的答复本身就是结果（`harness/loop.py::_apply_confirmation` 把它变成终态观测）。
+   handler 只是满足必填；**真被执行到说明拦截路径坏了，它必须抛异常**——
+   返回一句"已确认"会让模型以为用户真的同意了，而那正是这个工具唯一要防的事。
+3. **`targetTool` / `targetArgs` 由宿主校验，插件说了不算**。目标必须存在、必须是 write/dangerous、
+   不能自己也要确认（不能嵌套），参数用**目标自己的 `args_model`** 校验。
+   任何一条不满足 → `BAD_ARGS`，**不降级**成"纯意图确认"（降级 = 用户以为批准了 A，实际什么都没批准）。
+4. **等待发生在循环层**（`harness/loop.py`），不在 handler 里——`execute()` 一旦 `await`，
+   事件就发不出去了，界面不知道有东西要确认。所以 `execute()` 只登记，返回
+   `ToolStatus.NEEDS_CONFIRMATION` + `Invocation.confirm`。
+
+**它买的是什么（别读成安全属性）**：模型**可以先问再做**。风险门买的是**不做就不能做**。
+模型不调用这个工具就绕过去了——所以它**不能**当高风险调用的放行依据，两者是互补而非替代。
+
+带 `targetTool` 时，用户同意的是**那一次具体调用**（按「工具 + 参数指纹」绑定，一次性，
+与风险门共用 `claim_approved()` 通道）；模型换个参数再调，指纹对不上，照样重新走风险门。
 
 ---
 

@@ -60,7 +60,7 @@ _2026-09-20 实测。锚定 `15b847e`（main）。本文的每条结论都有**�
 ```
 用户输入 → POST /api/chat/stream
   → routes_chat._chat_events → run_agent_loop(history, client, default_registry(), cfg)
-      → registry.list_api_for(None) → 20 个工具的 function calling schema   ✅
+      → registry.list_api_for(None) → 全部工具的 function calling schema      ✅
       → deepseek.stream_chat(tools=...) → tool_calls 按 index 增量聚合      ✅
       → registry.execute(name, args, ToolContext(source="agent"))           ✅
           → pydantic 校验 → 确认门 → asyncio.wait_for(handler)            ✅
@@ -164,7 +164,7 @@ handler **返回了 1,056,412 字符**。所幸 `plugin_api.MAX_RESULT_CHARS = 1
 | H | **工具结果的前 1000 字符会进审计** | `ToolHub._audit` 把 `inv.content[:1000]` 写进 `agent_audit.result_summary`。若某工具返回敏感内容（见 B），它会**二次落库**（本地明文表） | P1 |
 | I | **多个 `tool_calls` 串行执行** | `loop.py:211` 的 `for call in ...` 串行。模型一次发 N 个独立调用时，延迟是 N 倍 | P2 |
 | J | **确认门拦的是"执行"，不是"继续尝试"** | 被拦后循环**继续**，模型可以换个参数/换个工具再试。提示词说"不要猜"，但没有**强制**。这在语义上可接受，但应显式确认是有意为之 | P2 |
-| K | **`plugins` 白名单未接线** | `run_agent_loop(plugins=...)` 的口子已留（"按页面裁剪工具面"），但 `routes_chat` 没传 → 20 个工具的 schema **每轮全量注入** | P2 |
+| K | **`plugins` 白名单未接线** | `run_agent_loop(plugins=...)` 的口子已留（"按页面裁剪工具面"），但 `routes_chat` 没传 → 全部工具的 schema **每轮全量注入** | P2 |
 | L | **`read_local_file` 的描述与实现不符** | 描述说"应用目录内的文件任意读"——读起来像"受限"，实际是"**应用目录内完全不受限**"，而凭据恰好都在应用目录内 | P1（与 B 同源） |
 
 ---

@@ -285,6 +285,17 @@ async function sendMessage(text) {
         trail.addApproval(event);
         proseEl = null;
         scrollToBottom();
+      } else if (event.type === "confirm_required") {
+        // 模型主动"先问再做"：这张卡出现时后端**正卡在等待里**，
+        // 用户点完模型自己继续，不需要再发一条消息
+        flushPaint();
+        segmentText = "";
+        trail.addConfirm(event);
+        proseEl = null;
+        scrollToBottom();
+      } else if (event.type === "confirm_resolved") {
+        trail.settleConfirm(event);
+        scrollToBottom();
       } else if (event.type === "final") {
         content = event.content;
       } else if (event.type === "error") {

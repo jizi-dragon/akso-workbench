@@ -1,6 +1,6 @@
-"""内置工具插件：与业务无关的通用能力（时间 / 读文件 / 读网页）。
+"""内置工具插件：与业务无关的通用能力（时间 / 读文件 / 读网页 / 请求用户确认）。
 
-三个工具从 `harness/tools.py` 迁到这里，行为有**一处收紧**：
+前三个工具从 `harness/tools.py` 迁到这里，行为有**一处收紧**：
 
 - `read_local_file` 原来是**无限制的绝对路径读**——任何凭据文件都能被模型一句话读出来
   （而它的结果会原样进对话、进审计）。现在两档收紧：
@@ -59,6 +59,37 @@ class ReadLocalFileArgs(BaseModel):
 
 class ReadWebPageArgs(BaseModel):
     url: str = pa.Arg("完整网页地址（http/https）")
+
+
+class ConfirmationArgs(BaseModel):
+    """`request_user_confirmation` 的参数。
+
+    ⚠️ 字段名用 snake_case（与其余工具一致）：`_openai_schema()` 不过别名，
+    模型看到的就是这些字面量。`TextPart` 那一类 camelCase 只出现在**出口**（SSE / API）。
+    """
+
+    question: str = pa.Arg(
+        "要向用户确认的问题，一句话说清**将要做什么、影响谁**。"
+        "例：「把 3 个对象（A01、A02、A03）提交到生产环境蓝图 B12，是否继续？」"
+    )
+    details: str = pa.Arg(
+        "补充说明：影响面（几个对象 / 哪个环境 / 哪个账号）、能否回滚、"
+        "以及为什么需要这一步。用户靠它决定点不点同意，别留空话",
+        default="",
+    )
+    target_tool: str = pa.Arg(
+        "可选：**将要执行的那个工具名**。填了就表示「用户同意后，我将调用它」。"
+        "只有 write / dangerous 级工具才需要填（read 级会被拒）",
+        default="",
+    )
+    target_args: dict[str, Any] = pa.Arg(
+        "可选：传给 target_tool 的参数对象，必须与它自己声明的参数一致。"
+        "用户同意的就是**这一组具体参数**；事后换参数要重新问",
+        default_factory=dict,
+    )
+    timeout_s: float = pa.Arg(
+        "可选：等用户答复的秒数（默认 300，上限 1800）", default=0
+    )
 
 
 async def get_current_time(_: BaseModel, ctx: pa.ToolContext) -> str:
@@ -210,11 +241,44 @@ def _extract_text(html: str) -> tuple[str, str]:
     return extractor.title.strip(), "\n".join(extractor.parts)
 
 
+# ---------------------------------------------------------------- 请求用户确认
+
+
+def confirmation_payload(args: ConfirmationArgs) -> dict[str, Any]:
+    """把参数翻译成确认内容（键名是**出口**的口径，见 `plugin_api.ConfirmPlan`）。
+
+    只搬运，不判断：`target_tool` 是否存在、是否只读、参数是否合法，
+    **全部由 `ToolHub._prepare_confirmation` 校验**——插件说了不算。
+    """
+    payload: dict[str, Any] = {"question": args.question, "details": args.details}
+    if args.target_tool:
+        payload["targetTool"] = args.target_tool
+        payload["targetArgs"] = dict(args.target_args or {})
+    if args.timeout_s:
+        payload["timeoutS"] = args.timeout_s
+    return payload
+
+
+async def request_user_confirmation(args: ConfirmationArgs, ctx: pa.ToolContext) -> str:
+    """**这个 handler 永远不会被调用**，留着只为满足 `ToolSpec.handler` 必填。
+
+    `needs_confirmation=True` 的工具由宿主在 `ToolHub.execute()` 里直接拦下并登记确认，
+    用户的答复本身就是结果（`harness/loop.py::_apply_confirmation` 把它变成终态观测）。
+
+    真被执行到 = "宿主拦下"这条路径坏了。此时**必须抛**：返回一句"已确认"会让模型
+    以为用户真的同意了，而那正是本工具唯一要防的事。
+    """
+    raise RuntimeError(
+        "request_user_confirmation 的 handler 不该被执行：确认结果由 harness/loop.py 回填。"
+        "看到这条说明 needs_confirmation 的拦截路径没有生效"
+    )
+
+
 PLUGIN = pa.Plugin(
     id=PLUGIN_ID,
     title="内置工具",
-    description="与业务无关的通用能力：时间、读本地文件、读网页正文",
-    version="1.0.0",
+    description="与业务无关的通用能力：时间、读本地文件、读网页正文、请求用户确认",
+    version="1.1.0",
     tools=[
         pa.ToolSpec(
             name="get_current_time",
@@ -247,6 +311,27 @@ PLUGIN = pa.Plugin(
             risk=pa.Risk.READ,
             timeout_s=40,
             audit_extra=pa.audit_env_key("url"),
+        ),
+        pa.ToolSpec(
+            name="request_user_confirmation",
+            description=(
+                "【高风险任务前置】在执行敏感、不可逆或会影响真实平台的操作**之前**，"
+                "先向用户弹确认框并**等待他当场答复**（同意 / 拒绝）。"
+                "适用场景：批量提交 / 删除 / 发布、修改账号或权限、提交表单、"
+                "对生产环境生效的任何写入、以及用户没说清但后果较大的动作。"
+                "用法：把将要执行的那次调用写进 target_tool + target_args，"
+                "用户同意后**直接调用 target_tool**（参数必须完全一致）即可执行，"
+                "不会再被问第二遍；用户拒绝或超时就**不要执行**，也不要绕过。"
+                "注意：本工具买的是「先问再做」，**不能**用它代替风险门——"
+                "write/dangerous 工具自己仍会走确认门，两者互补"
+            ),
+            args_model=ConfirmationArgs,
+            handler=request_user_confirmation,
+            risk=pa.Risk.READ,
+            timeout_s=10,
+            needs_confirmation=True,
+            confirm_payload=confirmation_payload,
+            audit_extra=pa.audit_env_key("target_tool"),
         ),
     ],
 )

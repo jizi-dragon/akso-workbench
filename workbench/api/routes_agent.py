@@ -118,6 +118,24 @@ async def invoke(body: InvokeIn) -> dict:
         "durationMs": invocation.duration_ms,
     }
 
+    if invocation.status is ToolStatus.NEEDS_CONFIRMATION:
+        # 实时确认在**对话链路**里由 `harness/loop.py` 就地等答复；
+        # 本端点是同步调用，没有"就地等"这回事——所以如实返回 409 + 确认内容，
+        # 由调用方去看 GET /api/agent/pending 并自行决定何时 approve。
+        # ⚠️ 绝不能在这里**替用户等**：一次 HTTP 请求挂 5 分钟既会被网关掐断，
+        # 也会让"谁在等"变得含糊。也绝不能顺手当成"已同意"。
+        payload.update({
+            "pendingId": invocation.pending_id,
+            "confirm": invocation.confirm,
+            "message": (
+                "这是模型发起的**实时确认**，需要用户答复；本端点不等待答复。"
+                f"用 GET /api/agent/pending 查看，POST /api/agent/pending/"
+                f"{invocation.pending_id}/approve 表示同意（会按「目标工具 + 参数指纹」"
+                "预先批准那一次调用）"
+            ),
+        })
+        raise HTTPException(409, detail=payload)
+
     if invocation.status is ToolStatus.NEEDS_APPROVAL:
         payload.update({
             "pendingId": invocation.pending_id,

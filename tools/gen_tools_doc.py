@@ -114,9 +114,18 @@ def render(hub: ToolHub, catalog: dict) -> str:
         risk = tool["risk"]
         args = tool.get("args") or {}
         arg_text = "、".join(f"`{name}`" for name in args) if args else "—"
+        # `needs_confirmation` 是**另一件**事，不能并进"需确认门"那一列：
+        # 那一列是"宿主会不会自动拦下这次调用"，它是"模型可以主动先问一句"。
+        # 两者互补（见 docs/TOOLS.md 开头的说明），所以单独标一个 🙋。
+        if tool.get("needs_confirmation"):
+            gate = "🙋 模型可主动问"
+        elif risk in ("write", "dangerous"):
+            gate = "✅ 宿主拦下"
+        else:
+            gate = "—"
         lines.append(
             f"| `{tool['name']}` | {tool['plugin']} | {RISK_LABEL.get(risk, risk)} | "
-            f"{'✅' if risk in ('write', 'dangerous') else '—'} | {_timeout(hub, tool['name'])} | "
+            f"{gate} | {_timeout(hub, tool['name'])} | "
             f"{_first_sentence(tool['description'])} | {arg_text} |"
         )
     return "\n".join(lines)

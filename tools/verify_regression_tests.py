@@ -37,6 +37,15 @@ import subprocess
 
 PY = r".venv\Scripts\python.exe"
 
+TIMEOUT_S = 120
+"""单条反证的墙钟上限。
+
+**这个超时是承重的**，不是保险丝：缺陷版的失败形态可能是"挂住"而不是"断言红"
+（实时确认真答不到就会干等满一个 `timeoutS`）。没有它，一次失误会**占住 5 分钟以上**，
+而且上层把它杀掉时本脚本的 `finally` 还原**不会执行** —— 2026-09-20 实测发生过一次，
+`workbench/approvals.py` 里留下了缺陷版代码（PITFALLS #51 的同族）。
+"""
+
 #: (标签, 目标测试, 待改文件, 锚点, 缺陷版替换)
 #:
 #: 每一项都描述「把实现改回缺陷形态 → 哪条断言必须变红」。
@@ -121,6 +130,51 @@ CASES: list[tuple[str, str, str, str, str]] = [
         "        pid = parent_pid()\n"
         "        if pid is None:\n",
     ),
+    # ── 实时确认（tests/test_user_confirmation.py）
+    #
+    # 这一条抓的是"答复先到、等待者后到"的 lost wakeup（PITFALLS #57）：缺陷版把
+    # `_decisions` 那条着陆点去掉，于是用户在 `confirm_required` 回调里点的同意无处落地，
+    # 循环干等满 timeoutS。锚点选 `wait_decision` 入口那三行——它正是"先查答复再取等待者"。
+    (
+        "实时确认：答复先到时不能丢（lost wakeup）",
+        "tests/test_user_confirmation.py::test_loop_pauses_then_resumes_and_preapproval_works",
+        "workbench/approvals.py",
+        "            early = self._decisions.pop(pending_id, None)\n",
+        "            early = None  # 缺陷版：不查已到的答复\n",
+    ),
+    # 这一条抓的是"预先批准绑定参数指纹"（ADR-0016 §D-3）：缺陷版让确认去批准**任意**参数，
+    # 于是"同意 X(A)"变成了"同意 X 的一切"。
+    (
+        "实时确认：同意 A 不等于同意 B",
+        "tests/test_user_confirmation.py::test_confirming_one_call_does_not_authorize_another",
+        "workbench/approvals.py",
+        '                if (item.status == "approved" and item.tool == spec.name\n'
+        "                        and item.fingerprint == fingerprint):\n",
+        '                if (item.status == "approved" and item.tool == spec.name):\n',
+    ),
+    # 这一条抓的是"装配期自检挡住无限递归"：缺陷版把 `needs_confirmation` + 非只读这条检查去掉，
+    # 于是那个"确认工具自己也要先过确认门"的配置能装进去。
+    (
+        "实时确认：确认工具自身必须是只读",
+        "tests/test_user_confirmation.py::test_confirmation_tool_must_be_read",
+        "workbench/plugin_api.py",
+        "        if self.needs_confirmation and self.risk is not Risk.READ:\n",
+        "        if False and self.needs_confirmation and self.risk is not Risk.READ:\n",
+    ),
+    # 这一条抓的是 PITFALLS #56：`_validate_tools` 一旦退回"逐字段手写重建"，
+    # 新字段就在装配时被静默丢掉（工具还在、行为没了）。
+    (
+        "装配：新增声明字段不被静默丢掉",
+        "tests/test_user_confirmation.py::test_real_builtin_tool_declaration_is_valid",
+        "workbench/plugin_api.py",
+        "            bound = replace(spec, plugin_id=plugin.id)\n",
+        "            bound = ToolSpec(\n"
+        "                name=spec.name, description=spec.description,\n"
+        "                args_model=spec.args_model, handler=spec.handler, risk=spec.risk,\n"
+        "                plugin_id=plugin.id, timeout_s=spec.timeout_s,\n"
+        "                audit_extra=spec.audit_extra,\n"
+        "            )\n",
+    ),
 ]
 
 
@@ -144,10 +198,21 @@ def apply_patch(text: str, anchor: str, replacement: str) -> str | None:
 
 
 def run_one(test_target: str) -> tuple[int, str]:
-    proc = subprocess.run(
-        [PY, "-m", "pytest", "-o", "addopts=", "-q", test_target],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
+    """跑一条反证。**必须有超时**——见下面 `TIMEOUT_S` 的说明。"""
+    try:
+        proc = subprocess.run(
+            [PY, "-m", "pytest", "-o", "addopts=", "-q", test_target],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        # 超时本身**就是抓到了**：缺陷版的典型表现不是断言失败，而是**挂住**
+        # （实时确认那条反证修复前会干等满一个 timeoutS）。
+        # ⚠️ 但超时也会让本进程被上层杀掉，于是 `finally` 里的还原**跑不到**——
+        # 2026-09-20 实测：一次 300s 超时之后 `workbench/approvals.py` 里留着
+        # `early = None  # 缺陷版：不查已到的答复`。所以这里必须自己兜住超时，
+        # 绝不能靠"外层会杀我"。
+        return 1, f"超时 {TIMEOUT_S}s 未结束（缺陷版挂住 = 抓到了）"
     lines = [ln for ln in proc.stdout.splitlines()
              if "passed" in ln or "failed" in ln or "error" in ln]
     return proc.returncode, (lines[-1] if lines else proc.stdout.strip()[-160:])

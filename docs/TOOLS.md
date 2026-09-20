@@ -33,11 +33,11 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 > 手改会在下一次 `--check` 时被判为不一致——这正是设计意图（清单只能来自代码）。
 
 <!-- TOOLS-TABLE:BEGIN —— 由 tools/gen_tools_doc.py 生成，勿手改；改插件后跑 --write -->
-> 实测（由运行期工具中枢生成）：**5 个插件 / 20 个工具**。风险分布：17 read · 2 write · 1 dangerous；装配失败：无。
+> 实测（由运行期工具中枢生成）：**5 个插件 / 21 个工具**。风险分布：18 read · 2 write · 1 dangerous；装配失败：无。
 
 | 插件 | 标题 | 版本 | 工具数 | 负责什么 |
 |---|---|---|---|---|
-| `builtin` | 内置工具 | 1.0.0 | 3 | 与业务无关的通用能力：时间、读本地文件、读网页正文 |
+| `builtin` | 内置工具 | 1.1.0 | 4 | 与业务无关的通用能力：时间、读本地文件、读网页正文、请求用户确认 |
 | `websearch` | 联网检索 | 1.1.0 | 1 | 自建联网检索（DeepSeek API 不支持内置 web_search，故由本工作台实现） |
 | `insight` | 平台洞察 | 1.0.0 | 6 | 读平台对象元数据、跑五步织网洞察、取回产物（akso-cc 能力原生化） |
 | `factory` | 配置工厂 | 1.0.0 | 5 | 蓝图两层校验、暂存蓝图清单、真机批量创建（akso-auto 能力原生化） |
@@ -48,16 +48,17 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `accounts_browser_sessions` | accounts | read | — | 20s | 托管浏览器会话状态墙（单账号或全部在线会话） | `account_id` |
 | `accounts_list` | accounts | read | — | 15s | 列出工作台账号库里的账号（id/用户名/环境/分配池） | — |
 | `accounts_login` | accounts | read | — | 90s | 用账号库的账号验证平台登录连通并预热 token（httpx 直连，不开浏览器） | `account_id` |
-| `accounts_browser_close` | accounts | **write** | ✅ | 30s | 关闭某账号的托管浏览器窗口（登录态保留）。注意：用户手动开的窗口也会被关掉 | `account_id` |
-| `accounts_browser_open` | accounts | **write** | ✅ | 180s | 在内置 Chromium 里以该账号身份打开平台（自动登录 + 会话持久化） | `account_id`、`headful` |
+| `accounts_browser_close` | accounts | **write** | ✅ 宿主拦下 | 30s | 关闭某账号的托管浏览器窗口（登录态保留）。注意：用户手动开的窗口也会被关掉 | `account_id` |
+| `accounts_browser_open` | accounts | **write** | ✅ 宿主拦下 | 180s | 在内置 Chromium 里以该账号身份打开平台（自动登录 + 会话持久化） | `account_id`、`headful` |
 | `get_current_time` | builtin | read | — | 5s | 获取当前日期与时间（本地时区） | — |
 | `read_local_file` | builtin | read | — | 30s | 读取本地文本文件。**敏感路径一律拒绝**（数据库/登录态/token 缓存/账号备份/浏览器 profile/SSH 与云凭据） | `path` |
 | `read_web_page` | builtin | read | — | 40s | 读取公开网页正文（用于核实 NMPA/FDA/ICH 等官方监管页面原文），返回标题、来源与正文文本 | `url` |
+| `request_user_confirmation` | builtin | read | 🙋 模型可主动问 | 10s | 【高风险任务前置】在执行敏感、不可逆或会影响真实平台的操作**之前**，先向用户弹确认框并**等待他当场答复**（同意 / 拒绝） | `question`、`details`、`target_tool`、`target_args`、`timeout_s` |
 | `factory_jobs` | factory | read | — | 15s | 最近的配置工厂任务（状态/时间），用于确认此前是否已经创建过 | — |
 | `factory_list_blueprints` | factory | read | — | 20s | 列出已暂存到运行时的蓝图（id/名称/涉及对象），create 的入参来源 | `limit` |
 | `factory_status` | factory | read | — | 30s | 某个工厂任务的详情：状态、日志末尾、断点续跑 checkpoint | `job_id`、`log_lines` |
 | `factory_validate_blueprint` | factory | read | — | 60s | 校验一份蓝图 JSON（结构 + 业务规则两层），返回 error/warning 清单 | `blueprint` |
-| `factory_create` | factory | **dangerous** | ✅ | 900s | 【危险】在真实平台上按蓝图批量创建对象/字段/选项集/生命周期/工作流/布局/菜单。幂等可重跑，但会真的改平台数据，必须经用户确认后才会执行 | `blueprint_id`、`account_id` |
+| `factory_create` | factory | **dangerous** | ✅ 宿主拦下 | 900s | 【危险】在真实平台上按蓝图批量创建对象/字段/选项集/生命周期/工作流/布局/菜单。幂等可重跑，但会真的改平台数据，必须经用户确认后才会执行 | `blueprint_id`、`account_id` |
 | `insight_accounts` | insight | read | — | 15s | 列出工作台账号库里的账号（id/用户名/环境），用于确定 account_id | — |
 | `insight_artifacts` | insight | read | — | 30s | 列出某次洞察任务的产物文件（含 proc.log 与工作区落点） | `job_id` |
 | `insight_read_artifact` | insight | read | — | 30s | 读取某件洞察产物正文（spider-network.md / step2-status-table.md / *.drawio 等） | `job_id`、`name` |
@@ -147,7 +148,12 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 |---|---|
 | 2026-09-15 | 工具插件层落地：`harness/tools.py` 与 `routes_agent.py` **两套并存的工具表**收口为单一事实源 `ToolHub`；同时新增自建 `web_search` |
 | 2026-09-15 | 插件 **4 → 5** 个、工具 **19 → 20** 个；但 CHANGELOG / PLUGIN-SDK / API / CODEBASE_OVERVIEW 四处仍写旧数字 |
-| 2026-09-16 | 用户发现"我不知道有 19 个 tools" → 建立本文档 + `gen_tools_doc.py` 机检；四处旧数字已按实测订正（`5 个插件 / 20 个工具`） |
+| 2026-09-16 | 用户发现"我不知道有 19 个 tools" → 建立本文档 + `gen_tools_doc.py` 机检；四处旧数字已按实测订正（当期 5 插件 / 20 工具） |
+| 2026-09-20 | 新增 `request_user_confirmation`：工具 20 → 21 |
 
 **教训**：*"写在文档里的数字"和"代码里的数字"是两个会漂移的事实源*——要么让文档从代码生成，
 要么迟早出现一次"用户比维护者更早发现不一致"。
+
+> 上面历史行里的数字刻意不写成「N 个工具」那个句式：`gen_tools_doc.py` 的正则
+> 只认它，核对的是**当前**数量。历史行若照抄那个句式，每次加工具都会把门禁弄红，
+> 而"红"的原因是它在核对一个**已经过去的事实**——那种红会训练人忽略门禁。

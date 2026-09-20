@@ -28,18 +28,27 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import secrets
 import threading
 import uuid
+from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
 
 from . import db
-from .plugin_api import ToolHub, ToolSpec, redact_args
+from .plugin_api import (
+    DEFAULT_CONFIRM_TIMEOUT_S,
+    ConfirmOutcome,
+    ConfirmPlan,
+    ToolHub,
+    ToolSpec,
+    redact_args,
+)
 
 logger = logging.getLogger("workbench.approvals")
 
@@ -75,6 +84,16 @@ class PendingAction:
     这是收 P0-A 时顺带发现的既有缺陷（当时所有工具的参数名恰好都不敏感，所以没暴露）。
     """
 
+    target_tool: str = ""
+    """`request_user_confirmation` 预先批准的那次调用的工具名（空 = 纯意图确认，不绑定调用）。
+
+    **刻意不落库**：`_record()` 的列里没有它。它是"这次确认绑定到哪一次调用"的运行时事实，
+    跨进程重启本来就该失效（见模块文档：不恢复遗留 pending）。
+    """
+
+    decided_reason: str = ""
+    """用户拒绝时填写的理由（原样，未打码——它由用户自己写下，且会回给模型）。"""
+
     def public(self) -> dict[str, Any]:
         """给界面的形状（**不含令牌**——令牌只回给批准它的那一次调用）。"""
         return {
@@ -92,12 +111,32 @@ class PendingAction:
 
 
 class PendingStore:
-    """待确认操作的进程内权威存储（线程安全；FastAPI 的同步/异步线程都会碰它）。"""
+    """待确认操作的进程内权威存储（线程安全；FastAPI 的同步/异步线程都会碰它）。
+
+    它同时服务**两种**待确认，两者共用一张表、一套 approve/reject 端点、一套指纹语义：
+
+    | | 谁发起 | 谁在等 | 用户同意后 |
+    |---|---|---|---|
+    | 风险门（`gate`） | 宿主，按 `Risk` 自动拦 | **没人等**，本轮对话已结束 | 模型下次重试同一次调用时被 `claim_approved` 认领 |
+    | 实时确认（`request_confirmation`） | 模型主动调 `request_user_confirmation` | **对话循环**（`wait_decision`） | 循环立刻醒来，把答复回填成工具观测 |
+
+    差别只在"谁在等"。**指纹与一次性语义完全一致**，所以实时确认不放松任何安全属性。
+    """
 
     def __init__(self) -> None:
         self._items: dict[str, PendingAction] = {}
         self._by_token: dict[str, str] = {}
         self._lock = threading.Lock()
+        self._waiters: dict[str, Future[ConfirmOutcome]] = {}
+        """pending_id → 正在等答复的那个对话循环。
+
+        ⚠️ 它必须在**登记确认的那一刻**就建好（`request_confirmation` 里），
+        不能等循环走到 `wait_decision` 时再懒建：用户手快先点了「同意」，
+        而当时还没人登记 → 这个答复**没有地方落地**，循环白等满一个超时。
+        """
+
+        self._decisions: dict[str, ConfirmOutcome] = {}
+        """已经产生、但等待者还没来取的答复（"答复先到"的着陆点，见 `_settle_locked`）。"""
 
     # ------------------------------------------------------------ 申请
 
@@ -108,30 +147,69 @@ class PendingStore:
             self._expire_locked()
             for item in self._items.values():
                 if (item.status == "pending" and item.tool == spec.name
-                        and item.fingerprint == fingerprint):
+                        and item.fingerprint == fingerprint
+                        and item.id not in self._waiters):
+                    # `id not in self._waiters` 是必须的：**有一方正在等答复**的条目
+                    # 不能被复用。复用会让第二个等待者挂到一个已经 resolve 过的 future 上，
+                    # 于是它立刻拿到上一个人的答案——"用户同意过 A" 于是变成了 "同意 B"。
                     return item
+            return self._mint(spec, args, conversation_id, summary="")
 
-            args_dump = redact_args(_dump(args))
-            item = PendingAction(
-                id=uuid.uuid4().hex[:12],
-                tool=spec.name,
-                plugin=spec.plugin_id,
-                risk=spec.risk.value,
-                args=args_dump,
-                summary=summarize(spec, args_dump),
-                created_at=_now_ms(),
-                conversation_id=conversation_id,
-                fingerprint=fingerprint,
-            )
-            self._items[item.id] = item
-            self._record(item)
-            logger.info("待确认操作：%s（%s，%s）", item.id, item.tool, item.risk)
-            return item
+    def request_confirmation(
+        self, spec: ToolSpec, args: BaseModel, plan: ConfirmPlan, conversation_id: str = ""
+    ) -> str:
+        """登记一次**实时确认**，返回 pending_id。**只登记，不等待**（等待在 `wait_decision`）。
+
+        ## 这条待确认挂在谁头上（本模块最容易读错的一处）
+
+        | `plan.target` | 行挂在 | 为什么 |
+        |---|---|---|
+        | 有（模型给了 `targetTool`） | **目标工具 + 目标参数** | 用户同意的是"那一次具体调用"，所以指纹必须和那次调用对得上，`claim_approved` 才认它 |
+        | 无 | 确认工具自己 | 纯意图确认，不绑定任何调用（那条行永远不会被认领——确认工具是只读的，不过风险门） |
+
+        第一行是「预先批准一次具体调用」的全部要害：**用户批准的是参数指纹，不是模型的意图**。
+        模型换个参数再调一次目标工具，指纹对不上，照样重新走一遍风险门。
+        """
+        target, target_args = plan.target, plan.target_args
+        with self._lock:
+            self._expire_locked()
+            if target is not None and target_args is not None:
+                item = self._mint(target, target_args, conversation_id,
+                                  summary=f"{plan.question}［{target.risk.value} 级］")
+                item.target_tool = target.name
+            else:
+                item = self._mint(spec, args, conversation_id, summary=plan.question)
+            # 等待者与条目**同时**建好（都在锁内），见 `_waiters` 的说明
+            self._waiters[item.id] = Future()
+        logger.info("实时确认已登记：%s（%s → %s）",
+                    item.id, spec.name, item.target_tool or "（未绑定调用）")
+        return item.id
+
+    def _mint(
+        self, spec: ToolSpec, args: BaseModel, conversation_id: str, summary: str
+    ) -> PendingAction:
+        """建一条待确认行（**不查重**）。调用方必须已持有 `self._lock`。"""
+        args_dump = redact_args(_dump(args))
+        item = PendingAction(
+            id=uuid.uuid4().hex[:12],
+            tool=spec.name,
+            plugin=spec.plugin_id,
+            risk=spec.risk.value,
+            args=args_dump,
+            summary=summary or summarize(spec, args_dump),
+            created_at=_now_ms(),
+            conversation_id=conversation_id,
+            fingerprint=_fingerprint(spec.name, args),
+        )
+        self._items[item.id] = item
+        self._record(item)
+        logger.info("待确认操作：%s（%s，%s）", item.id, item.tool, item.risk)
+        return item
 
     # ------------------------------------------------------------ 决策
 
     def approve(self, pending_id: str, *, by: str = "user") -> PendingAction | None:
-        """放行：兑换单次令牌（**一次性**）。"""
+        """放行：兑换单次令牌（**一次性**），并叫醒正在等答复的对话循环（如果有）。"""
         with self._lock:
             item = self._items.get(pending_id)
             if item is None or item.status != "pending":
@@ -143,6 +221,7 @@ class PendingStore:
             item.decided_by = by
             self._by_token[item.token] = item.id
             self._record(item)
+            self._settle_locked(item.id, approved=True)
             return item
 
     def reject(self, pending_id: str, reason: str = "", *, by: str = "user") -> PendingAction | None:
@@ -153,10 +232,98 @@ class PendingStore:
             item.status = "rejected"
             item.decided_at = _now_ms()
             item.decided_by = by
+            item.decided_reason = reason
             if reason:
                 item.summary = f"{item.summary}（用户拒绝：{reason}）"
             self._record(item)
+            self._settle_locked(item.id, approved=False)
             return item
+
+    def expire(self, pending_id: str, reason: str = "已过期") -> None:
+        """把一条**未决**的待确认标成到期，并叫醒等待者（未同意）。
+
+        超时/中断都必须走这一步：否则一条"晾过的"确认还停在 `pending`，
+        用户回来随手一点就成了事后通行证——这是"确认"与"批准"共用一张表
+        带来的唯一真实风险，靠这里堵住。
+        """
+        with self._lock:
+            item = self._items.get(pending_id)
+            if item is not None and item.status == "pending":
+                item.status = "expired"
+                item.decided_at = _now_ms()
+                self._record(item)
+                logger.info("确认到期：%s（%s）", pending_id, reason)
+            self._settle_locked(pending_id, approved=False, expired=True)
+
+    # ------------------------------------------------------------ 等待答复
+
+    async def wait_decision(self, pending_id: str, timeout_s: float) -> ConfirmOutcome:
+        """等用户答复（`ToolHub.await_confirmation` 的实现）。
+
+        这是**唯一**会阻塞对话循环的地方，因此四件事都要做对：
+
+        - **答复可能先到**。界面在 `confirm_required` 事件里就能点「同意」，
+          而那个事件**早于**本方法被调用（循环要先 yield 出去，界面才看得见）。
+          所以答复必须能存住、后到的等待者能取到——否则用户明明答复了，
+          循环还要干等到自己的超时。
+        - **超时 → 标 expired 并按未同意返回**。绝不"等不到就算默认同意"。
+        - **被取消 → 同样标 expired**。用户关掉页面 / SSE 断开时 `wait_for` 会把
+          这个协程取消掉；此时若什么都不做，那条 pending 就留在了 `pending`。
+        - **答复文本在这里拼**（`_answer`），而不是在 `approve()` 里：
+          只有这里同时看得见"用户点了什么"和"这条确认绑定了哪次调用"。
+        """
+        timeout_s = float(timeout_s) if timeout_s and timeout_s > 0 else DEFAULT_CONFIRM_TIMEOUT_S
+        with self._lock:
+            early = self._decisions.pop(pending_id, None)
+            fut: Future[ConfirmOutcome] | None = None
+            if early is None:
+                fut = self._waiters.get(pending_id)
+                if fut is None:
+                    # 正常路径上不该发生（登记时已建好）；真发生了也不能当"已同意"
+                    fut = Future()
+                    self._waiters[pending_id] = fut
+
+        try:
+            if early is not None:
+                return self._finish(pending_id, early)
+            outcome = await asyncio.wait_for(asyncio.wrap_future(fut), timeout=timeout_s)
+            return self._finish(pending_id, outcome)
+        except asyncio.TimeoutError:
+            self.expire(pending_id, "用户未在限时内答复")
+            return self._finish(pending_id, ConfirmOutcome(
+                approved=False, pending_id=pending_id, expired=True))
+        except BaseException:
+            # CancelledError 也要落到这里：对话被中断，等待者没了
+            self.expire(pending_id, "对话已中断")
+            raise
+        finally:
+            # 无论走哪条路都把存下来的答复清掉，`_decisions` 不会随对话增长
+            with self._lock:
+                self._decisions.pop(pending_id, None)
+
+    def _finish(self, pending_id: str, outcome: ConfirmOutcome) -> ConfirmOutcome:
+        """补上给模型看的答复文本。**必须在锁外调用**（`get()` 自己会抢锁）。"""
+        return ConfirmOutcome(
+            approved=outcome.approved, expired=outcome.expired, pending_id=pending_id,
+            answer=self._answer(self.get(pending_id), approved=outcome.approved,
+                                expired=outcome.expired),
+        )
+
+    def _answer(self, item: PendingAction | None, *, approved: bool, expired: bool) -> str:
+        """把答复拼成给模型看的一句话（工具观测的正文）。"""
+        target = item.target_tool if item is not None else ""
+        if approved:
+            if target:
+                return (f"用户已同意这次操作。现在可以调用 `{target}`——**参数必须与申请时"
+                        "完全一致**：服务端按「工具 + 参数指纹」认领这次批准，"
+                        "换了参数会重新走一遍风险确认门。")
+            return "用户已同意继续。"
+        if expired:
+            return ("用户没有在限时内答复，已按**未同意**处理。不要重复发起同一次确认；"
+                    "如果还需要，先用自然语言问用户是否方便。")
+        reason = (item.decided_reason if item is not None else "").strip()
+        return ("用户**拒绝**了这次操作。" + (f"理由：{reason} " if reason else "")
+                + "不要重试，也不要换一个工具绕过去；按用户的理由换个做法，或直接问他要怎么办。")
 
     # ------------------------------------------------------------ 确认门
 
@@ -248,6 +415,31 @@ class PendingStore:
 
     # ------------------------------------------------------------ 内部
 
+    def _settle_locked(
+        self, pending_id: str, *, approved: bool, expired: bool = False
+    ) -> None:
+        """叫醒等这条确认的对话循环。**调用方必须已持有 `self._lock`**。
+
+        刻意做成"要求在锁内调用"而不是自己抢锁：`_expire_locked` 已经在锁内，
+        自己抢锁就是**自死锁**（`threading.Lock` 不可重入）——而这类死锁只在
+        "TTL 恰好到期且恰好有人在等"时出现，最难复现。
+
+        `Future.set_result` 在锁内调用是安全的：它只是把回调排进事件循环
+        （`call_soon_threadsafe`），不阻塞、也不会回头抢这把锁。
+        """
+        fut = self._waiters.pop(pending_id, None)
+        if fut is None or fut.done():
+            # 没人在等（风险门的普通待确认），或等待者已经放弃（超时后 future 被取消）
+            return
+        outcome = ConfirmOutcome(approved=approved, expired=expired, pending_id=pending_id)
+        fut.set_result(outcome)
+        # ⚠️ 还要**存一份**：答复可能先于等待者到达（界面在 `confirm_required` 事件里
+        # 就点了同意，而循环那时还没走到 `wait_decision`）。不存的话，`wait_decision`
+        # 到 `_waiters` 里已经找不到东西，只能新建一个永远不会被 resolve 的 future
+        # ——用户明明答复了，循环却干等满一个超时（实测复现过）。
+        # 清理由 `wait_decision` 的 `finally` 负责。
+        self._decisions[pending_id] = outcome
+
     def _expire_locked(self) -> None:
         now = _now_ms()
         for item in self._items.values():
@@ -259,6 +451,9 @@ class PendingStore:
             elif (item.status == "pending" and now - item.created_at > PENDING_TTL_MS):
                 item.status = "expired"
                 self._record(item)
+                # 有人正在等的话必须一起叫醒：否则那个循环会一直等到自己的超时，
+                # 而条目早已不是 pending —— 用户这时候点「同意」只会拿到 409
+                self._settle_locked(item.id, approved=False, expired=True)
 
     def _record(self, item: PendingAction) -> None:
         try:
@@ -389,6 +584,14 @@ def install(hub: ToolHub) -> None:
         lambda spec, args, token, conversation_id: pending_store().gate(
             spec, args, token, conversation_id
         )
+    )
+    hub.set_confirmation_gate(
+        lambda spec, args, plan, ctx: pending_store().request_confirmation(
+            spec, args, plan, ctx.conversation_id
+        )
+    )
+    hub.set_confirmation_waiter(
+        lambda pending_id, timeout_s: pending_store().wait_decision(pending_id, timeout_s)
     )
     _expire_orphans()
 

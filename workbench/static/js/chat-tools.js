@@ -110,6 +110,7 @@ export function createToolTrail(host) {
   let pendingThought = null; // 已到达但还没等到工具卡的模型旁白
   let lastHandle = null; // 最近一张卡：observation 缺 auditId 时的兜底目标
   const cards = new Map(); // auditId → 卡片句柄
+  const confirms = new Map(); // pendingId → 确认卡句柄（等 `confirm_resolved` 来收口）
 
   const openBlock = () => {
     if (block) return block;
@@ -239,6 +240,31 @@ export function createToolTrail(host) {
     applyObservation,
     addApproval(event) {
       openBlock().appendChild(approvalCard(event));
+    },
+    /** 模型请求实时确认：对话循环此刻**正卡在等待里**，用户点完它自己就继续 */
+    addConfirm(event) {
+      const ui = confirmationCard(event);
+      const pendingId = String(event.pendingId || "");
+      if (pendingId) confirms.set(pendingId, ui);
+      openBlock().appendChild(ui.card);
+    },
+    /** 服务端给出的**权威答复**（用户的点击只是提交，答复以这条事件为准）。 */
+    settleConfirm(event) {
+      const pendingId = String(event.pendingId || "");
+      const ui = confirms.get(pendingId);
+      if (!ui) return; // 卡不在（SSE 断线重连/换会话）：紧跟其后的 observation 已经说明结果
+      confirms.delete(pendingId);
+      if (ui.decided) return; // 本地已经收口（409 等），不覆盖
+      if (event.approved) {
+        ui.settle("allowed", "已同意 · 模型继续执行",
+          "模型现在可以直接调用上面那次调用，参数一致即可，不会再问第二遍。");
+      } else if (event.expired) {
+        ui.settle("timeout", "超时未答复 · 已按未同意处理",
+          "没有产生任何批准；如果需要，让模型重新发起一次确认。");
+      } else {
+        ui.settle("rejected", "已拒绝 · 模型不会执行",
+          String(event.answer || "").trim() || "模型会看到这次拒绝，并被要求不要重试。");
+      }
     },
     /** 文字段开始 = 上一轮工具调用结束，卡片从此另起一块 */
     endRound() {
@@ -414,6 +440,137 @@ function approvalCard(event) {
   });
 
   return card;
+}
+
+/* ———————————————— 模型请求确认（实时确认） ———————————————— */
+
+/** `request_user_confirmation` 的确认卡。
+ *
+ *  **与 `approvalCard` 是两张卡，别合并**——它们要人做的事不一样：
+ *
+ *  | | 出现时机 | 用户点完之后 |
+ *  |---|---|---|
+ *  | `approvalCard`（风险门） | 本轮对话**已结束**，工具被拦下了 | 用户得再发一条消息让模型重试 |
+ *  | 本卡（实时确认） | 对话循环**正卡在等待里** | 模型自己就继续了，不用再发消息 |
+ *
+ *  文案因此**不能互抄**：这里写「同意后我会继续」，风险门那张写「不会自动重发」。
+ *  抄错方向的后果是让人对着一个已经复活的循环干等，或者反过来以为还要再发一句。
+ */
+function confirmationCard(event) {
+  const pendingId = String(event.pendingId || "");
+  const target = event.target || null;
+
+  const card = node("div", "confirm-card");
+  card.dataset.pendingId = pendingId;
+  card.dataset.state = "asking";
+
+  const head = node("div", "confirm-head");
+  head.appendChild(node("span", "confirm-title", "模型请求确认"));
+  if (target && target.tool) {
+    head.appendChild(riskBadge(target.risk));
+    head.appendChild(node("span", "confirm-tool mono", target.tool));
+  }
+  card.appendChild(head);
+
+  card.appendChild(node("div", "confirm-question",
+    event.question || "（模型没有说明要确认什么）"));
+  if (event.details) card.appendChild(node("div", "confirm-details", event.details));
+
+  if (target && target.tool) {
+    const block = node("div", "confirm-target");
+    block.appendChild(node("div", "tool-section-label",
+      "同意后将要执行的调用（参数必须与这里完全一致才会被放行）"));
+    const args = target.args && Object.keys(target.args).length
+      ? prettyArgs(JSON.stringify(target.args))
+      : "（无参数）";
+    block.appendChild(node("pre", "tool-args", args));
+    card.appendChild(block);
+  } else {
+    // 没绑定调用时必须说清楚：用户最容易误以为"点了同意就等于批准了后面的写操作"
+    card.appendChild(node("div", "confirm-details",
+      "这次确认没有绑定具体调用：同意只代表同意模型继续，不会放行任何写操作——"
+      + "真正的写入仍会单独弹一次确认。"));
+  }
+
+  const timeoutS = Number(event.timeoutS);
+  if (Number.isFinite(timeoutS) && timeoutS > 0) {
+    card.appendChild(node("div", "confirm-timeout",
+      `最多等待 ${formatDuration(timeoutS * 1000)}；超时按「未同意」处理`));
+  }
+
+  const actions = node("div", "confirm-actions");
+  const allow = node("button", "btn-primary confirm-allow", "同意");
+  allow.type = "button";
+  const deny = node("button", "btn-ghost confirm-deny", "拒绝");
+  deny.type = "button";
+  actions.appendChild(allow);
+  actions.appendChild(deny);
+  card.appendChild(actions);
+
+  const stateEl = node("div", "confirm-state");
+  stateEl.hidden = true;
+  card.appendChild(stateEl);
+
+  const ui = { card, actions, stateEl, decided: false };
+  ui.setBusy = (busy) => {
+    allow.disabled = busy;
+    deny.disabled = busy;
+    if (busy) {
+      stateEl.hidden = false;
+      stateEl.className = "confirm-state is-pending";
+      stateEl.textContent = busy === "allow"
+        ? "已同意，正在唤醒模型…"
+        : "正在提交拒绝…";
+    }
+  };
+  /** 终局：按钮必须撤掉。已决策的确认再点一次只会拿到 409，
+   *  留着按钮等于邀请人去撞那个 409（与风险门那张卡同一套理由）。 */
+  ui.settle = (kind, text, detail) => {
+    ui.decided = true;
+    actions.hidden = true;
+    card.dataset.state = kind;
+    stateEl.hidden = false;
+    stateEl.className = `confirm-state is-${kind}`;
+    stateEl.textContent = text;
+    if (detail) stateEl.appendChild(node("div", "approval-detail", detail));
+  };
+  /** 非 409 的失败不是终局：按钮放回去，让人能重试 */
+  ui.fail = (prefix, error) => {
+    ui.setBusy(false);
+    stateEl.hidden = false;
+    stateEl.className = "confirm-state is-failed";
+    stateEl.textContent = prefix + (error && error.message ? error.message : "未知原因");
+  };
+
+  allow.addEventListener("click", async () => {
+    if (ui.decided) return;
+    ui.setBusy("allow");
+    try {
+      await api.approvePending(pendingId);
+      // 令牌是一次性凭证，这里**不回填 DOM**。确认路径上循环本来就不需要它——
+      // 服务端按「工具 + 参数指纹」认领这次批准，模型重放同一次调用即可。
+      ui.setBusy("allow");
+    } catch (error) {
+      if (error.status === 409) ui.settle("stale", "已失效／已决策", error.message);
+      else ui.fail("同意失败：", error);
+    }
+  });
+
+  deny.addEventListener("click", async () => {
+    if (ui.decided) return;
+    const reason = await askRejectReason(`确认请求${target && target.tool ? `（${target.tool}）` : ""}`);
+    if (reason === null) return; // 取消：什么都没发生，按钮保持原样
+    ui.setBusy("deny");
+    try {
+      await api.rejectPending(pendingId, reason);
+      ui.setBusy("deny");
+    } catch (error) {
+      if (error.status === 409) ui.settle("stale", "已失效／已决策", error.message);
+      else ui.fail("拒绝失败：", error);
+    }
+  });
+
+  return ui;
 }
 
 /* ———————————————— 工具清单浮层 ———————————————— */

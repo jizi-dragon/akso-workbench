@@ -442,10 +442,10 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 |---|---|---|---|
 | **工具契约** | JSON Schema + 名字 + 描述；Anthropic 2025-11 追加 `input_examples` | pydantic `args_model` → `_openai_schema()` 自动派生，**schema 不手写第二份** | ✅ **优于主流**：类型即契约，schema 由类型派生，天然不会漂移 |
 | **工具来源标准化** | **MCP** 已是事实标准：2025-12-09 由 Anthropic 捐给 Linux Foundation 下的 Agentic AI Foundation（Anthropic/Block/OpenAI 共同创立，Google/Microsoft/AWS/Cloudflare/Bloomberg 支持），1 万+ 公开 server、97M+ 月 SDK 下载，ChatGPT/Cursor/Gemini/Copilot/VS Code 均已采用 | 自有 `ToolHub` 插件协议，**未接 MCP** | ❌ **缺失**，但**通道已预留**（见 §7.2） |
-| **大规模工具注入** | Anthropic Tool Search Tool（`defer_loading`）：>10K token 或 10+ 工具时按需发现，上下文省 85%；纯工具定义在 5 server 场景可达 55K token，Anthropic 内部见过 134K | **全量注入**，自估 ~2k token/轮；`list_api_for(plugins)` 已留白名单口子 | 🟡 20 个工具、~2k token **远低于 10K 阈值**，当前全量注入是**正确选择**；但缺"工具变多之后的退路" |
+| **大规模工具注入** | Anthropic Tool Search Tool（`defer_loading`）：>10K token 或 10+ 工具时按需发现，上下文省 85%；纯工具定义在 5 server 场景可达 55K token，Anthropic 内部见过 134K | **全量注入**，自估 ~2k token/轮；`list_api_for(plugins)` 已留白名单口子 | 🟡 当前工具规模（见 [TOOLS.md](TOOLS.md)）、~2k token **远低于 10K 阈值**，当前全量注入是**正确选择**；但缺"工具变多之后的退路" |
 | **风险分级** | 框架普遍有（OpenAI Agents SDK `needsApproval`、LangGraph `interrupt()`） | `Risk` 三档 + 显式声明（装配期强制，不声明不给过） | ✅ 符合 |
 | **工具结果体量** | 普遍靠截断；前沿做法是 Programmatic Tool Calling（工具在代码沙箱里编排，中间结果不进上下文，token 降 37%） | `MAX_RESULT_CHARS=16_000` **显式告知**截断 + 沙箱已具备执行能力，但**未做工具编排** | 🟡 截断处理比多数项目诚实（告知而非静默）；PTC 是明确的下一步 |
-| **参数准确率** | `input_examples` 实测把复杂参数准确率从 72% 提到 90% | 靠 `description` 里写清口径（如 `factory_create` 的描述写明"会真的改平台数据"） | 🟡 无示例机制；20 个工具规模下描述够用 |
+| **参数准确率** | `input_examples` 实测把复杂参数准确率从 72% 提到 90% | 靠 `description` 里写清口径（如 `factory_create` 的描述写明"会真的改平台数据"） | 🟡 无示例机制；当前工具规模下描述够用 |
 | **并行工具调用** | OpenAI/Anthropic 均支持一次返回多个 tool_call，框架普遍并发执行 | **串行** `for call in assistant["tool_calls"]`（`loop.py:211`） | 🟡 功能正确（回填顺序无所谓），但多工具场景延迟是 N 倍 |
 
 **一个值得点出的优点**：`ToolSpec.valid()` 在**装配期**就断言工具名符合
@@ -556,7 +556,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 
 **现状判断**：**当前不接是对的选择**。理由：
 1. 本项目的价值在**领域工具**（eGMP 洞察/工厂/账号），不在"接入尽可能多的工具"；
-2. MCP 的收益随工具数与生态规模增长，而本项目 20 个工具、单一领域；
+2. MCP 的收益随工具数与生态规模增长，而本项目工具数在"几十"这个量级、单一领域；
 3. MCP 会引入**不可信 server** 这个新信任边界，而现有的 `capabilities` Fail-Closed 设计
    是按"包是我们自己审过的"来设计的。
 
@@ -589,7 +589,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
   收益：模型一次发 N 个独立工具调用时延迟从 N× 降到 1×。
   风险：确认门 + 并发的交互需要想清楚（多个风险工具同时被拦时的 pending 展示顺序）。
 - **裁剪**：`plugins` 白名单口子已留。可按页面/意图注入子集，进一步压低每轮 schema 成本。
-  20 个工具时不必要，但**是接 MCP 之前必须有的能力**（MCP 会让工具数暴涨）。
+  当前工具数下不必要，但**是接 MCP 之前必须有的能力**（MCP 会让工具数暴涨）。
 
 ### 7.5 【中成本】可观测性对齐 OTel
 

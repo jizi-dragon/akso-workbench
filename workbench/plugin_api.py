@@ -69,7 +69,7 @@ import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
@@ -81,6 +81,21 @@ MAX_RESULT_CHARS = 16_000
 """单条工具结果回填给模型的上限。超出部分截断并显式告知模型（不是静默丢弃）。"""
 
 FUNCTION_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+DEFAULT_CONFIRM_TIMEOUT_S = 300.0
+"""`needs_confirmation` 工具等用户答复的默认上限（秒）。
+
+5 分钟与 `approvals.PENDING_TTL_S` 同量级——**这不是巧合**：两者都是
+"用户此刻还在电脑前"的时间尺度。超时后确认项会被标 `expired`，
+它**不能**再授权任何调用（否则一个晾了半小时的答复会变成一张事后通行证）。
+"""
+
+MAX_CONFIRM_TIMEOUT_S = 1_800.0
+"""`timeoutS` 的上限（30 分钟）。超上限就夹到这个值。
+
+为什么要夹：等待发生在**对话循环内部**，一次确认把整轮对话按住。
+不夹的话一个写错的 `timeoutS`（比如把毫秒当秒填了 `300000`）会让会话静默卡住三天。
+"""
 
 _REDACT_KEYS = frozenset({
     "password", "passwd", "token", "api_key", "apikey", "secret",
@@ -152,6 +167,41 @@ class ToolSpec:
     同样不得含凭据——`redact_args` 会再过一遍，但别指望它兜底。
     """
 
+    needs_confirmation: bool = False
+    """True = **不立即执行 handler**，而是先向用户发起一次**实时确认**（`request_user_confirmation`）。
+
+    与 `risk` 的分工（**别把两者读混**）：
+
+    | | 谁发起 | 拦的是什么 | 权威在 |
+    |---|---|---|---|
+    | `risk >= write` | **宿主**（按声明自动拦） | 这一次**调用** | 宿主，模型无法绕过 |
+    | `needs_confirmation` | **模型**（主动调用这个工具） | 模型**打算做的事** | 模型的自律 + 用户当场判断 |
+
+    ⚠️ 因此 `needs_confirmation` **不能**作为高风险调用的放行依据——
+    模型只要不调用它就绕过去了。它买的是"模型可以**先问再做**"，
+    而 `risk` 买的是"不做就不能做"。两者是**互补**，不是替代。
+
+    ⚠️ 带此标记的工具**必须**是 `Risk.READ`：否则它会先过自己的确认门 →
+    用户被问"要不要问你要不要确认" → 无限递归。有回归断言钉住。
+    """
+
+    confirm_payload: Callable[[BaseModel], dict[str, Any]] | None = None
+    """`needs_confirmation=True` 时，从参数里抽出**给用户看的**确认内容。
+
+    返回的 dict 会被 `ToolHub` 规范化，可含：
+
+        question    给人看的问题（一句话：将要做什么、影响谁）
+        details     补充说明（影响面 / 可否回滚 / 涉及的环境与对象）
+        targetTool  可选：将要执行的那个工具的**名字**
+        targetArgs  可选：传给它的参数（dict）
+        timeoutS    可选：等用户答复的秒数
+
+    ⚠️ **`targetTool` 是"预先批准一次具体调用"的入口**：填了它，
+    这条确认就绑定到那次调用的**参数指纹**上，用户同意后模型发起那次调用会直接执行
+    （走 `PendingStore.claim_approved`）。这与 `risk` 门用的是同一套指纹与一次性语义，
+    **不放松任何安全属性**——用户看到的就是将要跑的那一次调用。
+    """
+
     def to_api(self) -> dict:
         """转为 OpenAI function calling 的 tools 声明。"""
         return {
@@ -176,6 +226,17 @@ class ToolSpec:
             problems.append(f"工具 {self.name} 缺少 description（模型靠它选工具）")
         if not (isinstance(self.args_model, type) and issubclass(self.args_model, BaseModel)):
             problems.append(f"工具 {self.name} 的 args_model 必须是 pydantic BaseModel 子类")
+        if self.needs_confirmation and self.risk is not Risk.READ:
+            problems.append(
+                f"工具 {self.name} 同时标了 needs_confirmation 与 risk={self.risk.value}："
+                "确认工具本身必须是 read——否则它会先过自己的确认门，用户被问"
+                "「要不要问你要不要确认」，无限递归"
+            )
+        if self.confirm_payload is not None and not self.needs_confirmation:
+            problems.append(
+                f"工具 {self.name} 提供了 confirm_payload 但没标 needs_confirmation=True："
+                "该属性会被静默忽略（用户永远看不到那段内容），声明要么补齐要么删掉"
+            )
         return problems
 
 
@@ -227,10 +288,48 @@ class ToolPlugin(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class ConfirmPlan:
+    """一次「请用户确认」的**规范化**请求。
+
+    ⚠️ **只由 `ToolHub._prepare_confirmation` 构造**，插件的返回值得不到信任：
+    `target` 一定是中枢里真实存在、且已用 `args_model` 校验过参数的 `ToolSpec`。
+    插件唯一能决定的只有"问什么"，决定不了"批准什么"。
+    """
+
+    question: str
+    details: str = ""
+    timeout_s: float = DEFAULT_CONFIRM_TIMEOUT_S
+
+    target: ToolSpec | None = None
+    """`targetTool` 指定的那个将要执行的工具。`None` = 纯意图确认（没有绑定的调用）。"""
+
+    target_args: BaseModel | None = None
+    """已校验的目标参数。用户同意的就是**这一组具体参数**（按指纹绑定）。"""
+
+    target_args_raw: dict[str, Any] = field(default_factory=dict)
+    """目标参数的原样 dict，给界面预览用（可能含敏感值，界面按现状渲染）。"""
+
+
+@dataclass(frozen=True)
+class ConfirmOutcome:
+    """用户对一次确认请求的答复（`harness/loop.py` 把它回填成工具观测）。"""
+
+    approved: bool
+    pending_id: str = ""
+    answer: str = ""
+    """给模型看的一句话：同意 / 拒绝（含理由）/ 超时未答复。"""
+
+    expired: bool = False
+    """True = 没等到答复（超时、或应用退出）。**它同时意味着没有产生任何批准**。"""
+
+
 class ToolStatus(str, Enum):
     OK = "ok"
     ERROR = "error"
     NEEDS_APPROVAL = "needs_approval"
+    NEEDS_CONFIRMATION = "needs_confirmation"
+    """模型主动请求实时确认，等待用户答复（由 `harness/loop.py` 就地等待并回填答复）。"""
     REJECTED = "rejected"
     TIMEOUT = "timeout"
     UNKNOWN_TOOL = "unknown_tool"
@@ -250,6 +349,13 @@ class Invocation:
     plugin_id: str = ""
     pending_id: str = ""
     """status=NEEDS_APPROVAL 时的待确认操作 id（凭它去 /api/agent/pending/{id}/approve）。"""
+    confirm: dict[str, Any] = field(default_factory=dict)
+    """status=NEEDS_CONFIRMATION 时给界面看的确认内容。
+
+    形如 `{pendingId, question, details, timeoutS, target: {tool, risk, args} | None}`。
+    **由宿主规范化后填**（`ToolHub._prepare_confirmation`），工具自己填不了——
+    这样"目标工具是否存在/是否只读/参数是否合法"这几个校验无法被插件绕过。
+    """
     approval_token: str = ""
     """用户放行后拿到的单次令牌；模型原样重试同一次调用即可通过确认门。"""
     risk_reason: str = ""
@@ -299,6 +405,12 @@ class ToolHub:
         self._audit_writer: Callable[[dict[str, Any]], None] | None = None
         self._approval_gate: (
             Callable[[ToolSpec, BaseModel, str, str], tuple[bool, str, str]] | None
+        ) = None
+        self._confirm_gate: (
+            Callable[[ToolSpec, BaseModel, ConfirmPlan, ToolContext], str] | None
+        ) = None
+        self._confirm_waiter: (
+            Callable[[str, float], Awaitable[ConfirmOutcome]] | None
         ) = None
 
     # ------------------------------------------------------------ 装配
@@ -409,11 +521,16 @@ class ToolHub:
         for spec in plugin.tools:
             if spec.plugin_id and spec.plugin_id != plugin.id:
                 raise ValueError(f"插件 {plugin.id} 的工具 {spec.name} plugin_id 不一致")
-            bound = ToolSpec(
-                name=spec.name, description=spec.description, args_model=spec.args_model,
-                handler=spec.handler, risk=spec.risk, plugin_id=plugin.id,
-                timeout_s=spec.timeout_s, audit_extra=spec.audit_extra,
-            )
+            # ⚠️ 必须用 `dataclasses.replace`，**不要**手写字段清单。
+            #
+            # 这里原来是逐字段重建（`ToolSpec(name=..., description=..., …)`）。它的失败模式
+            # 是静默的：新加一个字段（`needs_confirmation` / `confirm_payload`）如果忘了
+            # 补进那份清单，插件的声明就会在装配时被**悄悄丢掉**——工具照常出现在清单里、
+            # 照常能调，只是那个新行为不生效。2026-09-20 实测：`request_user_confirmation`
+            # 的 `needs_confirmation` 在注册后变成了 `False`，于是 handler 被真执行，
+            # 而它本该永远不会被调用。
+            # `replace` 对"以后再加字段"是结构免疫的，手写清单不是。
+            bound = replace(spec, plugin_id=plugin.id)
             if bound.name in seen:
                 raise ValueError(f"插件 {plugin.id} 内工具名重复：{bound.name}")
             seen.add(bound.name)
@@ -477,6 +594,26 @@ class ToolHub:
     ) -> None:
         """注入确认门：`(spec, 已校验参数, 令牌, 会话id) → (放行?, pending_id, 需确认原因)`。"""
         self._approval_gate = gate
+
+    def set_confirmation_gate(
+        self,
+        gate: Callable[[ToolSpec, BaseModel, ConfirmPlan, ToolContext], str],
+    ) -> None:
+        """注入**实时确认**的登记口：`(spec, 参数, 计划, 上下文) → pending_id`。
+
+        刻意是**同步且立刻返回**的：它只负责"把这次确认登记下来"，**不等待用户**。
+        等待发生在 `harness/loop.py`（`await self.await_confirmation(...)`）——
+        原因见 `ToolSpec.needs_confirmation` 上面那段：`execute()` 期间循环是挂起的，
+        事件发不出去，界面就不会知道有东西要确认。**登记与等待必须分开**。
+        """
+        self._confirm_gate = gate
+
+    def set_confirmation_waiter(
+        self,
+        waiter: Callable[[str, float], Awaitable[ConfirmOutcome]],
+    ) -> None:
+        """注入等待口：`(pending_id, 超时秒) → 用户答复`。同样由 approvals 层提供。"""
+        self._confirm_waiter = waiter
 
     # ------------------------------------------------------------ 查询
 
@@ -555,6 +692,11 @@ class ToolHub:
                     "risk": s.risk.value,
                     "plugin": s.plugin_id,
                     "origin": self._plugins[s.plugin_id].origin.value,
+                    # True = 这个工具**由模型主动调用**去征求用户实时确认（不是宿主拦下的）。
+                    # 单独一个字段而不是塞进 `risk`：两者是**互补**的两套东西
+                    # （见 `ToolSpec.needs_confirmation` 的对照表）。界面与文档靠它
+                    # 把"宿主会拦"和"模型会问"分开显示。
+                    "needs_confirmation": s.needs_confirmation,
                     "args": _args_doc(s.args_model),
                 }
                 for s in self._tools.values()
@@ -568,6 +710,91 @@ class ToolHub:
         }
 
     # ------------------------------------------------------------ 执行
+
+    def _prepare_confirmation(self, spec: ToolSpec, args: BaseModel) -> ConfirmPlan:
+        """把插件给的 `confirm_payload` 规范化成**可信的** `ConfirmPlan`。
+
+        这里是唯一的信任边界：`targetTool` / `targetArgs` 必须在这里解析成中枢里
+        真实存在的 `ToolSpec` 并过一遍它自己的 `args_model`。越界的形态
+        （工具不存在 / 目标自己也要确认 / 目标是只读的）**一律拒**，
+        不回落到"那就当纯意图确认吧"——那会把插件的一个笔误静默降级成
+        "用户以为批准了 A，实际什么也没批准"。
+
+        校验失败抛 `_BadArguments`，由 `execute` 转成 BAD_ARGS 观测（模型可自我纠正）。
+        """
+        raw: dict[str, Any] = {}
+        if spec.confirm_payload is not None:
+            try:
+                raw = dict(spec.confirm_payload(args) or {})
+            except Exception as exc:  # noqa: BLE001 —— 抽取失败 = 参数问题，不是崩溃
+                raise _BadArguments(
+                    f"confirm_payload 抽取失败：{type(exc).__name__}: {exc}"
+                ) from exc
+
+        # question 缺省回落 description：宁可问得含糊，也不要因为少填一个字段就拒掉
+        # ——确认工具"问不出口"的后果是模型转向不做确认，那比问得含糊危险得多。
+        question = str(raw.get("question") or "").strip() or spec.description.strip()
+        details = str(raw.get("details") or "").strip()
+
+        timeout_raw = raw.get("timeoutS", raw.get("timeout_s", DEFAULT_CONFIRM_TIMEOUT_S))
+        try:
+            timeout_s = float(timeout_raw)
+        except (TypeError, ValueError) as exc:
+            raise _BadArguments(f"timeoutS 必须是数字，得到 {timeout_raw!r}") from exc
+        if timeout_s <= 0:
+            raise _BadArguments(f"timeoutS 必须为正数，得到 {timeout_s!r}")
+        timeout_s = min(timeout_s, MAX_CONFIRM_TIMEOUT_S)
+
+        target_name = str(raw.get("targetTool") or "").strip()
+        target: ToolSpec | None = None
+        target_args: BaseModel | None = None
+        target_raw: dict[str, Any] = {}
+
+        if target_name:
+            target = self._tools.get(target_name)
+            if target is None:
+                raise _BadArguments(
+                    f"targetTool={target_name!r} 不存在。可用工具："
+                    f"{', '.join(sorted(self._tools))}"
+                )
+            if target.name == spec.name:
+                raise _BadArguments(f"targetTool 不能是确认工具自己（{spec.name}）")
+            if target.needs_confirmation:
+                raise _BadArguments(
+                    f"targetTool={target_name!r} 本身也要确认：确认不能嵌套。"
+                    "一次确认只批准一次具体调用，不要用它去批准另一次确认"
+                )
+            if target.risk is Risk.READ:
+                raise _BadArguments(
+                    f"targetTool={target_name!r} 是只读工具（risk=read），无需预先批准"
+                    "——只读调用直接调用即可，targetTool 只用于 write/dangerous 级调用"
+                )
+            target_args = _validate(target, raw.get("targetArgs") or {})
+            target_raw = target_args.model_dump(mode="json")
+
+        return ConfirmPlan(
+            question=question, details=details, timeout_s=timeout_s,
+            target=target, target_args=target_args, target_args_raw=target_raw,
+        )
+
+    async def await_confirmation(self, pending_id: str, timeout_s: float) -> ConfirmOutcome:
+        """等用户对某次确认的答复。**由 `harness/loop.py` 调用**（不是 `execute`）。
+
+        没有接入等待口时**一律返回未同意**——"问不到用户"绝不能被当成"用户默许"。
+        """
+        if self._confirm_waiter is None:
+            return ConfirmOutcome(
+                approved=False, pending_id=pending_id, expired=True,
+                answer="确认通道不可用（宿主没有接入实时确认），已按未同意处理。",
+            )
+        try:
+            return await self._confirm_waiter(pending_id, timeout_s)
+        except Exception as exc:  # noqa: BLE001 —— 等待失败 = 未同意，不是崩溃
+            logger.warning("等待确认 %s 失败：%s", pending_id, exc)
+            return ConfirmOutcome(
+                approved=False, pending_id=pending_id, expired=True,
+                answer=f"确认通道异常（{type(exc).__name__}），已按未同意处理。",
+            )
 
     async def execute(
         self,
@@ -602,6 +829,50 @@ class ToolHub:
                              audit_id=audit_id, risk=spec.risk, plugin_id=spec.plugin_id,
                              request_id=_call_id(arguments), error=str(exc))
             self._audit(spec, inv, {})
+            return inv
+
+        # 实时确认（`needs_confirmation`）：模型主动"先问再做"。
+        #
+        # 位置在风险门**之前**，但两者不会互相触发：确认工具自己必须是 read
+        # （`ToolSpec.valid()` 装配期钉住）。分开的意义是用户会先后看到两条独立信息
+        # ——"你要不要做 X" 与 "X 现在要执行了"——而不会把前者误读成后者免检。
+        #
+        # ⚠️ 这里**只登记、不等待**：`execute` 一旦 await，调用它的循环就被挂起，
+        # `confirm_required` 事件发不出去，界面根本不知道有东西要确认（见
+        # `set_confirmation_gate` 的说明）。等待在 `harness/loop.py`。
+        if spec.needs_confirmation:
+            try:
+                plan = self._prepare_confirmation(spec, args)
+            except _BadArguments as exc:
+                inv = Invocation(tool=name, status=ToolStatus.BAD_ARGS, content=str(exc),
+                                 audit_id=audit_id, risk=spec.risk, plugin_id=spec.plugin_id,
+                                 request_id=_call_id(arguments), error=str(exc))
+                self._audit(spec, inv, {})
+                return inv
+
+            if self._confirm_gate is None:
+                inv = Invocation(
+                    tool=name, status=ToolStatus.ERROR, audit_id=audit_id, risk=spec.risk,
+                    plugin_id=spec.plugin_id, request_id=_call_id(arguments),
+                    error="确认通道不可用",
+                    content=(
+                        "确认通道不可用（宿主没有接入实时确认），**没有**向用户问过任何问题。"
+                        "不要把这次调用当成已获同意：请改用自然语言直接向用户提问，"
+                        "并在用户答复后再继续。"
+                    ),
+                )
+                self._audit(spec, inv, _extra(spec, args))
+                return inv
+
+            pending_id = self._confirm_gate(spec, args, plan, ctx)
+            inv = Invocation(
+                tool=name, status=ToolStatus.NEEDS_CONFIRMATION,
+                content=f"⏸ 已向用户发起确认（pending_id={pending_id}）：{plan.question}",
+                audit_id=audit_id, risk=spec.risk, plugin_id=spec.plugin_id,
+                pending_id=pending_id, request_id=_call_id(arguments),
+                risk_reason=plan.question, confirm=_confirm_view(plan, pending_id),
+            )
+            self._audit(spec, inv, _extra(spec, args))
             return inv
 
         # 确认门：风险工具没有单次令牌就不执行
@@ -803,6 +1074,28 @@ def _validate(spec: ToolSpec, arguments: str | dict[str, Any] | None) -> BaseMod
         parts = [f"{'.'.join(str(loc) for loc in err['loc']) or '参数'}: {err['msg']}"
                  for err in exc.errors()]
         raise _BadArguments("参数校验失败 — " + "；".join(parts)) from exc
+
+
+def _confirm_view(plan: ConfirmPlan, pending_id: str) -> dict[str, Any]:
+    """确认内容的对外形状（**camelCase**）。
+
+    它是 `Python → JS` 的**无类型接口**：改任何键名都必须同步跟进
+    `workbench/static/js/chat-tools.js` 里消费它的地方（AGENTS.md §2 / PITFALLS #35）。
+    """
+    target: dict[str, Any] | None = None
+    if plan.target is not None:
+        target = {
+            "tool": plan.target.name,
+            "risk": plan.target.risk.value,
+            "args": plan.target_args_raw,
+        }
+    return {
+        "pendingId": pending_id,
+        "question": plan.question,
+        "details": plan.details,
+        "timeoutS": plan.timeout_s,
+        "target": target,
+    }
 
 
 def _extra(spec: ToolSpec, args: BaseModel) -> dict[str, Any]:

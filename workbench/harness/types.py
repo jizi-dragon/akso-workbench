@@ -60,6 +60,8 @@ EventType = Literal[
     "action",     # 发起工具调用 {call: ToolCall, tool: {name,risk,plugin}, auditId}
     "observation",# 工具结果 {result: {ok,summary,status}, invocation: {…}}
     "approval_required",  # 风险工具被确认门拦下 {pendingId, tool, risk, summary}
+    "confirm_required",   # 模型主动请求实时确认 {pendingId, question, details, target, timeoutS}
+    "confirm_resolved",   # 实时确认有了答复 {pendingId, approved, expired, answer}
     "final",      # 最终回答 {content}
     "error",      # 终止性错误 {message}
 ]

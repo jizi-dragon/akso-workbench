@@ -286,12 +286,12 @@ autologin, has_token, monitoring, monitor_log}`；
 ## 10. Agent 工具层 `/api/agent`（`routes_agent.py`）
 
 > **单一事实源**：工具清单来自**工具插件中枢** `plugin_api.ToolHub`（`workbench/plugins/`
-> 五个插件装配，共 20 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
+> 五个插件装配，共 21 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
 > schema、审计三处读的是同一份定义。插件 SDK 契约见 [PLUGIN-SDK.md](PLUGIN-SDK.md)。
 
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
-| GET | `/api/agent/tools` | — | `{plugins:[{id,title,version,description,tools:[name]}], tools:[{name,description,risk,plugin,args:{参数:说明}}], failures:[{plugin,error}]}` |
+| GET | `/api/agent/tools` | — | `{plugins:[{id,title,version,description,tools:[name]}], tools:[{name,description,risk,plugin,needs_confirmation,args:{参数:说明}}], failures:[{plugin,error}]}` |
 | GET | `/api/agent/plugins` | — | `{plugins:[...], failures:[...]}`（插件维度视图；与上一条的分工：这里答"装了哪些插件"，上一条答"能调什么"） |
 | POST | `/api/agent/invoke` | `{tool, args:{}, approvalToken?}` | 成功 `{tool,ok:true,status:"ok",risk,plugin,auditId,durationMs,result}`；见下方状态码 |
 | GET | `/api/agent/pending?status=pending&limit=50` | — | 待确认（危险）操作清单；`status=""` 取全部状态 |
@@ -310,6 +310,7 @@ autologin, has_token, monitoring, monitor_log}`；
 | 400 | `bad_args` / `unknown_tool` / `rejected`——**调用方能自己修** | `{detail:{tool,status,error,...}}` |
 | 404 | 工具名不在目录里 | `{detail:"未知工具：…"}` |
 | 409 | `needs_approval`——风险工具缺单次令牌。**不是错误，是流程中止** | `{detail:{pendingId,risk,summary,message}}` |
+| 409 | `needs_confirmation`——模型自己发起实时确认（`request_user_confirmation`）。HTTP 面**不等待答复**，答复走 `/pending/*` | `{detail:{pendingId,confirm:{question,details,timeoutS,target},message}}` |
 | 502 | 执行期失败（平台侧/超时） | `{detail:{tool,status,error,...}}` |
 
 **风险分级与确认门**（详见 [PLUGIN-SDK.md](PLUGIN-SDK.md) §4）：
@@ -319,11 +320,24 @@ autologin, has_token, monitoring, monitor_log}`；
   令牌**一次性 / 5 分钟 / 绑定工具+参数指纹**（换个参数要重新确认）。
 - 对话链路等价走法：SSE `approval_required` 事件 → 同一套 `/pending/*` 端点 → 让模型重试同一次调用。
 
-**工具清单（20 个工具，按插件）**：
+**模型主动确认（`needs_confirmation`，与上面的风险门是两套东西）**：
+
+- 触发者是**模型**（它调用 `request_user_confirmation`），不是宿主自动拦；所以它
+  **不能**当高风险调用的放行依据——模型不调用它就绕过去了。
+- 对话链路：SSE `confirm_required` → 用户在卡片上点同意/拒绝 → SSE `confirm_resolved`
+  → 循环**当场继续**（不需要用户再发一条消息）。等待有上限（`timeoutS`，默认 300s，上限 1800s），
+  超时按**未同意**处理，且那条确认会被标 `expired`——事后补点同意也无效。
+- 带 `target_tool` + `target_args` 时，用户同意的是**那一次具体调用**：批准按
+  「目标工具 + 参数指纹」绑定，模型换参数调用要重新走一遍风险门。
+- HTTP 链路（`POST /invoke`）：本端点**不等待**，直接 409 + `confirm` 内容；
+  调用方自己看 `GET /pending` 决定何时 `approve`（同意同样会预先批准那次目标调用）。
+
+**工具清单（21 个工具，按插件）**：
 
 | 插件 | 工具 | 风险 |
 |---|---|---|
 | `builtin` | `get_current_time` / `read_local_file` / `read_web_page` | read |
+| `builtin` | `request_user_confirmation`（模型主动请求确认；会暂停对话等答复） | read |
 | `websearch` | `web_search` | read |
 | `insight` | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
 | `factory` | `factory_validate_blueprint` / `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |

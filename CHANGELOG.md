@@ -22,7 +22,82 @@
 
 > 新条目写在这里（`tools/publish_release.py` 逐字认这一行标题，说明与约束见文件顶部注释）。
 
+### Added
+
+- **模型可以主动"先问再做"：新工具 `request_user_confirmation`（请求用户确认）**
+  （2026-09-20，[ADR-0016](docs/adr/0016-model-initiated-confirmation.md)）。
+
+  用户的原话是"当 Agent 准备执行修改权限、提交表单等敏感、高风险或不可逆操作前，
+  调用该工具向用户弹出确认框"。落地形态经过两个决策点：**工具形态选 B**
+  （确认可以带上 `targetTool` + `targetArgs`，于是用户同意的是**那一次具体调用**，
+  不是一个含糊的"我打算做点什么"）、**交互形态选"循环内等待"**。
+
+  **它与已有的风险门是两套东西，互补而非替代**：
+
+  | | 谁发起 | 拦的是什么 | 权威在 |
+  |---|---|---|---|
+  | `risk >= write`（既有） | **宿主**，按声明自动拦 | 这一次**调用** | 宿主，模型绕不过 |
+  | `needs_confirmation`（新增） | **模型**，主动调工具 | 模型**打算做的事** | 模型自律 + 用户当场判断 |
+
+  所以它**不是安全边界**（模型不调用它就绕过去了），也不改变任何 `Risk` 分级——
+  写操作照样走它自己的门。它补的是分级表的盲区：模型知道它打算干什么，声明表不知道。
+
+  **等待只能在循环层，不能在工具 handler 里**——`ToolHub.execute` 一旦 `await`，
+  调用它的异步生成器就挂起了，`confirm_required` 事件发不出去，界面根本不知道有东西要确认。
+  于是拆成两步：`execute` **只登记**（建 `pending_action` 行 + 一个 `Future`）并返回
+  `needs_confirmation`；`harness/loop.py` 先把事件 yield 出去，**然后**才等答复。
+  新增两个 SSE 事件 `confirm_required` / `confirm_resolved`，前端一张独立的确认卡
+  （天蓝，与风险门那张琥珀色的**文案与配色都分开**——"点完之后要不要再发一条消息"是相反的）。
+  **不需要额外一轮模型调用**：答复就是那次工具调用的结果。
+
+  **安全性没有放松**：带 `targetTool` 时，那条待确认挂在**目标工具**头上、绑定**目标参数指纹**，
+  用户同意后模型直接调用目标工具走的是与风险门**完全相同**的 `claim_approved()` 通道
+  （按「工具 + 参数指纹」认领、**一次性**、5 分钟内有效）。模型换个参数再调，指纹对不上，
+  照样重新过门——回归断言 `test_confirming_one_call_does_not_authorize_another`。
+  不带 `targetTool` 的纯意图确认**不产生任何可认领的批准**。
+
+  **Fail-Closed 全覆盖**：宿主没接确认通道 → `ERROR` 且明说"**没有**向用户问过任何问题"；
+  没人能等 → 按未同意；`targetTool` 不存在 / 是只读 / 自己也要确认 → `BAD_ARGS`
+  （**不降级**成纯意图确认——那会让用户以为批准了 A 而实际什么都没批准）；用户超时或对话中断
+  → 条目置 `expired`（**事后补点同意无效**，不留事后通行证）；HTTP 面 409 + `confirm` 内容，
+  **不替用户等**。
+
+  回归测试 14 条见 `tests/test_user_confirmation.py`。
+
+- **`tools/verify_confirmation.py`：实时确认的端到端检查（19 项）**（2026-09-20）。
+
+  真起生产入口（`python -m workbench.server_entry`）、真发 HTTP、**真把三个静态文件拉下来看有没有新代码**，
+  用临时数据目录、跑完即清。组件测试用的是 `TestClient` 与假客户端——它证明得了逻辑，
+  证明不了链路，而"打包/静态目录漏收"这类事故只会在这里现形（PITFALLS #20 / #25 / #53 同族）。
+
+  覆盖：目录里 `needs_confirmation` 是否**真的**透到了 HTTP（不是被装配丢成默认值）、
+  前端三文件是否含新代码、`invoke → 409 → approve → 同参数不再被拦 / 换参数仍被拦`、
+  只读目标与不存在目标都是 400、纯意图确认同意后**不放行任何写操作**。
+
 ### Fixed
+
+- **给 `ToolSpec` 新增的声明字段会在装配时被静默丢掉**（2026-09-20，PITFALLS #56）。
+
+  `ToolHub._validate_tools()` 为了绑上 `plugin_id`，**逐字段手写重建**了一份 `ToolSpec`。
+  于是新加的字段没被列进那份清单时，插件的声明在装配后**变成默认值**——工具照常出现在清单里、
+  照常能调，只有新行为不生效。实测后果：`request_user_confirmation` 的
+  `needs_confirmation` 变成 `False`，那个"永远不该被执行"的 handler **真的被执行了**。
+
+  改用 `dataclasses.replace(spec, plugin_id=plugin.id)`——`replace` 对"以后再加字段"是
+  **结构免疫**的，手写清单不是。同类写法（重建不可变对象只为改一个字段）一律照此处理。
+
+- **用户已经点了「同意」，对话循环却干等满一个超时才继续**（2026-09-20，PITFALLS #57）。
+
+  界面在收到 `confirm_required` 那一刻就能点，而循环要等这个事件 yield 出去**之后**才走到
+  `await wait_decision()`——"用户答复"几乎总是**先于**"等待者登记"到达。当时的实现是
+  "等待者到了才建 `Future`"，答复无处落地被丢弃，循环新建一个永远不会被 resolve 的 future，
+  于是用户明明答复了，循环卡到 `timeoutS`（默认 300 秒）才动。
+
+  这是并发里经典的 **lost wakeup**。修法两件事一起做：**登记确认时就把接收端 `Future` 建好**
+  （与 `pending_action` 行同一把锁内），**并且**把答复**存一份**（`_decisions`）供
+  "答复先到、等待者后到"这一种时序取用，`wait_decision` 在 `finally` 里清掉它。
+  回归用例 `test_loop_pauses_then_resumes_and_preapproval_works` 刻意在
+  `confirm_required` 的**回调里**就答复——修复前它会挂到外层超时。
 
 - **CI 首次被判红：P8 查的是"本机装没装浏览器"这条环境事实，在 runner 上永远修不好**（2026-09-18，run #17）。
 

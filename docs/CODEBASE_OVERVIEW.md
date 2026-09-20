@@ -80,8 +80,8 @@ plugin_api.py（**插件 SDK 契约**：ToolHub / ToolSpec / Risk / ToolContext 
   ├─ 唯一的能力扩展面；不 import 任何插件、不给插件暴露 app
   └─ 审计写入器与确认门由 approvals.install(hub) 注入（故本文件连 db 都不 import）
 approvals.py（**危险操作确认门 + 审计写入器 + 人话摘要**）
-plugins/（**五个工具插件** = 20 个工具；`plugins/__init__.py::_MODULES` 是显式清单）
-  ├─ builtins.py（时间 / 读文件 / 读网页）　├─ websearch.py（自建联网检索，官方 API 无此工具）
+plugins/（**五个工具插件** = 21 个工具；`plugins/__init__.py::_MODULES` 是显式清单）
+  ├─ builtins.py（时间 / 读文件 / 读网页 / 请求用户确认）　├─ websearch.py（自建联网检索，官方 API 无此工具）
   ├─ insight.py（读元数据 / 跑织网 / 取产物）　├─ factory.py（蓝图校验与清单 / 创建任务）
   └─ accounts.py（登录验证 / 托管会话）
 services/
@@ -127,7 +127,7 @@ db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 | `workbench/db.py` | SQLite + `MIGRATIONS`（**1–20**；13 = `add_created_at_indexes`，14 = 洞察工作区与覆盖度，15 = 模块 id 数据改写，16 = `tool_plugin_layer`（`agent_audit` 加列 + `pending_action`），17 = `agent_cache_layer`，18 = `rename_factory_module_id`，19 = `sandbox_run`（沙箱执行审计），20 = `skill_audit`（能力供给链留痕））；迁移**只增不改** |
 | `workbench/plugin_api.py` | **插件 SDK 契约**：`ToolHub`（工具注册表/执行器，**分 core / installed 两层**）+ `ToolSpec`（含 `Risk` 分级）+ `ToolContext` + `Plugin`（含 `PluginOrigin`）。零领域知识（不 import 插件、不 import `services/egmp`、连 `db` 都不 import） |
 | `workbench/approvals.py` | **危险操作确认门**（单次令牌 / 5 分钟 / 参数指纹）+ **审计写入器**（唯一入口）+ 人话摘要 |
-| `workbench/plugins/` | 五个工具插件（`builtins` / `websearch` / `insight` / `factory` / `accounts`，共 20 个工具；风险分布：17 read + 2 write + 1 dangerous）。`plugins/__init__.py::_MODULES` 是显式清单，坏插件隔离成 failure |
+| `workbench/plugins/` | 五个工具插件（`builtins` / `websearch` / `insight` / `factory` / `accounts`，共 21 个工具；风险分布：18 read + 2 write + 1 dangerous）。`plugins/__init__.py::_MODULES` 是显式清单，坏插件隔离成 failure |
 | `workbench/sandbox/` | **不受信代码的执行底座**（[ADR-0014](adr/0014-sandbox-for-untrusted-code.md)，6 文件 ≈1150 行）：`layout`（沙箱根/运行目录）、`policy`（**策略 + 环境白名单 + 敏感路径**）、`job`（Windows Job Object 进程树终止）、`runner`（`ExecRequest`/`run`/`run_async`）、`audit`。**不是安全边界**，是限损层（D-3） |
 | `workbench/skills/` | **Skill 共享库与安装**（7 文件 ≈1775 行）：`layout`（库/已安装目录，**不入 git**）、`manifest`（`SKILL.md` 契约，两种工具形态）、`security`（ZIP 准入 + 可疑模式扫描）、`library`（上传/安装/卸载/删除）、`script_runner`（脚本式工具的入口约定）、`audit`。共享库与已安装目录都在 `<DATA_DIR>/skills/` |
 | `workbench/harness/` | 对话 Agent 循环（`loop.py` 事件流）。⚠️ `harness/tools.py` **已降级为兼容垫片**（只剩再导出 + `default_registry()` 转发 `get_hub()`），工具定义全部搬进 `plugins/` |

@@ -176,8 +176,54 @@ def test_reject_flow_marks_pending(client: TestClient) -> None:
     assert client.post(f"/api/agent/pending/{pending_id}/approve").status_code == 409
 
 
+# ---------------------------------------------------------------- 模型主动确认（HTTP 面）
+
+
+def test_model_confirmation_via_http_returns_409_without_waiting(client: TestClient) -> None:
+    """模型发起的实时确认走 HTTP：**409 + 确认内容，且本端点不替用户等**。
+
+    对话链路里这个工具由 `harness/loop.py` 就地等答复；HTTP 面没有"就地等"这回事，
+    所以必须如实返回 409 让调用方自己去看 `/pending`。两种错法都要防：
+    把它当成功（调用方以为用户同意了）、或在请求里挂 5 分钟替用户等。
+    """
+    from workbench import approvals
+
+    approvals.reset_store()
+    resp = client.post("/api/agent/invoke", json={
+        "tool": "request_user_confirmation",
+        "args": {
+            "question": "把 3 个对象提交到生产，是否继续？",
+            "details": "可回滚",
+            "target_tool": "accounts_browser_close",
+            "target_args": {"account_id": "ghost"},
+        },
+    })
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    assert detail["status"] == "needs_confirmation"
+    assert detail["pendingId"]
+    assert detail["confirm"]["question"].startswith("把 3 个对象提交到生产")
+    assert detail["confirm"]["target"] == {
+        "tool": "accounts_browser_close", "risk": "write", "args": {"account_id": "ghost"},
+    }
+
+    # 待确认清单里能查到，且**挂在目标工具头上**（不是确认工具自己）——
+    # 这条是"用户同意的是那一次具体调用"的可查证据
+    listed = client.get("/api/agent/pending").json()["pending"]
+    assert [p["id"] for p in listed] == [detail["pendingId"]]
+    assert listed[0]["tool"] == "accounts_browser_close"
+
+    # 同意之后再调目标工具，参数一致 → 直接执行（这里失败在"账号不存在"，不是"需要确认"）
+    client.post(f"/api/agent/pending/{detail['pendingId']}/approve")
+    retried = client.post("/api/agent/invoke", json={
+        "tool": "accounts_browser_close", "args": {"account_id": "ghost"},
+    })
+    assert retried.status_code != 409, "预先批准没有生效——指纹或认领通道断了"
+
+
 def test_audit_detail_endpoint(client: TestClient) -> None:
     """审计按 id 单查（列表刻意不 SELECT *，细节走这条）。"""
+
     from workbench import db
 
     row_id = "audit-detail-1"
