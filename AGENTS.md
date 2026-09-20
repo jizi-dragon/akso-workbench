@@ -15,6 +15,7 @@
 > | 不再变的决策（17 篇 ADR） | [docs/adr/](docs/adr/) |
 > | 配置工厂 × Agent 的接口缺口（问题分析） | [docs/FACTORY-AGENT-GAP.md](docs/FACTORY-AGENT-GAP.md) |
 > | 配置工厂逐条验证与优化（**待办**） | [docs/FACTORY-VERIFICATION-PLAN.md](docs/FACTORY-VERIFICATION-PLAN.md) |
+> | 平台操作录制与分析（**不属于产品**） | [factory-tuning/](factory-tuning/README.md) |
 > | 核心 Agent 架构与分层契约 | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
 > | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
 > | 人的协作规范 | [CONTRIBUTING.md](CONTRIBUTING.md) |
@@ -147,6 +148,7 @@
 | `workbench/logging_setup.py`、`api/routes_logs.py`、任何 `logger.*` | `pytest tests/test_logging.py`（落盘/幂等/脱敏/关联 ID/滚动/检索/失败隔离）<br>★ 动了日志系统还要跑 `python tools\verify_logging.py`——它**真起服务、真发请求、真读日志文件**，**36 项**端到端检查（含**两条启动路径**：生产入口与开发态裸 uvicorn）。组件测试证明不了链路，PITFALLS #53 就是这么栽的 |
 | `config.SENSITIVE_PATH_PARTS`、`plugins/builtins.py`、`sandbox/policy.py` | `pytest tests/test_sensitive_paths.py`（**唯一事实源 + 只读工具的边界**） |
 | `workbench/lifecycle.py`、`api/__init__.py` 的 lifespan、`desktop/main.js`（stderr/stdio/菜单） | `pytest tests/test_lifecycle.py -o addopts=""`（**含 slow 层**：真起父子进程验"父死子退"）+ `node --check desktop\main.js` |
+| `factory-tuning/**`（**不属于产品**） | 它自己的自检 + 提交前扫描：<br>`python factory-tuning\tests\selfcheck.py`（脱敏规则 / 扫描精度 / 合成样例链路 / 产品零引用）<br>`python factory-tuning\tools\scan_secrets.py`（**采集数据后必跑**，见下） |
 | ★ 动了上面任一处 | 还要跑 `python tools\verify_regression_tests.py`——它**反证**那 **16 条**断言真的会红（手动诊断用，不进 CI，会临时改写源码并在结束时字节级还原；含一条 29 秒的 slow 项）。**它按单条 120 秒超时收口**：缺陷版的失败形态可能是"挂住"而不是"断言红"，没有这个超时，一次失误会让上层把脚本杀掉，`finally` 的还原**跑不到**——2026-09-20 实测留下过一份缺陷代码 |
 | `workbench/api/extension_auth.py` 或 `/extension/**` 蓝图 | `node tools\verify_extension_sync.mjs`（该蓝图**无 pytest 覆盖**） |
 | `extensions/quick-login/**`（TS） | `npm run typecheck` + `npm run build`，再跑 `verify_extension_boot.py` + `verify_extension_isolation.py` + `node tools\verify_host_logic.mjs` |
