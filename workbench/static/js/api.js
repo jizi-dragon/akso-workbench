@@ -48,6 +48,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ reason: reason ?? "" }),
     }),
+  /** 待确认清单：页面加载时用它认领**遗留在服务端**的待确认
+   *  （只活在 SSE 流里的东西，刷新一下就没人管了——而那是一个真实写入的闸门） */
+  listPending: (status = "pending") =>
+    jsonFetch(`/api/agent/pending?status=${encodeURIComponent(status)}`),
 
   /** SSE 流式对话：onEvent(event) 回调每个事件 */
   async streamChat({ conversationId, message }, onEvent) {

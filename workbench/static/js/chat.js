@@ -3,11 +3,43 @@
 import { api } from "./api.js";
 import { renderMarkdown } from "./markdown.js";
 import { createToolTrail, initToolPalette } from "./chat-tools.js";
+import { initApprovalModal, recoverPending, requestDecision } from "./approval-modal.js";
 import { state } from "./app.js";
 
 const messagesEl = () => document.getElementById("messages");
 let isRunning = false;
 let chatInitialized = false;
+
+/** 决定类事件 → 弹窗入参。
+ *
+ *  `confirm_required`（模型主动问）与 `approval_required`（宿主风险门）**都走弹窗**，
+ *  但 `kind` 不同——两者的标题与说明文案不一样，因为对用户要做的动作不一样：
+ *  前者点完模型自己继续，后者本轮已结束、要再让模型重试一次。
+ */
+function decisionFromConfirm(event) {
+  return {
+    pendingId: String(event.pendingId || ""),
+    kind: "confirmation",
+    tool: (event.target && event.target.tool) || event.tool || "",
+    risk: (event.target && event.target.risk) || "",
+    question: event.question || "",
+    details: event.details || "",
+    timeoutS: event.timeoutS,
+    target: event.target || null,
+    auditId: event.auditId || "",
+  };
+}
+
+function decisionFromApproval(event) {
+  return {
+    pendingId: String(event.pendingId || ""),
+    kind: "approval",
+    tool: event.tool || "",
+    risk: event.risk || "",
+    summary: event.summary || "",
+    auditId: event.auditId || "",
+  };
+}
 
 export function initChat() {
   if (chatInitialized) return;
@@ -34,6 +66,10 @@ export function initChat() {
     input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
   });
   initToolPalette(input);
+  initApprovalModal();
+  // 认领**遗留在服务端**的待确认：没有这一步时，一条待确认只活在当前这条 SSE
+  // 流里，刷新页面它就永远没人处理了——而它是一个真实写入的闸门。
+  void recoverPending();
 
   if (!state.settings.apiKey) {
     input.placeholder = "请先在「设置」中配置 DeepSeek API Key";
@@ -284,17 +320,21 @@ async function sendMessage(text) {
         trail.applyObservation(event);
         scrollToBottom();
       } else if (event.type === "approval_required") {
+        // 风险门拦下：轨迹留一条回执，**交互交给弹窗**（内联卡片会随输出滚走，
+        // 而它是一次真实写入的闸门）
         flushPaint();
         segmentText = "";
         trail.addApproval(event);
+        requestDecision(decisionFromApproval(event));
         proseEl = null;
         scrollToBottom();
       } else if (event.type === "confirm_required") {
-        // 模型主动"先问再做"：这张卡出现时后端**正卡在等待里**，
-        // 用户点完模型自己继续，不需要再发一条消息
+        // 模型主动"先问再做"：弹窗出现时后端**正卡在等待里**，
+        // 用户在弹窗里点完模型自己继续，不需要再发一条消息
         flushPaint();
         segmentText = "";
         trail.addConfirm(event);
+        requestDecision(decisionFromConfirm(event));
         proseEl = null;
         scrollToBottom();
       } else if (event.type === "confirm_resolved") {

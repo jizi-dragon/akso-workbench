@@ -480,6 +480,187 @@ dialog.tk-dialog::backdrop {
   gap: 8px;
 }
 
+/* ———— 决定弹窗（审批 / 确认） ————
+ *
+ *  内联卡片改成模态的全部理由写在 `js/approval-modal.js` 的开头。
+ *  这里只管形状：它盖住界面、必须被处理、且能看出是哪一类决定
+ *  （琥珀 = 宿主拦下的风险操作；天蓝 = 模型在问你）。 */
+
+dialog.tk-decision {
+  max-width: min(560px, calc(100vw - 40px));
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+}
+
+.tk-decision-card {
+  gap: 10px;
+}
+
+.tk-decision-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tk-decision-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.tk-decision-tool {
+  font-size: 11.5px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.tk-decision-question {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.7;
+  color: var(--text-1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tk-decision-details {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tk-decision-target {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border-radius: var(--radius-s);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.tk-decision-target .tool-args {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+}
+
+.tk-decision-meta {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.tk-decision-actions {
+  /* 「稍后」靠左、决定靠右：手最先碰到的是"先别决定"那一侧，
+     而"同意"是一次真实写入——不该落在最容易误点的位置 */
+  justify-content: flex-end;
+}
+
+.tk-decision-actions .btn-ghost:first-child {
+  margin-right: auto;
+}
+
+.tk-decision-state {
+  font-size: 11.5px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.tk-decision-state.is-pending { color: var(--sky); }
+.tk-decision-state.is-allowed { color: var(--lime); font-weight: 600; }
+.tk-decision-state.is-rejected { color: var(--text-2); font-weight: 600; }
+.tk-decision-state.is-stale { color: var(--text-3); font-weight: 600; }
+.tk-decision-state.is-failed { color: var(--red); }
+
+/* ———— 待办条（「稍后」的落点，贴在输入框上方） ———— */
+
+.pending-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(2, 132, 199, 0.4);
+  border-left: 3px solid var(--sky);
+  border-radius: var(--radius-m);
+  background: linear-gradient(180deg, var(--sky-dim), var(--ink-2) 70%);
+  font-size: 12px;
+}
+
+.pending-strip-label {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.pending-strip-item {
+  max-width: 320px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--ink-3);
+  color: var(--text-1);
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-strip-item:hover {
+  border-color: var(--sky);
+}
+
+/* ———— 决定回执（轨迹里的留痕：不可交互，只回答"当时问了什么、结果是什么"） ———— */
+
+.decision-receipt {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 11px;
+  border-left: 3px solid var(--sky);
+  border-radius: var(--radius-s);
+  background: var(--ink-3);
+  font-size: 12px;
+}
+
+.decision-receipt[data-kind="approval"] {
+  border-left-color: var(--amber);
+}
+
+.decision-receipt[data-state="allowed"] { border-left-color: var(--lime); }
+.decision-receipt[data-state="rejected"],
+.decision-receipt[data-state="timeout"] { border-left-color: var(--text-3); }
+
+.decision-receipt-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  color: var(--text-2);
+}
+
+.decision-receipt-title { font-weight: 600; color: var(--text-1); }
+.decision-receipt-glyph { color: var(--sky); }
+.decision-receipt-tool { font-size: 11px; color: var(--text-3); }
+
+.decision-receipt-text {
+  color: var(--text-2);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.decision-receipt-state {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.decision-receipt[data-state="allowed"] .decision-receipt-state { color: var(--lime); }
+.decision-receipt[data-state="rejected"] .decision-receipt-state { color: var(--text-2); }
+
 /* ———— 工具清单浮层 ———— */
 
 .tool-palette-anchor {

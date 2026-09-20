@@ -94,6 +94,17 @@ class PendingAction:
     decided_reason: str = ""
     """用户拒绝时填写的理由（原样，未打码——它由用户自己写下，且会回给模型）。"""
 
+    kind: str = "approval"
+    """这条待确认是**谁发起的**：`approval`（宿主按风险门自动拦）/ `confirmation`（模型主动问）。
+
+    界面靠它决定弹窗标题与文案——两者对用户要做的动作**不一样**：
+    风险门那张要说"放行后本轮已结束，需要让模型重试"，
+    实时确认这张要说"你点完我就继续"。混用会让用户对着一个已经复活的循环干等。
+
+    **不落库**（`_record()` 的列里没有它）：它是运行期事实，而历史行不需要这个区分
+    ——`pending_action.tool` 已经能说明是哪一次调用。DB 迁移只增不改，不值得为它开一列。
+    """
+
     def public(self) -> dict[str, Any]:
         """给界面的形状（**不含令牌**——令牌只回给批准它的那一次调用）。"""
         return {
@@ -107,6 +118,7 @@ class PendingAction:
             "createdAt": self.created_at,
             "decidedAt": self.decided_at,
             "conversationId": self.conversation_id,
+            "kind": self.kind,
         }
 
 
@@ -179,6 +191,7 @@ class PendingStore:
                 item.target_tool = target.name
             else:
                 item = self._mint(spec, args, conversation_id, summary=plan.question)
+            item.kind = "confirmation"
             # 等待者与条目**同时**建好（都在锁内），见 `_waiters` 的说明
             self._waiters[item.id] = Future()
         logger.info("实时确认已登记：%s（%s → %s）",

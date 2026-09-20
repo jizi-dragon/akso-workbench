@@ -113,19 +113,29 @@ def main() -> int:
                                                    "target_args", "timeout_s"},
               str(tool and sorted(tool["args"])))
 
-        print("=== B. 前端三个文件真的被服务出去了（且含新代码）===")
+        print("=== B. 前端文件真的被服务出去了（且含新代码）===")
         for path, needles in (
-            ("/static/js/chat-tools.js",
-             ["function confirmationCard", "settleConfirm", "正在唤醒模型"]),
+            # 弹窗模块：**交互必须在这里**，不在会滚走的轨迹里（2026-09-20 用户反馈）
+            ("/static/js/approval-modal.js",
+             ["showModal()", "requestDecision", "settleDecision", "pending-strip",
+              'addEventListener("cancel"']),
+            ("/static/js/chat-tools.js", ["decisionReceipt", "settleDecision"]),
             ("/static/js/chat.js",
-             ['event.type === "confirm_required"', 'event.type === "confirm_resolved"']),
-            ("/static/css/chat-tools.css", [".confirm-card", ".confirm-state.is-timeout"]),
+             ['event.type === "confirm_required"', 'event.type === "confirm_resolved"',
+              "decisionFromConfirm", "decisionFromApproval", "recoverPending"]),
+            ("/static/css/chat-tools.css",
+             [".tk-decision", ".pending-strip", ".decision-receipt"]),
         ):
             res = client.get(path)
             missing = [n for n in needles if n not in res.text]
             check(f"B {path}（{res.status_code}，{len(res.text)}B）",
                   res.status_code == 200 and not missing,
                   f"缺：{missing}" if missing else "")
+
+        # 旧的交互式内联卡片必须**不见了**：留着它就是一条"卡片也能点"的旁路
+        tools_js = client.get("/static/js/chat-tools.js").text
+        check("B2 轨迹里不再有带按钮的卡片（只留回执）",
+              "approvalCard" not in tools_js and "confirmationCard" not in tools_js)
 
         print("=== C. HTTP 面的实时确认流程 ===")
         target_args = {"account_id": "ghost-live"}
@@ -148,6 +158,11 @@ def main() -> int:
         check("C3 待确认**挂在目标工具头上**（用户同意的是那一次具体调用，不是一个意图）",
               bool(row) and row["tool"] == "accounts_browser_close",
               str(row and row["tool"]))
+        # 弹窗靠 `kind` 决定标题与文案（"模型在问你" vs "宿主拦下了"）；
+        # 页面加载时的认领也用它。缺了它，刷新之后那条待确认会被当成风险门渲染。
+        check("C3b 清单里带 kind=confirmation（弹窗与认领都靠它区分两类决定）",
+              bool(row) and row.get("kind") == "confirmation",
+              str(row and row.get("kind")))
 
         check("C4 同意成功", client.post(f"/api/agent/pending/{pending_id}/approve").status_code == 200)
 

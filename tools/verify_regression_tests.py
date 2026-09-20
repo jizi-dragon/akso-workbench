@@ -209,13 +209,25 @@ CASES: list[tuple[str, str, str, str, str]] = [
         '            if False and event.get("finish_reason") == "length":\n',
     ),
     # 问题③：确认摘要退回通用口径后，用户看到的是 `blueprint_id=…`——
-    # 而他要判断的是"这一按下去平台上会多出什么"。
+    #   而他要判断的是"这一按下去平台上会多出什么"。
     (
         "问题③：危险操作的摘要要讲蓝图要点",
         "tests/test_factory_agent.py::test_create_confirmation_summary_talks_about_the_blueprint",
         "workbench/approvals.py",
         "    custom = _custom_summary(spec, model)\n",
         '    custom = ""  # 缺陷版：永远用通用摘要\n',
+    ),
+    # 审批弹窗：Esc 一旦不被拦，原生 dialog 会直接关掉它——而用户以为那等于拒绝，
+    # 循环却还在等（2026-09-20 用户反馈"审批要弹窗，不要随输出消失"）。
+    (
+        "审批弹窗：Esc 不等于拒绝",
+        "tests/test_user_confirmation.py::test_esc_means_later_not_reject",
+        "workbench/static/js/approval-modal.js",
+        '  dialog.box.addEventListener("cancel", (event) => {\n'
+        "    event.preventDefault();\n"
+        "    deferCurrent();\n"
+        "  });\n",
+        "  // 缺陷版：不拦 Esc，让它直接关掉\n",
     ),
 ]
 

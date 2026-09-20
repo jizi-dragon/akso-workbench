@@ -368,11 +368,15 @@ def _read(rel: str) -> str:
 
 
 def test_confirm_payload_keys_all_have_a_frontend_consumer() -> None:
-    """`_confirm_view()` 产出的每个键，都必须在确认卡里真的被读到。
+    """`_confirm_view()` 产出的每个键，都必须真的走完前端那两跳。
 
     `Python → JS` 是**无类型接口**（AGENTS.md §2）：改一个键名不会有任何报错，
-    只会让卡片上少一行字——而"少一行字"在确认卡上等于**用户看不到他要批准什么**。
-    这条断言把那份耦合变成可机检的（与 PITFALLS #35 同一族）。
+    只会让弹窗上少一行字——而"少一行字"在一次真实写入的确认窗上等于
+    **用户看不到他要批准什么**。链路是两跳，两跳都要查：
+
+        SSE 事件 → `chat.js` 的映射（`event.<key>`）→ 弹窗读取（`request.<key>`）
+
+    只查第一跳是不够的：改造过程中就出现过"映射搬了、消费端没搬"（反之亦然）。
     """
     plan = pa.ConfirmPlan(
         question="q", details="d", timeout_s=12.0,
@@ -383,11 +387,19 @@ def test_confirm_payload_keys_all_have_a_frontend_consumer() -> None:
     assert set(view) == {"pendingId", "question", "details", "timeoutS", "target"}
     assert set(view["target"]) == {"tool", "risk", "args"}
 
-    js = _read("workbench/static/js/chat-tools.js")
+    mapper = _read("workbench/static/js/chat.js")
+    modal = _read("workbench/static/js/approval-modal.js")
     for key in ("pendingId", "question", "details", "timeoutS"):
-        assert f"event.{key}" in js, f"确认卡没有消费 event.{key}——键名改了吗？"
-    for key in ("tool", "risk", "args"):
-        assert f"target.{key}" in js, f"确认卡没有消费 target.{key}"
+        assert f"event.{key}" in mapper, f"chat.js 没有把 event.{key} 交给弹窗"
+        assert f"request.{key}" in modal, f"弹窗没有消费 request.{key}"
+    # `target` 在映射那一跳被**摊平**（弹窗要的是"目标工具 + 它的风险 + 它的参数"，
+    # 不需要知道它原来嵌在 target 里），所以两跳分开查：
+    for key in ("tool", "risk"):
+        assert f"event.target.{key}" in mapper, f"chat.js 没有读 event.target.{key}"
+        assert f"request.{key}" in modal, f"弹窗没有消费摊平后的 request.{key}"
+    assert "target.args" in modal, "弹窗没有消费 target.args（用户看不到将要传什么参数）"
+    # 回执那一跳：轨迹里要能查到"当时问的是什么"
+    assert "event.question" in _read("workbench/static/js/chat-tools.js")
 
 
 def test_event_contract_names_are_in_sync() -> None:
@@ -405,24 +417,68 @@ def test_event_contract_names_are_in_sync() -> None:
 
 
 def test_confirmation_card_wording_is_not_copied_from_the_risk_gate() -> None:
-    """两张卡的文案**不能互抄**——它们要人做的事是相反的。
+    """两类决定的**文案不能互抄**——它们要人做的事是相反的。
 
-    风险门那张卡：本轮对话**已经结束**，用户放行后还得再发一条消息（"不会自动重发"）。
-    实时确认这张卡：循环**正卡在等待里**，用户点完模型自己就继续了。
+    风险门：本轮对话**已经结束**，用户放行后还得再发一条消息让模型重试。
+    实时确认：循环**正卡在等待里**，用户点完模型自己就继续。
 
     抄错方向的后果是让人对着一个已经复活的循环干等，或者反过来以为还要再发一句。
+    改造后这些文案都在**弹窗**里（`approval-modal.js`）——测试跟着搬到那里。
     """
-    js = _read("workbench/static/js/chat-tools.js")
-    start = js.index("function confirmationCard")
-    end = js.index("/* ————", start)
-    card = js[start:end]
+    modal = _read("workbench/static/js/approval-modal.js")
+    assert "本轮对话已经结束" in modal, "风险门那条没告诉用户「放行后还得让模型重试」"
+    assert "模型继续" in modal, "确认那条没告诉用户「点完模型自己会继续」"
+    assert "未同意" in modal, "超时的语义没写清（超时 = 没有产生任何批准）"
 
-    assert "不会自动重发" not in card, "确认卡抄了风险门的文案（那句话的前提是本轮已结束）"
-    # 卡片自己要说清"点完之后会发生什么"：按钮下方立刻给一句"正在唤醒模型"，
-    # 终态（`settleConfirm`）再给"模型继续执行"——两句缺一不可，
-    # 否则用户会在等待期间不知道自己是该等还是该再发一条消息
-    assert "正在唤醒模型" in card, "确认卡没有即时反馈（用户不知道点了之后要不要再发消息）"
-    assert "模型继续执行" in js, "确认卡没有终态文案"
-    # 风险门那张卡本身仍需保留原来的说法（它是给人"再发一条消息"的指令）
-    assert "不会自动重发" in js[:start] + js[end:]
+
+def test_approval_is_a_modal_not_an_inline_card() -> None:
+    """**交互走弹窗，轨迹只留回执**（2026-09-20 用户反馈）。
+
+    > 「提供给用户审批的，应该设计为弹出窗，而不是放在对话框中随着输出消失」
+
+    内联卡片会随输出滚走、不要求答复、且长得像一条消息——而它是一次真实写入的闸门。
+    这条断言钉住三件事：① 弹窗模块存在且用了原生 `showModal()`；
+    ② `chat-tools.js` **不再**自己渲染带按钮的卡片（它只留不可交互的回执）；
+    ③ 两类事件都接到了弹窗上。
+    """
+    modal = _read("workbench/static/js/approval-modal.js")
+    assert "showModal()" in modal, "没用原生模态——焦点陷阱与 Esc 就得手搓"
+    assert "requestDecision" in modal and "settleDecision" in modal
+
+    tools_js = _read("workbench/static/js/chat-tools.js")
+    # 旧实现的两个渲染器必须消失：留着它们等于留了一条"卡片也能点"的旁路
+    assert "function approvalCard" not in tools_js, "带按钮的风险门卡片还在"
+    assert "function confirmationCard" not in tools_js, "带按钮的确认卡片还在"
+    assert "approvePending" not in tools_js, "轨迹文件里还留着「点一下就放行」的调用"
+    assert "decisionReceipt" in tools_js, "轨迹里没有回执——那就查不到「当时问了什么」"
+
+    chat_js = _read("workbench/static/js/chat.js")
+    for event_type, factory in (("approval_required", "decisionFromApproval"),
+                                ("confirm_required", "decisionFromConfirm")):
+        assert factory in chat_js, f"{event_type} 没接到弹窗上"
+
+
+def test_esc_means_later_not_reject() -> None:
+    """Esc / 「稍后」= **没有答复**，不是拒绝。
+
+    只给"同意/拒绝"两态时，用户想先看一眼对话就只剩"关掉弹窗"这一条路，
+    而关掉等于**悄悄丢掉一次确认**（循环还在等，用户却以为已经处理完了）。
+    第三态是承重的：它把决定收成底部待办条，循环继续等，到点仍算未同意。
+    """
+    modal = _read("workbench/static/js/approval-modal.js")
+    assert 'addEventListener("cancel"' in modal and "preventDefault()" in modal, (
+        "Esc 没有被拦下——原生 dialog 会直接关掉它，而用户以为那等于拒绝")
+    assert "pending-strip" in modal, "「稍后」没有落点（那就等于把确认弄丢了）"
+
+
+def test_pending_is_recovered_on_page_load() -> None:
+    """刷新页面后，**遗留在服务端的待确认必须还能被看到**。
+
+    没有这一步时，一条待确认只活在当前这条 SSE 流里：刷新一下、切走再看，
+    它就永远没人处理了——而它是一个真实写入的闸门。
+    """
+    chat_js = _read("workbench/static/js/chat.js")
+    assert "recoverPending" in chat_js, "页面加载时没有认领遗留的待确认"
+    api_js = _read("workbench/static/js/api.js")
+    assert "listPending" in api_js
 

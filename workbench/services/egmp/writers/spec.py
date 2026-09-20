@@ -375,20 +375,36 @@ def blueprint_highlights(raw: dict[str, Any]) -> dict[str, Any]:
 
     为什么单独抽一个函数：`approvals.summarize()` 的通用口径是"描述 + 参数 + 风险级"，
     对 `factory_create` 来说那句摘要等于没说——用户要判断的是**将要建出什么**。
+
+    ## `needsManual` 为什么必须在这里算（2026-09-20）
+
+    它列的这几项是**引擎当前不执行**的：菜单（`orchestrate.execute_menu` 至今
+    **没有任何调用方**）、规则、权限、报表模板。界面必须把它们标成"人工配置"，
+    否则确认框会替引擎做出它做不到的承诺——而那是用户据以点头的唯一依据
+    （AGENTS.md 规则 32：界面文案是承诺）。
+
+    ⚠️ **这是"如实描述现状"，不是"设计如此"**。清单与判据见
+    [docs/FACTORY-VERIFICATION-PLAN.md](../../../../docs/FACTORY-VERIFICATION-PLAN.md) 的 T1 / T2。
     """
     objects = to_object_blueprints(raw)
     picklists: set[str] = set()
     fields = 0
     workflows = 0
     statuses = 0
-    manual = len(raw.get("rules") or []) + len(raw.get("permissions") or []) \
-        + len(raw.get("reportTemplates") or [])
     for obj in objects:
         picklists.update(str(p.get("code") or "") for p in obj.get("picklists") or [])
         fields += len(obj.get("fields") or [])
         workflows += len(obj.get("workflows") or [])
         lifecycle = obj.get("lifecycle") or {}
         statuses += len(lifecycle.get("statuses") or []) + len(lifecycle.get("renameStatuses") or [])
+
+    needs_manual: list[str] = []
+    if raw.get("menu"):
+        needs_manual.append("菜单")
+    for key, label in (("rules", "规则"), ("permissions", "权限"),
+                       ("reportTemplates", "报表模板")):
+        if raw.get(key):
+            needs_manual.append(f"{label} {len(raw[key])} 项")
     return {
         "name": str(raw.get("name") or raw.get("description") or "")[:60],
         "objectCount": len(objects),
@@ -397,13 +413,18 @@ def blueprint_highlights(raw: dict[str, Any]) -> dict[str, Any]:
         "picklistCount": len(picklists),
         "workflowCount": workflows,
         "statusCount": statuses,
-        "manualItemCount": manual,
+        "manualItemCount": len(needs_manual),
+        "needsManual": needs_manual,
         "hasMenu": bool(raw.get("menu")),
     }
 
 
 def blueprint_summary_line(raw: dict[str, Any]) -> str:
-    """一句话说清"这份蓝图会建出什么"（确认门摘要与审阅材料共用）。"""
+    """一句话说清"这份蓝图会建出什么"（确认门摘要与审阅材料共用）。
+
+    ⚠️ 只承诺**引擎真的会做**的事：菜单与声明区一律归到"引擎不执行"里，
+    不写成"将创建菜单"。见 `blueprint_highlights` 的说明。
+    """
     h = blueprint_highlights(raw)
     parts = [f"{h['objectCount']} 个对象（{'、'.join(h['objectCodes']) or '—'}）",
              f"{h['fieldCount']} 个字段"]
@@ -413,11 +434,11 @@ def blueprint_summary_line(raw: dict[str, Any]) -> str:
         parts.append(f"{h['statusCount']} 个状态变更")
     if h["workflowCount"]:
         parts.append(f"{h['workflowCount']} 条工作流")
-    if h["hasMenu"]:
-        parts.append("含菜单挂载")
-    if h["manualItemCount"]:
-        parts.append(f"{h['manualItemCount']} 项人工配置")
-    return "将创建 " + "、".join(parts)
+    line = "将创建 " + "、".join(parts)
+    if h["needsManual"]:
+        line += ("；另有 " + "、".join(h["needsManual"])
+                 + " **引擎不执行**，需要你人工配置")
+    return line
 
 
 #: 字段名 → 注解的反查表（校验失败时用来"就地补一句规格"）。
