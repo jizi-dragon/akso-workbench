@@ -25,6 +25,25 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+# 敏感路径表**已收归 `config` 唯一事实源**，这里只是再导出，
+# 让既有的 `from ..sandbox.policy import is_sensitive_path` 调用点原样可用。
+#
+# **为什么收走**（2026-09-20 实测的 P0）：本文件原有一张表、`plugins/builtins.py`
+# 另有一张，而只读工具用的是后者——后者**不含** `browser-states` / `egmp-tokens` /
+# `workbench.db` / `accounts.json`，于是 `read_local_file`（`risk=read`、不过确认门）
+# 能**完整读出** cookie、平台 JWT 与含 Fernet 密钥的账号备份。
+# 两张表并存 = 两个会漂的事实源，与 2026-09-15「两套工具表并存」同类。
+#
+# `tests/test_sensitive_paths.py` 断言两个模块拿到的是**同一个对象**
+# （不是"内容相等"——那样下次还是可能只改一边）。
+from ..config import SENSITIVE_PATH_PARTS, is_sensitive_path  # noqa: F401  再导出
+
+__all__ = [
+    "ENV_ALLOW_EXACT", "ENV_ALLOW_PREFIX", "POLICIES", "SENSITIVE_PATH_PARTS",
+    "SandboxError", "SandboxPolicy", "Severity", "build_env", "describe_policies",
+    "get_policy", "is_sensitive_path", "looks_like_secret", "within_root",
+]
+
 
 class SandboxError(RuntimeError):
     """沙箱拒绝执行（Fail-Closed：宁可不跑，也不放宽）。"""
@@ -60,23 +79,8 @@ ENV_ALLOW_EXACT: frozenset[str] = frozenset({
 #: 允许的**前缀**（只放行明确无害的族）。
 ENV_ALLOW_PREFIX: tuple[str, ...] = ("LC_",)
 
-#: ── 敏感路径拒绝表 ───────────────────────────────────────────────────────────
-#:
-#: 判定用**路径成分包含**（大小写不敏感），而不是精确相等——因为子路径同样是敏感的。
-#: 这些名字来自本仓的真实数据布局（见 `docs/SCHEMA.md` 与 `ADR-0007`）。
-SENSITIVE_PATH_PARTS: tuple[str, ...] = (
-    "browser-states",        # Playwright storage_state：含 cookie 与登录态
-    "egmp-tokens",           # token-*.json：含 JWT
-    "workbench.db",          # 主库：含 password_enc 与 Fernet 密钥
-    "workbench.db-wal",
-    "workbench.db-shm",
-    "pending_action",
-    "shell-state.json",
-    "accounts.json",         # 账号库导出备份
-    ".ssh", "id_rsa", "id_ed25519",
-    "credentials", ".git-credentials",
-    "cookies", "login data", "web data",   # 浏览器 profile 里的凭据文件
-)
+#: ── 敏感路径拒绝表 ────────────────────────────────────────────────────────────
+#: 定义处是 `config.SENSITIVE_PATH_PARTS`（见文件顶部导入处的说明与本模块 `__all__`）。
 
 
 @dataclass(frozen=True)
@@ -171,12 +175,6 @@ def build_env(policy: SandboxPolicy, base: dict[str, str] | None = None,
     if extra:
         allowed.update({str(k): str(v) for k, v in extra.items()})
     return allowed
-
-
-def is_sensitive_path(path: str | os.PathLike[str]) -> bool:
-    """路径是否命中敏感表（按成分包含判定，大小写不敏感）。"""
-    parts = str(path).replace("\\", "/").lower()
-    return any(part.lower() in parts for part in SENSITIVE_PATH_PARTS)
 
 
 def within_root(path: str | os.PathLike[str], root: str | os.PathLike[str]) -> bool:

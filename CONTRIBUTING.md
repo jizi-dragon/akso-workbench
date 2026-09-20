@@ -6,6 +6,11 @@
 > 使用者请看 [README.md](README.md) 与 [docs/USER-MANUAL.md](docs/USER-MANUAL.md)；
 > 接手维护请先读 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md)（代码地图 / 红线 / 风险台账）
 > 与 [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑 / 排障速查）。
+>
+> **用 AI 助手改这个仓库时**：把 **[AGENTS.md](AGENTS.md)** 交给它（多数工具会自动读取根目录的该文件）。
+> 那份文件是**同一套规则的"规则形状"版本**——本文档写给能容忍模糊的人，
+> 而 AI 会把"没写下来的约定"当成"不存在这个约定"。两份内容不重复：这里讲**为什么与怎么做**，
+> 那里只讲**做与不做**（外加每条的判据与出处）。
 
 ## 1. 环境搭建（新同事 5 分钟）
 
@@ -25,12 +30,22 @@ cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建
 > **`--extra build` 不能省**：`uv sync` 不带它会把 PyInstaller 移出环境，
 > 之后 `tools/build.ps1` 的第 5 步（PyInstaller）直接失败。`build.ps1` 内部已带这两个 extra。
 >
-> **`uv` 不在 PATH 时**：2026-09-17 实测本机 `.venv\Scripts\` 里**有 `uv.exe` / `uvx.exe` / `uvw.exe`**（走 venv 内的那条可用）；
-> 但**没有 `ruff.exe`**——2026-09-16 记的"走 `.venv\Scripts\ruff.exe check .`"**是错的**（该文件不存在，
-> 报 `CommandNotFoundException`）。**可用的 lint 命令是**：
-> `.\.venv\Scripts\uv.exe tool run ruff check .`（首次会自动下载 ruff 约 10 MB，需要网络；
-> 实测本机 `pypi.org` 偶发 TLS 握手失败——失败时重试或走代理）。CI 里用的就是这条，本地绿 == CI 绿。
-> 依赖同步在**已建好的 venv** 上可跳过（依赖已装齐）；换机器时仍先装 uv（`pip install uv`）。
+> **⚠️ `uv` / `ruff` 的口径在本仓已翻转过三次，别再背命令——先探一次**（[PITFALLS #50](docs/PITFALLS.md)）：
+>
+> ```powershell
+> Get-ChildItem .venv\Scripts -Filter "uv*.exe","ruff*.exe"
+> ```
+>
+> **2026-09-20 实测**：`ruff.exe` **存在**（0.16.0）→ **lint 命令是 `.\.venv\Scripts\ruff.exe check .`**；
+> `uv.exe` **不存在**（只有 `uvicorn.exe`，`python -m uv` 报 `No module named uv`，PATH 上也没有）。
+> 若哪天 `uv.exe` 回来，回退是 `.\.venv\Scripts\uv.exe tool run ruff check .`（首次会下载 ruff，需网络）。
+> **两条都记着。**
+>
+> 历史（**保留以留痕，均已过期**）：原 `AGENT.md` 说"两个都没有" → 2026-09-15 记"uv 存在"
+> → 2026-09-16"更正说 uv 不存在、ruff 存在" → 2026-09-17 再更正回来。
+> **每一版在当时都是实测的**——问题不在诚实，在于**把一个会漂的环境事实固化成了散文**。
+> 根治方向是把它变成探测（`tools/` 下一条 `lint.ps1`，或让某个 `verify_*` 探一次并打印实际命令），
+> 这样"用哪条命令"由代码回答而不是由人记。
 
 ### 1.1 本机 Python / uv 的真实位置（**先看这条，再理 VS Code 的报错**）
 
@@ -226,7 +241,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
    [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑）、[docs/SCHEMA.md](docs/SCHEMA.md)（数据契约）；
 2. 新路由挂到 `workbench/api/__init__.py::_optional_routers`（可选路由）或同级注册；
 3. 新增/修改端点 → 同步 [docs/API.md](docs/API.md)；新增配置项 → 同步 [docs/CONFIG.md](docs/CONFIG.md)；
-   架构级决策 → 新增 [docs/adr/](docs/adr/) 一篇；
+   架构级决策 → 新增 [docs/adr/](docs/adr/) 一篇，**用 [docs/adr/0000-template.md](docs/adr/0000-template.md)**；
 4. 每完成一块：更新 `CHANGELOG.md` 的 `Unreleased` 段；
 5. 提交信息建议 `阶段/模块: 动作`（如 `2B: 自动登录引擎节奏参数对齐上游`）。
 
@@ -236,7 +251,32 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 | `workbench/harness/*` | fork 存量（对话 Agent 循环），改动最小化 |
 | `desktop/*`、`extensions/quick-login/*` | 壳与扩展；改扩展必跑 §7 的三个回归工具 |
 | `adapters/*.json` 指向的原四项目目录 | **冻结**：任何情况下不写 |
-| `docs/adr/*` | 改已采纳的决策 = 新增一篇取代它，不允许悄悄改历史 ADR |
+| `docs/adr/*` | 改已采纳的决策 = 新增一篇取代它，不允许悄悄改历史 ADR。新增**必须用 [0000-template.md](docs/adr/0000-template.md)**，其中的 **§6「外部参照」与 §7「触发器」不得省略**（理由见下） |
+
+### 5.1 为什么 ADR 模板多了「外部参照」一栏（2026-09-20 起）
+
+模板比历史 ADR（0001–0015）多一栏 **§6 外部参照**：**谁解决过同一问题、他们怎么做、我们为何不同**。
+
+它要解决的是一类具体的损失：**你写下决策时，脑子里一定权衡过若干做法，
+但只有结论落了纸——半年后没人能重建那个权衡。** 而这两件事的价值完全不同：
+
+| 对照的结果 | 含义 | 该怎么写 |
+|---|---|---|
+| **一致** | 行业共识，直接采纳即可 | 一句"我们跟随"就够，**不必论证** |
+| **分歧** | 真权衡，**只能靠自己判断** | 必须写清"我们为何不同"——**这一栏的价值几乎全在这里** |
+
+填写要求（写进模板里了，这里再强调一次）：
+
+- **署名来源**：能给仓库/文档/标准链接的就给。给不出来源的写 **"未核实"**——
+  **不要凭印象写**，那会变成一条没人敢质疑的假共识。
+- **不要求逐条穷尽**：3–5 个真实对照胜过 20 个凑数的。
+- **历史 ADR 的该栏可以后补**，但**必须显式标注"本栏为后补"**
+  （参考 [ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md) §6 与
+  [ADR-0004](docs/adr/0004-extension-as-execution-plane.md) 末尾的写法）。
+  **标注后补不是免责**，是让读者分清"决策当时的认知"与"后来的认知"。
+- **本仓已有的对照成果**：外部项目的系统梳理在
+  [docs/OPENSOURCE-LANDSCAPE.md](docs/OPENSOURCE-LANDSCAPE.md)（含 star 实测数据与许可红线）。
+  **写新 ADR 前先翻一遍它**——很可能那个问题已经调研过了。
 
 ## 6. 已知状态（诚实记录，勿当绿灯）
 
@@ -259,7 +299,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 .\.venv\Scripts\python.exe -m pytest          # 382 项（2026-09-17 合并后实测全绿；含 test_plugin_api/test_cache/test_agent_loop/test_tools_doc）
 .\.venv\Scripts\python.exe tools\gen_tools_doc.py   # 工具清单与数字门禁（PASS：5 插件 / 20 工具）
 node tools\verify_port_broker.mjs             # 固定端口 + 占用判定（离线，不需要 Electron；**须先退出工作台**——它靠真占固定端口验判定）
-.\.venv\Scripts\uv.exe tool run ruff check .  # All checks passed（venv 内**没有** ruff.exe，必须走 uv tool run）
+.\.venv\Scripts\ruff.exe check .               # All checks passed（★ 先探一次，见 §1；PITFALLS #50）
 .\.venv\Scripts\python.exe tools\verify_packaging.py   # 9/9
 ```
 
@@ -284,3 +324,97 @@ node tools\verify_host_logic.mjs                                 # host/端口�
 - 阶段验收以 `tests/` 机器验收为准，不靠肉眼；
 - 真机验收（真实 eGMP 平台）只在测试环境账号上做；
 - 测试发现问题：**先记根因，再修**——不修「看起来好了」。
+
+## 8. 日常测试：三种运行模式（**以及"要不要编译"**）
+
+> 这一节存在的原因很具体：**"开发态怎么起"从来没被写清楚过**，于是没人注意到
+> 「桌面壳的开发态是直接 spawn `uvicorn`、不经过任何入口脚本」——
+> 结果是**日常开发测试时日志里没有启动横幅**（2026-09-20 实测确认，已把横幅移到
+> `api.lifespan` 修掉）。**没写下来的东西不会有人去验。**
+
+### 8.1 三种模式对照
+
+| 模式 | 命令 | 要编译吗 | 覆盖什么 | **不覆盖**什么 |
+|---|---|---|---|---|
+| **① Web 模式** | `.\.venv\Scripts\python.exe -m workbench.main` | **不要** | 全部页面与业务功能（对话/洞察/工厂/账号/沙箱/Skill）；自动开浏览器 | Electron 壳的一切（托盘/热键/单实例/更新器）；`WORKBENCH_SESSION_MODE=cdp`（壳才下发，Web 模式跑 `local` 的 Playwright chromium）；扩展的桌面地址发现（回退固定 18765，能用） |
+| **② 桌面壳开发态** | `cd desktop; npm start` | **不要** | **完整桌面应用**：真窗口 + 托盘 + 热键 + sidecar 生命周期 + CDP 会话模式 + 扩展协作面 | 打包特有行为（见 8.3） |
+| **③ 打包安装版** | `powershell -File tools\build.ps1` → 跑 NSIS 安装包 | **要**（数分钟） | 全部，含 PyInstaller 冻结态、chromium 打包、electron-builder `files` 白名单、NSIS 安装/卸载 | 调试便利性（改一行要重打） |
+
+**结论：日常测试打开应用页面，①②都不需要编译。**
+`desktop/node_modules` 与 `.venv` 就绪即可（本机已就绪）。
+
+### 8.2 什么时候**必须**编译
+
+只有三件事需要"构建步骤"，且**都不是"编译应用"**：
+
+| 你改了什么 | 要跑的 | 说明 |
+|---|---|---|
+| `extensions/quick-login/**`（TS） | `cd extensions\quick-login; npm run build` | 产 `extensions/quick-login/dist/`。**这不是编译桌面应用**，只是把扩展打成 Chrome 能加载的产物 |
+| 要让 `verify_packaging.py` 的 P4b/P4c 转绿 | 同上 | 它们比对 `dist/manifest.json` 的版本 == 项目版本；`git pull` 之后、build 之前**必然红**（那是本地残留，不是上游坏了） |
+| 要验打包特有行为 | `tools\build.ps1` | 见 8.3 |
+
+> **开发态跑应用时，扩展 `dist/` 不是必需的**——壳只在「安装引导」里用它展示路径
+> （`main.js::extensionDir()` 开发态取 `extensions/quick-login/dist`）。
+> 要测**快捷登录执行面**才需要：先在 Chrome 装一次 `dist/`，改完重建后到
+> `chrome://extensions` 点「重新加载」（Chrome 会缓存 SW 脚本，不重载等于没改）。
+
+### 8.3 只有**打包态**才验得到的（改完必须打一次包）
+
+这些是"开发态永远绿、装出来才炸"的类别，改动相关代码后要真打一次包：
+
+| 项 | 为什么开发态验不到 |
+|---|---|
+| **PyInstaller 漏收插件**（PITFALLS #32） | 动态导入 `importlib.import_module` 静态分析看不见——开发态导入得到，装完**静默少功能** |
+| **`sidecar-stdio-*.log`**（壳抓的进程原始输出） | 由 Electron 主进程写，开发态/测试脚本都不起壳 |
+| **冻结态的日志落盘** | `config.FROZEN` 只影响默认格式（JSONL）；`DATA_DIR` 可写性在安装目录环境下才见真章 |
+| **托盘图标 / `desktop/package.json` 的 `files` 白名单**（B-g） | P6 只 glob `*.js`，`icon.ico` 这类资源无人守 |
+| **chromium 是否真打进包** | `server.spec` 的守卫只在打包时触发（P8 / P8b） |
+| **NSIS 安装/升级/卸载**、`latest.yml` | 只有产物才有 |
+| **壳的异常生命周期**（强杀 / 崩溃 → sidecar 是否成孤儿） | 需要真实进程树；但**已有自动化**：`pytest tests/test_lifecycle.py -o addopts="" -m slow` 真起父子进程、对父 `taskkill /F`（不带 `/T`）、断言 sidecar 自退 |
+
+> **窗口/进程行为速查**（用户定稿 2026-09-20，PITFALLS #55）：
+>
+> | 动作 | 应用 | sidecar |
+> |---|---|---|
+> | 最小化 | 继续运行（托盘「显示主窗」可捞回，已补 `restore()`） | 继续运行 |
+> | **关闭窗口（X / 菜单）** | **退出** | **一并被杀**（`taskkill /T`） |
+> | 托盘/应用菜单「退出」 | 退出 | 一并被杀 |
+> | 强杀 / 崩溃 | 进程消失 | **自行退出**（`workbench/lifecycle.py` 等父句柄，2026-09-20 起） |
+
+### 8.4 日常配方（建议照抄）
+
+```powershell
+# ① 一次性准备（本机已完成）
+cd desktop; npm ci; cd ..
+cd extensions\quick-login; npm install; npm run build; cd ..\..
+
+# ② 每次开工前：确认基线是绿的（约 40 秒）
+.\.venv\Scripts\python.exe -m pytest -o addopts=""      # 596 passed
+.\.venv\Scripts\ruff.exe check .                        # ★ 先探一次，见 §1
+
+# ②b 改了生命周期/壳的启动链路时，补跑慢层（真起进程，约 10–30 秒）
+.\.venv\Scripts\python.exe -m pytest -o addopts="" -m slow
+
+# ③ 打开完整应用来测（零编译）
+cd desktop; npm start
+#    只想快速看页面、不想开 Electron 时：
+#    .\.venv\Scripts\python.exe -m workbench.main
+
+# ④ 测试期间排障：日志是完整可查的
+#    %APPDATA%\Workbench\logs\workbench-<日期>.jsonl
+curl.exe -s "http://127.0.0.1:18765/api/logs/tail?level=WARNING&n=50"
+#    界面响应头里的 X-Trace-Id → 还原整条链路
+curl.exe -s "http://127.0.0.1:18765/api/logs/trace/<traceId>"
+
+# ⑤ 改完代码：重跑 ②；动了日志/确认门/敏感表再跑这两条
+.\.venv\Scripts\python.exe tools\verify_logging.py           # 36/36（自起服务，不必退出工作台）
+.\.venv\Scripts\python.exe tools\verify_regression_tests.py  # 6/6 反证
+
+# ⑥ 发版前：打一次包，走 §8.3 清单
+powershell -ExecutionPolicy Bypass -File tools\build.ps1
+```
+
+> ⚠️ **端口是固定常量、不顺延**（[ADR-0012](docs/adr/0012-fixed-ports.md)）：
+> `npm start` 与已打开的打包版**不能同时跑**（都抢 18765），会直接报错退出并说清占用者是谁。
+> 起不来时先 `Get-NetTCPConnection -LocalPort 18765 -State Listen` 看是谁占着
+> （PITFALLS #20 / #25：那种情况下的典型症状是"改了代码界面没变"——**先怀疑跑的是旧进程**）。

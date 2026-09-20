@@ -582,6 +582,9 @@ class ToolHub:
         """
         spec = self._tools.get(name)
         if spec is None:
+            # 未知工具**走不到 `_audit`**（那是唯一不经过扼流点的分支），
+            # 所以这里必须单独记一笔——"模型编了一个不存在的工具名"是有价值的信号。
+            logger.warning("未知工具调用：%s（可用：%s）", name, ", ".join(sorted(self._tools)))
             return Invocation(
                 tool=name, status=ToolStatus.UNKNOWN_TOOL, risk=Risk.READ,
                 error=f"未知工具：{name}",
@@ -612,7 +615,9 @@ class ToolHub:
                     content=(
                         f"⏸ 工具 {name} 属于「{spec.risk.value}」级操作，已暂停等待用户确认"
                         f"（pending_id={pending_id}）。不要在未确认前重试；"
-                        "先向用户说明将要做什么，等界面放行后再重试同一次调用。"
+                        "先向用户说明将要做什么。**用户放行后，用完全相同的参数重试这一次"
+                        "调用**即可执行——服务端会按「工具 + 参数指纹」认领那次批准；"
+                        "换了参数则需要重新确认。"
                     ),
                     audit_id=audit_id, risk=spec.risk, plugin_id=spec.plugin_id,
                     pending_id=pending_id, request_id=_call_id(arguments),
@@ -651,6 +656,30 @@ class ToolHub:
         return inv
 
     def _audit(self, spec: ToolSpec, inv: Invocation, extra: dict[str, Any]) -> None:
+        # ── L0 工具调用日志
+        #
+        # 挂在这里是**刻意的**：`_audit` 是每一次真实调用都会经过的**扼流点**
+        # （bad_args / needs_approval / ok / timeout / error 五条路径都调它）。
+        # 于是"日志里有"与"审计里有"在结构上等价，不会出现一边有一边没有的漂移
+        # ——本仓 PITFALLS #42（`audit.record` 写了但没有任何调用方）正是这类漂移的样本。
+        #
+        # 注意：这里**不复制**审计的内容（参数、结果摘要）。权威在 `agent_audit` 表，
+        # 日志只带 `auditId` 指过去，外加几个便于聚合的标量（耗时/状态/长度）。
+        from . import logging_setup
+
+        with logging_setup.bind(auditId=inv.audit_id, tool=spec.name):
+            logging.getLogger("workbench.tool").log(
+                logging.INFO if inv.status is ToolStatus.OK else logging.WARNING,
+                "工具调用 %s → %s", spec.name, inv.status.value,
+                extra={"wb_kind": "tool", "wb_fields": {
+                    "plugin": spec.plugin_id,
+                    "risk": spec.risk.value,
+                    "status": inv.status.value,
+                    "durationMs": inv.duration_ms,
+                    "contentChars": len(inv.content or ""),
+                }},
+            )
+
         if self._audit_writer is None:
             return
         try:

@@ -65,6 +65,56 @@ const portPreflight = portBroker.unavailable().then((busy) => {
 
 // ------------------------------------------------------------ 服务 sidecar
 
+/** sidecar 的 stdout/stderr 落盘（**兜底通道**，与 Python 的日志系统分工不同）。
+ *
+ * 为什么壳还要读这个管道：Python 侧 `workbench/logging_setup.py` 能覆盖**日志装配之后**
+ * 的一切，但覆盖不到它之前——解释器启动失败、PyInstaller 引导异常、`import` 期的
+ * SyntaxError、`sitecustomize` 报错，全都发生在日志可用之前，只走 stderr。
+ * 而 `stdio: 'ignore'` 让这些输出**直接消失**，现场表现是「服务没起来」且零线索
+ * （PITFALLS #20 / #25 反复记过"跑的是旧产物"这类无从判断的情形）。
+ *
+ * ⚠️ **必须持续消费管道**：不读的话子进程写满缓冲区后会**卡死**——
+ * 那比丢日志严重得多（本仓 PITFALLS #2 的"不消费的管道成为阻塞源"同族）。
+ */
+function teeServerOutput(child) {
+  try {
+    const dir = path.join(shellState.dataDir(), 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const stream = fs.createWriteStream(
+      path.join(dir, `sidecar-stdio-${stamp}.log`), { flags: 'a' });
+
+    const pipe = (src, tag) => {
+      if (!src) return;
+      src.setEncoding('utf8');
+      let buffer = '';
+      const emit = (line) => stream.write(`${new Date().toISOString()} [${tag}] ${line}\n`);
+      src.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() ?? '';
+        for (const line of lines) emit(line);
+        // 单行超长（没有换行的巨量输出）时强制落盘，避免 buffer 无限增长
+        if (buffer.length > 64 * 1024) {
+          emit(`${buffer.slice(0, 64 * 1024)}…（单行过长已截断）`);
+          buffer = '';
+        }
+      });
+      src.on('end', () => { if (buffer) emit(buffer); });
+      src.on('error', () => { /* 管道错误不该影响壳 */ });
+    };
+    pipe(child.stdout, 'out');
+    pipe(child.stderr, 'err');
+    child.on('exit', (code, signal) => {
+      stream.write(`${new Date().toISOString()} [exit] code=${code} signal=${signal}\n`);
+      stream.end();
+    });
+  } catch (error) {
+    // 落盘失败绝不能影响启服
+    console.error('[akso-shell] sidecar 输出落盘失败：', error);
+  }
+}
+
 function spawnServer() {
   // 端口下发的两条路一起走（ADR-0011 §D-2，端口值本身已按 ADR-0012 固定）：
   //  - 环境变量：Python 侧 config.PORT/CDP_PORT/CONTROL_PORT 是唯一读数点；
@@ -77,7 +127,15 @@ function spawnServer() {
     WORKBENCH_CDP_PORT: String(DEBUG_PORT),
     WORKBENCH_CONTROL_PORT: String(CONTROL_PORT),
     WORKBENCH_SESSION_MODE: 'cdp',
+    // 父进程监视（workbench/lifecycle.py）：本壳**非正常死亡**时（崩溃 / 被任务管理器结束），
+    // sidecar 的 before-quit 链根本不会跑，它会变成孤儿并占着 18765 —— 而端口是**固定**的
+    // （ADR-0012），于是下次启动直接失败，且弹窗认不出"占用者是自己的孤儿"。
+    // 下发本壳的 pid，sidecar 用 WaitForSingleObject 等这个句柄，壳一死它就退出。
+    WORKBENCH_PARENT_PID: String(process.pid),
   };
+  // `stdio` 的 stdout/stderr 必须 'pipe' 而不是 'ignore'：见 `teeServerOutput`。
+  // stdin 保持 'ignore'（sidecar 不接受输入）。
+  const stdio = ['ignore', 'pipe', 'pipe'];
   const packaged = process.resourcesPath
     ? path.join(process.resourcesPath, 'server', 'WorkbenchServer.exe')
     : null;
@@ -85,9 +143,10 @@ function spawnServer() {
     serverChild = spawn(packaged, ['--server', '--port', String(SERVER_PORT)], {
       cwd: path.dirname(packaged),
       env,
-      stdio: 'ignore',
+      stdio,
       windowsHide: true,
     });
+    teeServerOutput(serverChild);
     return;
   }
   // 开发态回退：仓库 venv 的 uvicorn
@@ -96,7 +155,8 @@ function spawnServer() {
   if (fs.existsSync(py)) {
     serverChild = spawn(py,
       ['-m', 'uvicorn', 'workbench.api:app', '--host', '127.0.0.1', '--port', String(SERVER_PORT)],
-      { cwd: repoRoot, env, stdio: 'ignore', windowsHide: true });
+      { cwd: repoRoot, env, stdio, windowsHide: true });
+    teeServerOutput(serverChild);
     return;
   }
   console.error('未找到服务端（打包资源与 venv 均缺失）');
@@ -431,6 +491,21 @@ function createControlServer() {
 
 // ------------------------------------------------------------ 托盘
 
+/**
+ * 把主窗显示出来并聚焦。
+ *
+ * `show()` **不会取消最小化**——窗口已最小化时调它，任务栏里仍是收起的，
+ * 用户会以为"托盘那个菜单点了没反应"。所以必须先 `restore()`。
+ * （用户定稿"关闭窗口 = 应用退出"之后，托盘最主要的用途就是**把最小化的窗口捞回来**，
+ * 所以这条路径必须真的可用。）
+ */
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 function createTray() {
   try {
     tray = new Tray(path.join(__dirname, 'icon.ico'));
@@ -438,7 +513,7 @@ function createTray() {
     return; // 图标缺失不阻塞
   }
   const menu = Menu.buildFromTemplate([
-    { label: '显示主窗', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
+    { label: '显示主窗', click: showMainWindow },
     { label: '账号轮盘 (Alt+Q)', click: toggleWheel },
     { label: '安装浏览器扩展…', click: () => { void openExtensionSetup(); } },
     { type: 'separator' },
@@ -471,7 +546,7 @@ function createTray() {
   ]);
   tray.setToolTip('Workbench');
   tray.setContextMenu(menu);
-  tray.on('double-click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
+  tray.on('double-click', showMainWindow);
 }
 
 // ------------------------------------------------------------ 自动更新
@@ -634,8 +709,13 @@ function createAppMenu() {
     {
       label: '窗口',
       submenu: [
-        { role: 'minimize', label: '最小化' },
-        { role: 'close', label: '关闭窗口（应用继续在托盘运行）' },
+        { role: 'minimize', label: '最小化（应用与后台服务继续运行）' },
+        // ⚠️ 标签必须与**实际行为**一致：这里没有 `mainWindow.on('close')` 拦截器，
+        // 关闭窗口 → `window-all-closed` → `app.quit()` → **应用真的退出**（sidecar 一并被杀）。
+        // 原标签写的是"应用继续在托盘运行"，与代码相反——2026-09-20 订正为实际行为。
+        // 若哪天要做"关闭即收进托盘"，必须同时加 close 拦截 + isQuitting 标志，
+        // 并把这里改回去（用户定稿：保持"关闭 = 退出"的直白语义）。
+        { role: 'close', label: '关闭窗口（应用退出）' },
       ],
     },
   ];

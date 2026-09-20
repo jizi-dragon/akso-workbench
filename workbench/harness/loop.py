@@ -40,7 +40,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 
-from .. import cache
+from .. import cache, logging_setup
 from ..plugin_api import Risk, ToolContext, ToolHub, ToolStatus
 from ..services.deepseek import DeepSeekClient
 from .safety import SafetyGate
@@ -96,26 +96,35 @@ async def run_agent_loop(
     meter = meter or UsageMeter(conversation_id, getattr(client, "model", ""))
     conversation = await _build_context(messages, client, config, conversation_id, meter)
 
-    while True:
-        if safety.exhausted:
-            yield make_event("error", message="已达到步数预算上限，已终止本轮")
-            usage = meter.finish()
-            meter.stats.persist()
-            yield make_event("usage", usage=usage)
-            return
-
-        async for event in _one_model_turn(
-            conversation, client, registry, config, safety,
-            conversation_id=conversation_id, plugins=plugins, meter=meter,
-        ):
-            yield event
-            if event["type"] in ("final", "error"):
-                # 用量在**收尾时**发一条：命中量要等所有 LLM 调用（含摘要重算）都结束
-                # 才有完整答案；提前发会让前端显示一个偏低的数字
+    # 整个循环（含它内部发起的工具调用）都带 `conversationId`。
+    # 注意：`contextvars` 在 `async for` 的每次迭代里**不会被自动传播**到
+    # `registry.execute` 内部的同步代码——工具调用那一段由 `ToolHub._audit`
+    # 自己再 bind 一次（那里同时补上 `auditId` / `tool`），两边合起来才是完整链路。
+    with logging_setup.bind(conversationId=conversation_id):
+        logger.info("Agent 循环开始：%d 条历史消息，%d 个工具可用，步数预算 %d",
+                    len(conversation), len(registry.specs()), config.max_steps)
+        while True:
+            if safety.exhausted:
+                # "为什么这次没答完"最需要这条：前端的错误提示很短，日志要留下预算与轮次
+                logger.warning("步数预算耗尽，终止本轮（max_steps=%d）", config.max_steps)
+                yield make_event("error", message="已达到步数预算上限，已终止本轮")
                 usage = meter.finish()
                 meter.stats.persist()
                 yield make_event("usage", usage=usage)
                 return
+
+            async for event in _one_model_turn(
+                conversation, client, registry, config, safety,
+                conversation_id=conversation_id, plugins=plugins, meter=meter,
+            ):
+                yield event
+                if event["type"] in ("final", "error"):
+                    # 用量在**收尾时**发一条：命中量要等所有 LLM 调用（含摘要重算）都结束
+                    # 才有完整答案；提前发会让前端显示一个偏低的数字
+                    usage = meter.finish()
+                    meter.stats.persist()
+                    yield make_event("usage", usage=usage)
+                    return
 
 
 def _with_system_prompt(messages: list[dict], system_prompt: str) -> list[dict]:
@@ -210,6 +219,10 @@ async def _one_model_turn(
 
             for call in assistant["tool_calls"]:
                 if safety.is_loop(call):
+                    # 这条不写日志的话，用户只看到"模型说了一句话就停了"，
+                    # 而真实原因是同一个调用连打了 3 次
+                    logger.warning("检测到重复的工具调用，终止本轮：%s %s",
+                                   call.get("name"), str(call.get("arguments"))[:200])
                     yield make_event("error", message="检测到重复的工具调用，已终止本轮")
                     return
 
@@ -234,6 +247,10 @@ async def _one_model_turn(
                 safety.consume_step()
 
                 if invocation.status is ToolStatus.NEEDS_APPROVAL:
+                    # 确认门被触发是"用户接下来该做点什么"的信号，
+                    # 也是排查"为什么危险工具没执行"的第一现场
+                    logger.warning("工具被确认门拦下：%s（pendingId=%s）",
+                                   invocation.tool, invocation.pending_id)
                     # 危险操作：**不执行**，把"要不要做"交回给人。
                     yield make_event(
                         "approval_required",

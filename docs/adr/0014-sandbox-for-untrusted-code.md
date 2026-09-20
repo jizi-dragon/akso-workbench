@@ -124,3 +124,43 @@ Skill 作为第一个消费方，不必再设计第二套隔离（**已于 2026-
 | 上传的 Skill 需要**访问客户内网** | 出网策略的强制实现（WFP/代理白名单）+ 与生产环境隔离的强约束 |
 | 沙箱成为**性能瓶颈**（每次执行起进程开销大） | 常驻 worker + 池化，但**不得**退化成"同进程内 `exec`" |
 | 出现一次"沙箱被绕过"的真实事故 | 立刻升级到内核级隔离，并把事故写成 PITFALLS 条目 |
+
+---
+
+## 6. 外部参照（2026-09-20 后补）
+
+> ⚠️ **本栏为后补**（正文保持决策当时的样子，不改写）。
+> 本 ADR 的价值一半在 §D-2「四件事」的分层，另一半在 §D-3 的诚实边界——
+> 而这两件事**在行业里都有明确对照物**，此前没写下来。上方的 §5 即本模板所说的"触发器"栏。
+
+### 6.1 Job Object 在行业里的位置（**最重要的对照，可能改变 §5 的触发器判断**）
+
+| 参照对象 | 它的 Windows 隔离做法 | 与本决策的关系 | 我们的理由 |
+|---|---|---|---|
+| **OpenAI Codex**（[官方《Building a safe and effective sandbox for Codex on Windows》](https://openai.com/index/building-codex-windows-sandbox/)） | **完全不用 Job Object**。分两模式：`elevated` = 专用低权限沙箱用户 + 文件系统权限边界 + **防火墙规则** + 本地策略；`unelevated` = **从当前用户派生的受限 Windows 令牌** + **ACL** 边界 + 环境级离线控制。另有私有桌面做 UI 隔离 | **★ 关键分歧** | **Job Object 是进程树生命周期手段，不是权限边界**——它解决的是 §D-2 E1 那一层（超时后残留的进程树），而 Codex 用它解决的那一层（**拦权限**）我们**完全没有**。这不是"我们做错了"，而是**必须把定位说准**：本沙箱的四层里没有"权限"这一层 |
+| [Sandboxie-plus](https://github.com/sandboxie-plus/Sandboxie)（约 19,483 ★） | **Windows 内核态重定向隔离**（文件/注册表/进程虚拟化），Windows 上最成熟的开源方案 | 参考，**不采纳** | ① 许可 **GPL-3.0**（与本仓 Apache-2.0 不兼容）；② 内核驱动级，集成与分发成本远超一个桌面应用的承受范围 |
+| [E2B](https://github.com/e2b-dev/E2B) / [Daytona](https://github.com/daytonaio/daytona) / [microsandbox](https://github.com/superradcompany/microsandbox) / Firecracker / gVisor | **microVM 或容器级隔离** | **分歧** | 它们在**服务端**跑，可以假设宿主可控。本项目的宿主就是**用户自己的笔记本**：跑 microVM 需要 Hyper-V/WSL2，会毁掉"零依赖安装"这个核心卖点。§D-3 的判断是对的，**但行业的存在说明"限损层"确实是弱一档的方案** |
+
+**⇒ 由这条对照得出的具体结论**：若要把"限损"升级为"隔离"，**下一个原语是受限令牌
+（`CreateRestrictedToken`）/ AppContainer + ACL，而不是继续加固 Job Object**。
+Codex 之所以必须提供 `unelevated` 回退，正是因为**提权路径常常被企业策略禁止**——
+这与本项目"工程师自己电脑上零配置"的取向天然冲突。
+**因此本 ADR §5 的触发器应当补一条**（不是改历史，是追加认知）：
+> 触发条件新增：**产品开始面向"用户会装陌生来源 Skill"的场景，或出现合规要求时**，
+> 再评估受限令牌方案；届时须同时评估"是否需要管理员做一次性设置"这一代价。
+
+### 6.2 "官方示例自标仅供演示"——我们比参照物做得更完整
+
+| 参照对象 | 它的做法 | 关系 |
+|---|---|---|
+| **Microsoft Agent Framework** 的 `SubprocessScriptRunner` | 官方**自标为"仅供演示"**，并要求生产环境自行补上：沙箱（容器/seccomp/jail）+ 资源限制（CPU/内存/墙钟）+ 输入校验与脚本白名单 + 结构化日志与审计 | **一致（且我们更完整）**：本 ADR 的 E1–E4 正是那份"待补清单"，而**我们已经补上了**——`script_runner.py` 已接沙箱、策略、审计 |
+| 同一框架的 archive 准入参数 | `ArchiveMaxFileCount`(20) / `ArchiveMaxSizeBytes`(1 MB) / `ArchiveMaxUncompressedSizeBytes`(1 MB) / 扩展名白名单 / `digest`（`sha256:` 解压前校验） | **参考，我们缺两项**：本仓 `skills/security.py` 有可疑模式扫描（领先多数生态），但**没有 sha256 摘要校验**，**也没有解压后大小上限**（zip bomb 防护）。已记入 [OPENSOURCE-LANDSCAPE.md](../OPENSOURCE-LANDSCAPE.md) §6.6 |
+
+### 6.3 一个值得保留的判断：不把安全建立在未验证的行为上
+
+§D-1 讨论"为什么中间件而不是来源校验"时给的理由是
+**"扩展 SW 的 `Origin` 头行为无法在本机实证，不能把安全建立在没验证过的浏览器行为上"**。
+这条在行业里**是少数派**（多数实现直接用 `Origin` 允许清单），但它是**更严的**——
+且与 MCP 生态的态度一致：MCP 规范明确写着客户端**不应基于不可信服务端提供的 annotations
+做工具使用决策**。**"不可信方不能自证安全"是共识，"用什么手段实现"才是分歧。**
+

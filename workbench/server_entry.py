@@ -23,11 +23,21 @@ from datetime import datetime
 
 import uvicorn
 
-from workbench import __version__, config
+from workbench import __version__, config, logging_setup
 
 
 def _log_startup(line: str) -> None:
-    """冻结态把启动信息落盘（壳 spawn 时 stdio 被忽略，现场无输出可用）。"""
+    """**面包屑**：一行启动信息落 `DATA_DIR/server.log`。
+
+    注意它与 `logging_setup` 的分工——**这不是"另一个日志"，是日志系统自身失败时的兜底**：
+
+    - 正常路径：`logging_setup` 把启动横幅与后续一切写进 `logs/workbench-<date>.jsonl`；
+    - 兜底路径：若**日志系统都建不起来**（磁盘满、目录不可写、`logging` 初始化异常），
+      本函数仍会往 `server.log` 留一行——因为它是裸 `open()`，不依赖任何日志设施。
+
+    保留它还有一个具体理由：`workbench/static/blank.html` 的"服务端没有应答"页面
+    **直接把这个文件名告诉了用户**。删掉它会让那句提示指向一个不存在的文件。
+    """
     if not config.FROZEN:
         return
     try:
@@ -55,13 +65,20 @@ def main(argv: list[str] | None = None) -> int:
             continue
         i += 1
 
+    # 日志必须**在 uvicorn 之前**装配：壳以 `stdio: 'ignore'` 启动本进程，
+    # 装配前发生的任何失败（PyInstaller 引导、import 期异常）都无处可查。
+    logging_setup.configure()
+    logging_setup.install_excepthooks()
+
     line = (
         f"WorkbenchServer v{__version__} pid={os.getpid()} → http://{host}:{port} "
         f"(frozen={config.FROZEN})"
     )
     print(line, flush=True)
     _log_startup(line)
-    uvicorn.run("workbench.api:app", host=host, port=port, log_level="warning")
+    # 启动横幅由 `api.lifespan` 记（所有启动路径的唯一交集，见 logging_setup.banner 的文档串）
+    # 见 `main.py` 同一处的说明：日志配置所有权归 `logging_setup`。
+    uvicorn.run("workbench.api:app", host=host, port=port, log_config=None)
     return 0
 
 

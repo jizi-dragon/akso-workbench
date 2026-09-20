@@ -640,3 +640,43 @@ autologin, has_token, monitoring, monitor_log}`；
   （这正是 §10 那条文档门禁能继续成立的原因）；
 - **卸载 ≠ 删除**：卸载只断 `current` 指针并摘插件，**共享库里的版本一个都不删**；
 - **核心插件只能禁用、不能卸载**（`capability_id` 为空串的插件会被守卫直接拒）。
+
+## 19. 运行日志 `/api/logs`（`routes_logs.py`，2026-09-20 引入）
+
+**定位**：这是**运维面**，不是业务域。它回答"刚才发生了什么"。
+装配点在 `create_app()` 里**显式注册**（不进 `_optional_routers`）——查不到日志比少一个业务路由更严重，
+不该被容错注册静默跳过。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/logs/days` | 有哪些天的日志可读（倒序）+ 日志目录 + 当天文件名 |
+| GET | `/api/logs/tail` | 读最近 N 条；支持 `level` / `contains` / `trace` / `kind` / `day` 过滤 |
+| GET | `/api/logs/trace/{trace_id}` | **把一次请求的日志按时间正序排出来**（本组接口的核心用途） |
+| GET | `/api/logs/download?day=YYYYMMDD` | 导出当天日志（JSONL，**再脱敏一次**） |
+
+**`traceId` 从哪来**：每个 `/api/*` 请求由中间件生成一个 8 位十六进制号，
+**同时回在响应头 `X-Trace-Id` 里**——用户报故障时报这个号即可定位整条链路。
+
+```powershell
+# 拿 traceId
+curl.exe -i -s http://127.0.0.1:18765/api/agent/selfcheck | Select-String X-Trace-Id
+# 看这条请求的完整时间线
+curl.exe -s "http://127.0.0.1:18765/api/logs/trace/<traceId>"
+# 只看错误
+curl.exe -s "http://127.0.0.1:18765/api/logs/tail?level=ERROR&n=50"
+```
+
+**安全边界**（务必注意）：
+
+1. **可能返回用户数据**（对象编码、文件路径、工具名）。它与 `/api/*` 同级——
+   只有"本机回环"这一层（既有取舍 R1b），**本组端点不得扩大它**；
+2. **导出时再脱敏一次**（纵深防御）：落盘已过 `RedactionFilter`，导出再走一遍；
+3. **不提供删除/清空**。删日志是不可逆动作，应由人在文件系统里做，不该藏在 HTTP 面里
+   （与 [approvals.py](../workbench/approvals.py) 对不可逆动作的态度一致）；
+4. **`/api/logs/*` 自身不记请求日志**——否则查一次日志会在下一次查询里看到自己（自指噪声）。
+
+**错误码**：`400` = `day` 不是 8 位数字；`404` = 该天没有日志 / 该 traceId 没有记录（只查当天）；
+`413` = 当天日志超过导出上限（32 MB，请直接取文件）。
+
+> 配置项（`WORKBENCH_LOG_*`）与日志文件清单见 [CONFIG.md](CONFIG.md) §2.1 / §6；
+> 设计与分期见 [LOGGING-DESIGN.md](LOGGING-DESIGN.md)。

@@ -88,3 +88,27 @@ def _worker(self):
   （应为「已关闭（登录态已保存）」）。见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 的风险台账。
 - **真机验收入口固定**：`GET /api/browser/check`（chromium 可执行文件体检）、
   `tests/test_browser_state.py`（storage_state 5 项）、`tests/test_browser_parallel.py`（双账号并行/免密/自愈 4 项）。
+
+---
+
+## 外部参照（2026-09-20 后补）
+
+> ⚠️ **本栏为后补**（正文保持决策当时的样子，不改写）。
+
+| 参照对象 | 它的做法 | 与本决策的关系 | 我们的理由 |
+|---|---|---|---|
+| **Playwright 官方文档**（sync API 章节） | 明确：sync API **非线程安全**、绑定创建它的线程；同线程不得起第二个 `sync_playwright()` | **一致（跟随）** | 这不是本仓的发明，是**上游的硬约束**。"专职单线程 + Future 提交"是满足该约束的标准解法，**无需自证** |
+| [browser-use](https://github.com/browser-use/browser-use) / [Skyvern](https://github.com/Skyvern-AI/skyvern) / [Stagehand](https://github.com/browserbase/stagehand) | 一律用 **async API**（`async_playwright`），跑在自己的 asyncio 事件循环里，**因此不需要专职线程**——并发由事件循环提供 | **★ 分歧** | 这是一个**真实的权衡**，不是"我们落后"：本仓 `services/egmp/client`、`proc`、`sandbox.run` **都是同步的**，且 FastAPI 的同步依赖也走线程池。选 async 意味着把整条业务链改成 async（fork 存量大、改动面广），**而收益只是省掉一个线程**。我们选了 sync + 单线程队列，用 `asyncio.to_thread` 桥接 |
+| 同上三者的"浏览器池" | 通常**每任务一个新上下文**，用完即弃，任务间无共享状态 | **分歧** | 我们的会话**必须长期存活**（登录态要复用、监听要持续），所以状态集中在 `sessions: dict[account_id, SessionEntry]`。代价就是正文里那条"**全局串行**：一个慢操作阻塞所有账号" |
+
+**由本次对照得出的结论**：
+
+- **可以放心的部分**：单线程串行化本身是上游约束下的标准解法，不必再论证。
+- **必须自己盯住的部分**（也是本 ADR 最有价值的原创内容）：
+  ① 正文那条「**事件回调内禁止连接调用**」——async 派系的框架天然没有这个问题（回调在事件循环里、
+  它们本来就要 await），**所以行业里没有现成教训可抄**，这是 sync + 队列这个组合**独有**的坑；
+  ② 正文承认的「**新增录制能力时没有测试能拦住违规**」——同上，只能靠纪律与 code review。
+- **一个值得记住的推论**：本项目选了与主流相反的那条路（sync vs async），
+  **代价集中体现在 ADR 的"代价（已接受）"表里，而收益是改动面小**。
+  这正是"外部参照"栏存在的意义——**不是为了证明我们错了，是为了让代价可见**。
+

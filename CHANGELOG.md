@@ -126,6 +126,344 @@
   > 现在失败构建**原样重跑即可**——默认 `none` 是幂等的，不会再吃号。
 
 
+- **P0-A：危险工具在对话链路里**永远无法执行**（2026-09-20，实测复现后修复）**。
+
+  **症状**（用真实 `ToolHub` + `PendingStore` + `run_agent_loop` 走完整流程）：
+
+  ```
+  轮1 被拦（pendingId=A）→ 人放行 → 轮2 让模型重试同一次调用
+        → **仍被拦，且新建了 pendingId=B** → 工具从未执行
+  ```
+
+  ⇒ `accounts_browser_open` / `accounts_browser_close` / `factory_create`
+  （**全部 3 个写 / 危险工具**）在对话里不可用。
+
+  **根因**（三处合起来才成立）：① 确认门判据是 `ctx.approval_token`；
+  ② 全仓**唯一**的令牌赋值点在 HTTP 链路（`routes_agent.invoke`），
+  而 `harness/loop.py` 构造 `ToolContext` 时**不传**它；③ `PendingStore.request()`
+  只复用 `status == "pending"` 的条目，而被批准的那条已是 `"approved"` → 匹配不到 → 新建。
+
+  **三方说法互相矛盾**（这是它能潜伏至今的原因）：`routes_agent.py` 的文档串说
+  「模型重试同一次调用（**原样带 `approvalToken`**）」、`plugin_api` 回给模型的话说
+  「等界面放行后再重试同一次调用」、而前端 `chat-tools.js` 说「**刻意不自动重发**……
+  请在输入框里让模型继续或重试」。**三句话各自都像对的，合起来走不通。**
+
+  **修法**：`PendingStore.claim_approved()` —— 无令牌时按「**工具 + 参数指纹**」认领一条
+  **已批准**的条目，**一次性**（认领后置 `consumed`）。门槛与令牌**完全一致**
+  （同工具、同参数、5 分钟窗口、只用一次），只是"凭据"从令牌换成了服务端内存里的事实——
+  与 `approvals` 既有的「**权威状态在内存、DB 只留痕**」完全一致。
+  同时**统一了三处说法**，并补了回归 `tests/test_agent_approval.py`（8 项）。
+
+  > 顺带修掉一个既有缺陷：`request()` 原用 `_fingerprint(item.tool, item.args)` 现算，
+  > 而 `item.args` 是 `redact_args()` **之后**的副本 —— 参数名命中 `_REDACT_KEYS`
+  > （如 `token`）时两边指纹不同，"同一工具同一参数复用"会**静默失效**、每次新建一条 pending。
+  > 现在指纹在申请时算一次并存下来（`PendingAction.fingerprint`）。
+
+- **P0-B：只读工具能**完整读出**cookie / 平台 JWT / 含 Fernet 密钥的账号备份**（2026-09-20，实测复现后修复）**。
+
+  **症状**（临时 `WORKBENCH_DATA` + 真实形态的产物，实测）：
+
+  ```
+  runtime/browser-states/acct-1.json    ❌ 放行，含 cookie + localStorage token
+  runtime/egmp-tokens/token-env1.json   ❌ 放行，**完整吐出**，含平台 JWT
+  runtime/accounts-backup/accounts.json ❌ 放行，**完整吐出**，含 Fernet 密钥 + 密文口令
+
+  对照：同样三个路径，沙箱 is_sensitive_path = True / True / True
+  ```
+
+  而 `read_local_file` 是 `risk=read`、**不过确认门**。主库更直接：
+  handler 返回 **1,056,412 字符**（本次密钥落在 `MAX_RESULT_CHARS` 截断之外，
+  **但那是运气不是控制**——那个上限是**上下文预算**手段，不是保密手段）。
+
+  **根因**：仓里**两张敏感路径表**——沙箱那张含 `browser-states` / `egmp-tokens` /
+  `workbench.db` / `accounts.json`，而 `plugins/builtins.py` 的 `_BLOCKED_PARTS`
+  **一个都不含**（只有 Chrome/Firefox profile 那类**应用之外**的路径）。
+  再加上 `_guard_path()` 的顺序是「先查自己那张残表 → 再 `is_inside_app` 就 `return`」，
+  而 `is_inside_app()` 的根包含 `DATA_DIR` 与 `RUNTIME_DIR` —— **凭据恰好都在那里**，
+  且 `return` 之后连"文本后缀 + 2MB 上限"两道也不生效。
+
+  **与 2026-09-15「两套工具表并存」是同一类错误**：两份会各自漂移的事实源。
+
+  **修法**：① 表收归 **`config.SENSITIVE_PATH_PARTS`**（唯一事实源，取两边并集），
+  `sandbox/policy.py` 只做再导出、`_BLOCKED_PARTS` 删除；
+  ② `_guard_path()` 把敏感表判定放到 `is_inside_app` **之前**（**与位置无关**）；
+  ③ 工具描述从"应用目录内的文件任意读"改成实际边界
+  （原文读起来像受限，实际是"应用目录内**完全不受限**"）。
+  回归 `tests/test_sensitive_paths.py`（含"收紧不能把正常用途一起打死"的反向断言）。
+
+- **开发态启动路径没有启动横幅**（2026-09-20，用户问"日常怎么测、要不要编译"时实测发现）。
+
+  桌面壳的**开发态**是直接 spawn `python -m uvicorn workbench.api:app`
+  （`desktop/main.js::spawnServer` 的开发态回退分支），**不经过任何入口脚本**。
+  而启动横幅原先只在 `main.py` / `server_entry.py` 里记 → **日常开发测试时日志里没有
+  "跑的是哪一版、在哪些路径上"**（版本/pid/frozen/端口/数据目录/日志路径全缺）。
+
+  **修法**：把横幅移到 `api.lifespan` —— 它是**所有启动路径的唯一交集**
+  （生产入口、裸 uvicorn、测试夹具都经过）。同时把工具自检从横幅里**摘出去**
+  （那是 `_tool_selfcheck()` 的职责），否则"工具中枢：N 个插件 / M 个工具"会记两遍——
+  日志里的重复不是小事，它让"这条是什么时候记的"变得难判断。
+  新增端到端检查 **H1–H4**（`tools/verify_logging.py`，总计 **36/36**），
+  其中 H2 在修复前**必然 FAIL**。
+
+- **`routes_agent` 的 HTTP 路径未知工具没有工具级留痕**（2026-09-20，端到端检查抓到）。
+  `invoke` 在**路由层就 404 短路了**，所以 `ToolHub.execute()` 里那条"未知工具调用"告警
+  根本不执行 → 两条链路对同一事件的口径不一致（对话链路有，HTTP 链路只有一条 404 访问日志）。
+  **修法是路由层也记一条**，并补了走 `TestClient` 的单元断言。
+
+- **壳被强杀时 sidecar 变孤儿、占着固定端口**（2026-09-20，实测复现后根治，PITFALLS #54）。
+
+  **症状**：桌面壳被强杀（任务管理器结束 / 崩溃）后 `python.exe` 继续运行并占着 18765
+  → 下次启动 `portPreflight` 立刻失败，弹窗却报「**占用者不是 Workbench 实例**」
+  （因为 `portBroker.clearStale()` 清掉了公布文件，`prev` 变 null）——
+  **明明是我们自己的孤儿，却认不出来**，只能手工清理。
+
+  **根因**：Electron 的 `child_process.spawn` 在 Windows 下**不使用 Job Object**；
+  清理只挂在 `before-quit → killServer()` 上，而**强杀路径根本不触发 `before-quit`**。
+
+  **实测**（`subprocess.Popen` 精确模拟 Electron 的 spawn）：
+  对父执行 `taskkill /F`（**刻意不带 `/T`**）→ 3 秒后 sidecar 仍在、端口仍在 LISTEN。
+
+  **修法**：新增 `workbench/lifecycle.py::watch_parent()` —— 壳 spawn 时下发
+  `WORKBENCH_PARENT_PID`，sidecar 起守护线程 `OpenProcess(SYNCHRONIZE)` +
+  `WaitForSingleObject(INFINITE)`，父一死立刻自退。**选句柄等待而不是轮询 pid**：
+  句柄会**钉住那个进程对象**，因此不存在"pid 被复用、误等成别人"的问题（轮询方案最难处理的一点）。
+  三条防自杀约束：未设变量不启用（Web 模式）；拿不到句柄一律**不杀自己**
+  （只有 `ERROR_INVALID_PARAMETER` 才立即退出）；幂等只启动一次。
+  装在 `api.lifespan` —— **所有启动路径的唯一交集**（与"启动横幅"同一个理由）。
+
+  回归 `tests/test_lifecycle.py`：快层 11 项验"什么时候**不**启用"，slow 层 1 项真起父子进程
+  验"父死子退"（**该断言在无监视的实现上 27.8 秒后变红**，反证见 `verify_regression_tests.py`）。
+
+- **菜单标签在说谎：「关闭窗口（应用继续在托盘运行）」，而关窗其实会退出应用**（2026-09-20，PITFALLS #55）。
+
+  `desktop/main.js` 里**没有 `mainWindow.on('close')` 拦截器**——只有 `on('closed')`
+  （只把引用置空）。真实链路是 关窗 → `closed` → `window-all-closed` → `app.quit()`
+  → `before-quit` → `killServer()` → **应用与 sidecar 一起退出**。
+  于是托盘菜单的「显示主窗」在关窗之后**永远点不出窗口**（应用已经没了）。
+
+  **处置**（用户定稿）：**统一成"关闭 = 退出"**，标签改为「关闭窗口（应用退出）」，
+  并在代码旁写清"要做托盘常驻必须**同时**加 `close` 拦截 + `isQuitting` 标志"。
+  同时把托盘「显示主窗」补上 `isMinimized() → restore()` ——
+  **`show()` 不会取消最小化**，而定"关闭=退出"之后托盘最主要的用途恰恰是"把最小化的窗口捞回来"，
+  不补这条那个菜单等于废的。判据：`Select-String -Path desktop/main.js -Pattern "on\('close'"`（零命中即它）。
+
+- **`PITFALLS.md` 的 `#44` 被误删，已恢复**（2026-09-20 发现）。
+
+  该行在 `be3b59f` 加入，被紧接着的 `d10272e`（一次"文档同步"提交）**整行删除**，
+  而**它记录的修复至今仍在代码里**（`browser_pool.chromium_executable_path()` 走 async API、
+  `test_warmup_check_leaves_no_asyncio_noise` 仍在跑）——**成果还在、机构记忆没了**，
+  正是该文件 §维护规则 第 1 条所禁止的。已恢复原行并在末尾标注了这次误删。
+
+  顺带暴露一个**结构性缺口**：本仓对"文档里的数字"（工具数/插件数/迁移号）有
+  `gen_tools_doc.py` 机检，但**坑清单的编号连续性没有任何机检**——少一行没人会发现。
+  已在 §维护规则 里补上判据（一行 Python，断言缺号列表为空）。
+
+### Added
+
+- **全项目运行日志系统**（2026-09-20）。改造前：全仓 **38 处** `logger.*` 调用
+  （18 info · 18 warning · 1 error · 1 debug），而 `basicConfig` / `FileHandler` /
+  `addHandler` / `dictConfig` **一处都没有**；数据目录里**只有 `workbench.db`，零日志文件**。
+
+  分级后果：19 处 `info`/`debug` → 无 handler → `logging.lastResort` 是 **WARNING 级** → **完全丢弃**；
+  19 处 `warning`/`error` → 写 stderr → 而桌面壳以 `stdio: 'ignore'` 启动 sidecar
+  （`desktop/main.js`）→ **打包态丢弃**。
+
+  > **最能说明问题的一条**：`api/__init__.py::_tool_selfcheck()` 的注释写着
+  > 「**必须把结果喊出来**：少了哪个插件一眼可见」，而它的 `logger.error` **喊不出去**——
+  > PITFALLS #32（打包漏收插件）唯一的启动期报警在打包态 **100% 听不到**。
+
+  落地：新增 `workbench/logging_setup.py`（唯一装配点）+ `api/routes_logs.py`（检索面）；
+  两个入口（`main.py` / `server_entry.py`）最先装配；`api.__init__` 的 lifespan 幂等兜底。
+
+  **四层分工**（刻意不重造已有的审计表）：L0 进程日志 / L1 请求日志 → `logs/workbench-<日期>.jsonl`；
+  L2 领域事件 → **既有 DB 表**；L3 审计 → 不碰。日志只带 `auditId`/`jobId` **指过去**，不复制内容。
+
+  **关联 ID 用 `contextvars`**（`traceId`/`conversationId`/`auditId`/`jobId`/`tool`），
+  于是不必在几十个函数签名里穿参数；`traceId` 同时回在响应头 **`X-Trace-Id`** 里——
+  用户报故障时给出这个号即可还原整条链路。
+
+  **四条不变量**（每条都有回归断言）：① 日志失败**绝不影响主流程**
+  （`logging.Handler.handle` 本身**不包 try**，故自己包了一层）；
+  ② 凭据**永不入日志**（落盘前统一 `RedactionFilter`，不依赖调用方自觉）；
+  ③ 不依赖 stdio / 不依赖 CWD；④ 单进程单写者。
+
+  **刻意不做 `QueueHandler`**：队列满时它会**丢弃记录**——那是本仓最忌讳的静默失败，
+  比同步写的开销糟得多（理由写进了模块文档串）。
+
+- **`tools/verify_logging.py`：日志系统的端到端检查（32 项）**。真起服务（真实入口
+  `workbench.server_entry`、专用端口 18793、临时数据目录）→ 真发请求（含工具调用、
+  确认门、未知工具、错误路径）→ 读**真落盘的文件**逐条断言。
+  **它第一次跑就抓到了两个组件测试抓不到的缺陷**（见下 `Fixed`）。
+
+- **`tools/verify_regression_tests.py`：回归断言反证台（6 例）**。把三份近乎相同的反证脚本
+  （前缀 / 日志 / 审批 + 敏感表）**收成一张 `CASES` 表**——三份复制品就是三个会各自漂的事实源，
+  正是本仓 2026-09-15「两套工具表」与 2026-09-20「两张敏感表」的同一种错误。加一条反证 = 加一行。
+
+- **`docs/adr/0000-template.md`（新增 ADR 模板）：比历史 ADR 多一栏「外部参照」**（2026-09-20）。
+
+  历史 ADR 记了"我们决定什么"，但没记"**谁解决过同一问题、他们怎么做、我们为何不同**"。
+  那部分权衡在写下决策时**确实存在过**（在脑子里），只是没落纸——于是半年后没人能重建它。
+
+  模板要求：一致的地方 = 行业共识，写一句"我们跟随"即可；**分歧的地方 = 真权衡，
+  必须写清"我们为何不同"，那一栏的价值几乎全在这里**。给不出来源的写"未核实"，
+  **不许凭印象写**（那会变成一条没人敢质疑的假共识）。
+
+- **`tests/test_cache.py` 新增 3 条链路级测试**（2026-09-20）。动因：该文件原有 4 条
+  前缀稳定性断言，但全部覆盖"普通问答轮次"——而 `run_agent_loop` **内部**还有一处会改动
+  context：`_one_model_turn` 拿到 tool_calls 后 append `assistant(+tool_calls)` 与 `role=tool`
+  两条。**那是 append-only 最容易被悄悄破坏的地方，此前零覆盖。**
+
+  1. `test_tool_turn_keeps_prefix_within_one_run` —— 工具轮次的第二次 LLM 调用，
+     其 messages 必须以第一次为**逐字节前缀**，且确实只多出那两条。
+  2. `test_prefix_stable_over_history_containing_tool_messages` —— 覆盖工具轮次特有的消息形状
+     （`content: None` + `tool_call_id`），用的是 `sort_keys=False` 的指纹，
+     因此**键的插入顺序漂移也会被抓到**（dict 的 `==` 忽略键序，而 DeepSeek 的前缀匹配
+     发生在**序列化后的字节**上——单靠 `==` 会漏掉这类漂移）。
+  3. `test_injected_tool_result_is_bounded` —— 回填进**上下文**的工具结果受硬上限约束。
+     单列这条的理由是本仓 PITFALLS #42 的教训：`test_plugin_api` 验的是 `_truncate()`
+     **这个函数**，而"loop 回填进 context 的那条 tool 消息真的被截断了"是**另一件事**。
+
+  **三条均已实测对模拟回归 FAIL**（反证脚本 [`tools/verify_regression_tests.py`](tools/verify_regression_tests.py)：
+  分别注入"每轮重新注入系统提示词"与"`_truncate` 空转"两种**看似无害**的改动，对应测试立刻红；
+  脚本跑完对源文件做**字节级还原核验**，还原失败则 `exit 2`）。
+  这遵循本仓纪律：回归断言必须"实测对旧实现 FAIL"——**一条从没红过的测试，你不知道它测的是什么**。
+  该脚本**手动诊断用、不进 CI**（它会临时改写生产源码）。
+
+  > **写这个脚本时又踩出一个新坑（已记为 PITFALLS #51）**：初版用 `read_text()` +
+  > `write_text(..., newline="")` 读写源文件，并在结束时核验"字节级还原"。
+  > 那段核验**是假的**——`read_text()` 会做通用换行转换，把 CRLF 源文件静默改成 LF，
+  > 而它比的是**已经转换过的字符串**，所以一路报"还原成功"；
+  > 真相只在 `git status` 里露头（两个生产文件显示 modified + `LF will be replaced by CRLF`）。
+  > **"看起来还原了"不构成还原正确性证明，要比的是字节。** 修法：一律 `read_bytes()`/`write_bytes()`，
+  > 核验比字节；且匹配锚点要用归一化视图（CRLF 文件里 `anchor in text` 会永远找不到）、
+  > 落盘用原风格。两条都写进了该脚本的文档串。
+
+- **`PITFALLS.md` #50 / #51 / #52 / #53**：四个"看起来正常但其实是坏的"实例（见下 `Changed` 与 `Fixed`）。
+
+- **`AGENTS.md`（新增，仓库根目录）：给 AI 协作者的规则入口**（2026-09-20）。
+
+  本仓已有 ADR / `PITFALLS.md` / `CODEBASE_OVERVIEW.md`，但那些**都是写给人看的**。
+  用 AI 助手改这个仓库时会出现一类特定的失败：它会把我**没写下来的约定**当成
+  **不存在这个约定**，然后用**看起来完全正常**的代码违反它。已有的失效证据不止一条——
+  `cache.py` 的 append-only 前缀靠一句文档串警告守着，而 PITFALLS #41 / #42 记的正是
+  "约定在纸上、没在代码里"造成的静默故障。
+
+  内容：**25 条铁律**（每条注明出处 ADR/PITFALLS 编号）+ 门禁矩阵（改哪跑哪）+
+  本机环境速查 + "不要做的事" + 留痕纪律。格式遵循
+  [agents.md](https://agents.md) 约定——它与 MCP 同属 Linux Foundation 旗下
+  **AAIF（Agentic AI Foundation）的创始项目**，即"仓库根目录的该文件就是 AI 的规则入口"。
+
+  与 `CONTRIBUTING.md` 的分工是刻意的：**这里只写"做与不做"**（规则形状、可执行、带判据），
+  "为什么与怎么做"留在 CONTRIBUTING 与 ADR。两份不重复。
+
+- **`docs/adr/0000-template.md`（新增 ADR 模板）：比历史 ADR 多一栏「外部参照」**（2026-09-20）。
+
+  历史 ADR 记了"我们决定什么"，但没记"**谁解决过同一问题、他们怎么做、我们为何不同**"。
+  那部分权衡在写下决策时**确实存在过**（在脑子里），只是没落纸——于是半年后没人能重建它。
+
+  模板要求：一致的地方 = 行业共识，写一句"我们跟随"即可；**分歧的地方 = 真权衡，
+  必须写清"我们为何不同"，那一栏的价值几乎全在这里**。给不出来源的写"未核实"，
+  **不许凭印象写**（那会变成一条没人敢质疑的假共识）。
+
+- **`tests/test_cache.py` 新增 3 条链路级测试**（2026-09-20）。动因：该文件原有 4 条
+  前缀稳定性断言，但全部覆盖"普通问答轮次"——而 `run_agent_loop` **内部**还有一处会改动
+  context：`_one_model_turn` 拿到 tool_calls 后 append `assistant(+tool_calls)` 与 `role=tool`
+  两条。**那是 append-only 最容易被悄悄破坏的地方，此前零覆盖。**
+
+  1. `test_tool_turn_keeps_prefix_within_one_run` —— 工具轮次的第二次 LLM 调用，
+     其 messages 必须以第一次为**逐字节前缀**，且确实只多出那两条。
+  2. `test_prefix_stable_over_history_containing_tool_messages` —— 覆盖工具轮次特有的消息形状
+     （`content: None` + `tool_call_id`），用的是 `sort_keys=False` 的指纹，
+     因此**键的插入顺序漂移也会被抓到**（dict 的 `==` 忽略键序，而 DeepSeek 的前缀匹配
+     发生在**序列化后的字节**上——单靠 `==` 会漏掉这类漂移）。
+  3. `test_injected_tool_result_is_bounded` —— 回填进**上下文**的工具结果受硬上限约束。
+     单列这条的理由是本仓 PITFALLS #42 的教训：`test_plugin_api` 验的是 `_truncate()`
+     **这个函数**，而"loop 回填进 context 的那条 tool 消息真的被截断了"是**另一件事**。
+
+  **三条均已实测对模拟回归 FAIL**（反证脚本 [`tools/verify_prefix_tests.py`](tools/verify_prefix_tests.py)：
+  分别注入"每轮重新注入系统提示词"与"`_truncate` 空转"两种**看似无害**的改动，对应测试立刻红；
+  脚本跑完对源文件做**字节级还原核验**，还原失败则 `exit 2`）。
+  这遵循本仓纪律：回归断言必须"实测对旧实现 FAIL"——**一条从没红过的测试，你不知道它测的是什么**。
+  该脚本**手动诊断用、不进 CI**（它会临时改写生产源码）。
+
+  > **写这个脚本时又踩出一个新坑（已记为 PITFALLS #51）**：初版用 `read_text()` +
+  > `write_text(..., newline="")` 读写源文件，并在结束时核验"字节级还原"。
+  > 那段核验**是假的**——`read_text()` 会做通用换行转换，把 CRLF 源文件静默改成 LF，
+  > 而它比的是**已经转换过的字符串**，所以一路报"还原成功"；
+  > 真相只在 `git status` 里露头（两个生产文件显示 modified + `LF will be replaced by CRLF`）。
+  > **"看起来还原了"不构成还原正确性证明，要比的是字节。** 修法：一律 `read_bytes()`/`write_bytes()`，
+  > 核验比字节；且匹配锚点要用归一化视图（CRLF 文件里 `anchor in text` 会永远找不到）、
+  > 落盘用原风格。两条都写进了该脚本的文档串。
+
+- **`PITFALLS.md` #50 / #51**：两个"看起来正常但其实是坏的"实例（见下 `Changed` 与本条末段）。
+
+### Changed
+
+- **敏感路径表收归唯一事实源**（2026-09-20，P0-B 的结构性修法）。
+  `config.SENSITIVE_PATH_PARTS` 成为**定义处**（取原两张表的并集，并补上 `.npmrc` /
+  `.netrc` / `known_hosts` / `.env` 等）；`sandbox/policy.py` 改为再导出
+  （`from ..config import SENSITIVE_PATH_PARTS, is_sensitive_path`），
+  `plugins/builtins.py` 的 `_BLOCKED_PARTS` **删除**。
+  新增 `config.is_sensitive_path()` 作为全项目唯一判定口径
+  （大小写不敏感、`\` 与 `/` 等同、按路径成分包含判定）。
+  回归断言**直接查源码里的定义处**，而不是比对象 identity ——
+  后者会被 `tests/test_ports_contract.py` 的 `importlib.reload(config)` 弄成
+  **测试顺序相关**的（本仓第一版就是这么写错的）。
+
+- **文档与配置同步**（2026-09-20）：
+  - [CONFIG.md](docs/CONFIG.md) 新增 **§2.1 运行日志**（5 个 `WORKBENCH_LOG_*` 变量）
+    与 §6 的三个日志文件条目（含 `server.log` 与主日志的**分工说明**）；
+    §1 的入口表改为"两者共用 `logs/` 运行日志"。
+  - [API.md](docs/API.md) 新增 **§19 `/api/logs`**（四个端点 + `X-Trace-Id` 用法 + 安全边界）。
+  - `workbench/static/blank.html` 的「服务端没有应答」提示改为
+    **先指向 `logs/`**（主日志 + sidecar stdio），再提 `server.log` 面包屑。
+  - [AGENTS.md](AGENTS.md) 补 **§1「日志与留痕」铁律 26–30**（脱敏 / 失败隔离 /
+    不复制审计 / 关联 ID / 敏感表唯一），并在 §3 门禁矩阵里加上日志与敏感表两行。
+  - 新增 [docs/LOGGING-VERIFICATION.md](docs/LOGGING-VERIFICATION.md)：
+    端到端验证报告（32 项检查矩阵、as-built 差异、**已知边界**）。
+
+- **`uv` / `ruff` 的口径订正——实测与文档记载正好相反**（2026-09-20）。
+
+  `CONTRIBUTING.md` §1 与 `CODEBASE_OVERVIEW.md` 的现行口径是
+  "`.venv\Scripts\` 里**有** `uv.exe`、**没有** `ruff.exe`，故 lint 必须走 `uv tool run ruff`"。
+  **2026-09-20 实测**：
+
+  | 事实 | 实测结果 |
+  |---|---|
+  | `.venv\Scripts\ruff.exe` | **存在**（`ruff 0.16.0`），`check .` → `All checks passed!` |
+  | `.venv\Scripts\uv.exe` | **不存在**（只有 `uvicorn.exe`；`python -m uv` 报 `No module named uv`；PATH 上也没有） |
+
+  按旧口径敲命令会直接 `CommandNotFoundException`。**故 lint 门禁命令改为
+  `.\.venv\Scripts\ruff.exe check .`，并把两条命令都写下 + 给出探测命令**
+  （`Get-ChildItem .venv\Scripts -Filter "uv*.exe","ruff*.exe"`）。
+
+  **值得单独记的不是"写反了"，而是这类事实为什么必然漂**：这条口径在本仓**已翻转过三次**
+  （原 `AGENT.md`"两个都没有" → 2026-09-15"uv 存在" → 2026-09-16"uv 不存在、ruff 存在"
+  → 2026-09-17 再更正回来）——**每一版在当时都是实测的**。问题不在诚实，
+  在于**把一个会漂的环境事实固化成了散文**。故记为 PITFALLS #50，其"推广"给出三种正确形态：
+  探一次再决定 / 写成按角色断言的机检（如 P8/P8b）/ 干脆别写进文档。
+
+- **4 份关键 ADR 追加「外部参照」栏**（2026-09-20）：[ADR-0004](docs/adr/0004-extension-as-execution-plane.md)（扩展=执行面）、
+  [ADR-0006](docs/adr/0006-browser-pool-single-thread.md)（浏览器池单线程）、
+  [ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md)（沙箱）、
+  [ADR-0015](docs/adr/0015-extension-access-token.md)（访问令牌）。
+  均**显式标注"本栏为后补"**，正文一字未改（遵循本仓 ADR 纪律：改已采纳的决策 = 新增一篇取代它）。
+
+  其中两条对照推出了**可执行的认知**，不只是记录：
+
+  - **ADR-0014**：OpenAI Codex 的 Windows 沙箱**完全不用 Job Object**，用的是受限令牌 +
+    独立低权限沙箱用户 + ACL + 防火墙。⇒ 若要把"限损层"升级为"权限边界"，
+    下一个原语是**受限令牌 / AppContainer + ACL，而不是继续加固 Job Object**——
+    并据此给该 ADR §5 触发器补了一条（产品开始面向"用户会装陌生来源 Skill"的场景时再评估）。
+  - **ADR-0006**：主流浏览器 agent（browser-use / Skyvern / Stagehand）一律用 **async API**，
+    因此不需要专职线程。本项目用 sync + 单线程队列是**与主流相反的选择**——
+    代价（全局串行、事件回调纪律）集中体现在该 ADR 的"代价（已接受）"表里。
+    对照栏的作用**不是证明我们错了，是让代价可见**。
+
+- **`CONTRIBUTING.md`**：新增 §5.1 说明「外部参照」栏为什么存在、怎么填、历史 ADR 如何后补；
+  开头加一段指向 `AGENTS.md`（含"AI 会把没写下来的约定当成不存在"的动因）；
+  ADR 流程改为**必须用模板**；§1 与 §7 的 lint 命令按上述实测订正。
+
 ## [0.3.12] - 2026-09-18
 
 > **本版范围说明**：这是自最后一个**已发布**版本 `0.3.4`（2026-09-11）以来首次对外发布，

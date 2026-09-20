@@ -18,14 +18,15 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import __version__, config, db
+from .. import __version__, config, db, lifecycle, logging_setup
 from . import routes_chat, routes_conversations, routes_settings
 
 logger = logging.getLogger("workbench.app")
@@ -73,11 +74,27 @@ def _optional_routers(app: FastAPI) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # **不管从哪条路起，都保证有日志**：`main.py` / `server_entry.py` 已在更早处装配，
+    # 这里是幂等的兜底（直接 `uvicorn workbench.api:app`、测试夹具等路径都能覆盖）。
+    logging_setup.configure()
+    logging_setup.install_excepthooks()
     db.connect()
     _sandbox_setup()
     _skills_setup()
     _tool_selfcheck()
+    # **启动横幅放在这里而不是入口脚本里**：入口脚本只覆盖两条路
+    # （`main.py` 与 `server_entry.py`），而**桌面壳的开发态是直接 spawn
+    # `python -m uvicorn workbench.api:app`**（见 `desktop/main.js::spawnServer` 的
+    # 开发态回退分支）——那条路**不经过任何入口脚本**，于是"版本/端口/数据目录/日志路径/
+    # 插件装配失败"全都不会留痕。lifespan 是**所有启动路径的唯一交集**。
+    logging_setup.banner(host=config.HOST, port=config.PORT)
+    # 父进程监视：壳一旦非正常死亡（崩溃 / 被任务管理器结束），本 sidecar 随之退出，
+    # 否则会成为孤儿并占着固定端口，导致下次启动直接失败（2026-09-20 实测复现，见 lifecycle.py）。
+    # 放在 lifespan 而不是入口脚本里，理由与上面的横幅相同：**所有启动路径的唯一交集**。
+    logger.info("父进程监视：%s", lifecycle.watch_parent())
+    logger.info("应用就绪：lifespan 装配完成，监听 %s:%s", config.HOST, config.PORT)
     yield
+    logger.info("应用退出：lifespan 收尾")
 
 
 def _skills_setup() -> None:
@@ -136,6 +153,9 @@ def _tool_selfcheck() -> None:
 
     坏插件是被**静默跳过**的（`ToolHub.load` 的刻意设计），所以这里必须把结果喊出来：
     少了哪个插件、少了哪个必需工具，一眼可见。也可经 `GET /api/agent/selfcheck` 复查。
+
+    这是"能力齐不齐"的**唯一**留痕点（启动横幅只管版本/端口/路径，不重复报这个——
+    见 `logging_setup.banner()` 的文档串）。
     """
     try:
         from ..plugin_api import get_hub, verify_required_tools
@@ -146,8 +166,12 @@ def _tool_selfcheck() -> None:
         logger.info(
             "工具中枢：%d 个插件 / %d 个工具%s",
             len(hub.plugins), len(hub.specs()),
-            f"；装配失败 {hub.failures}" if hub.failures else "",
+            f"；装配失败 {len(hub.failures)} 个" if hub.failures else "",
         )
+        # 逐条列出失败原因：光有个数量，现场没法知道"少了什么、为什么"
+        for item in hub.failures:
+            logger.error("插件装配失败（该插件的能力将静默缺失）：%s → %s",
+                         item.get("plugin"), item.get("error"))
         if missing:
             logger.error("工具自检未通过：必需工具缺失 %s（对应插件未装配成功）", missing)
     except Exception:  # noqa: BLE001 —— 自检本身绝不能阻断应用启动
@@ -187,10 +211,66 @@ def create_app() -> FastAPI:
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
         return response
+
+    @app.middleware("http")
+    async def _access_log(request: Request, call_next):
+        """L1 请求日志 + `traceId` 贯通（**最外层**中间件）。
+
+        ## 为什么刻意让它最外层
+
+        Starlette 的中间件栈是"**后加的在最外层**"。这条在 `ExtensionAuthMiddleware`
+        之后注册，因此它包在外面——**这是有意的**：令牌校验失败（401）也必须留下日志。
+        PITFALLS #49 记的正是"扩展 401 了，但用户只看到快捷登录不灵"——
+        那类故障的判据就是"有没有 401 被记下来"。若这条被挤到内层，401 就查不到了。
+
+        这也**不影响** `ExtensionAuthMiddleware` 的"按前缀守备"性质：
+        它守的是路由匹配前的请求，与它在栈里的位置无关。
+
+        ## 只记 `/api/*`，且跳过 `/api/logs/*` 自己
+
+        - 静态面（`/` 与 `/static/*`）不计入：它们由渲染进程高频拉取，记了只是噪音；
+        - `/api/logs/*` 不计入：否则查一次日志就产生一条日志，**下一次查询里会看到自己**，
+          排障时非常迷惑（自指噪声）。
+        """
+        path = request.url.path
+        if not path.startswith("/api/") or path.startswith("/api/logs"):
+            return await call_next(request)
+
+        trace = logging_setup.new_trace_id()
+        started = time.perf_counter()
+        status = 500
+        failed = False
+        with logging_setup.bind(traceId=trace):
+            try:
+                response = await call_next(request)
+                status = response.status_code
+                response.headers["X-Trace-Id"] = trace
+                return response
+            except Exception:
+                failed = True
+                # 未捕获异常：先留全栈，再交回上层（不吞）
+                logging.getLogger("workbench.http").exception(
+                    "请求处理异常：%s %s", request.method, path)
+                raise
+            finally:
+                logging_setup.log_event(
+                    "http", f"{request.method} {path}",
+                    method=request.method, path=path, status=status,
+                    durationMs=int((time.perf_counter() - started) * 1000),
+                    failed=failed,
+                    traceId=trace,
+                    client=request.client.host if request.client else "",
+                )
+
     app.include_router(routes_conversations.router)
     app.include_router(routes_settings.router)
     app.include_router(routes_chat.router)
     _optional_routers(app)
+    # 日志检索（放在 `_optional_routers` 之外：它是运维面，不是一个"业务域"，
+    # 且**不允许被容错注册静默跳过**——查不到日志比少了某个业务路由更严重）
+    from . import routes_logs
+
+    app.include_router(routes_logs.router)
 
     @app.get("/")
     def index() -> FileResponse:

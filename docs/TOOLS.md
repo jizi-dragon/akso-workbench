@@ -51,7 +51,7 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `accounts_browser_close` | accounts | **write** | ✅ | 30s | 关闭某账号的托管浏览器窗口（登录态保留）。注意：用户手动开的窗口也会被关掉 | `account_id` |
 | `accounts_browser_open` | accounts | **write** | ✅ | 180s | 在内置 Chromium 里以该账号身份打开平台（自动登录 + 会话持久化） | `account_id`、`headful` |
 | `get_current_time` | builtin | read | — | 5s | 获取当前日期与时间（本地时区） | — |
-| `read_local_file` | builtin | read | — | 30s | 读取本地文本文件（应用目录内的文件任意读 | `path` |
+| `read_local_file` | builtin | read | — | 30s | 读取本地文本文件。**敏感路径一律拒绝**（数据库/登录态/token 缓存/账号备份/浏览器 profile/SSH 与云凭据） | `path` |
 | `read_web_page` | builtin | read | — | 40s | 读取公开网页正文（用于核实 NMPA/FDA/ICH 等官方监管页面原文），返回标题、来源与正文文本 | `url` |
 | `factory_jobs` | factory | read | — | 15s | 最近的配置工厂任务（状态/时间），用于确认此前是否已经创建过 | — |
 | `factory_list_blueprints` | factory | read | — | 20s | 列出已暂存到运行时的蓝图（id/名称/涉及对象），create 的入参来源 | `limit` |

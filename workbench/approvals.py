@@ -59,12 +59,21 @@ class PendingAction:
     args: dict[str, Any]
     summary: str
     created_at: int
-    status: str = "pending"       # pending | approved | rejected | expired
+    status: str = "pending"       # pending | approved | rejected | expired | consumed
     token: str = ""
     token_expires_at: int = 0
     conversation_id: str = ""
     decided_at: int = 0
     decided_by: str = ""
+
+    fingerprint: str = ""
+    """**未打码**的参数指纹（`_fingerprint(tool, 原始参数)`）。
+
+    为什么单独存一份而不是每次从 `args` 现算：`args` 是 `redact_args()` 之后的副本，
+    若参数里出现 `_REDACT_KEYS` 命中的键名（`token` / `secret` …），现算出来的指纹
+    **与申请时的对不上** → 复用一个 pending 的逻辑会静默失效、每次都新建一条。
+    这是收 P0-A 时顺带发现的既有缺陷（当时所有工具的参数名恰好都不敏感，所以没暴露）。
+    """
 
     def public(self) -> dict[str, Any]:
         """给界面的形状（**不含令牌**——令牌只回给批准它的那一次调用）。"""
@@ -99,7 +108,7 @@ class PendingStore:
             self._expire_locked()
             for item in self._items.values():
                 if (item.status == "pending" and item.tool == spec.name
-                        and _fingerprint(item.tool, item.args) == fingerprint):
+                        and item.fingerprint == fingerprint):
                     return item
 
             args_dump = redact_args(_dump(args))
@@ -112,6 +121,7 @@ class PendingStore:
                 summary=summarize(spec, args_dump),
                 created_at=_now_ms(),
                 conversation_id=conversation_id,
+                fingerprint=fingerprint,
             )
             self._items[item.id] = item
             self._record(item)
@@ -153,7 +163,21 @@ class PendingStore:
     def gate(
         self, spec: ToolSpec, args: BaseModel, token: str, conversation_id: str = ""
     ) -> tuple[bool, str, str]:
-        """`ToolHub` 的确认门实现：返回 (放行?, pending_id, 需确认原因)。"""
+        """`ToolHub` 的确认门实现：返回 (放行?, pending_id, 需确认原因)。
+
+        放行有**两条**通道，都是"一次性"的：
+
+        | 通道 | 谁用 | 凭据 |
+        |---|---|---|
+        | 令牌 | HTTP 链路（`POST /api/agent/invoke`） | `approval_token`，由 `/pending/{id}/approve` 换得 |
+        | **认领** | **对话链路**（`harness/loop.py`） | 无需令牌：按"工具 + 参数指纹"认领一条**已批准**的条目 |
+
+        第二条是 2026-09-20 补的，修的是 P0-A：前端刻意**不自动重发**那次调用
+        （"放行是人做的决定"），所以用户放行后会让模型**再试一次**；
+        而模型的重试走 `harness/loop.py`，那里**拿不到令牌**（令牌只回给了批准它的
+        那一次 HTTP 响应，不回 DOM、不落日志）。改造前的结果是：
+        **危险工具在对话链路里永远无法执行**，每次重试都新建一条 pending（已实测复现）。
+        """
         if token:
             with self._lock:
                 self._expire_locked()
@@ -162,12 +186,51 @@ class PendingStore:
                 if item is not None and item.status == "approved":
                     # 令牌一次性：pop 掉即作废，防止"批准一次、重放多次"
                     item.token = ""
+                    item.status = "consumed"
+                    self._record(item)
                     return True, item.id, ""
             # 令牌无效/已用过/已过期 → 当作没批准，重新申请
             logger.info("确认令牌无效或已失效，重新申请确认：%s", spec.name)
 
+        claimed = self.claim_approved(spec, args)
+        if claimed is not None:
+            return True, claimed.id, ""
+
         item = self.request(spec, args, conversation_id)
         return False, item.id, item.summary
+
+    def claim_approved(self, spec: ToolSpec, args: BaseModel) -> PendingAction | None:
+        """无令牌时，认领一条**已批准且参数指纹相同**的条目（P0-A 的修法）。
+
+        ## 安全性没有放松
+
+        认领的门槛与令牌**完全一致**，只是"凭据"从令牌换成了服务端内存里的事实：
+
+        - 同一**工具**；
+        - 同一**参数指纹**（`_fingerprint`，未打码的那份）；
+        - 仍在 **5 分钟**令牌有效期内（`_expire_locked` 会把过期的 approved 变 `expired`）；
+        - **一次性**——认领后置 `consumed`，第二次重试必须重新申请。
+
+        ## 为什么权威放在内存里是对的
+
+        与 `approvals` 既有的"权威状态在内存、DB 只留痕"完全一致：单机单人应用，
+        待确认操作的生命周期是几十秒，跨进程重启后**本来就应该失效**
+        （`install()` 会把遗留的 pending/approved 标 expired）。
+        """
+        fingerprint = _fingerprint(spec.name, args)
+        with self._lock:
+            self._expire_locked()
+            for item in self._items.values():
+                if (item.status == "approved" and item.tool == spec.name
+                        and item.fingerprint == fingerprint):
+                    item.token = ""
+                    self._by_token.pop(item.token, None)
+                    item.status = "consumed"
+                    self._record(item)
+                    logger.info("确认门：按已批准条目放行（认领）%s（%s）",
+                                spec.name, item.id)
+                    return item
+        return None
 
     # ------------------------------------------------------------ 查询
 

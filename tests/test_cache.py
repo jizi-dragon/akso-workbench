@@ -12,9 +12,13 @@ import asyncio
 import json
 
 import pytest
+from pydantic import BaseModel
 
-from workbench import cache, db
+from workbench import approvals, cache, db
+from workbench import plugin_api as pa
 from workbench.harness.context import estimate_messages_tokens
+from workbench.harness.loop import run_agent_loop
+from workbench.harness.types import AgentConfig
 from workbench.services.deepseek import DEFAULT_MODEL, normalize_model
 
 
@@ -277,3 +281,169 @@ def test_loop_freezes_summary_and_keeps_prefix(ready, monkeypatch) -> None:
 
     assert second_request[: len(first_request)] == first_request, "第二轮前缀被改写了，缓存必 miss"
     assert not cache.load_state(conv_id).summary, "未超预算就不该产生摘要（省一次 LLM 调用）"
+
+
+# ---------------------------------------------------------------- 前缀稳定（工具轮次与回填）
+#
+# 上面那批测的是"普通问答轮次"。但 `run_agent_loop` **内部**还有一处会改动 context：
+# `_one_model_turn` 拿到 tool_calls 后会 append 两条（assistant 带 tool_calls + role=tool 结果），
+# 然后才发起本轮的第二次 LLM 调用。**那是 append-only 最容易被悄悄破坏的地方**，
+# 而它此前没有任何断言覆盖——只验了"工具结果确实回填了"，没验"前缀没被改写"。
+
+
+class ToolTurnClient:
+    """第一轮要求调工具、第二轮收尾的假 LLM 客户端。
+
+    与 `test_agent_loop.FakeClient` 的分工：那个面向"事件序列"断言，
+    这个只关心"每次调用时发出去的 messages 长什么样"。
+    """
+
+    def __init__(self, tool_calls: list[dict], final: str = "查到了") -> None:
+        self._script = [
+            {"content": "", "tool_calls": tool_calls},
+            {"content": final, "tool_calls": []},
+        ]
+        self.calls: list[list[dict]] = []
+        self.model = "fake"
+        self.last_usage: dict = {}
+
+    async def stream_chat(self, messages, tools=None, temperature=0.7, max_tokens=None):
+        self.calls.append([dict(m) for m in messages])
+        step = self._script.pop(0) if self._script else {"content": "（脚本耗尽）", "tool_calls": []}
+        yield {
+            "type": "end",
+            "content": step["content"],
+            "tool_calls": step["tool_calls"],
+            "usage": {"prompt_tokens": 10, "prompt_cache_hit_tokens": 10,
+                      "prompt_cache_miss_tokens": 0, "completion_tokens": 1},
+        }
+
+    async def chat(self, messages, temperature=0.7, max_tokens=None, json_mode=False):
+        self.last_usage = {"prompt_tokens": 5, "prompt_cache_hit_tokens": 0,
+                           "prompt_cache_miss_tokens": 5}
+        return "摘要"
+
+
+class EchoArgs(BaseModel):
+    text: str = pa.Arg("内容", default="")
+
+
+async def _echo(args: EchoArgs, ctx: pa.ToolContext) -> str:
+    return json.dumps({"ok": True, "echo": args.text})
+
+
+async def _echo_huge(args: EchoArgs, ctx: pa.ToolContext) -> str:
+    """返回远超单条结果上限的内容（用于验"注入上下文的东西有硬上限"）。"""
+    return "x" * (pa.MAX_RESULT_CHARS * 3)
+
+
+@pytest.fixture()
+def echo_hub(ready, monkeypatch):
+    """带两个只读回显工具的极简中枢。"""
+    approvals.reset_store()
+    hub = pa.ToolHub()
+    approvals.install(hub)
+    hub.add_plugin(pa.Plugin(id="echo", title="回显", tools=[
+        pa.ToolSpec(name="echo_text", description="回显", args_model=EchoArgs,
+                    handler=_echo, risk=pa.Risk.READ, timeout_s=5),
+        pa.ToolSpec(name="echo_huge", description="回显超长内容", args_model=EchoArgs,
+                    handler=_echo_huge, risk=pa.Risk.READ, timeout_s=5),
+    ]))
+    monkeypatch.setattr(pa, "_hub", hub)
+    return hub
+
+
+async def _drain(gen) -> list[dict]:
+    return [event async for event in gen]
+
+
+def _drive_tool_turn(hub, conv_id: str, tool_calls: list[dict]) -> ToolTurnClient:
+    client = ToolTurnClient(tool_calls)
+    asyncio.run(_drain(run_agent_loop(
+        [msg("user", "查一下")], client, hub,
+        AgentConfig(system_prompt="系统", context_window_tokens=1_000_000),
+        conversation_id=conv_id,
+    )))
+    return client
+
+
+def test_tool_turn_keeps_prefix_within_one_run(ready, echo_hub) -> None:
+    """工具轮次 append 了两条消息，**已发出的前缀必须原样保留**。
+
+    `run_agent_loop` 内部唯一改动 context 的地方就是这里（`loop.py::_one_model_turn`）：
+    拿到 tool_calls → `context.append(assistant)` → 每个调用再 append 一条 role=tool。
+    如果这里被改成"重建 messages"或"回填时顺手规整一下"，缓存就从那一刻起全 miss，
+    而**测试、类型、ruff 都不会报错**——这是本仓库最贵的一类静默回归（价差 50×）。
+    """
+    cache.clear_state("conv-tool-prefix")
+    client = _drive_tool_turn(echo_hub, "conv-tool-prefix", [
+        {"id": "c1", "name": "echo_text", "arguments": json.dumps({"text": "hi"})},
+    ])
+
+    assert len(client.calls) == 2, "工具轮次应当产生两次 LLM 调用"
+    first, second = client.calls[0], client.calls[1]
+
+    assert second[: len(first)] == first, "工具轮次改写了已发出的前缀，缓存必 miss"
+    assert fingerprint(second[: len(first)]) == fingerprint(first)
+
+    # 并且确实是"只追加"：assistant(带 tool_calls) + tool 结果 这两条
+    assert len(second) == len(first) + 2
+    assert second[-2]["role"] == "assistant"
+    assert second[-2]["tool_calls"], "assistant 那条必须带 tool_calls，否则模型看不到自己调过什么"
+    assert second[-1]["role"] == "tool"
+    assert second[-1]["tool_call_id"] == "c1"
+
+
+def test_prefix_stable_over_history_containing_tool_messages(ready) -> None:
+    """带「assistant(tool_calls) + tool」的**持久化历史**开新一轮，前缀仍逐字节一致。
+
+    与 `test_prefix_is_byte_identical_across_turns` 的区别：那条用的是 `conversation()` 夹具，
+    它**永远产生不出**工具轮次特有的两种消息形状（`content: None` + `tool_call_id`）。
+    而这两种形状在真实链路里每次带工具的对话都会出现，且要经过
+    「落库 → 读回 → 组装」三道手。
+
+    `fingerprint` 用 `sort_keys=False`，所以**键的插入顺序变了也会被抓到**——
+    这一点是刻意的：DeepSeek 的前缀匹配发生在**序列化之后的字节**上，
+    而 dict 的 `==` 比较忽略键序，单靠 `==` 会漏掉这类漂移。
+    """
+    cache.clear_state("conv-tool-history")
+    history = [
+        msg("system", "系统提示"),
+        msg("user", "查一下"),
+        {"role": "assistant", "content": None,
+         "tool_calls": [{"id": "c1", "name": "echo_text", "arguments": "{}"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "结果"},
+        msg("assistant", "查到了"),
+    ]
+    first = cache.plan_prefix(history, cache.load_state("conv-tool-history"),
+                              window_tokens=50_000, threshold=0.8, keep_recent_turns=5)
+    extended = [*history, msg("user", "再问"), msg("assistant", "再答")]
+    second = cache.plan_prefix(extended, cache.load_state("conv-tool-history"),
+                               window_tokens=50_000, threshold=0.8, keep_recent_turns=5)
+
+    assert second.messages[: len(first.messages)] == first.messages
+    assert fingerprint(second.messages[: len(first.messages)]) == fingerprint(first.messages)
+
+
+def test_injected_tool_result_is_bounded(ready, echo_hub) -> None:
+    """回填进**上下文**的工具结果必须受硬上限约束——这是**链路级**断言，不是函数级。
+
+    为什么要单列一条：`tests/test_plugin_api.py::test_long_result_is_truncated` 验的是
+    `_truncate()` **这个函数**；而"loop 回填进 context 的那条 tool 消息真的被截断了"
+    是**另一件事**。本仓 PITFALLS #42 的教训正是「函数级测过了 ≠ 链路用上了」
+    （`audit.record` 当时三条测试全绿，而它一个调用方都没有），
+    所以这里按同一纪律补上链路级断言。
+
+    上限来自 Codex `AGENTS.md` 的同一条评审规则："注入模型上下文的一切必须有界且带硬上限"。
+    """
+    cache.clear_state("conv-bounded")
+    client = _drive_tool_turn(echo_hub, "conv-bounded", [
+        {"id": "c1", "name": "echo_huge", "arguments": "{}"},
+    ])
+
+    tool_msg = client.calls[1][-1]
+    assert tool_msg["role"] == "tool"
+    assert len(tool_msg["content"]) <= pa.MAX_RESULT_CHARS + 200, (
+        f"注入上下文的结果没有被硬上限约束：{len(tool_msg['content'])} 字符"
+    )
+    assert "已截断" in tool_msg["content"], "截断必须**显式告知模型**，不能静默丢弃"

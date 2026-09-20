@@ -144,3 +144,58 @@ def describe_service() -> dict:
             "startedAt": published.get("startedAt"),
         } if published else None,
     }
+
+
+# ---------------------------------------------------------------- 敏感路径（唯一事实源）
+
+
+#: 命中即拒的路径片段（大小写不敏感、按**成分包含**判定，因此子路径同样敏感）。
+#:
+#: ## 为什么必须是**一张**表
+#:
+#: 2026-09-20 实测发现**两张表并存**：`sandbox/policy.py` 有一张（含 `browser-states` /
+#: `egmp-tokens` / `workbench.db` / `accounts.json`），`plugins/builtins.py` 另有一张
+#: （只有 Chrome/Edge/Firefox profile 那类**应用之外**的路径）。
+#:
+#: 后果是可复现的：只读工具 `read_local_file`（`risk=read`，**不过确认门**）能**完整读出**
+#: `runtime/browser-states/*.json`（cookie + 登录态）、`runtime/egmp-tokens/*.json`（平台 JWT）、
+#: 以及账号备份（**含 Fernet 密钥与全部密文口令**）——而**同一个路径沙箱是拦的**。
+#:
+#: 这与 2026-09-15「两套工具表并存」是**同一类错误**：两个会各自漂移的事实源。
+#: ⇒ 收成这一张，两个消费者都从这里读；`tests/test_sensitive_paths.py` 有一条断言钉住
+#: "两边拿到的是**同一个对象**"（不是"内容相等"，那样还是会漂）。
+#:
+#: ## 为什么是并集（而不是各留一份）
+#:
+#: 读工具与沙箱 `cwd` 的威胁模型不同，但**并集对两者都安全**：
+#: 沙箱只是不能用这些路径当工作目录——而那本来就该拒。
+#:
+#: ## 判定是"宁可误拒"
+#:
+#: 这些是"一句话就能读走凭据"的位置，**没有"用户其实想看它"的合理场景**；
+#: 真要看请用户自己打开。误拒的代价是让用户换个文件，漏放的代价是全量凭据外泄。
+SENSITIVE_PATH_PARTS: tuple[str, ...] = (
+    # 本应用自己的凭据产物（**最关键的一批**：它们就在 DATA_DIR 里）
+    "workbench.db", "workbench.db-wal", "workbench.db-shm",
+    "browser-states", "egmp-tokens", "pending_action", "shell-state.json",
+    "accounts.json", "desktop-ports.json",
+    # 通用凭据位置
+    ".ssh", "id_rsa", "id_ed25519", "known_hosts",
+    ".aws", ".azure", ".gnupg", ".git-credentials",
+    ".npmrc", ".pypirc", ".netrc",
+    "credentials", "secrets", ".env",
+    # 浏览器 profile 里的凭据文件
+    "cookies", "login data", "web data", "key3.db", "key4.db", "logins.json",
+    "google/chrome/user data", "microsoft/edge/user data", "mozilla/firefox/profiles",
+    # 系统级凭据库
+    "windows/system32/config",
+)
+
+
+def is_sensitive_path(path) -> bool:
+    """路径是否命中敏感表（按成分包含判定，大小写不敏感，`\\` 与 `/` 等同）。
+
+    **这是全项目唯一的判定口径**——沙箱与只读工具都调它，不各自实现一份。
+    """
+    parts = str(path).replace("\\", "/").lower()
+    return any(part in parts for part in SENSITIVE_PATH_PARTS)

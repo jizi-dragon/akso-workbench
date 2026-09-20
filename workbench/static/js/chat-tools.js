@@ -386,10 +386,12 @@ function approvalCard(event) {
       const data = await api.approvePending(pendingId);
       // 令牌是一次性凭证：不回填 DOM、不落日志，避免被页面脚本或截图带走。
       // 也刻意不自动重发那次调用——放行是人做的决定，重发应当由人再发一条消息触发。
+      // 但**重发确实能通过**：服务端按「工具 + 参数指纹」认领这次批准
+      // （`PendingStore.claim_approved()`，2026-09-20 修 P0-A；此前重发永远被再拦一次）。
       settle(
         "allowed",
         "已放行",
-        `确认令牌 ${formatDuration(data.expiresInMs)}内有效。这次调用不会自动重发——请在输入框里让模型继续或重试。`,
+        `这次调用不会自动重发——在输入框里让模型重试同一次调用（参数要一样）即可执行；${formatDuration(data.expiresInMs)}内有效，超时需重新确认。`,
       );
     } catch (error) {
       if (error.status === 409) settle("stale", "已失效／已决策", error.message);

@@ -19,7 +19,11 @@ browser_status），与 `harness/tools.py` 的三个基础工具并存且互不�
 两类调用方各走各的路：
 
 - **对话链路**：模型调用 → 被拦 → SSE `approval_required` → 界面上出现「放行/拒绝」
-  → 人点放行 → 模型重试同一次调用（原样带 `approvalToken`）→ 执行。
+  → 人点放行 → **用户让模型重试同一次调用** → 执行。
+  这条链路**不传令牌**（令牌只回给批准它的那一次 HTTP 响应，不回 DOM、不落日志）。
+  放行的凭据是服务端内存里的**事实**：`PendingStore.claim_approved()` 按
+  「工具 + 参数指纹」认领那条已批准的条目，一次性。详见 `approvals.py` 的
+  `gate()` 与 `claim_approved()`（2026-09-20 修 P0-A 时补的）。
 - **HTTP 链路**：`POST /api/agent/invoke` 直接返回 `409 + pendingId`，调用方拿
   `pendingId` 去 `POST /api/agent/pending/{id}/approve` 换令牌，再带令牌重投。
 
@@ -28,6 +32,7 @@ browser_status），与 `harness/tools.py` 的三个基础工具并存且互不�
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -36,6 +41,8 @@ from pydantic import BaseModel, Field
 from .. import db
 from ..approvals import pending_store
 from ..plugin_api import Risk, ToolContext, ToolStatus, get_hub
+
+logger = logging.getLogger("workbench.agent")
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
@@ -88,6 +95,13 @@ async def invoke(body: InvokeIn) -> dict:
     """同步调用一个工具。风险工具无令牌 → 409 + pendingId（不是 400/500）。"""
     hub = get_hub()
     if hub.get(body.tool) is None:
+        # 与 `ToolHub.execute()` 里那条同一个事件、同一种记法。
+        # 为什么这里也要记：本端点**在路由层就短路了**（下面直接 404），
+        # 所以那个"模型/调用方编了一个不存在的工具名"的信号在工具层根本不会产生；
+        # 只留一条 404 访问日志的话，两条链路对同一件事的留痕口径就不一致了
+        # （对话链路有 `未知工具调用`，HTTP 链路什么都没有）。
+        logger.warning("未知工具调用（HTTP）：%s（可用：%s）",
+                       body.tool, ", ".join(sorted(s.name for s in hub.specs())))
         raise HTTPException(404, f"未知工具：{body.tool}（GET /api/agent/tools 查清单）")
 
     invocation = await hub.execute(

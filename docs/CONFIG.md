@@ -36,7 +36,7 @@
 
 | 进程 | 开发态 | 打包态 |
 |---|---|---|
-| 服务端入口 | `python -m workbench.main`（**自动开浏览器**） | `WorkbenchServer.exe --server`（**不开浏览器**，日志落 `server.log`） |
+| 服务端入口 | `python -m workbench.main`（**自动开浏览器**） | `WorkbenchServer.exe --server`（**不开浏览器**）；两者共用 `<数据目录>/logs/` 下的运行日志（§2.1），打包态另留 `server.log` 面包屑 |
 | 壳 | `cd desktop && npm start` | `Workbench.exe` |
 | 数据库 | 同左（默认 `%APPDATA%`） | 同左 |
 
@@ -105,6 +105,25 @@
 > ℹ️ `adapters/*.json` 的 `$schema` 字段原指向已删除的 `docs/模块契约.md#adapters`，
 > 已于本轮文档重构改为 `docs/SCHEMA.md`（只动这一个字段）。除此之外这些文件属于
 > 「原项目只读引用」区，改动需谨慎（见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的「原四仓库只读」约定）。
+
+### 2.1 运行日志（`workbench/logging_setup.py`，2026-09-20 引入）
+
+改造前全仓 38 处 `logger.*` 调用**一个字节都落不下来**（没有任何 handler）：
+19 处 `info`/`debug` 被 `logging.lastResort`（WARNING 级）静默丢弃，
+19 处 `warning`/`error` 写 stderr 而壳以 `stdio:'ignore'` 丢弃。这几个变量是它的开关：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `WORKBENCH_LOG_DIR` | `<数据目录>/logs` | 日志目录。测试用它指向临时目录 |
+| `WORKBENCH_LOG_LEVEL` | `INFO` | 根日志级别（`DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL`）。**非法值回落 `INFO` 而不是报错**——日志配置不该阻断启动 |
+| `WORKBENCH_LOG_FORMAT` | 打包态 `jsonl`，开发态 `text` | `jsonl` = 一行一个 JSON 对象（可 `jq`/聚合）；`text` = 人读单行。**两者是同一套字段，不是两套日志** |
+| `WORKBENCH_LOG_MAX_BYTES` | `8388608`（8 MB） | 单文件体积上限；超过即强制归档一次。**安全阀，不是容量规划** |
+| `WORKBENCH_LOG_BACKUP_COUNT` | `14` | 保留多少个归档 |
+| `WORKBENCH_PARENT_PID` | 空（= 不监视） | **由桌面壳下发**（`desktop/main.js::spawnServer` 填自己的 pid）。设了它之后，sidecar 起一个守护线程等**父进程句柄**，父一结束就自退 —— 防的是"壳被强杀/崩溃 → sidecar 变孤儿占着固定端口 → 下次启动失败"（[lifecycle.py](../workbench/lifecycle.py)，PITFALLS #54）。**未设 = 不监视**：Web 模式（`python -m workbench.main`）与任何独立运行都属这种情况，**不要手工设它**（设错会让自己被误杀） |
+
+> ⚠️ **这几个变量全部失败安全**：日志目录建不起来时 `configure()` 返回 `None` 并往 stderr
+> 写一行，**应用照常启动**。这是刻意的——本仓对留痕的一贯纪律是
+> 「留痕是义务，不是执行的前置条件」（同 `approvals.write_audit` / `cache.persist`）。
 
 ## 3. 第二层：`settings` 表键
 
@@ -225,7 +244,9 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | `shell-state.json` | **壳**（每 15s 原子写） | 服务端 `GET /api/update` | 只读更好：手改会污染 UI 判定；删除 → UI 显示「桌面壳未运行」 |
 | `runtime/desktop-ports.json` | **壳**（启动时原子写，退出时删） | 服务端 `/api/health`、人排障、工具 | 只读。**这是「当前端口是多少」的权威答案**（[ADR-0011](adr/0011-port-and-session-negotiation.md)）；手改会让排障信息失真。壳异常退出时可能残留，下次启动会按其中的 `pid` 判断它是否还有效 |
 | **`proxy.txt`** | **用户** | 壳（`proxy.apply`） | ✅ **这是给用户的开关**：一行代理串 = 强制代理；**存在但为空 = 强制直连**（终极兜底） |
-| `server.log` | 服务端（**仅打包态**） | 人 | 只读。壳以 `stdio:'ignore'` 启动 sidecar，这是唯一现场输出 |
+| `logs/workbench-<日期>.jsonl` | 服务端（**全部运行日志**） | 人 + 工具 | 只读。**主日志**：启动横幅 / 路由注册 / 工具自检 / 工具调用（带 `auditId`）/ 请求行 / 异常栈。按天 + 按体积双滚动，保留 14 份。读口是 `GET /api/logs/tail`（[API.md](API.md) §13） |
+| `logs/sidecar-stdio-<日期>.log` | **壳**（sidecar 的原始 stdout/stderr） | 人 | 只读。**兜底通道**：Python 日志系统**装配之前**的失败（解释器引导、`import` 期异常）只走 stderr，只有这里抓得到 |
+| `server.log` | 服务端（**仅打包态**） | 人 | 只读。**启动面包屑，不是日志**：一行（版本/pid/URL），用裸 `open()` 写，因此**在日志系统自身失效时仍然有效**。`blank.html` 的「服务端没有应答」页面直接引用它 |
 | `.updaterId` | electron-updater | 同上 | 勿删（更新通道标识） |
 | `runtime/insight/<job_id>/` | 洞察 | `routes_insight` 产物接口 | 可删（历史产物） |
 | `runtime/factory/<blueprint_id>/` | 工厂 | `routes_factory` | 可删；但 `checkpoint.json` 是断点续跑依据 |
