@@ -36,13 +36,6 @@
             <select id="fac-blueprint"></select>
           </label>
           <label class="mfield">
-            命令
-            <select id="fac-command">
-              <option value="create">create · 蓝图创建（原生 API 执行）</option>
-              <option value="orchestrate">orchestrate · 需求→蓝图生成（DeepSeek）+ 审阅三件套</option>
-            </select>
-          </label>
-          <label class="mfield">
             凭证账号（配置池，取自账号中心）
             <select id="fac-account"></select>
           </label>
@@ -55,6 +48,10 @@
           <div style="flex:1"></div>
           <button class="mbtn" id="btn-fac-run">▶ 执行</button>
         </div>
+        <p class="hint">
+          <b>这里只做执行</b>：「一句话 → 蓝图」现在在<b>对话</b>里做（让 Agent 先给你一份审阅清单，
+          你点头它才动手），本页负责用已有的 blueprint.json 直接创建，以及手工上传。
+        </p>
         <p class="hint">
           凭证由统一账号库解密后在内存中直连平台（原生 httpx），<b>不落盘、不写原项目目录</b>；
           任务日志与产物落在本机 <span class="mono">runtime/factory/&lt;blueprint_id&gt;/</span>。

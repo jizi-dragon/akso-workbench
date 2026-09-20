@@ -110,8 +110,23 @@ async def run_agent_loop(
         while True:
             if safety.exhausted:
                 # "为什么这次没答完"最需要这条：前端的错误提示很短，日志要留下预算与轮次
-                logger.warning("步数预算耗尽，终止本轮（max_steps=%d）", config.max_steps)
-                yield make_event("error", message="已达到步数预算上限，已终止本轮")
+                logger.warning("步数预算耗尽，终止本轮（max_steps=%d，已用 %d 次工具调用）",
+                               config.max_steps, safety.steps_used)
+                # ⚠️ 这不是"错误"，是"这一轮到头了"——两者对用户要做的动作完全不同：
+                # 错误要他去查，预算耗尽只需他回一句「继续」。所以：
+                # ① 事件里带 `reason` 让前端能分开渲染（不再是一律红色报错）；
+                # ② 文案必须**可行动**：说清发生了什么、怎么接着做、去哪儿调大。
+                # 改造前只有一句"已达到步数预算上限，已终止本轮"——用户看不懂
+                # "预算是多少""为什么不够""我怎么继续"（见 docs/FACTORY-AGENT-GAP.md 问题①）。
+                yield make_event(
+                    "error",
+                    reason="budget_exhausted",
+                    message=(
+                        f"这一轮的工具调用次数用完了（{config.max_steps} 次）。"
+                        "**已完成的部分都保留着**——直接回一句「继续」我就接着做。"
+                        "如果是配置工厂这类多步任务反复撞上限，可以在「设置 → 推理参数」里调大这个数字。"
+                    ),
+                )
                 usage = meter.finish()
                 meter.stats.persist()
                 yield make_event("usage", usage=usage)
@@ -208,6 +223,28 @@ async def _one_model_turn(
         elif event["type"] == "end":
             if meter is not None:
                 meter.feed(event.get("usage"))
+            if event.get("finish_reason") == "length":
+                # ⚠️ 输出被长度上限截断。**必须在这里拦下**，不能让它流到工具层：
+                # 一个正在生成的 tool_call 被截断后是**半截 JSON**，上层只会报
+                # 「参数解析失败」——模型据此完全推不出真正的原因，最可能的反应是
+                # 原样重试，而重试大概率再截断一次（白烧步数，见 PITFALLS #58）。
+                logger.warning(
+                    "模型输出被长度上限截断（finish_reason=length，%d 个工具调用，"
+                    "正文 %d 字）——本轮终止，避免把半截参数喂给工具",
+                    len(event.get("tool_calls") or []), len(event.get("content") or ""))
+                yield make_event(
+                    "error",
+                    reason="output_truncated",
+                    message=(
+                        "模型这次的输出被长度上限截断了，内容不完整，**没有**执行任何工具"
+                        "（半截参数执行出去比不执行危险得多）。"
+                        "请把这件事拆小一点再说一次——"
+                        "比如「先建对象和字段，建好我再让你加工作流」，"
+                        "或者分几次把蓝图补全。"
+                    ),
+                )
+                return
+
             assistant = {"role": "assistant", "content": event["content"]}
             if event["tool_calls"]:
                 assistant["tool_calls"] = event["tool_calls"]

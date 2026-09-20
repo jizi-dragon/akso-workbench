@@ -167,6 +167,17 @@ class ToolSpec:
     同样不得含凭据——`redact_args` 会再过一遍，但别指望它兜底。
     """
 
+    summary_fn: Callable[[BaseModel], str] | None = None
+    """可选：**给用户看的那一句**（确认门弹窗、待确认清单里的摘要）。
+
+    默认口径是 `approvals.summarize()` 的"工具描述 + 参数 + 风险级"——对多数工具够用，
+    但对"参数本身说明不了后果"的工具等于没说。典型是 `factory_create`：
+    用户要判断的不是 `blueprint_id` 是多少，而是**这一按下去平台上会多出什么**。
+
+    约定：返回空串 = 退回默认口径。**实现里必须自己兜住异常**——摘要失败绝不能让
+    危险操作连确认框都弹不出来（那会静默变成"没过门"，而用户看到的是"点了没反应"）。
+    """
+
     needs_confirmation: bool = False
     """True = **不立即执行 handler**，而是先向用户发起一次**实时确认**（`request_user_confirmation`）。
 

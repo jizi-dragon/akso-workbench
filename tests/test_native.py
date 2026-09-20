@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fakes import FakeEgmpClient
 
-from workbench.services.egmp import complexity, orchestrate
+from workbench.services.egmp import orchestrate
 from workbench.services.egmp.insight import run_spider
 from workbench.services.egmp.monitor import (
     classify_api,
@@ -116,15 +116,26 @@ def test_review_artifacts_render() -> None:
 # ---------------------------------------------------------------- 编排管道
 
 
-def test_topological_sort_and_complexity() -> None:
+def test_topological_sort_objects() -> None:
+    """引用者后建（被引用者先建）——**排序由引擎做，不交给模型**。
+
+    这条留着并**加了断言强度**：`complexity.assess_complexity` 的断言随
+    `complexity.py` 一起删了（那是 `command="orchestrate"` 那条已下线路径的组件，
+    见 docs/FACTORY-AGENT-GAP.md 问题④），但拓扑排序是**确定性执行逻辑**，不动。
+    """
     objects = [
         {"code": "b__c", "fields": [{"code": "f", "dataType": 13, "referenceObjectCode": "a__c"}]},
         {"code": "a__c", "fields": []},
     ]
     ordered = orchestrate.topological_sort_objects(objects)
     assert [o["code"] for o in ordered] == ["a__c", "b__c"]  # 被引用者先建
-    assert complexity.assess_complexity("创建对象")["level"] == "low"
-    assert complexity.assess_complexity("带工作流的审批对象")["level"] == "high"
+
+    # 成环时保持声明序（不抛异常、不丢对象）——上游口径，别"顺手"改成报错
+    cyclic = [{"code": "x__c", "fields": [{"code": "f", "dataType": 13,
+                                           "referenceObjectCode": "y__c"}]},
+              {"code": "y__c", "fields": [{"code": "g", "dataType": 13,
+                                           "referenceObjectCode": "x__c"}]}]
+    assert [o["code"] for o in orchestrate.topological_sort_objects(cyclic)] == ["x__c", "y__c"]
 
 
 def test_run_full_workflow_idempotent(tmp_path: Path) -> None:

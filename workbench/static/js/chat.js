@@ -241,6 +241,10 @@ async function sendMessage(text) {
     scrollToBottom();
   };
 
+  /** 「这一轮到头了」而不是「出错了」——文案最后要换个颜色。
+   *  两者对用户要做的动作不一样：这个只需回一句「继续」，那个要他去排查。 */
+  let softStop = false;
+
   /** 收段前把这段文字兑现：挂起的 rAF 要取消（否则它会在新段里用新段的文本重画），
    *  还没画过的文字要补画（rAF 没轮到就来了工具卡时，proseEl 还是空的） */
   const flushPaint = () => {
@@ -299,7 +303,15 @@ async function sendMessage(text) {
       } else if (event.type === "final") {
         content = event.content;
       } else if (event.type === "error") {
-        content = `错误：${event.message}`;
+        // 「这一轮到头了」与「真出错了」要分开渲染：前者只需要用户回一句「继续」，
+        // 后者需要他去排查。两者都印成红色"错误："会让人对着一个其实能接着走的
+        // 状态去查日志（`reason` 由 loop.py 给出，见 FACTORY-AGENT-GAP 问题①）。
+        content = event.reason === "budget_exhausted"
+          ? `⏸ ${event.message}`
+          : event.reason === "output_truncated"
+            ? `✂ ${event.message}`
+            : `错误：${event.message}`;
+        softStop = event.reason === "budget_exhausted" || event.reason === "output_truncated";
       } else if (event.type === "usage") {
         // 用量在 final/error 之后单独发一条：命中量要等所有模型调用（含摘要重算）
         // 都结束才是完整答案，提前显示会给出一个偏低的数字
@@ -325,6 +337,7 @@ async function sendMessage(text) {
   // 用收尾内容覆盖它们会把「为什么调这个工具」的来龙去脉抹掉
   if (!proseEl) proseEl = openSegment();
   proseEl.innerHTML = renderMarkdown(content || "（无内容）");
+  proseEl.classList.toggle("prose-soft-stop", softStop);
   bodyEl.querySelectorAll(".typing-cursor").forEach((cursor) => cursor.remove());
   // 兜底：还剩着「正在思考…」的空壳，说明没有任何一段文字接管它，留着就是一条假状态
   bodyEl.querySelectorAll(".bubble-assistant.thinking-bubble").forEach((stale) => stale.remove());

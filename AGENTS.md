@@ -11,8 +11,9 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（57 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
-> | 不再变的决策（16 篇 ADR） | [docs/adr/](docs/adr/) |
+> | 真机环境坑（59 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 不再变的决策（17 篇 ADR） | [docs/adr/](docs/adr/) |
+> | 配置工厂 × Agent 的接口缺口（问题分析） | [docs/FACTORY-AGENT-GAP.md](docs/FACTORY-AGENT-GAP.md) |
 > | 核心 Agent 架构与分层契约 | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
 > | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
 > | 人的协作规范 | [CONTRIBUTING.md](CONTRIBUTING.md) |
@@ -59,6 +60,8 @@
 | 33 | **模型发起的确认（`needs_confirmation`）不是安全边界**，它买的是"模型可以先问再做"，`Risk` 买的是"不做就不能做"（[ADR-0016](docs/adr/0016-model-initiated-confirmation.md) §5）。**不要**把它写成"高风险操作的批准环节"，**不要**因为它存在而放宽任何 `Risk` 分级。判据：`grep -rn "needs_confirmation=True" workbench/plugins/` 里每一个的 `risk` 都必须是 `READ`（`ToolSpec.valid()` 在装配期强制） |
 | 34 | **不要在工具 handler 里等用户**。`execute()` 一旦 `await`，调用它的异步生成器就挂起了，事件发不出去 → 界面不知道有东西要确认 → 用户永远点不了。跨"通知 → 等答复 → 继续"的交互**必须把等待放在循环层**（`harness/loop.py` 发完 `confirm_required` 再 `await registry.await_confirmation`）。这条不是偏好，是架构约束（[ADR-0016](docs/adr/0016-model-initiated-confirmation.md) §D-2） |
 | 35 | **"发通知 → 等对方回 → 我再登记等待"的形状，接收端必须提前建好**。对方（用户/子进程/worker）的响应会比你开始等更早到达，晚建的 `Future` 接不住它 → 表现为"对方明明答复了，我方干等满一个超时"（PITFALLS #57 实测：实时确认卡了整整一个 `timeoutS`）。判据：`pytest tests/test_user_confirmation.py -o addopts=""`——它**在 `confirm_required` 事件的回调里**就答复，命中这个时序；挂起不返回 = 本条复发 |
+| 36 | **给 Agent 接一条既有能力链时，先问"这条路上有哪几步只有人能做的"，把答案逐个变成工具**。缺一个动词不会报错、不会让测试变红——它只让流程走不通，而走不通的表现是**模型开始输出"请你去做某事"**（PITFALLS #59 实测：模型能校验蓝图、能创建，却**不能把校验通过的东西交给执行**，于是只能让用户"把文件拖进页面"）。判据：`Get-ChildItem -Recurse workbench -Include *.py,*.js \| Select-String '拖进页面\|页面上传\|让用户上传'` —— **必须零命中** |
+| 37 | **"输出太长被截断"必须与"参数写错了"分开**。`finish_reason == "length"` 是唯一的信号，丢了他模型只会看到「参数解析失败」，于是原样重试、又截断一次（PITFALLS #58）。收流式响应时**必须收 `finish_reason`**；截断时**绝不让半截参数进工具层**，并明说"没有执行任何工具"。判据：`pytest tests/test_agent_loop.py::test_truncated_output_is_not_reported_as_bad_args -o addopts=""` |
 
 ### 沙箱与技能
 
@@ -135,14 +138,15 @@
 
 | 你改了什么 | 必须额外跑 |
 |---|---|
-| `workbench/plugins/**` | `tools\gen_tools_doc.py --write`（重生成 [docs/TOOLS.md](docs/TOOLS.md) 清单块）**+** 确认 `server.spec` 的 `hiddenimports` 有该模块 **+** `REQUIRED_TOOLS` |
+| `workbench/plugins/**` | `tools\gen_tools_doc.py --write`（重生成 [docs/TOOLS.md](docs/TOOLS.md) 清单块）**+** 确认 `server.spec` 的 `hiddenimports` 有该模块 **+** `REQUIRED_TOOLS`。<br>★ 动了配置工厂的工具面（`factory_*`）还要跑 `pytest tests/test_factory_agent.py -o addopts=""` **与** `python tools\verify_factory_agent.py`（**24 项**端到端：真起生产入口、真发 HTTP、**真去磁盘上看那份暂存的蓝图在不在**——"返回了个 id 但没落盘"是本条链路最可能的假通过）——它们钉的是**那条链路通不通**（蓝图 → `blueprint_id` → 创建），而不只是每个工具自己对不对（[ADR-0017](docs/adr/0017-factory-agent-interface.md)） |
+| `workbench/services/egmp/writers/**`、`spec.py` | `pytest tests/test_native.py tests/test_factory_agent.py -o addopts=""`。<br>★ 给 `writers/blueprint.py` 的模型**加字段**时，必须同时补 `writers/spec.py::_NOTES` 的注解——`test_every_model_field_is_annotated` 会红，而那是对的：漏注解是**静默**的（规格照样生成，只是模型少一行说明） |
 | `workbench/sandbox/**` | `pytest tests/test_sandbox.py -o addopts=""`（含 slow 层：真起进程、验 Job Object 树杀） |
 | `workbench/skills/**` | `pytest tests/test_skills.py tests/test_skill_scripts.py -o addopts=""` |
 | `workbench/harness/**`、`cache.py`、`plugin_api.py`、`approvals.py` | `pytest tests/test_cache.py tests/test_agent_loop.py tests/test_agent_approval.py tests/test_user_confirmation.py`（**前缀稳定性 + 确认门两条通道 + 模型发起的实时确认**都在这里）<br>★ 动了实时确认（`needs_confirmation` / `confirm_required` / `pending_action`）还要跑 `python tools\verify_confirmation.py`——**19 项**端到端：真起生产入口、真发 HTTP、真拉三个静态文件（"打包/静态目录漏收"只在这里现形） |
 | `workbench/logging_setup.py`、`api/routes_logs.py`、任何 `logger.*` | `pytest tests/test_logging.py`（落盘/幂等/脱敏/关联 ID/滚动/检索/失败隔离）<br>★ 动了日志系统还要跑 `python tools\verify_logging.py`——它**真起服务、真发请求、真读日志文件**，**36 项**端到端检查（含**两条启动路径**：生产入口与开发态裸 uvicorn）。组件测试证明不了链路，PITFALLS #53 就是这么栽的 |
 | `config.SENSITIVE_PATH_PARTS`、`plugins/builtins.py`、`sandbox/policy.py` | `pytest tests/test_sensitive_paths.py`（**唯一事实源 + 只读工具的边界**） |
 | `workbench/lifecycle.py`、`api/__init__.py` 的 lifespan、`desktop/main.js`（stderr/stdio/菜单） | `pytest tests/test_lifecycle.py -o addopts=""`（**含 slow 层**：真起父子进程验"父死子退"）+ `node --check desktop\main.js` |
-| ★ 动了上面任一处 | 还要跑 `python tools\verify_regression_tests.py`——它**反证**那 **11 条**断言真的会红（手动诊断用，不进 CI，会临时改写源码并在结束时字节级还原；含一条 29 秒的 slow 项）。**它按单条 120 秒超时收口**：缺陷版的失败形态可能是"挂住"而不是"断言红"，没有这个超时，一次失误会让上层把脚本杀掉，`finally` 的还原**跑不到**——2026-09-20 实测留下过一份缺陷代码 |
+| ★ 动了上面任一处 | 还要跑 `python tools\verify_regression_tests.py`——它**反证**那 **15 条**断言真的会红（手动诊断用，不进 CI，会临时改写源码并在结束时字节级还原；含一条 29 秒的 slow 项）。**它按单条 120 秒超时收口**：缺陷版的失败形态可能是"挂住"而不是"断言红"，没有这个超时，一次失误会让上层把脚本杀掉，`finally` 的还原**跑不到**——2026-09-20 实测留下过一份缺陷代码 |
 | `workbench/api/extension_auth.py` 或 `/extension/**` 蓝图 | `node tools\verify_extension_sync.mjs`（该蓝图**无 pytest 覆盖**） |
 | `extensions/quick-login/**`（TS） | `npm run typecheck` + `npm run build`，再跑 `verify_extension_boot.py` + `verify_extension_isolation.py` + `node tools\verify_host_logic.mjs` |
 | `tools/build.ps1` | **立刻补 UTF-8 BOM**，再跑 `verify_packaging.py`（P5 就是为这件事存在的，PITFALLS #37） |

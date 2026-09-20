@@ -203,18 +203,23 @@ POST /api/chat/stream   Content-Type: application/json
 | POST | `/api/factory/blueprint` | `multipart/form-data` 文件 | 上传蓝图 → 暂存 `runtime/factory/<id>/blueprint.json`，返回 `{blueprint_id, path, name, top_keys, validation[]}`。上限 **10 MB**；解析用 `utf-8-sig` |
 | POST | `/api/factory/blueprint/validate` | 蓝图 JSON（裸 dict） | 只校验不暂存 → `{issues:[], valid: bool}` |
 | GET | `/api/factory/blueprints` | — | 已暂存蓝图列表 `{blueprints:[{blueprint_id,name,mtime}]}` |
-| POST | `/api/factory/run` | `FactoryRunIn` | 执行 `create` / `orchestrate`（同步） |
+| POST | `/api/factory/run` | `FactoryRunIn` | 执行 `create`（同步）。**`command` 现在只接受 `create`**，见下方说明 |
 | GET | `/api/factory/jobs?limit=30` | — | 任务列表（上限 200） |
 | GET | `/api/factory/jobs/{job_id}` | — | 任务详情 + `log_tail`（末 400 行）+ `checkpoint` |
 | GET | `/api/factory/jobs/{job_id}/artifacts` | — | 产物列表（排除 `blueprint.json` / `proc.log`） |
 | GET | `/api/factory/jobs/{job_id}/log` | — | 日志文件下载（`FileResponse`） |
 
-`FactoryRunIn`：`{blueprint_id?, command:"create"|"orchestrate", account_id (必填), confirmed: bool, requirement?}`
+`FactoryRunIn`：`{blueprint_id?, command:"create", account_id (必填), confirmed: bool}`
 
 - **`confirmed=false` → 409**：这是「环境强制确认」原则（`native_orchestrate.run_full_workflow` 内还有
   `approved=True, confirmed_env=True` 双闸）。**不要为了自动化而绕过它**——写配置会落到真实环境。
-- `orchestrate` 需要 DeepSeek Key（未配置 → 400）；流程：复杂度评估 → LLM 蓝图生成 →
-  规范化 + 校验 → 落 `blueprint.generated.json` / `blueprint.json` / `spec.md` / `checklist.md`。
+- **`command` 只有 `create`**（2026-09-20）：旧的 `orchestrate`（需求描述 → LLM 生成蓝图）
+  已删除——它的输入只有一个 `requirement` 字符串，是**对话链路的降级复制品**
+  （见 [ADR-0017](adr/0017-factory-agent-interface.md) §D-1）。传别的值 → **400**，
+  错误信息里会指明改用对话。字段本身保留：它是 `blueprint_jobs.command` 这一列的写入源。
+- **「一句话 → 蓝图」现在走对话**：模型先调 `factory_blueprint_spec` 取规格，
+  再调 `factory_preview_blueprint`（**校验 + 暂存 + 出审阅清单**一次完成），
+  你点头之后它才调 `factory_create`。**手工上传那条路（`POST /blueprint`）保留**。
 
 ## 8. 账号库 `/api/accounts`（`routes_accounts.py`）
 
@@ -286,7 +291,7 @@ autologin, has_token, monitoring, monitor_log}`；
 ## 10. Agent 工具层 `/api/agent`（`routes_agent.py`）
 
 > **单一事实源**：工具清单来自**工具插件中枢** `plugin_api.ToolHub`（`workbench/plugins/`
-> 五个插件装配，共 21 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
+> 五个插件装配，共 22 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
 > schema、审计三处读的是同一份定义。插件 SDK 契约见 [PLUGIN-SDK.md](PLUGIN-SDK.md)。
 
 | 方法 | 路径 | 请求 | 说明 |
@@ -332,7 +337,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - HTTP 链路（`POST /invoke`）：本端点**不等待**，直接 409 + `confirm` 内容；
   调用方自己看 `GET /pending` 决定何时 `approve`（同意同样会预先批准那次目标调用）。
 
-**工具清单（21 个工具，按插件）**：
+**工具清单（22 个工具，按插件）**：
 
 | 插件 | 工具 | 风险 |
 |---|---|---|
@@ -340,7 +345,7 @@ autologin, has_token, monitoring, monitor_log}`；
 | `builtin` | `request_user_confirmation`（模型主动请求确认；会暂停对话等答复） | read |
 | `websearch` | `web_search` | read |
 | `insight` | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
-| `factory` | `factory_validate_blueprint` / `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
+| `factory` | `factory_blueprint_spec` / `factory_preview_blueprint` / `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
 | `factory` | `factory_create` | **dangerous** |
 | `accounts` | `accounts_list` / `accounts_login` / `accounts_browser_sessions` | read |
 | `accounts` | `accounts_browser_open` / `accounts_browser_close` | **write** |

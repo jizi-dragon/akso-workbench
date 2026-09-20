@@ -91,7 +91,10 @@ async function upload() {
 async function run() {
   const blueprint_id = el('fac-blueprint').value;
   const account_id = el('fac-account').value;
-  const command = el('fac-command').value;
+  // 命令下拉已删除（orchestrate 那条路 2026-09-20 下线，见 docs/FACTORY-AGENT-GAP.md 问题④）。
+  // 仍然显式发 `command: 'create'`：路由侧保留了这个字段，为的是让
+  // `blueprint_jobs.command` 这一列历史与现在口径一致。
+  const command = 'create';
   if (!blueprint_id) { logLine(log, '✗ 请先上传/选择蓝图', 'err'); return; }
   if (!account_id) { logLine(log, '✗ 请先在统一账号库添加账号', 'err'); return; }
   if (!el('fac-confirmed').checked) {
@@ -141,9 +144,6 @@ function renderOutcome(log, data) {
   logLine(log, `■ ${ok ? '成功' : '失败'}：${result.message || (ok ? '已按蓝图完成创建' : data.status)}`,
     ok ? 'ok' : 'err');
   if (result.artifact_dir) logLine(log, `产物：${result.artifact_dir}`, 'sys');
-  if (result.complexity) {
-    logLine(log, `复杂度：${result.complexity.level ?? JSON.stringify(result.complexity)}`, 'sys');
-  }
   for (const issue of result.issues || []) {
     logLine(log, `· [${issue.level}] ${issue.path || ''} ${issue.message}`,
       issue.level === 'error' ? 'err' : 'sys');

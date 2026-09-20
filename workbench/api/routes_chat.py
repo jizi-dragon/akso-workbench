@@ -22,7 +22,7 @@ from ..harness.tools import default_registry
 from ..harness.types import AgentConfig
 from ..services import storage
 from ..services.deepseek import DeepSeekClient
-from ..services.settings import load_deepseek
+from ..services.settings import load_deepseek, load_max_steps
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -120,6 +120,11 @@ async def _stream_agent(
     agent_config = AgentConfig(
         temperature=cfg.temperature,
         system_prompt=build_system_prompt(),
+        # 步数预算从设置读（默认 40）。**这里曾经什么都不传** —— 于是 `max_steps`
+        # 永远是 `AgentConfig` 里的类默认值，用户没有任何手段调大它，
+        # 而"稍微长一点的配置工厂任务"必然撞上限并**整轮被砍掉**（见
+        # docs/FACTORY-AGENT-GAP.md 问题①）。
+        max_steps=load_max_steps(),
     )
 
     assistant_content = ""

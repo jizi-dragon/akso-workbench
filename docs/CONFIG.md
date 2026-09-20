@@ -206,7 +206,8 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | eGMP token 缓存 TTL | `egmp/client.py` `TOKEN_TTL_S` | `55 * 60` 秒 |
 | httpx 超时 | 同上 | 登录 30s；客户端默认 60s |
 | DeepSeek 流式/非流式超时 | `services/deepseek.py` | 流式 120s（连接 15s）；非流式 90s |
-| 最大步数预算 | `harness/types.AgentConfig.max_steps` | Agent 循环的工具调用预算 |
+| 最大步数预算 | `harness/types.DEFAULT_MAX_STEPS`（默认 40），**设置页可改**（`settings.maxSteps`，范围 4~200） | 一次用户消息里允许的**工具调用**次数。只读探索与危险写一样计费；耗尽只是"这一轮到头了"，回一句「继续」即接着做 |
+| 输出截断判据 | `services/deepseek.py` 收 `finish_reason` | `length` = 被长度上限截断 → 本轮终止且**不执行任何工具**。本仓**从不发送 `max_tokens`**，用服务端默认值（官方文档：非思考 8K / 思考 64K） |
 | 蓝图上传上限 | `routes_factory.BLUEPRINT_MAX_BYTES` | 10 MB |
 | 产物文本截断 | `routes_insight.read_artifact` | 2,000,000 字符 |
 | 审计字段截断 | `routes_agent._audit` | `args` 2,000 / `result_summary` 1,000 字符 |

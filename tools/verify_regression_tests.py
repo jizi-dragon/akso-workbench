@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import pathlib
 import subprocess
+import sys
 
 PY = r".venv\Scripts\python.exe"
 
@@ -175,6 +176,47 @@ CASES: list[tuple[str, str, str, str, str]] = [
         "                audit_extra=spec.audit_extra,\n"
         "            )\n",
     ),
+    # ── 配置工厂 × Agent 的接口缺口（tests/test_factory_agent.py，见 FACTORY-AGENT-GAP.md）
+    #
+    # 问题②：把"暂存"这一步拆掉，闭环就断了——这正是改造前的形态
+    # （`blueprint_id` 只能由网页上的 multipart 文件上传产生）。
+    (
+        "配置工厂：预览必须真的暂存（闭环）",
+        "tests/test_factory_agent.py"
+        "::test_blueprint_becomes_a_blueprint_id_without_leaving_the_chat",
+        "workbench/plugins/factory.py",
+        "    def stage() -> dict[str, str]:\n"
+        "        workdir.mkdir(parents=True, exist_ok=True)\n",
+        "    def stage() -> dict[str, str]:\n"
+        "        return {}  # 缺陷版：只校验不暂存（改造前就是缺这个动词）\n"
+        "        workdir.mkdir(parents=True, exist_ok=True)\n",
+    ),
+    # 问题②（规格那一半）：模型加字段却不补注解，规格里就少一行说明——
+    # **这是静默的**（规格照样生成得出来），所以只能靠机检。
+    (
+        "配置工厂：规格注解不许漏字段",
+        "tests/test_factory_agent.py::test_every_model_field_is_annotated",
+        "workbench/services/egmp/writers/spec.py",
+        '    "FieldDef.dataType": "字段类型码，见规格里的 dataTypes",\n',
+        "    # 缺陷版：故意漏一条注解\n",
+    ),
+    # 问题①：截断一旦不可见，模型看到的是"参数解析失败"，于是原样重试、又截断一次。
+    (
+        "问题①：输出截断必须显式说出来",
+        "tests/test_agent_loop.py::test_truncated_output_is_not_reported_as_bad_args",
+        "workbench/harness/loop.py",
+        '            if event.get("finish_reason") == "length":\n',
+        '            if False and event.get("finish_reason") == "length":\n',
+    ),
+    # 问题③：确认摘要退回通用口径后，用户看到的是 `blueprint_id=…`——
+    # 而他要判断的是"这一按下去平台上会多出什么"。
+    (
+        "问题③：危险操作的摘要要讲蓝图要点",
+        "tests/test_factory_agent.py::test_create_confirmation_summary_talks_about_the_blueprint",
+        "workbench/approvals.py",
+        "    custom = _custom_summary(spec, model)\n",
+        '    custom = ""  # 缺陷版：永远用通用摘要\n',
+    ),
 ]
 
 
@@ -219,6 +261,13 @@ def run_one(test_target: str) -> tuple[int, str]:
 
 
 def main() -> int:
+    # GBK 控制台兜底：✅/❌/中文需要 UTF-8 输出。
+    # ⚠️ 少了这三行，本脚本会在**打印第一行结果**时抛 UnicodeEncodeError ——
+    # 而那时它已经临时改写了生产源码，虽然 `finally` 仍会还原，但"跑到一半崩掉"
+    # 会让人以为是被改写坏了（2026-09-20 实测踩到，与 PITFALLS #5 同族）。
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     originals: dict[pathlib.Path, bytes] = {}
     caught = 0
     try:

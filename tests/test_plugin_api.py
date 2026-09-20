@@ -372,7 +372,11 @@ def test_real_hub_risk_grading() -> None:
     expected = {
         "insight_read_config": pa.Risk.READ,
         "insight_run": pa.Risk.READ,
-        "factory_validate_blueprint": pa.Risk.READ,
+        "factory_blueprint_spec": pa.Risk.READ,
+        # 预览会**写**运行时目录，但仍然是 read：只写自有工作区、可整体删除、
+        # 不碰平台与凭据（与 insight_run 同级）。真正的闸门是 create 的 dangerous 门。
+        # 给它加确认门会把"确认"用在暂存上，训练用户习惯性点同意。
+        "factory_preview_blueprint": pa.Risk.READ,
         "factory_create": pa.Risk.DANGEROUS,
         "accounts_login": pa.Risk.READ,
         "accounts_browser_open": pa.Risk.WRITE,

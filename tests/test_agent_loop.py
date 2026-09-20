@@ -47,6 +47,9 @@ class FakeClient:
             "content": step.get("content") or "",
             "tool_calls": step.get("tool_calls") or [],
             "usage": step.get("usage", self.usage),
+            # 真实客户端总会带它（`deepseek.py` 收 `finish_reason`）；
+            # 脚本默认 "stop"，要模拟截断就写 `"finish_reason": "length"`
+            "finish_reason": step.get("finish_reason", "stop"),
         }
 
     async def chat(self, messages, temperature=0.7, max_tokens=None, json_mode=False):
@@ -266,11 +269,52 @@ def test_approved_token_lets_the_same_call_through(hub) -> None:
 
 
 def test_exhausted_budget_terminates(hub) -> None:
-    """步数预算：模型无限调工具时必须被切断，而不是转圈烧 token。"""
+    """步数预算：模型无限调工具时必须被切断，而不是转圈烧 token。
+
+    **并且它必须是"可继续的终态"而不是"一个错误"**（2026-09-20 修订）：
+    改造前只有一句"已达到步数预算上限，已终止本轮"——用户看不懂预算是多少、
+    为什么不够、接下来怎么办；前端也把它渲染成红色报错。现在它带 `reason`，
+    文案里必须出现"继续"与"设置"这两条出路（见 docs/FACTORY-AGENT-GAP.md 问题①）。
+    """
     script = [{"tool_calls": [call("probe_echo", {"text": str(i)}, f"c{i}")]} for i in range(20)]
     _, events = drive(script, hub, AgentConfig(max_steps=3, system_prompt="s"))
-    assert "步数预算" in error_of(events)["message"]
+    event = error_of(events)
+    assert event["reason"] == "budget_exhausted", f"前端靠 reason 区分「到头了」与「出错了」：{event}"
+    assert "继续" in event["message"], "文案必须告诉用户怎么接着做"
+    assert "设置" in event["message"], "反复撞上限的用户要知道去哪儿调大"
     assert types_of(events)[-1] == "usage", "预算耗尽也要把用量发出来（前端要显示）"
+
+
+def test_truncated_output_is_not_reported_as_bad_args(hub) -> None:
+    """输出被长度上限截断 → **显式说出来**，而不是让半截参数流到工具层。
+
+    改造前：`finish_reason` 在 `DeepSeekClient.stream_chat` 里被丢弃，被截断的
+    tool_call 带着半截 JSON 进 `_validate` → 观测是「参数解析失败」——
+    模型据此完全推不出真正的原因，最可能的反应是原样重试，而重试大概率再截断一次
+    （白烧步数，见 docs/FACTORY-AGENT-GAP.md 问题① 与 PITFALLS #58）。
+    """
+    _, events = drive(
+        [{"content": "", "finish_reason": "length",
+          "tool_calls": [{"id": "c1", "name": "probe_echo", "arguments": '{"text": "半截'}]}],
+        hub, AgentConfig(max_steps=5, system_prompt="s"),
+    )
+    kinds = types_of(events)
+    assert "observation" not in kinds, f"截断时不该执行任何工具：{kinds}"
+    assert "action" not in kinds, "连 action 都不该发——那会让界面显示一个正在跑的工具卡"
+    event = error_of(events)
+    assert event["reason"] == "output_truncated"
+    assert "截断" in event["message"]
+    assert "没有" in event["message"], (
+        "要说清「没有执行工具」，否则用户会以为已经动过平台了——"
+        "而半截参数执行出去比不执行危险得多")
+
+
+def test_truncated_final_answer_is_also_flagged(hub) -> None:
+    """纯文字回答被截断同样要拦：半截回答读起来像"说完了"，那比报错更坏。"""
+    _, events = drive([{"content": "结论如下：第一点……", "finish_reason": "length"}],
+                      hub, AgentConfig(max_steps=5, system_prompt="s"))
+    assert "final" not in types_of(events)
+    assert error_of(events)["reason"] == "output_truncated"
 
 
 def test_repeated_identical_call_is_cut_off(hub) -> None:

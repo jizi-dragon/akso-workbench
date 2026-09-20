@@ -1,4 +1,4 @@
-"""运行时设置（DeepSeek）——唯一的设置读写入口。
+"""运行时设置（DeepSeek 与 Agent 运行限制）——唯一的设置读写入口。
 
 集中为 Pydantic 模型：
 - 内部代码一律用 snake_case 属性
@@ -12,10 +12,18 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
+from ..harness.types import DEFAULT_MAX_STEPS, MAX_MAX_STEPS, MIN_MAX_STEPS
 from . import storage
 from .deepseek import DEFAULT_MODEL, normalize_model
 
 _DEEPSEEK_DB_KEYS = ("apiKey", "model", "temperature")
+
+MAX_STEPS_KEY = "maxSteps"
+"""步数预算的 DB 键（与前端 camelCase 同名，省一次转换）。
+
+**空 / 非法 / 越界一律回默认值，不报错**：这是"给用户调大的旋钮"，
+不是安全参数——它的失效方向是"回到原来那个偏小的值"，而不是"变成无穷大"。
+"""
 
 
 def _camel(snake: str) -> str:
@@ -70,4 +78,39 @@ def all_settings_json() -> dict:
         "apiKey": deepseek.api_key,
         "model": deepseek.model,
         "temperature": deepseek.temperature,
+        "maxSteps": load_max_steps(),
+        "maxStepsRange": [MIN_MAX_STEPS, MAX_MAX_STEPS],
+        "maxStepsDefault": DEFAULT_MAX_STEPS,
     }
+
+
+# ---------------------------------------------------------------- Agent 运行限制
+
+
+def load_max_steps() -> int:
+    """读步数预算。**任何异常都回默认值**（见 `MAX_STEPS_KEY` 的说明）。"""
+    try:
+        raw = storage.get_setting(MAX_STEPS_KEY)
+    except Exception:  # noqa: BLE001 —— 读设置失败不该让对话起不来
+        return DEFAULT_MAX_STEPS
+    if not raw:
+        return DEFAULT_MAX_STEPS
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_STEPS
+    if not (MIN_MAX_STEPS <= value <= MAX_MAX_STEPS):
+        return DEFAULT_MAX_STEPS
+    return value
+
+
+def save_max_steps(value: int | None) -> int:
+    """写步数预算。`None` = 不动；越界值**夹到范围内**而不是拒（旋钮语义，不是校验语义）。"""
+    if value is None:
+        return load_max_steps()
+    try:
+        clamped = max(MIN_MAX_STEPS, min(int(value), MAX_MAX_STEPS))
+    except (TypeError, ValueError):
+        return load_max_steps()
+    storage.set_setting(MAX_STEPS_KEY, str(clamped))
+    return clamped

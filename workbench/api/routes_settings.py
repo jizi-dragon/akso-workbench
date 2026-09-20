@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from .. import cache
 from ..harness import prompts
 from ..services import storage
-from ..services.settings import all_settings_json, save_deepseek
+from ..services.settings import all_settings_json, save_deepseek, save_max_steps
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
@@ -17,6 +17,8 @@ class SettingsBody(BaseModel):
     apiKey: str | None = None
     model: str | None = None
     temperature: float | None = None
+    maxSteps: int | None = None
+    """一次回答里允许的**工具调用**次数（空 = 不动）。越界值会被夹到允许范围内。"""
 
 
 class PromptBody(BaseModel):
@@ -47,6 +49,7 @@ def put_settings(body: SettingsBody) -> dict:
         model=body.model,
         temperature=body.temperature,
     )
+    save_max_steps(body.maxSteps)
     return {"ok": True, "settings": {**all_settings_json(), "systemPrompt": prompts.prompt_state()}}
 
 

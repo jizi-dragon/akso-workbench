@@ -172,6 +172,15 @@
                       <small>发散 · 1.3+</small>
                     </div>
                   </label>
+                  <label class="field">
+                    <span>单轮工具调用上限&nbsp;&nbsp;<b class="mono" id="max-steps-value">40</b></span>
+                    <input type="range" id="set-max-steps" class="range-input" min="4" max="200" step="1" value="40" />
+                    <small>
+                      你发一条消息后，我最多调用这么多次工具。<b>用完不会丢失进度</b>——
+                      回一句「继续」就接着做。配置工厂这类多步任务（找账号 → 校验蓝图 →
+                      创建 → 查结果，中间还可能要改几轮）建议 40 以上。
+                    </small>
+                  </label>
                 </div>
               </section>
 

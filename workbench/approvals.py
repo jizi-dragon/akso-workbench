@@ -196,7 +196,7 @@ class PendingStore:
             plugin=spec.plugin_id,
             risk=spec.risk.value,
             args=args_dump,
-            summary=summary or summarize(spec, args_dump),
+            summary=summary or summarize(spec, args_dump, model=args),
             created_at=_now_ms(),
             conversation_id=conversation_id,
             fingerprint=_fingerprint(spec.name, args),
@@ -487,17 +487,38 @@ _SUMMARY_LABEL = {
 }
 
 
-def summarize(spec: ToolSpec, args: dict[str, Any]) -> str:
+def summarize(spec: ToolSpec, args: dict[str, Any], *, model: BaseModel | None = None) -> str:
     """给用户看的一句话：做什么 + 影响谁。
 
     刻意不做成"工具名 + JSON"——用户要判断的是**后果**，不是参数名。
+
+    `ToolSpec.summary_fn` 优先（只有它知道这个工具的"后果"该怎么讲，
+    见 `factory_create`）；它没给、返回空串、或抛异常时一律退回通用口径。
     """
+    custom = _custom_summary(spec, model)
+    if custom:
+        return custom
     parts = [f"{spec.description}"]
     details = [f"{_SUMMARY_LABEL.get(k, k)}={v}" for k, v in args.items() if v not in (None, "", [])]
     if details:
         parts.append("（" + "，".join(details) + "）")
     parts.append(f"［{spec.risk.value} 级］")
     return "".join(parts)
+
+
+def _custom_summary(spec: ToolSpec, model: BaseModel | None) -> str:
+    """调 `summary_fn`。**任何失败都退回空串**——摘要坏掉不能让确认框弹不出来。
+
+    传的是**已校验的参数模型**而不是打码后的 dict：摘要实现要读的往往是
+    "这份蓝图里有什么"，而打码后的 dict 可能缺键。
+    """
+    if spec.summary_fn is None or model is None:
+        return ""
+    try:
+        return str(spec.summary_fn(model) or "").strip()
+    except Exception:  # noqa: BLE001 —— 见上
+        logger.warning("summary_fn 失败，退回通用摘要：%s", spec.name, exc_info=True)
+        return ""
 
 
 def _fingerprint(tool: str, args: Any) -> str:

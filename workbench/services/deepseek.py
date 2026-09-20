@@ -156,6 +156,7 @@ class DeepSeekClient:
                     tool_calls: dict[int, dict] = {}
                     content_parts: list[str] = []
                     usage: dict = {}
+                    finish_reason = ""
                     async for line in res.aiter_lines():
                         line = line.strip()
                         if not line.startswith("data:"):
@@ -173,7 +174,14 @@ class DeepSeekClient:
                             # 把它塞进最后一帧的 choices 里），`end` 事件仍带得上用量。
                             usage = data["usage"]
                             yield {"type": "usage", "usage": usage}
-                        delta = (data.get("choices") or [{}])[0].get("delta") or {}
+                        choice = (data.get("choices") or [{}])[0]
+                        # ⚠️ `finish_reason` **必须收**：它唯一的值 `length` 表示
+                        # "这次输出被长度上限截断了"。丢了它，被截断的 tool_call
+                        # （半截 JSON）会在上层表现为「参数解析失败」——模型完全不知道
+                        # 是自己被截断，于是重试一次，又截断一次（见 PITFALLS #58）。
+                        if choice.get("finish_reason"):
+                            finish_reason = str(choice["finish_reason"])
+                        delta = choice.get("delta") or {}
                         if delta.get("content"):
                             content_parts.append(delta["content"])
                             yield {"type": "delta", "text": delta["content"]}
@@ -197,6 +205,7 @@ class DeepSeekClient:
             "content": "".join(content_parts),
             "tool_calls": [tool_calls[i] for i in sorted(tool_calls)],
             "usage": usage,
+            "finish_reason": finish_reason,
         }
 
     async def chat(

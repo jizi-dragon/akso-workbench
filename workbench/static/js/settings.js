@@ -38,6 +38,11 @@ export function initSettings() {
     document.getElementById("temp-value").textContent = Number(tempInput.value).toFixed(1);
   });
 
+  const stepsInput = document.getElementById("set-max-steps");
+  stepsInput.addEventListener("input", () => {
+    document.getElementById("max-steps-value").textContent = String(stepsInput.value);
+  });
+
   document.getElementById("btn-toggle-key").addEventListener("click", () => {
     const input = document.getElementById("set-api-key");
     const show = input.type === "password";
@@ -50,8 +55,12 @@ export function initSettings() {
       apiKey: document.getElementById("set-api-key").value.trim() || null,
       model: state.settings.model,
       temperature: Number(document.getElementById("set-temperature").value),
+      maxSteps: Number(document.getElementById("set-max-steps").value),
     });
     state.settings = result.settings;
+    // 服务端会把越界值夹回范围内，所以**保存后必须回填**——否则滑块停在 999，
+    // 而实际生效的是 200，"我设的"和"跑的是"就对不上了
+    fillSteps();
     flashButton("btn-save-settings", "✓ 已保存");
   });
 
@@ -182,7 +191,21 @@ export function fillSettings() {
   }
   paintModelGrid();
   paintPrompt();
+  fillSteps();
   loadCache();
+}
+
+/** 步数滑块：范围与默认值都从服务端来（**不在这里写死第二份**——
+ *  前后端各写一个 40，改一处漏一处就是"界面上写着 40、实际跑的是 12"）。 */
+function fillSteps() {
+  const settings = state.settings || {};
+  const range = Array.isArray(settings.maxStepsRange) ? settings.maxStepsRange : [4, 200];
+  const value = Number(settings.maxSteps ?? settings.maxStepsDefault ?? range[1]);
+  const input = document.getElementById("set-max-steps");
+  input.min = String(range[0]);
+  input.max = String(range[1]);
+  input.value = String(value);
+  document.getElementById("max-steps-value").textContent = String(value);
 }
 
 function paintModelGrid() {

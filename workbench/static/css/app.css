@@ -401,6 +401,15 @@
   min-width: 0;
 }
 
+/* 「这一轮到头了」而不是「出错了」：预算耗尽 / 输出截断时用中性色，
+   不用红色。红色是"去查日志"的信号，而这两种只要回一句「继续」。
+   判据：气泡里出现 ⏸ / ✂ 时，用户不该被吓到。 */
+.prose.prose-soft-stop {
+  border-left: 3px solid var(--amber);
+  padding-left: 10px;
+  color: var(--text-2);
+}
+
 .prose > *:first-child { margin-top: 0; }
 .prose > *:last-child { margin-bottom: 0; }
 

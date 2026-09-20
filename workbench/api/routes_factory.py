@@ -1,9 +1,20 @@
 """配置工厂路由（阶段 3 原生化）：egmp.writers + orchestrate 直接执行，不再调 node。
 
-- create      → orchestrate.run_full_workflow（校验/幂等/拓扑排序/8 步管道/checkpoint）
-- orchestrate → 复杂度评估 → DeepSeek 蓝图生成（规范化+校验）→ 审阅三件套（spec/checklist）
+- **create** → `orchestrate.run_full_workflow`（校验/幂等/拓扑排序/8 步管道/checkpoint）
 - 「环境强制确认」原则由 UI 承担（confirmed=true 才发起；引擎侧 approved/confirmed_env 双闸）；
 - 蓝图暂存与产物全部在 workbench 运行时目录；凭证走统一账号库 + egmp client。
+
+## 2026-09-20：`orchestrate` 命令已删除（见 docs/FACTORY-AGENT-GAP.md 问题④）
+
+原来这里还有一条 `command="orchestrate"`：**需求描述 → 复杂度评估 → 另一个 LLM 调用生成蓝图
+→ 校验 → 审阅三件套**。它和对话 Agent 干的是同一件事，但只有一个 `requirement` 字符串的输入
+——拿不到对话上下文、拿不到用户前面说的约束、也拿不到工具查到的真实对象结构。
+**是对话链路的降级复制品**，而且本仓对"两套会漂的事实源"已经栽过两次（两张敏感路径表、
+两套工具表），所以直接删掉而不是标废弃。
+
+要"把一句话变成蓝图"，现在走对话：模型先用 `factory_blueprint_spec` 看规格，
+再用 `factory_preview_blueprint` 提交。**手工上传 blueprint.json 的那条路保留**
+（`POST /blueprint`）——用户手里已经有文件时不该被迫让模型把内容抄一遍。
 """
 
 from __future__ import annotations
@@ -19,7 +30,6 @@ from pydantic import BaseModel, Field
 from .. import config, db
 from ..services.egmp import orchestrate as native_orchestrate
 from ..services.egmp.client import egmp_client_for_account
-from ..services.egmp.generate import format_review_prompt, generate_blueprint
 from ..services.storage import now_ms
 
 router = APIRouter(prefix="/api/factory", tags=["factory"])
@@ -96,18 +106,28 @@ def list_blueprints() -> dict:
 
 
 class FactoryRunIn(BaseModel):
-    blueprint_id: str = Field("", description="已有暂存蓝图 id（create 模式必填）")
-    command: str = Field("create", description="create | orchestrate")
+    blueprint_id: str = Field("", description="已暂存蓝图 id（必填）")
+    command: str = Field("create", description="create（本路由只有这一个命令）")
     account_id: str = Field(..., min_length=1, description="凭证来源账号（确认后的环境）")
     confirmed: bool = Field(False, description="UI 环境强制确认（必须勾选）")
-    requirement: str = Field("", description="orchestrate 模式：需求描述（不填则取蓝图 description）")
 
 
 @router.post("/run")
 def run(body: FactoryRunIn) -> dict:
-    """执行工厂任务（原生 Python；日志落盘，任务行入 blueprint_jobs）。"""
-    if body.command not in {"create", "orchestrate"}:
-        raise HTTPException(400, f"未知命令：{body.command}（monitor 长驻录制见 /api/monitor）")
+    """执行工厂任务（原生 Python；日志落盘，任务行入 blueprint_jobs）。
+
+    ⚠️ `command` 现在**只有 `create`**。旧的 `orchestrate`（需求→LLM 生成蓝图）已删除，
+    见模块文档串。保留这个字段而不是删掉：它是**已存的 `blueprint_jobs.command` 列**的
+    写入源，删了会让历史行与现在写入的口径对不上（而"任务表里的 command 是什么"
+    是排障时要看的）。
+    """
+    if body.command != "create":
+        raise HTTPException(
+            400,
+            f"未知命令：{body.command}。本路由只接受 create；"
+            "「一句话生成蓝图」请改用对话（模型会调 factory_blueprint_spec + "
+            "factory_preview_blueprint）",
+        )
     if not body.confirmed:
         raise HTTPException(409, "违反配置工厂「环境强制确认」原则：需要 UI 明确确认（confirmed=true）")
 
@@ -133,43 +153,12 @@ def run(body: FactoryRunIn) -> dict:
 
     try:
         with egmp_client_for_account(body.account_id) as client:
-            if body.command == "create":
-                if not blueprint_path.exists():
-                    raise HTTPException(404, f"蓝图不存在：{body.blueprint_id}")
-                blueprint = json.loads(blueprint_path.read_text(encoding="utf-8"))
-                result = native_orchestrate.run_full_workflow(
-                    client, blueprint, approved=True, confirmed_env=True,
-                    artifact_dir=workdir, on_log=on_log)
-            else:  # orchestrate
-                requirement = body.requirement
-                if not requirement and blueprint_path.exists():
-                    existing = json.loads(blueprint_path.read_text(encoding="utf-8"))
-                    requirement = str(existing.get("description") or existing.get("name") or "")
-                if not requirement:
-                    raise HTTPException(400, "orchestrate 需要 requirement（需求描述）或带 description 的蓝图")
-                on_log("① 复杂度评估 → ② LLM 蓝图生成（DeepSeek）→ ③ 规范化+校验")
-                generation = generate_blueprint(requirement, llm_chat_fn=_llm_chat_fn())
-                (workdir / "blueprint.generated.json").write_text(
-                    json.dumps(generation["blueprint"], ensure_ascii=False, indent=2),
-                    encoding="utf-8")
-                (workdir / "blueprint.json").write_text(
-                    json.dumps(generation["blueprint"], ensure_ascii=False, indent=2),
-                    encoding="utf-8")
-                (workdir / "spec.md").write_text(
-                    native_orchestrate_imported_generate_spec(generation["blueprint"]),
-                    encoding="utf-8")
-                (workdir / "checklist.md").write_text(
-                    native_orchestrate_imported_generate_checklist(generation["blueprint"]),
-                    encoding="utf-8")
-                on_log(format_review_prompt(generation))
-                result = {
-                    "success": generation["valid"],
-                    "message": "蓝图已生成并通过校验（审阅后用 create 执行）"
-                    if generation["valid"] else "蓝图校验未通过（见 issues）",
-                    "complexity": generation["complexity"],
-                    "issues": generation["issues"],
-                    "artifact_dir": str(workdir),
-                }
+            if not blueprint_path.exists():
+                raise HTTPException(404, f"蓝图不存在：{body.blueprint_id}")
+            blueprint = json.loads(blueprint_path.read_text(encoding="utf-8"))
+            result = native_orchestrate.run_full_workflow(
+                client, blueprint, approved=True, confirmed_env=True,
+                artifact_dir=workdir, on_log=on_log)
         status = "succeeded" if result.get("success") else "failed"
     except HTTPException:
         db.execute("UPDATE blueprint_jobs SET status = 'failed', updated_at = ? WHERE id = ?",
@@ -183,37 +172,6 @@ def run(body: FactoryRunIn) -> dict:
     db.execute("UPDATE blueprint_jobs SET status = ?, updated_at = ? WHERE id = ?",
                (status, now_ms(), job_id))
     return {"job_id": job_id, "status": status, "result": result, "log_tail": lines[-50:]}
-
-
-def _llm_chat_fn():
-    from ..services.settings import load_deepseek
-
-    settings = load_deepseek()
-    if not settings.api_key:
-        raise HTTPException(400, "orchestrate 需要 DeepSeek API Key（设置页配置后重试）")
-
-    def _chat(prompt: str) -> str:
-        import asyncio
-
-        from ..services.deepseek import DeepSeekClient
-
-        client = DeepSeekClient(api_key=settings.api_key, model=settings.model)
-        return asyncio.run(client.chat(
-            [{"role": "user", "content": prompt}], temperature=0.3, json_mode=True))
-
-    return _chat
-
-
-def native_orchestrate_imported_generate_spec(blueprint: dict) -> str:
-    from ..services.egmp.writers.blueprint import generate_review_spec
-
-    return generate_review_spec(blueprint)
-
-
-def native_orchestrate_imported_generate_checklist(blueprint: dict) -> str:
-    from ..services.egmp.writers.blueprint import generate_checklist
-
-    return generate_checklist(blueprint)
 
 
 @router.get("/jobs")

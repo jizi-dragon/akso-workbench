@@ -12,13 +12,35 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
+DEFAULT_MAX_STEPS = 40
+"""一次用户消息里允许的**工具调用**次数上限（默认值）。
+
+## 为什么是 40 而不是 12（2026-09-20 修订）
+
+原来写死 12，且**任何地方都改不了**（路由组装 `AgentConfig` 时只传 temperature 与
+system_prompt）。12 是通用问答 Agent 的默认量级，而配置工厂这类作业是**多步 + 有重试 +
+有依赖**的：找账号 1 步、蓝图校验改 2~3 轮、创建 1 步、看结果 1 步——多对象蓝图几乎必然撞上限，
+而撞上限的表现是**整轮被砍掉**（`loop.py` 的 `safety.exhausted` 分支），不是"再走一轮"。
+
+40 的取法：实测量级在 6~20 步，留一倍余量。再往上，"模型跑飞"的代价开始显著——
+**每一步都是一次完整的 LLM 往返**（还可能带工具副作用）。
+
+> 它是**默认值**，不是常量：用户可在设置页改（`services/settings.py::load_agent_limits`）。
+> 之所以仍然给一个默认值：绝大多数用户不该为了用一次配置工厂先去调参数。
+"""
+
+MIN_MAX_STEPS = 4
+MAX_MAX_STEPS = 200
+"""设置页允许的范围。下限 4 = 至少够"查一次 → 做一次 → 看一次"；
+上限 200 是防手滑（填 100000 等于关掉刹车，而刹车是这层唯一的作用）。"""
+
 
 class AgentConfig(BaseModel):
     """一次 Agent 运行的全部可调参数（全部有默认值，调用方只传差异项）。"""
 
     temperature: float = 0.7
     max_tokens: int | None = None
-    max_steps: int = 12
+    max_steps: int = DEFAULT_MAX_STEPS
     context_window_tokens: int = 131072
     context_threshold: float = 0.8
     keep_recent_turns: int = 5

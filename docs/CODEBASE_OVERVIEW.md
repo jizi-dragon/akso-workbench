@@ -80,19 +80,24 @@ plugin_api.py（**插件 SDK 契约**：ToolHub / ToolSpec / Risk / ToolContext 
   ├─ 唯一的能力扩展面；不 import 任何插件、不给插件暴露 app
   └─ 审计写入器与确认门由 approvals.install(hub) 注入（故本文件连 db 都不 import）
 approvals.py（**危险操作确认门 + 审计写入器 + 人话摘要**）
-plugins/（**五个工具插件** = 21 个工具；`plugins/__init__.py::_MODULES` 是显式清单）
+plugins/（**五个工具插件** = 22 个工具；`plugins/__init__.py::_MODULES` 是显式清单）
   ├─ builtins.py（时间 / 读文件 / 读网页 / 请求用户确认）　├─ websearch.py（自建联网检索，官方 API 无此工具）
   ├─ insight.py（读元数据 / 跑织网 / 取产物）　├─ factory.py（蓝图校验与清单 / 创建任务）
   └─ accounts.py（登录验证 / 托管会话）
 services/
   ├─ browser_pool.py 625 行（专职工作线程 / 双模式 / CDP 托管 / 免密 / 自愈）
   ├─ accounts.py 607 · autologin.py 372 · proc.py 236 · deepseek.py 181 · modules.py 172 · storage.py 122
-  └─ egmp/（平台内核，34 文件 3,796 行）
-       ├─ client 252 · orchestrate 306 · replay 259（离线回放台架）· generate 104 · cache 87 · queries 69
+  └─ egmp/（平台内核，33 文件 ≈3,700 行）
+       ├─ client 252 · orchestrate 306 · replay 259（离线回放台架）· cache 87 · queries 69
        ├─ kernel/ 3 文件 300 行（endpoints / semantics 等）
        ├─ insight/  6 文件 1,145 行（spider 437 · drawio 309 · workspace 184 · report 86 · lifecycle 70 · __init__ 59）
-       ├─ writers/  11 文件 1,442 行（blueprint 513 · workflows 322 · layouts 167 · lifecycle 159 · fields 101 · endpoints 85 · idempotency 80 · menus 49 · picklists 41 · objects 19）
+       ├─ writers/  12 文件 ≈1,900 行（blueprint 513 · workflows 322 · **spec ≈400（给 agent 的蓝图规格）** · layouts 167 · lifecycle 159 · fields 101 · endpoints 85 · idempotency 80 · menus 49 · picklists 41 · objects 19）
        └─ monitor/   4 文件 530 行（monitor 207 · query_layer 168 · interpreter 148）
+
+> **2026-09-20 删除**：`egmp/generate.py`（104 行）与 `egmp/complexity.py`——
+> 它们服务的是 `command="orchestrate"` 那条"一句话 → 另一个 LLM 循环 → 蓝图"的路，
+> 而那条路的输入只有一个字符串，是**对话链路的降级复制品**
+> （[ADR-0017](adr/0017-factory-agent-interface.md) §D-1）。**执行引擎（orchestrate.py）一行没删。**
 harness/（对话 Agent 循环：loop 事件流 · tools **已降级为兼容垫片** · types/prompts/safety/context）
 db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 ```
@@ -123,11 +128,11 @@ db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 | `workbench/services/browser_pool.py` | **专职工作线程**（Playwright sync 单线程单实例约束；操作走队列作业）；headful/headless 双模式；storage_state 持久化；`heal_count≤2` 自愈；CDP 挂接内置 Chromium |
 | `workbench/services/accounts.py` | Fernet 密钥管理、环境/账号/盒子 CRUD、分配池（config/monitor）、备份导出导入（`fernetKey` 随文件下发） |
 | `workbench/services/autologin.py` | 节奏门控五重门（MAIN world JS 注入 + TokenCapture JWT） |
-| `workbench/services/egmp/` | 平台内核：`client`（code==0 信封 / paged_post / 55min token 缓存）、`insight`、`writers`、`orchestrate`、`monitor` |
+| `workbench/services/egmp/` | 平台内核：`client`（code==0 信封 / paged_post / 55min token 缓存）、`insight`、`writers`（含 `spec.py`：**给 agent 的蓝图规格 + 给用户的审阅材料**，从运行期模型生成）、`orchestrate`（**只做确定性执行**：拓扑排序 / 8 步管道 / checkpoint）、`monitor` |
 | `workbench/db.py` | SQLite + `MIGRATIONS`（**1–20**；13 = `add_created_at_indexes`，14 = 洞察工作区与覆盖度，15 = 模块 id 数据改写，16 = `tool_plugin_layer`（`agent_audit` 加列 + `pending_action`），17 = `agent_cache_layer`，18 = `rename_factory_module_id`，19 = `sandbox_run`（沙箱执行审计），20 = `skill_audit`（能力供给链留痕））；迁移**只增不改** |
 | `workbench/plugin_api.py` | **插件 SDK 契约**：`ToolHub`（工具注册表/执行器，**分 core / installed 两层**）+ `ToolSpec`（含 `Risk` 分级）+ `ToolContext` + `Plugin`（含 `PluginOrigin`）。零领域知识（不 import 插件、不 import `services/egmp`、连 `db` 都不 import） |
 | `workbench/approvals.py` | **危险操作确认门**（单次令牌 / 5 分钟 / 参数指纹）+ **审计写入器**（唯一入口）+ 人话摘要 |
-| `workbench/plugins/` | 五个工具插件（`builtins` / `websearch` / `insight` / `factory` / `accounts`，共 21 个工具；风险分布：18 read + 2 write + 1 dangerous）。`plugins/__init__.py::_MODULES` 是显式清单，坏插件隔离成 failure |
+| `workbench/plugins/` | 五个工具插件（`builtins` / `websearch` / `insight` / `factory` / `accounts`，共 22 个工具；风险分布：19 read + 2 write + 1 dangerous）。`plugins/__init__.py::_MODULES` 是显式清单，坏插件隔离成 failure |
 | `workbench/sandbox/` | **不受信代码的执行底座**（[ADR-0014](adr/0014-sandbox-for-untrusted-code.md)，6 文件 ≈1150 行）：`layout`（沙箱根/运行目录）、`policy`（**策略 + 环境白名单 + 敏感路径**）、`job`（Windows Job Object 进程树终止）、`runner`（`ExecRequest`/`run`/`run_async`）、`audit`。**不是安全边界**，是限损层（D-3） |
 | `workbench/skills/` | **Skill 共享库与安装**（7 文件 ≈1775 行）：`layout`（库/已安装目录，**不入 git**）、`manifest`（`SKILL.md` 契约，两种工具形态）、`security`（ZIP 准入 + 可疑模式扫描）、`library`（上传/安装/卸载/删除）、`script_runner`（脚本式工具的入口约定）、`audit`。共享库与已安装目录都在 `<DATA_DIR>/skills/` |
 | `workbench/harness/` | 对话 Agent 循环（`loop.py` 事件流）。⚠️ `harness/tools.py` **已降级为兼容垫片**（只剩再导出 + `default_registry()` 转发 `get_hub()`），工具定义全部搬进 `plugins/` |
