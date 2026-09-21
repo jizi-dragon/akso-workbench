@@ -46,9 +46,15 @@ node_modules/
 # ⚠️ 正因如此，**它是"资料"不是"本仓的产出"**：我们的产出是从它提炼出的规则与判据
 # （`docs/PITFALLS.md`、`docs/FACTORY-VERIFICATION-PLAN.md` §8），别把它当成规格来源去引用。
 
-# 平台操作采集数据：**只跟踪 .gitkeep**。
-# 2026-09-21 加：`factory-tuning/data/sessions/` 每次演示都会新增一份，
-# 内容含环境标识（已脱敏但仍属该环境的操作痕迹），且本仓从未跟踪过它们——
-# 一直靠"记得别 add"维持，太脆。见 PITFALLS #65。
-factory-tuning/data/sessions/*
-!factory-tuning/data/sessions/.gitkeep
+# 平台操作采集数据：**入库**（2026-09-21 用户决定）。
+# 理由：本机要能"上云接着做"，而且这类数据会持续增长，靠"记得别 add"维持太脆。
+# 入库前普查过全库（46 条记录 / 6 份会话），残留情况记在这里：
+#   · 令牌形状扫描 → exit 0；未假名化的标准 GUID **0 个**；
+#     `standard-val` / `aksoegmp` / `liyulong` / `password` / `Bearer` / `token` **各 0 次**；
+#   · 账号只有**稳定假名** `acct-<8位hex>-<时间戳>`（目录名与 meta.json 里）；
+#   · ⚠️ **残留 `requestID` 20 处**（形如 `0HNON16GD5ES3:00000027`）——
+#     平台侧的请求关联 id，**不是凭据**，但能拿去平台日志里对号。
+#     它留下是因为裁剪**按响应体大小**触发（`TRIM_SIZE` = 10KB），小响应原样透传，
+#     而 `redact.py` 不认为它像令牌。要打掉就在 `redact.py` 加一条键名规则。
+#   · 其余是业务内容：对象/字段/选项集的**名字本身**（如 `测试09-01`）与平台内置菜单名。
+# 仓库是**私有**的（`api.github.com/repos/...` 未认证返回 404）。

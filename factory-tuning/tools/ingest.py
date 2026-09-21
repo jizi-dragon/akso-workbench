@@ -158,7 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         # （`pseudonym(account) + 时间戳`）。也就是说这行**没有增加任何信息量**，
         # 只是把脱敏白做的账重新用明文写了一遍——`scan_secrets.py` 会把它扫出来（实测 3 处）。
         # 教训：脱敏要脱的是"值的来源"，不是"值的每一个副本"；漏一个副本等于没脱。
-        "collected_from": "workbench runtime/monitor（该路径本身不入库）",
+        "collected_from": "workbench 运行时目录 runtime/monitor"
+                          "（那个目录在仓库外、**不入库**；进仓库的是这份脱敏后的副本）",
         "entry_count": len(cleaned),
         "filter_stats": stats,
         "note": "已脱敏：无令牌/口令/会话 id，无主机名，账号为稳定假名。见 tools/redact.py",
