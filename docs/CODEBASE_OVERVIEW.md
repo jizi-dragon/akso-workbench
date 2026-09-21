@@ -87,12 +87,12 @@ plugins/（**五个工具插件** = 22 个工具；`plugins/__init__.py::_MODULE
 services/
   ├─ browser_pool.py 625 行（专职工作线程 / 双模式 / CDP 托管 / 免密 / 自愈）
   ├─ accounts.py 607 · autologin.py 372 · proc.py 236 · deepseek.py 181 · modules.py 172 · storage.py 122
-  └─ egmp/（平台内核，33 文件 ≈3,700 行）
-       ├─ client 252 · orchestrate 306 · replay 259（离线回放台架）· cache 87 · queries 69
-       ├─ kernel/ 3 文件 300 行（endpoints / semantics 等）
-       ├─ insight/  6 文件 1,145 行（spider 437 · drawio 309 · workspace 184 · report 86 · lifecycle 70 · __init__ 59）
-       ├─ writers/  12 文件 ≈1,900 行（blueprint 513 · workflows 322 · **spec ≈400（给 agent 的蓝图规格）** · layouts 167 · lifecycle 159 · fields 101 · endpoints 85 · idempotency 80 · menus 49 · picklists 41 · objects 19）
-       └─ monitor/   4 文件 530 行（monitor 207 · query_layer 168 · interpreter 148）
+  └─ egmp/（平台内核，35 文件 6,025 行 —— 2026-09-21 实测）
+       ├─ 顶层 8 文件 1,094 行（orchestrate 316 · replay 259（离线回放台架）· client 258 · queries 94 · cache 87 · checkpoint 45 · auth 12 · __init__ 23）
+       ├─ kernel/ 4 文件 376 行（endpoints / semantics 等）
+       ├─ insight/  6 文件 1,890 行（spider 437 · drawio 309 · workspace 184 · report 86 · lifecycle 70 · __init__ 59）
+       ├─ writers/  13 文件 2,087 行（blueprint 512 · **spec 470（给 agent 的蓝图规格）** · workflows 321 · layouts 166 · lifecycle 158 · fields 130 · idempotency 79 · **responses 69（统一的"接口只回成功标志"取 id 口，见 PITFALLS #62）** · objects 59 · menus 48 · picklists 40 · endpoints 14 · __init__ 21）
+       └─ monitor/   4 文件 578 行（monitor 207 · query_layer 168 · interpreter 148）
 
 > **2026-09-20 删除**：`egmp/generate.py`（104 行）与 `egmp/complexity.py`——
 > 它们服务的是 `command="orchestrate"` 那条"一句话 → 另一个 LLM 循环 → 蓝图"的路，

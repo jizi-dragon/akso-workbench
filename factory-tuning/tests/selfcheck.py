@@ -20,6 +20,10 @@
 - 脱敏：该打码的打码（JWT / Fernet / token_urlsafe / 口令字段 / URL 查询串）；
 - 脱敏：**不该打码的保住**（`enableSignatures` / `code` / `tenantId` / 中文名）；
 - 扫描器：对端点路径、GUID、普通业务 JSON **零误报**（这是它有用的前提）；
+  对**本项目自己生成的假名**同样零误报——否则每采集一次就误报一批，
+  恒红的门禁等于没有门禁（`find_secrets` 自己的文档警告过这件事）；
+- 产物：`data/sessions/*/meta.json` **自己得先过得了扫描器**
+  ——脱敏漏掉"值的某个副本"，等于没脱；
 - 链路：合成样例 → 分析 → 报告，三件产物都出得来且报告里有预期的缺口。
 """
 
@@ -36,7 +40,13 @@ FT = HERE.parent
 sys.path.insert(0, str(FT / "tools"))
 sys.path.insert(0, str(FT))
 
-from redact import find_secrets, is_sensitive_key, redact_body, redact_url  # noqa: E402
+from redact import (  # noqa: E402
+    find_secrets,
+    is_sensitive_key,
+    redact_body,
+    redact_text,
+    redact_url,
+)
 
 PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
 
@@ -51,6 +61,17 @@ def check(label: str, ok: bool, detail: str = "") -> None:
     print(f"  {'PASS' if ok else 'FAIL'}  {label}" + (f"  —— {detail}" if not ok else ""))
     if not ok:
         FAILED.append(label)
+
+
+def skip(label: str, why: str) -> None:
+    """前置条件不成立 —— **既不 PASS 也不 FAIL**。
+
+    存在的理由：`data/sessions/` 是**故意不入库**的（只跟踪 `.gitkeep`），
+    所以干净 clone 上必然没有采集产物。那种情况下把检查写成 `check(..., bool(x))`
+    会**在别人机器上恒红**，而恒红的门禁等于没有门禁——正是本文件在防的那件事。
+    但也不能悄悄过：`SKIP` 是**看得见的第三种结果**，不会被读成"验过了"。
+    """
+    print(f"  SKIP  {label}  —— {why}")
 
 
 def test_redaction_catches_credentials() -> None:
@@ -94,6 +115,20 @@ def test_redaction_keeps_business_structure() -> None:
           kept["enableSignatures"] is True and kept["signature"] == "***"
           and kept["name"] == "培训记录", str(kept))
 
+    # ←→ 真实缺陷回归（docs/PITFALLS.md #60）：GUID 曾经被 tokenish 兜底抢先抹成 `***`。
+    # 这三条钉的是"id 必须还能用来跨请求关联"——不是因为 `***` 不安全，而是因为
+    # 平台的对象/字段/状态标识全是 GUID，抹掉它分析就断链了。
+    guid = "3a09fb55-64da-f000-0008-c292c3a6e0be"
+    other = "3a09fb55-64da-d9b9-15a9-c292c3a6e0be"
+    once, twice, other_once = redact_text(guid), redact_text(guid), redact_text(other)
+    check("B5 GUID 是假名化而不是抹成 ***",
+          once.startswith("id-") and once != "***", once)
+    check("B6 同一 GUID 稳定、不同 GUID 可区分（可跨请求关联）",
+          once == twice and once != other_once, f"{once} / {twice} / {other_once}")
+    nested = redact_body({"objectId": guid, "name": "A"})
+    check("B7 GUID 嵌在结构里也被假名化（且业务字段不受影响）",
+          str(nested["objectId"]).startswith("id-") and nested["name"] == "A", str(nested))
+
 
 def test_scanner_has_no_false_positives() -> None:
     print("=== C. 扫描器不许把正常东西判成凭据（否则它会被忽略）===")
@@ -105,9 +140,32 @@ def test_scanner_has_no_false_positives() -> None:
         ("普通业务 JSON", json.dumps({"code": "a__c", "name": "培训记录", "dataType": 1},
                                      ensure_ascii=False)),
         ("markdown 表格行", "| `/api/platform/Workflow/AddWorkflowBasic` | 1 | 新建工作流 |"),
+        # 下面两条是**本项目自己生成的假名**，形态恰好满足"像令牌"的启发式
+        # （≥24 字符、带 `-`、含数字）。不豁免就是"每采集一次误报一批"，
+        # 而恒红的门禁等于没有门禁——`find_secrets` 自己的文档警告过这件事。
+        ("会话目录假名", "acct-fb8dc317-20260921-154824"),
+        ("对象假名", "id-9af645a8"),
+        # 平台自己的编码：长一点的（≥24 字符）同样会撞上"像令牌"的启发式。
+        # 实测是写真机实战报告时撞上的——每一份文档都会误报，所以必须豁免。
+        ("长对象编码", "test_0903_option_probe__c"),
+        ("系统字段编码", "statistics_relation_id__sys"),
+        ("默认字段编码", "object_type_id__ak"),
     ):
         hits = find_secrets(text)
         check(f"C {label} 零误报", hits == [], str(hits))
+
+    # 反向：豁免必须**只对"整段就是假名"**生效。假名被嵌进一段更长的串里，
+    # 那就是真令牌的典型形态，必须照样判红——否则这条豁免就成了一个后门。
+    #
+    # 刻意**拼起来**而不是写成一整段字面量：扫描器当前的 `SUFFIXES` 不含 `.py`
+    # （见 F 组的说明），所以今天这行扫不到；但一旦有人补上 `.py`，
+    # 一整段字面量会让**这个测试文件自己**变成命中项。拼起来就没有这个耦合。
+    embedded = find_secrets("sk-live-" + "acct-fb8dc317-20260921-154824" + "-9f2c1d")
+    check("C 假名嵌在更长的串里照样判红（豁免不是后门）", embedded != [], str(embedded))
+
+    # 同一条反证，用在**平台编码**上：编码被拼进一段更长的串里就是真令牌的形态。
+    embedded_code = find_secrets("sk-live-test_0903_option_probe__c-9f2c1d")
+    check("C 编码嵌在更长的串里照样判红", embedded_code != [], str(embedded_code))
 
 
 def test_chain_end_to_end() -> None:
@@ -146,6 +204,35 @@ def test_chain_end_to_end() -> None:
               "SaveFieldDefaultValue" in text and "SaveOutField" in text)
 
 
+def test_captured_artifacts_pass_the_scanner() -> None:
+    print("=== F. 采集产物自己必须过得了扫描器（脱敏漏一个副本 = 没脱）===")
+    # 背景（2026-09-21 已处置，见 docs/PITFALLS.md #66）：`scan_secrets.SUFFIXES`
+    # **曾经不含 `.py`**，而它的 `ALLOWLIST` 里 3 条有 2 条是 `.py`（`redact.py` /
+    # `scan_secrets.py`）——只有"本来会扫到"才需要豁免，所以那两条曾是**死条目**，
+    # 反过来证明 `.py` 是被漏掉的而不是刻意排除的。现已补上 `.py`（本文件因此进了
+    # ALLOWLIST：那三个测试向量是故意的）。
+    # 本文件的反证串仍**刻意拼起来**写，不依赖这个边界——见 C 组的注释。
+    metas = sorted((FT / "data" / "sessions").glob("*/meta.json"))
+    # `data/sessions/` 故意不入库（只跟踪 `.gitkeep`），所以干净 clone 上必然没有产物。
+    # 那种情况是 SKIP，不是 PASS 也不是 FAIL —— 见 `skip()` 的注释。
+    if not metas:
+        skip("F1 meta.json 零命中且不含 source_dir",
+             "本机没有采集产物（data/sessions/ 不入库）——本条无从校验")
+        return
+
+    problems = []
+    for meta in metas:
+        body = meta.read_text(encoding="utf-8")
+        hits = find_secrets(body)
+        if hits:
+            problems.append(f"{meta.parent.name}: 扫描命中 {hits}")
+        # `source_dir` 一旦回来，写进去的就是运行时目录名 = `<原始账号id>-<时间戳>` 明文。
+        # 而 `session` 是同一个东西的假名形式——所以这个键**只泄露、不增信息**。
+        if "source_dir" in json.loads(body):
+            problems.append(f"{meta.parent.name}: 又写回 source_dir（原始账号 id 明文）")
+    check("F1 meta.json 零命中且不含 source_dir", problems == [], str(problems))
+
+
 def test_product_stays_clean() -> None:
     print("=== E. 产品代码不许 import 本目录（删掉它，产品必须一行都不变）===")
     hits = []
@@ -162,6 +249,7 @@ def main() -> int:
     test_redaction_keeps_business_structure()
     test_scanner_has_no_false_positives()
     test_chain_end_to_end()
+    test_captured_artifacts_pass_the_scanner()
     test_product_stays_clean()
     print()
     print("=" * 60)

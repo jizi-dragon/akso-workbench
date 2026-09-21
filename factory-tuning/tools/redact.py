@@ -102,6 +102,33 @@ GUID_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
 
+#: **本项目自己生成的假名**形状：`pseudonym()` 产出的 `acct-<8位hex>` / `id-<8位hex>`，
+#: 会话目录再拼上时间戳，形如 `acct-fb8dc317-20260921-154824`。
+#:
+#: ⚠️ **只在扫描器（`find_secrets`）里豁免，脱敏（`redact_text`）不豁免。**
+#: 这个不对称是刻意的，而且方向是安全的：
+#: - 扫描器豁免它：假名不是凭据，但它的形态恰好满足"像令牌"的启发式（≥24 字符、带 `-`、
+#:   含数字），**每采集一次就误报一批**，而恒红的门禁价值为负（PITFALLS #43）——
+#:   本文件自己的 `find_secrets` 文档就警告过这件事；
+#: - 脱敏**不**豁免：脱敏的默认必须是"可疑就打掉"。万一平台真回了一个这种形状的值，
+#:   打掉是安全的方向。少了这条豁免，最坏结果是"假名被多打一次码"，而不是"凭据漏出去"。
+#:   ——**豁免放在严格性更低的那个消费者上，是这套不对称的关键。**
+PSEUDONYM_RE = re.compile(r"\b(?:acct|id)-[0-9a-f]{8}(?:-\d{8}-\d{6})?\b")
+
+#: **平台自己的编码**形态：`[a-z][a-z0-9_]*(__c|__ak|__sys)`——蓝图侧同一条形状，
+#: 见 `writers/blueprint.py::CODE_OBJECT_RE`，以及系统字段后缀 `__ak` / `__sys`。
+#:
+#: 与 `PSEUDONYM_RE` 同一族、同样的理由、**同样只在扫描器一侧豁免**：
+#: 对象/字段/选项集的编码**不是凭据**，但长一点的编码（≥24 字符、含下划线与数字，
+#: 例如 `test_0903_option_probe__c`）恰好满足"像令牌"的启发式，于是**每一份写文档、
+#: 每一次实战记录都会被判红**——而恒红的门禁等于没有门禁（PITFALLS #43）。
+#: 实测：这条误报是在写真机实战报告时撞上的。
+#:
+#: 为什么这个豁免是安全的：真凭据是**高熵**的（大小写混合 / 含 `-`、`+`、`/`、`=`），
+#: 而这条只放行"全小写 + 数字 + 下划线、且以平台后缀结尾"的形状。
+#: 仍然用 `fullmatch`：编码被拼进一段更长的串里就照样判红。
+PLATFORM_CODE_RE = re.compile(r"[a-z][a-z0-9_]*(?:__c|__ak|__sys)")
+
 #: 本机绝对路径（Windows 与 POSIX 两种写法）
 PATH_RE = re.compile(r"(?i)\b[A-Z]:\\(?:[^\\\s\"']+\\)*[^\\\s\"']*|/(?:home|Users|var|tmp)/[^\s\"']+")
 
@@ -136,8 +163,14 @@ def redact_text(text: str) -> str:
     out = text
     for pattern in SENSITIVE_VALUE_RES:
         out = pattern.sub(PLACEHOLDER, out)
-    out = _TOKENISH_RE.sub(lambda m: PLACEHOLDER if is_tokenish(m.group(0)) else m.group(0), out)
+    # ⚠️ 顺序即语义：GUID 必须**先于** tokenish 兜底处理。
+    # GUID 恰好 36 字符、带连字符、含数字，`is_tokenish` 的三个条件全中；顺序反了
+    # 它就在兜底那一步被抹成 `***`，紧随其后的假名化沦为**死代码**——后果是对象/字段/
+    # 状态/生命周期标识全部不可关联，而报告与自检照常全绿（见 docs/PITFALLS.md #60）。
+    # GUID 不含 `=` 填充、也不是 32 位连续 hex，所以上面的 SENSITIVE_VALUE_RES
+    # 本来就不会误伤它——换序即可，不必动任何正则。
     out = GUID_RE.sub(lambda m: pseudonym(m.group(0), prefix="id"), out)
+    out = _TOKENISH_RE.sub(lambda m: PLACEHOLDER if is_tokenish(m.group(0)) else m.group(0), out)
     out = PATH_RE.sub("<path>", out)
     return out
 
@@ -219,6 +252,9 @@ def find_secrets(text: str, *, limit: int = 8) -> list[str]:
     刻意与 `redact_text` 共用同一组规则：**扫描规则与脱敏规则必须是同一份**，
     否则会出现"脱敏漏掉的形状，扫描也认不出来"这种最坏的组合
     ——那时你会以为"扫过了就安全"。
+
+    唯一的例外是 `PSEUDONYM_RE`（只在这里生效，见其注释）。它**不违反**上面这句话：
+    例外方向是"扫描器更宽"，也就是"脱敏仍然更严"——漏网的方向依旧是安全的那个方向。
     """
     hits: list[str] = []
     for pattern in SENSITIVE_VALUE_RES:
@@ -231,7 +267,17 @@ def find_secrets(text: str, *, limit: int = 8) -> list[str]:
         # GUID 走这条会被误判（36 字符、含连字符与数字）——但它**不是凭据**，
         # 脱敏对它的处理是"假名化"（见 `GUID_RE`）而不是"替换成 ***"。
         # 扫描器跟着同一个口径，否则每一份带 tenantId 的数据都会被判红。
-        if is_tokenish(blob) and not GUID_RE.fullmatch(blob):
+        #
+        # `PSEUDONYM_RE` 这条捷径**只有扫描器有**，理由见该常量的注释：
+        # 豁免只能放在严格性更低的那个消费者上。
+        # 用 fullmatch 而不是 search 是刻意的——只有"整段就是假名"才豁免；
+        # 假名被拼进一段更长的字符串时（真令牌的典型形态）照样判红。
+        if (
+            is_tokenish(blob)
+            and not GUID_RE.fullmatch(blob)
+            and not PSEUDONYM_RE.fullmatch(blob)
+            and not PLATFORM_CODE_RE.fullmatch(blob)
+        ):
             hits.append(blob[:24] + "…")
             if len(hits) >= limit:
                 return hits

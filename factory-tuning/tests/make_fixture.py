@@ -96,7 +96,14 @@ def main() -> int:
             # 形状完全一致（GUID 已假名化、敏感键已替换）。手写一份"看起来像"的
             # 样例，等于让分析器对着一个假的输入形状被验证。
             "postData": redact_body(BODIES[key]),
-            "body": {"code": 0, "message": "ok", "success": True},
+            # ⚠️ 信封必须照**真机**抄。这里原本写的是 `{"code": 0, "message": "ok",
+            # "success": True}` —— 那是**猜的**，真机没有任何一个响应长这样。
+            # 真机信封（2026-09-21 首次完整录到，见 docs/PITFALLS.md #63）：
+            #   {"code":0,"errorCode":0,"message":null,"data":true,"requestID":"…","traceId":"…"}
+            # 内容全在 `data` 里，而 `success` 这个键**根本不存在**。
+            # 样例照猜的信封写，等于让分析器对着一个假的输入形状被验证（PITFALLS #62 同族）。
+            "body": {"code": 0, "errorCode": 0, "message": None, "data": True,
+                     "requestID": "fixture", "traceId": "fixture"},
             "precedingActions": [{"type": t, "tag": "BUTTON", "text": s} for t, s in actions],
         })
     (FIXTURE / "traffic.jsonl").write_text(

@@ -32,6 +32,19 @@ for _name in dir(W):
 
 TRIM_SIZE = 10 * 1024
 
+#: 裁剪后**保留哪些顶层键**。
+#:
+#: ⚠️ 第一版是 `("code", "message", "id", "name", "success")` —— 那是**照着一个猜的信封**
+#: 写的。真机信封是 `{code, errorCode, message, data, requestID, traceId}`：**内容全在
+#: `data` 里，而白名单没有 `data`**。后果（2026-09-21 真机量化）：一次 20 条写请求的采集里
+#: **11 条响应被裁成只剩 `{code, message}`**，被裁的恰是"保存后回读对象有哪些字段"这类
+#: **平台侧核对依据**。讽刺的是它只作用于**已知端点**（本包建模过的），陌生端点反而全量保留
+#: —— 于是"越是对某个端点建模，越看不到它的完整响应"。见 docs/PITFALLS.md #63。
+_KEEP_KEYS = ("code", "errorCode", "message", "data", "id", "name", "success")
+
+#: `data` 自身也可能很大（字段列表 93 键 × N 条），按**序列化长度**有界保留。
+_DATA_KEEP_CHARS = 2000
+
 
 def classify(method: str, path: str) -> str:
     if method.upper() in {"GET"}:
@@ -44,12 +57,28 @@ def classify(method: str, path: str) -> str:
 
 
 def trim_body(body: Any) -> Any:
+    """大响应体的有界裁剪。**不许把 `data` 整个丢掉**，也不许静默丢弃。
+
+    - 保留 `_KEEP_KEYS` 里的顶层键（含 `data`）；
+    - `data` 超长时**截断为字符串**并追加 `…(data trimmed)`；
+    - 一律加 `_trimmed: True` —— 本仓硬要求"截断必须显式告知，不许静默丢弃"
+      （AGENTS.md 规则 4）。消费方据此知道这条不是完整响应。
+    """
     if isinstance(body, str) and len(body) > TRIM_SIZE:
         try:
             data = json.loads(body)
-            return {k: data.get(k) for k in ("code", "message", "id", "name", "success") if k in data}
         except ValueError:
             return body[:500] + "…(trimmed)"
+        if not isinstance(data, dict):
+            # 顶层不是对象（少数接口直接回数组）：整个序列化后截断，形状信息还在
+            return {"_trimmed": True, "data": body[:_DATA_KEEP_CHARS] + "…(trimmed)"}
+        out = {k: data.get(k) for k in _KEEP_KEYS if k in data}
+        if "data" in out:
+            serialized = json.dumps(out["data"], ensure_ascii=False)
+            if len(serialized) > _DATA_KEEP_CHARS:
+                out["data"] = serialized[:_DATA_KEEP_CHARS] + "…(data trimmed)"
+        out["_trimmed"] = True
+        return out
     return body
 
 

@@ -8,11 +8,26 @@ from typing import Any
 from ..queries import GaiaQueries
 from .endpoints import FIELD_PAGE, SAVE_FIELD
 from .picklists import create_picklist  # noqa: F401 —— 转出口
+from .responses import created_id
+
+
+def _field_by_code(client: Any, object_id: str, code: str) -> dict[str, Any] | None:
+    """按编码回读刚建的字段。**用 objectId 走 FieldPage**，不用对象编码走 OpenAPI
+    —— 建字段这一层手上只有 `object_id`，为一条回读去改签名不划算。"""
+    for field in query_fields(client, object_id):
+        if str(field.get("code")) == code:
+            return field
+    return None
 
 
 def create_field(client: Any, *, object_id: str, name: str, code: str, data_type: int,
                  extras: dict[str, Any] | None = None) -> dict[str, Any]:
-    """默认注入 statisticsArrange:{id:1}、invisible/disabled=false（上游口径）。"""
+    """默认注入 statisticsArrange:{id:1}、invisible/disabled=false（上游口径）。
+
+    ⚠️ **真机实证（2026-09-21）**：`SaveField` 与 `SaveBasicObject` 一样只回
+    `{code:0, data:true}`，**不回 id** —— 旧写法把布尔当成 id，`fieldMap` 里于是
+    存进字符串 `"True"`，被布局步骤当作 fieldId 发出去。见 `writers/responses.py`。
+    """
     body: dict[str, Any] = {
         "name": name, "code": code, "dataType": data_type, "objectId": object_id,
         "invisible": False, "disabled": False,
@@ -21,8 +36,11 @@ def create_field(client: Any, *, object_id: str, name: str, code: str, data_type
     }
     body.update(extras or {})
     body.pop("extras", None)
-    resp = client.post(SAVE_FIELD, body)
-    field_id = resp.get("id") if isinstance(resp, dict) else resp
+    field_id = created_id(client, path=SAVE_FIELD, body=body,
+                          refetch=lambda: _field_by_code(client, object_id, code))
+    if not field_id:
+        return {"success": False, "name": name, "code": code, "fieldId": None,
+                "message": f"字段[{name}]已创建但回读不到 id"}
     return {"success": True, "name": name, "code": code, "fieldId": field_id,
             "message": f"字段[{name}]创建成功"}
 
@@ -40,9 +58,21 @@ def collect_extras(field: dict[str, Any]) -> dict[str, Any]:
     if field.get("format"):
         extras["format"] = field["format"]
     if data_type == 2:
-        for key in ("max", "min", "decimalPlaces"):
-            if field.get(key) is not None:
-                extras[key] = field[key]
+        # ⚠️ **键名必须用平台的**：`minValue` / `maxValue` / `scale`，
+        # **不是** `min` / `max` / `decimalPlaces`。
+        #
+        # 真机实证（2026-09-21）：蓝图侧叫 `min`/`max`/`decimalPlaces`，直接把这个名字
+        # 发出去，平台**静默丢弃** —— 接口回 `data:true`、字段也建出来了，
+        # 只有回读 `minValue`/`maxValue` 才会发现是空的。对照实验：
+        #   · 工厂发 `min`/`max`        → 平台 `minValue="" maxValue=""`
+        #   · 界面发 `minValue`/`maxValue` → 平台 `minValue="1" maxValue="888888"`
+        # 见 docs/PITFALLS.md #69。
+        # `scale`（小数位数，手册 §3.4）取自平台字段 schema —— 同一份 schema 也是
+        # `minValue`/`maxValue` 的来源，那两个已被界面请求体确证，故一并采用并**真机复验**。
+        for src, dst in (("min", "minValue"), ("max", "maxValue"),
+                         ("decimalPlaces", "scale")):
+            if field.get(src) is not None:
+                extras[dst] = field[src]
     if data_type == 8:
         for key in ("attachmentCount", "attachmentSize", "attachmentExtension"):
             if field.get(key) is not None:

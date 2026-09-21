@@ -34,3 +34,17 @@ node_modules/
 .vscode/
 !.vscode/settings.json
 !.vscode/extensions.json
+
+# 第三方产品手册：**只作学习资料，不入库**。
+# 2026-09-21 加：`docs/gaia平台技术手册/` 是 186 个文件 / 1.7MB 的厂商文档，
+# 版权不属于本仓；它此前一直是未跟踪状态，而 `git add -A` 会把它整包收进去。
+# 我们的产出是**从它提炼出的规则与判据**（docs/PITFALLS.md、docs/FACTORY-VERIFICATION-PLAN.md §8），
+# 而不是手册本身。
+docs/gaia平台技术手册/
+
+# 平台操作采集数据：**只跟踪 .gitkeep**。
+# 2026-09-21 加：`factory-tuning/data/sessions/` 每次演示都会新增一份，
+# 内容含环境标识（已脱敏但仍属该环境的操作痕迹），且本仓从未跟踪过它们——
+# 一直靠"记得别 add"维持，太脆。见 PITFALLS #65。
+factory-tuning/data/sessions/*
+!factory-tuning/data/sessions/.gitkeep

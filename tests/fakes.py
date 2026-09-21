@@ -42,7 +42,11 @@ class FakeEgmpClient:
                     {"id": str(uuid.uuid4()), "code": "init_status__c", "name": "开启"},
                     {"id": str(uuid.uuid4()), "code": "complete_status__c", "name": "关闭"},
                 ]
-            return {"id": object_id}
+            # ⚠️ 真机只回 `{code:0, data:true}`（经 _envelope 后就是布尔 True），**不回 id**。
+            # 台架原先在这里返回 `{"id": ...}` —— 那是**真实平台不做的事**，于是
+            # `create_object` 里 `isinstance(resp, dict)` 那条正确分支被反复执行、
+            # `else resp` 那条**从未被测过**，缺陷因此长期藏着（见 PITFALLS #62）。
+            return True
         if path == "/api/platform/BasicObject/SaveField":
             object_id = body["objectId"]
             for oc, meta in self.objects.items():
@@ -51,10 +55,14 @@ class FakeEgmpClient:
                         {"id": str(uuid.uuid4()), "code": body["code"], "name": body["name"],
                          "dataType": body["dataType"], **{k: v for k, v in body.items()
                                                           if k not in {"objectId"}}})
-                    return {"id": str(uuid.uuid4())}
+                    # 同上：真机 SaveField 也只回成功标志，不回 id
+                    return True
             raise RuntimeError("objectId 不存在")
         if path == "/api/platform/ObjectPicklist/save":
-            self.picklists[body["code"]] = {"id": str(uuid.uuid4()), "code": body["code"],
+            # 真机 `save` 只回 `data: true`，**不回 id**；选项集 id 由平台生成，
+            # 之后只能从 `/BasicObject/picklist/{code}` 的 `objectPicklistId` 里读到。
+            self.picklists[body["code"]] = {"objectPicklistId": str(uuid.uuid4()),
+                                            "code": body["code"],
                                             "name": body["name"], "options": body["options"]}
             return True
         if path == "/api/config/lifecycle/Status/Create":
@@ -102,6 +110,23 @@ class FakeEgmpClient:
         if path.startswith("/api/openapi/v1.0/BasicObject/lifecycleStatus/"):
             code = path.rsplit("/", 1)[-1]
             return self.statuses_by_object.get(code, [])
+        if path.startswith("/api/openapi/v1.0/BasicObject/picklist/"):
+            # ⚠ 必须放在下面那条 `BasicObject/` **之前**：`BasicObject/picklist/...` 同样以
+            # 该前缀开头，顺序写反会把选项集当成对象元数据（与 field / lifecycleStatus 同一个坑）。
+            #
+            # ⚠⚠ **返回形状是「选项数组」，不是选项集对象**（2026-09-21 真机实测）：
+            #     [{"id": "<选项id>", "objectPicklistId": "<选项集id>", "name": ..., "code": ...}]
+            # 选项集 id 在 `objectPicklistId` 里，**不在** `data["id"]`。
+            # 本夹具原来返回的是 `{{"id": ...}}` 这样一个 dict —— 那是**照着错常量猜的**，
+            # 于是测试一直"通过"，而真机上 `data` 是 list，调用方的 `meta.get("id")`
+            # 会 AttributeError 并被吞掉（PITFALLS #67）。夹具照真机抄，才不会反过来守错误行为。
+            code = path.rsplit("/", 1)[-1]
+            meta = self.picklists.get(code)
+            if meta is None:
+                raise RuntimeError(f"选项集不存在：{code}")
+            return [{**opt, "id": str(uuid.uuid4()),
+                     "objectPicklistId": meta["objectPicklistId"]}
+                    for opt in meta.get("options", [])]
         if path.startswith("/api/openapi/v1.0/BasicObject/"):
             # ⚠ 必须放在上面两条**之后**：`BasicObject/field/...` 与 `BasicObject/lifecycleStatus/...`
             # 同样以本前缀开头，顺序写反会把它们误判成对象元数据（真实平台由路由区分，不靠前缀）。
@@ -109,12 +134,6 @@ class FakeEgmpClient:
             meta = self.objects.get(code)
             if meta is None:
                 raise RuntimeError(f"对象不存在：{code}")
-            return dict(meta)
-        if path.startswith("/api/openapi/v1.0/ObjectPicklist/"):
-            code = path.rsplit("/", 1)[-1]
-            meta = self.picklists.get(code)
-            if meta is None:
-                raise RuntimeError(f"选项集不存在：{code}")
             return dict(meta)
         if path.startswith("/api/platform/Layout/LayoutList"):
             oid = (params or {}).get("basicObjectId")

@@ -32,15 +32,26 @@ from redact import find_secrets  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 #: 只扫这些后缀。二进制/大文件没必要，也不该被当成文本读进来。
-SUFFIXES = {".json", ".jsonl", ".md", ".txt", ".log", ".csv", ".yaml", ".yml"}
+#:
+#: ⚠️ `.py` **曾经不在这个集合里**，而 `ALLOWLIST` 里有两条 `.py`——于是那两条豁免
+#: 永远用不上（死条目），Python 源码成了一个**没人看过的盲区**：往 `.py` 里硬编码一个
+#: token，这层兜底完全看不见。2026-09-21 补上。见 docs/PITFALLS.md #66。
+#: **教训**：豁免清单必须与扫描范围交叉验证——豁免一个"根本不在扫描范围内的东西"，
+#: 给人的感觉是"这块我管过了"，而事实是"这块从来没被看过"。
+SUFFIXES = {".json", ".jsonl", ".md", ".txt", ".log", ".csv", ".yaml", ".yml", ".py"}
 
 #: 本目录里**允许**出现令牌形状的串：它们是讲规则的文档与代码本身
-#: （比如 README 里写着"JWT 形如 eyJ…"）。刻意用**精确路径**而不是目录豁免——
-#: 豁免一个目录，就等于那个目录里以后放什么都不会被扫到。
+#: （比如 README 里写着"JWT 形如 eyJ…"）。
+#: 刻意用**精确路径**而不是目录豁免——豁免一个目录，就等于那个目录里以后放什么都不会被扫到。
 ALLOWLIST = {
     "factory-tuning/tools/redact.py",
     "factory-tuning/README.md",
     "factory-tuning/tools/scan_secrets.py",
+    # 自检里那三个常量（`JWT` / `FERNET` / `TOKEN_URLSAFE`）是**故意的测试向量**：
+    # A6–A8 正是靠它们断言"该抓的抓得住"。补上 `.py` 后它们会被扫到（实测共 3 处，
+    # 全部集中在这一个文件），所以按**文件**豁免，而不是把 `.py` 从 SUFFIXES 里拿掉
+    # ——后者等于为了躲 3 个假阳性，重新把整个源码面变成盲区。
+    "factory-tuning/tests/selfcheck.py",
 }
 
 

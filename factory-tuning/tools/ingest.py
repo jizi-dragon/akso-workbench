@@ -153,7 +153,11 @@ def main(argv: list[str] | None = None) -> int:
 
     meta = {
         "session": session_name,
-        "source_dir": source.name,
+        # 这里曾经有一行 `"source_dir": source.name`。删掉的理由不是"没用"，是**它泄密**：
+        # 运行时目录名是 `<原始账号id>-<时间戳>`，而 `session` 是同一个东西的假名形式
+        # （`pseudonym(account) + 时间戳`）。也就是说这行**没有增加任何信息量**，
+        # 只是把脱敏白做的账重新用明文写了一遍——`scan_secrets.py` 会把它扫出来（实测 3 处）。
+        # 教训：脱敏要脱的是"值的来源"，不是"值的每一个副本"；漏一个副本等于没脱。
         "collected_from": "workbench runtime/monitor（该路径本身不入库）",
         "entry_count": len(cleaned),
         "filter_stats": stats,
@@ -162,7 +166,15 @@ def main(argv: list[str] | None = None) -> int:
     (out_dir / "meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
 
-    print(f"✓ 已收进 {out_dir.relative_to(FACTORY_TUNING.parent)}")
+    # `--out` 允许指到仓库外（彩排时写临时目录）。那时 `relative_to` 会抛 ValueError，
+    # 而它发生在**产物已经正确落盘之后**——于是"数据好好的，进程却带堆栈、非零码退出"，
+    # 看起来像失败。这个 `--out` 参数存在的唯一理由就是写仓库外，等于它从不可用。
+    # 见 docs/PITFALLS.md #61。
+    try:
+        shown: object = out_dir.relative_to(FACTORY_TUNING.parent)
+    except ValueError:
+        shown = out_dir
+    print(f"✓ 已收进 {shown}")
     print(f"  {len(cleaned)} 条请求 → traffic.jsonl（脱敏后）")
     print(f"  过滤统计：{stats}")
     print(f"  原始目录仍留在 {source}（那是产品运行时目录，不在仓库里）")

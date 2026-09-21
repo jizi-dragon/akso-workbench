@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from fakes import FakeEgmpClient
 
 from workbench.services.egmp import orchestrate
 from workbench.services.egmp.insight import run_spider
+from workbench.services.egmp.kernel import endpoints as egmp_endpoints
 from workbench.services.egmp.monitor import (
     classify_api,
     compare_recordings,
@@ -16,6 +18,10 @@ from workbench.services.egmp.monitor import (
     query_monitor_log,
     read_log_entries,
 )
+from workbench.services.egmp.monitor.monitor import TRIM_SIZE, trim_body
+from workbench.services.egmp.queries import GaiaQueries
+from workbench.services.egmp.writers import fields as writers_fields
+from workbench.services.egmp.writers import objects as writers_objects
 from workbench.services.egmp.writers.blueprint import (
     generate_checklist,
     generate_review_spec,
@@ -238,3 +244,196 @@ def test_monitor_interpret_segment(tmp_path: Path) -> None:
     assert plan["steps"][0]["module"] == "writers.objects"
     report = (tmp_path / "interpretation.md").read_text(encoding="utf-8")
     assert "待 Agent 填充" in report and "是否已迭代学习: 否" in report
+
+
+# ---------------------------------------------------------------- 写路径响应解析（PITFALLS #62）
+
+
+def test_create_object_reads_back_id_when_platform_returns_success_flag() -> None:
+    """平台只回成功标志时，objectId 必须是**回读到的真实 id**，不能是布尔或 `"True"`。
+
+    `FakeEgmpClient` 的 `SaveBasicObject` / `SaveField` 现已改回**真机形状**：
+    只回 `{code:0, data:true}`（经 `_envelope` 就是布尔 `True`），**不回 id**。
+    台架原先回 `{"id": ...}` —— 那正是真实平台**不**做的事，于是旧实现里
+    `isinstance(resp, dict)` 那条正确分支被反复执行、`else resp` 那条
+    **从未被测过**，缺陷因此长期藏着（见 [docs/PITFALLS.md](../../docs/PITFALLS.md) #62）。
+    """
+    client = FakeEgmpClient()
+    out = writers_objects.create_object(client, name="培训管理", code="training_mgr__c")
+    assert out["success"] is True
+    assert out["objectId"] not in (True, "True", None), f"拿到了假 id：{out['objectId']!r}"
+    assert out["objectId"] == client.objects["training_mgr__c"]["id"]
+
+
+def test_create_field_reads_back_id_when_platform_returns_success_flag() -> None:
+    """同上，字段这一层。旧实现会让 `fieldMap` 里存进字符串 `"True"`。"""
+    client = FakeEgmpClient()
+    obj = writers_objects.create_object(client, name="培训管理", code="training_mgr__c")
+    result = writers_fields.create_field(client, object_id=obj["objectId"],
+                                         name="培训主题", code="topic__c", data_type=1)
+    assert result["success"] is True
+    assert result["fieldId"] not in (True, "True", None), f"拿到了假 id：{result['fieldId']!r}"
+    assert result["fieldId"] == client.fields_by_object["training_mgr__c"][0]["id"]
+
+
+def test_create_object_reports_failure_when_id_is_unavailable() -> None:
+    """回读也拿不到 id 时**必须如实报失败** —— 旧实现无条件 `success: True`，
+    会让空 id 一路流到建字段那一步，症状变成"平台报了个看不懂的错"。"""
+
+    class _Blind(FakeEgmpClient):
+        def post(self, path: str, body: dict | None = None) -> Any:
+            return True
+
+        def get(self, path: str, params: dict | None = None) -> Any:
+            return {}
+
+        def paged_post(self, path: str, body: dict | None = None,
+                       page_size: int = 1000) -> list:
+            return []
+
+    out = writers_objects.create_object(_Blind(), name="无回读", code="blind__c")
+    assert out["success"] is False
+    assert out["objectId"] is None
+    assert "回读不到 id" in out["message"]
+
+
+# ------------------------------------------------- 选项集 → 字段 的 id 解析（PITFALLS #67）
+
+
+def test_picklist_readback_path_is_a_basicobject_subresource() -> None:
+    """回读路径必须是 `BasicObject/picklist/{code}`。
+
+    旧常量写成平级的 `/api/openapi/v1.0/ObjectPicklist/{code}` —— **实测恒 404**
+    （真机同时刻对照：`BasicObject/{code}` / `field/` / `lifecycleStatus/` 全 200）。
+    OpenAPI 的结构是「子资源挂在对象下」，这里把它钉死，防止再被"猜"回去。
+    """
+    assert egmp_endpoints.OBJECT_PICKLIST == "/api/openapi/v1.0/BasicObject/picklist/{code}"
+
+
+def _make_picklist(client: Any, code: str = "training_type__c") -> str:
+    client.post("/api/platform/ObjectPicklist/save", {
+        "name": "培训类型", "code": code,
+        "options": [{"name": "内训"}, {"name": "外训"}]})
+    return client.picklists[code]["objectPicklistId"]
+
+
+def test_get_picklist_normalizes_option_array_to_picklist_id() -> None:
+    """真机 `data` 是**选项数组**，选项集 id 在 `objectPicklistId` 里，不在 `data["id"]`。
+
+    旧实现 `return data or None` 把 list 原样抛出，调用方 `meta.get("id")` 会
+    `AttributeError`，而那个异常被调用方的 `try/except` 吞掉 —— 表现为
+    「拿不到 id」而不是「报错」，所以查不出来。
+    """
+    client = FakeEgmpClient()
+    picklist_id = _make_picklist(client)
+    meta = GaiaQueries(client).get_picklist("training_type__c")
+    assert isinstance(meta, dict), f"必须是归一化后的 dict，拿到 {type(meta).__name__}"
+    assert meta["id"] == picklist_id
+    assert len(meta["options"]) == 2
+
+
+def test_resolve_picklist_id_finds_id_by_code_lookup() -> None:
+    """本地映射里没有时必须能**查出来** —— 这是字段拿到选项集的唯一途径。"""
+    client = FakeEgmpClient()
+    picklist_id = _make_picklist(client)
+    got = writers_fields.resolve_picklist_id(client, "training_type__c", {})
+    assert got == picklist_id, f"应解析出真实选项集 id，拿到 {got!r}"
+
+
+def test_picklist_field_body_carries_picklist_id() -> None:
+    """端到端：选项字段的请求体里**必须真的有 `picklistId`**。
+
+    旧实现拿不到 id 就**不往请求体里放**这个键 ⇒「选项字段」被静默建成了一个
+    没有选项集的选项字段，而接口照样回 `data:true`。
+    """
+    client = FakeEgmpClient()
+    picklist_id = _make_picklist(client)
+    obj = writers_objects.create_object(client, name="培训管理", code="training_mgr__c")
+
+    sent: list[dict] = []
+    original = client.post
+
+    def recording_post(path: str, body: dict | None = None) -> Any:
+        if path.endswith("/SaveField"):
+            sent.append(body or {})
+        return original(path, body)
+
+    client.post = recording_post  # type: ignore[method-assign]
+    writers_fields.batch_create_fields(
+        client, object_id=obj["objectId"],
+        fields=[{"name": "类型", "code": "type__c", "dataType": 4,
+                 "picklistCode": "training_type__c"}],
+        picklist_map={})
+    assert sent, "没抓到 SaveField 请求"
+    assert sent[0].get("picklistId") == picklist_id, \
+        f"选项字段的请求体里没有正确的 picklistId：{sent[0]}"
+
+
+# ------------------------------------------------- 数字字段的范围键名（PITFALLS #69）
+
+
+def test_number_field_extras_use_platform_key_names() -> None:
+    """数字字段的 min/max/小数位，**必须用平台的键名**：`minValue`/`maxValue`/`scale`。
+
+    蓝图侧叫 `min`/`max`/`decimalPlaces`，直接发这个名字平台**静默丢弃** ——
+    接口回 `data:true`、字段也建出来了，只有回读才会发现是空的。
+    真机对照：工厂发 `min`/`max` → `minValue=""`；界面发 `minValue`/`maxValue` → 落上。
+    """
+    extras = writers_fields.collect_extras(
+        {"dataType": 2, "min": 0, "max": 100, "decimalPlaces": 2})
+    assert extras.get("minValue") == 0
+    assert extras.get("maxValue") == 100
+    assert extras.get("scale") == 2
+    assert "min" not in extras and "max" not in extras and "decimalPlaces" not in extras
+
+
+def test_number_field_body_carries_platform_range_keys() -> None:
+    """端到端：`SaveField` 请求体里出现的必须是 `minValue`/`maxValue`。"""
+    client = FakeEgmpClient()
+    obj = writers_objects.create_object(client, name="培训管理", code="training_mgr__c")
+
+    sent: list[dict] = []
+    original = client.post
+
+    def recording_post(path: str, body: dict | None = None) -> Any:
+        if path.endswith("/SaveField"):
+            sent.append(body or {})
+        return original(path, body)
+
+    client.post = recording_post  # type: ignore[method-assign]
+    writers_fields.batch_create_fields(
+        client, object_id=obj["objectId"],
+        fields=[{"name": "数量", "code": "qty__c", "dataType": 2,
+                 "min": 1, "max": 999}],
+        picklist_map={})
+    assert sent, "没抓到 SaveField 请求"
+    assert sent[0].get("minValue") == 1, f"没有用平台的键名：{sent[0]}"
+    assert sent[0].get("maxValue") == 999, f"没有用平台的键名：{sent[0]}"
+
+
+# ---------------------------------------------------------------- 大响应裁剪（PITFALLS #63）
+
+def test_trim_body_keeps_data_under_real_platform_envelope() -> None:
+    """真机信封是 `{code, errorCode, message, data, requestID, traceId}` —— **内容全在 `data` 里**。
+
+    旧白名单是 `("code", "message", "id", "name", "success")`，**漏了 `data`**；
+    实测一次 20 条写请求的采集里 11 条响应被裁成只剩 `{code, message}`。
+    """
+    big = {"code": 0, "errorCode": 0, "message": None,
+           "data": {"datas": [{"code": f"f{i}__c", "name": f"字段{i}"} for i in range(400)],
+                    "hasNext": False, "total": 400},
+           "requestID": "0HNON16GD5ER9:00000063", "traceId": "t" * 40}
+    text = json.dumps(big, ensure_ascii=False)
+    assert len(text) > TRIM_SIZE, "样例不够大，测不到裁剪分支"
+
+    out = trim_body(text)
+    assert isinstance(out, dict)
+    assert out["_trimmed"] is True, "截断必须显式告知（AGENTS.md 规则 4）"
+    assert "data" in out, "data 被整个丢掉了 —— 这正是 #63"
+    assert "f0__c" in str(out["data"]), "data 留下了但内容没保住"
+
+
+def test_trim_body_leaves_small_bodies_untouched() -> None:
+    small = json.dumps({"code": 0, "data": True})
+    assert trim_body(small) == small
+    assert trim_body(None) is None

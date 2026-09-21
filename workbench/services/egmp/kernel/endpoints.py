@@ -28,7 +28,11 @@ AUTH = "/api/openapi/v1.0/Auth"
 OBJECT = "/api/openapi/v1.0/BasicObject/{code}"
 OBJECT_FIELD = "/api/openapi/v1.0/BasicObject/field/{code}"
 OBJECT_LIFECYCLE = "/api/openapi/v1.0/BasicObject/lifecycleStatus/{code}"
-OBJECT_PICKLIST = "/api/openapi/v1.0/ObjectPicklist/{code}"
+#: ⚠️ **2026-09-21 真机修正**：原来写成平级的
+#: `/api/openapi/v1.0/ObjectPicklist/{code}` —— **实测恒 404**（连确知存在的编码也是），
+#: 于是 `get_picklist` 永远回 None，三个消费者一起静默降级（见 docs/PITFALLS.md #67）。
+#: OpenAPI 的结构是「**子资源挂在对象下**」，与上面 `field` / `lifecycleStatus` 同理。
+OBJECT_PICKLIST = "/api/openapi/v1.0/BasicObject/picklist/{code}"
 WORKFLOW = "/api/openapi/v1.0/Workflow/{code}"
 
 # ---------------------------------------------------------------- platform（私有、无版本）

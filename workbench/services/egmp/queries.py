@@ -45,12 +45,37 @@ class GaiaQueries:
         )
 
     def get_picklist(self, code: str) -> dict[str, Any] | None:
-        """选项集（验证/幂等用）。"""
+        """选项集（验证 / 幂等 / **字段的 picklistId 解析**三处共用）。
+
+        ⚠️ **真机响应形状（2026-09-21 实测）**：`data` 是**选项数组**，不是选项集对象：
+
+            {"code":0,"message":null,
+             "data":[{"id":"<选项id>","objectPicklistId":"<选项集id>",
+                      "name":"选项A","code":"A__c","sort":0}, ...]}
+
+        所以「选项集 id」在 `objectPicklistId` 里，**不在** `data["id"]`。
+
+        这里**统一归一化成一个 dict 再返回**。为什么不在三个调用点各修一次：
+        它们都写的是 `meta.get("id")`，而 `data` 是 list 时 `list.get` 会
+        `AttributeError`，那个异常又会被调用方的 `try/except` 吞掉 ——
+        表现为「拿不到 id」而不是「报错」。把形状差异收在这一个函数里，
+        比在三个地方各写一遍更不容易再错一次（见 docs/PITFALLS.md #67）。
+
+        平台对**不存在**的编码不是回 404 或空数组，而是 HTTP 200 + `code:500`
+        + `message:"Object reference not set to an instance of an object."`；
+        `client.get` 会据此抛 `ApiError`，被下面吞成 `None`（= 不存在）。
+        """
         try:
             data = self._client.get(endpoints.render(endpoints.OBJECT_PICKLIST, code=code))
-            return data or None
         except Exception:  # noqa: BLE001 —— 不存在/无权限按未命中处理
             return None
+        if not data:
+            return None
+        if isinstance(data, list):
+            options = [opt for opt in data if isinstance(opt, dict)]
+            first = options[0] if options else {}
+            return {"id": first.get("objectPicklistId"), "code": code, "options": options}
+        return data if isinstance(data, dict) else None
 
     def get_workflow(self, code: str) -> dict[str, Any] | None:
         try:
