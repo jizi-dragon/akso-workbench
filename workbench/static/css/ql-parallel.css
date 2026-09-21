@@ -724,6 +724,18 @@ dialog#ask-modal::backdrop, dialog#box-modal::backdrop {
 }
 .ver-chip:disabled { cursor: default; opacity: 0.75; }
 
+/* 自动更新关闭：角标只报状态，**不是按钮**（点它不会再弹「已关闭」框）。
+   悬停仍有完整说明 —— 状态写在角标上，用户不必靠点一下才知道。
+   2026-09-21：此前它显示「未检查更新」，看起来像能检查，用户点完反问"我不是关了吗"。 */
+.ver-chip.is-off {
+  cursor: default;
+  opacity: 0.75;
+}
+.ver-chip.is-off:hover {
+  border-color: inherit;
+  color: inherit;
+}
+
 /* —— 扩展需重新加载提示条（升级后一次性；与安装引导条同构，色相区分） —— */
 .setup-banner.banner-stale {
   background: var(--sb-brand-soft);

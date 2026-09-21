@@ -40,9 +40,16 @@ export const api = {
 
   /** 工具目录：插件 → 工具（含风险分级）与装配失败清单 */
   listTools: () => jsonFetch("/api/agent/tools"),
-  /** 放行危险操作：返回一次性 approvalToken，由调用方原样带回重投那次调用 */
-  approvePending: (pendingId) =>
-    jsonFetch(`/api/agent/pending/${encodeURIComponent(pendingId)}/approve`, { method: "POST" }),
+  /** 放行危险操作：返回一次性 approvalToken，由调用方原样带回重投那次调用。
+   *
+   *  `value` 只对**选择型确认**（待确认里带 `options`）有意义：它是用户在卡片上点中的
+   *  那一项。服务端会校验它确实在候选项里——编出来的值会被 409 拒掉，不会静默当参数用。
+   */
+  approvePending: (pendingId, value = "") =>
+    jsonFetch(`/api/agent/pending/${encodeURIComponent(pendingId)}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ value: value ?? "" }),
+    }),
   rejectPending: (pendingId, reason) =>
     jsonFetch(`/api/agent/pending/${encodeURIComponent(pendingId)}/reject`, {
       method: "POST",
@@ -52,6 +59,17 @@ export const api = {
    *  （只活在 SSE 流里的东西，刷新一下就没人管了——而那是一个真实写入的闸门） */
   listPending: (status = "pending") =>
     jsonFetch(`/api/agent/pending?status=${encodeURIComponent(status)}`),
+  /** 这个会话当前选中的账号 / 环境（刷新后把右下角那张卡片画回来） */
+  getSelection: (conversationId) =>
+    jsonFetch(`/api/agent/selection?conversationId=${encodeURIComponent(conversationId || "")}`),
+  /** **界面发起**一次选账号：服务端按账号表展开候选项并登记一条待确认。
+   *  返回的形状与 `confirm_required` 事件里的 confirm 一致（pendingId / options / …），
+   *  所以同一套卡片弹窗直接就能用。 */
+  pickSelection: (conversationId, question = "") =>
+    jsonFetch("/api/agent/selection/pick", {
+      method: "POST",
+      body: JSON.stringify({ conversationId: conversationId || "", question }),
+    }),
 
   /** SSE 流式对话：onEvent(event) 回调每个事件 */
   async streamChat({ conversationId, message }, onEvent) {

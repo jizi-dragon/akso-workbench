@@ -376,9 +376,20 @@ function updateVerChip(info, health) {
   const shell = info?.shell || {};
   const version = info?.version || health?.desktopVersion || '';
   if (version) chip.textContent = `v${version}`;
-  chip.classList.remove('has-update', 'is-ready');
+  chip.classList.remove('has-update', 'is-ready', 'is-off');
   let title = version ? `Workbench v${version}` : 'Workbench';
-  if (!shell.live) {
+  // **自动更新关闭**：这一档必须最先判，而且角标要**当着用户的面说出来**。
+  // 以前它落到最后的 else，显示「未检查更新」——看起来像"点我可以检查"，
+  // 于是用户点一下、吃到一个「自动更新已关闭」的弹窗，当场问"我不是关了吗"
+  // （2026-09-21 实测）。状态要写在角标上，不该靠点击之后才知道。
+  const autoUpdateOff = shell.live && shell.autoUpdate === false;
+  if (autoUpdateOff) {
+    chip.classList.add('is-off');
+    chip.disabled = true; // 它不是"检查更新"按钮——点不动，也就不会误触弹窗
+    title += '\n自动更新已关闭：应用不会自己检查 / 下载 / 替换版本。'
+      + '\n需要更新时，手动运行新下载的安装包即可。'
+      + '\n（要开启：设置环境变量 WORKBENCH_AUTO_UPDATE=1 后重启应用）';
+  } else if (!shell.live) {
     title += '\n桌面壳未运行：浏览器直接打开本页时无法检查更新（改用托盘菜单「检查更新…」）。';
   } else if (shell.phase === 'ready') {
     chip.classList.add('is-ready');
@@ -400,10 +411,18 @@ function updateVerChip(info, health) {
 el('ver-chip').addEventListener('click', () => {
   void (async () => {
     if (checkingUpdate) return;
-    checkingUpdate = true;
     const chip = el('ver-chip');
-    chip.disabled = true;
+    checkingUpdate = true;
     try {
+      // 先自己确认"自动更新是不是关着的"。`updateVerChip` 会在关闭时把角标置灰，
+      // 但**首次 `refresh()` 之前**它还没跑过——那一小段时间里角标仍是可点的，
+      // 一次误点照样弹出「自动更新已关闭」框（2026-09-21 实测要修的就是这个意外）。
+      const info = await api('/api/update').catch(() => null);
+      if (info?.shell?.live && info.shell.autoUpdate === false) {
+        updateVerChip(info, null); // 把状态写回角标（置灰 + 悬停说明），不弹窗
+        return;
+      }
+      chip.disabled = true;
       const r = await api('/api/update/check', { method: 'POST' });
       if (!r || r.ok === false) {
         alert(
@@ -418,7 +437,10 @@ el('ver-chip').addEventListener('click', () => {
       alert(`检查更新失败：${e.message}`);
     } finally {
       checkingUpdate = false;
-      chip.disabled = false;
+      // 不在这里无条件 `disabled = false`：自动更新关着时角标本来就该是禁用的，
+      // 恢复了就等于把刚修掉的误点入口又打开。交给 `updateVerChip` 按状态决定。
+      if (chip.classList.contains('is-off')) chip.disabled = true;
+      else chip.disabled = false;
     }
   })();
 });

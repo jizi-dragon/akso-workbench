@@ -11,10 +11,10 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（69 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 真机环境坑（71 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 不再变的决策（17 篇 ADR） | [docs/adr/](docs/adr/) |
 > | 配置工厂 × Agent 的接口缺口（问题分析） | [docs/FACTORY-AGENT-GAP.md](docs/FACTORY-AGENT-GAP.md) |
-> | 配置工厂逐条验证与优化（**进行中 · L1/L2 已跑**） | [docs/FACTORY-VERIFICATION-PLAN.md](docs/FACTORY-VERIFICATION-PLAN.md) |
+> | 配置工厂逐条验证与优化（**进行中 · L1/L2 已跑，L3 列表布局取证跑过一半**） | [docs/FACTORY-VERIFICATION-PLAN.md](docs/FACTORY-VERIFICATION-PLAN.md) |
 > | 平台操作录制与分析（**不属于产品**） | [factory-tuning/](factory-tuning/README.md) |
 > | 核心 Agent 架构与分层契约 | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
 > | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
@@ -109,6 +109,7 @@
 |---|---|
 | 31 | **凡"由父进程负责清理"的资源**（子进程 / 端口 / 锁文件 / 临时目录），必须回答一句 **"父非正常死亡时谁释放"**。答案只有两个：**子进程自己盯着父**（`workbench/lifecycle.py::watch_parent()` 用 `WaitForSingleObject` 等父的句柄），或**由 OS 内核对象担保**（Job Object / cgroup / `prctl(PDEATHSIG)`）。**不要**把清理只挂在 `before-quit` 这类正常退出链上——强杀与崩溃时那条链根本不跑（PITFALLS #54 实测复现：父被 `taskkill /F` 后 sidecar 存活并占着 18765） |
 | 32 | **界面文案是承诺**：菜单项 / 提示条 / 错误页指引里描述的每个行为，都必须能在代码里找到实现。**改行为与改文案必须一起做**（PITFALLS #55：「关闭窗口（应用继续在托盘运行）」而实际关窗即退出，托盘「显示主窗」因此永远点不出窗口）。判据：`Select-String -Path desktop/main.js -Pattern "on\('close'"` —— 零命中就说明"关窗不退出"没有实现 |
+| 38 | **交付给用户实测之前，最后一步必须是「杀干净 + 重启」，不是「跑完测试」。** 违反它的后果**不是报错，是归因错误**——而错误归因会烧掉整轮排查。2026-09-21 实录：用户三次报告「自动更新弹窗自己冒出来」，前两轮我在 `workbench/` 与 `desktop/` 里翻遍了调用方（先后误判成"误点角标""外部网页"），真凶是**我自己跑的测试**：`tests/test_update.py` 里一条用例**真的**去 POST 了本机控制端口，于是每跑一次全量，用户屏幕上就弹一次模态框——而它**始终是绿的**（PITFALLS #71）。同一个晚上还有另一半：改了壳侧代码却没重启，用户测的还是旧进程（#20/#25 的交付侧版本）。<br>**判据（交付前跑，三条都要过）**：① `Get-NetTCPConnection -LocalPort 18765,18766,18767 -State Listen` —— **必须为空，或全部属于同一个刚启动的进程**；② 改过 `workbench/**` 或 `desktop/**`（Python / 壳）**必须重启应用**（只刷新页面对 `static/**` 才够）；③ **跑测试与用户实测分成两段**，跑完测试要重启一次再交付——别让测试的副作用留在现场。<br>**为什么单列一条**：固定端口（[ADR-0012](docs/adr/0012-fixed-ports.md)）让"旧进程还活着"和"测试戳到了真端口"这两件事**都不报错**，只让现象指向错误的嫌疑人 |
 
 ---
 

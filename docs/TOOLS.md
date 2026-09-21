@@ -53,7 +53,7 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `get_current_time` | builtin | read | — | 5s | 获取当前日期与时间（本地时区） | — |
 | `read_local_file` | builtin | read | — | 30s | 读取本地文本文件。**敏感路径一律拒绝**（数据库/登录态/token 缓存/账号备份/浏览器 profile/SSH 与云凭据） | `path` |
 | `read_web_page` | builtin | read | — | 40s | 读取公开网页正文（用于核实 NMPA/FDA/ICH 等官方监管页面原文），返回标题、来源与正文文本 | `url` |
-| `request_user_confirmation` | builtin | read | 🙋 模型可主动问 | 10s | 【高风险任务前置】在执行敏感、不可逆或会影响真实平台的操作**之前**，先向用户弹确认框并**等待他当场答复**（同意 / 拒绝） | `question`、`details`、`target_tool`、`target_args`、`timeout_s` |
+| `request_user_confirmation` | builtin | read | 🙋 模型可主动问 | 10s | 【高风险任务前置】在执行敏感、不可逆或会影响真实平台的操作**之前**，先向用户弹确认框并**等待他当场答复**（同意 / 拒绝），也可以用来**让用户在卡片上挑一个账号 / 环境** | `question`、`details`、`target_tool`、`target_args`、`timeout_s`、`options_source` |
 | `factory_blueprint_spec` | factory | read | — | 20s | 【先看这个】返回 eGMP 配置蓝图的**完整规格**：每个键叫什么、什么类型、哪些必填、dataType/stepType 等枚举的含义、编码约定、校验规则、以及一份能直接跑通的最小示例 | — |
 | `factory_jobs` | factory | read | — | 15s | 最近的配置工厂任务（状态/时间），用于确认此前是否已经创建过 | — |
 | `factory_list_blueprints` | factory | read | — | 20s | 列出已暂存的蓝图（id/名称/涉及对象）。含**用户在配置工厂页面上传的**那些，所以用户说自己传了一份时用它确认 | `limit` |

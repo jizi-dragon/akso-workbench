@@ -110,7 +110,8 @@ def main() -> int:
               str(tool and tool.get("needs_confirmation")))
         check("A4 参数表齐全",
               bool(tool) and set(tool["args"]) == {"question", "details", "target_tool",
-                                                   "target_args", "timeout_s"},
+                                                   "target_args", "timeout_s",
+                                                   "options_source"},
               str(tool and sorted(tool["args"])))
 
         print("=== B. 前端文件真的被服务出去了（且含新代码）===")
@@ -118,13 +119,25 @@ def main() -> int:
             # 弹窗模块：**交互必须在这里**，不在会滚走的轨迹里（2026-09-20 用户反馈）
             ("/static/js/approval-modal.js",
              ["showModal()", "requestDecision", "settleDecision", "pending-strip",
-              'addEventListener("cancel"']),
+              'addEventListener("cancel"',
+              # 选择型确认（2026-09-21）：卡片栅格 + 交给右下角停靠卡 + 藏掉「同意」
+              "tk-choice-grid", "tk-choice-card", "dockSelection",
+              "ui.allow.hidden = isChoice"]),
+            ("/static/js/account-dock.js",
+             ["dockSelection", "restoreSelection", "getBoundingClientRect",
+              "prefers-reduced-motion", "PICK_ACCOUNT_EVENT",
+              # 让位：卡片不许压住输入区（2026-09-21 用户反馈第 1 条）
+              "keepClearOfComposer", "ResizeObserver", "--dock-bottom"]),
             ("/static/js/chat-tools.js", ["decisionReceipt", "settleDecision"]),
             ("/static/js/chat.js",
              ['event.type === "confirm_required"', 'event.type === "confirm_resolved"',
-              "decisionFromConfirm", "decisionFromApproval", "recoverPending"]),
+              "decisionFromConfirm", "decisionFromApproval", "recoverPending",
+              "event.options", "restoreSelection", "PICK_ACCOUNT_EVENT",
+              # 界面主动发起的选择要标 local：否则它会掉进"等你拍板"的待办条
+              "local: true"]),
             ("/static/css/chat-tools.css",
-             [".tk-decision", ".pending-strip", ".decision-receipt"]),
+             [".tk-decision", ".pending-strip", ".decision-receipt",
+              ".tk-choice-grid", ".account-dock", ".account-chip"]),
         ):
             res = client.get(path)
             missing = [n for n in needles if n not in res.text]
@@ -201,6 +214,121 @@ def main() -> int:
             "tool": "accounts_browser_close", "args": {"account_id": "ghost-intent"}})
         check("E3 同意纯意图确认**不放行任何写操作**", intent_after.status_code == 409,
               f"status={intent_after.status_code}")
+
+        print("=== F. 选择型确认：让用户在卡片上挑一个账号 ===")
+        # ⚠️ **本脚本的"临时数据目录"里是有账号的**：`config.bootstrap_database()`
+        # 会把旧库整个复制过来（ADR-0013 的"自动接管"，否则用户升级后会看到"账号全没了"）。
+        # 所以"账号中心为空"那条路**验不了**——它由单测覆盖
+        # （`tests/test_user_confirmation.py::test_empty_option_source_is_rejected_with_a_next_step`，
+        # 那里是自己注入的候选项提供方，可以精确控制"空"）。
+        unknown = client.post("/api/agent/invoke", json={
+            "tool": CONFIRM_TOOL, "args": {"question": "用哪个？", "options_source": "nope"}})
+        check("F1 未知来源 → 400（不返回空列表：那读起来像「用户没得选」）",
+              unknown.status_code == 400
+              and "未知的候选项来源" in str(unknown.json().get("detail", "")))
+
+        mixed = client.post("/api/agent/invoke", json={
+            "tool": CONFIRM_TOOL,
+            "args": {"question": "用哪个？", "options_source": "accounts",
+                     "target_tool": "accounts_browser_close",
+                     "target_args": {"account_id": "x"}}})
+        check("F2 选项 + target_tool → 400（选哪个是用户点完才知道的，没法提前绑定）",
+              mixed.status_code == 400
+              and "不能同时填" in str(mixed.json().get("detail", "")))
+
+        # 造一个真实账号，再问一次
+        env = client.post("/api/accounts/envs",
+                          json={"name": "验证环境", "base_url": "http://10.0.0.9"}).json()
+        account = client.post("/api/accounts", json={
+            "env_id": env["id"], "username": "probe-user", "password": "p@ss",
+            "note": "验证用"}).json()
+        asked = client.post("/api/agent/invoke", json={
+            "tool": CONFIRM_TOOL,
+            "args": {"question": "用哪个账号？", "options_source": "accounts"}})
+        check("F3 有账号时 → 409 并带候选项", asked.status_code == 409,
+              f"status={asked.status_code} {str(asked.json())[:120]}")
+        confirm = asked.json()["detail"]["confirm"]
+        options = confirm.get("options") or []
+
+        # 卡片是**服务端按账号表展开**的：它必须与「账号中心」那一页看到的是同一份东西。
+        # 这条挡住的是"另做一份缓存 / 让模型转录候选"——那种实现会先漂，再静默错。
+        center = client.get("/api/accounts").json()["accounts"]
+        check("F3b 候选项与账号中心同源（不是另一份缓存，也不是模型转录的）",
+              sorted(o["label"] for o in options) == sorted(a["username"] for a in center)
+              and len(options) == len(center),
+              f"卡片 {sorted(o['label'] for o in options)} vs 账号中心 "
+              f"{sorted(a['username'] for a in center)}")
+
+        picked = next((o for o in options if o.get("label") == "probe-user"), None)
+        check("F3c 卡片字段来自账号表（value=账号 id / 环境 / 地址）",
+              bool(picked) and picked.get("value") == account.get("id")
+              and picked.get("description") == "验证环境"
+              and (picked.get("meta") or {}).get("地址") == "http://10.0.0.9",
+              str(picked)[:220])
+
+        pending_id = confirm["pendingId"]
+        row = next((p for p in client.get("/api/agent/pending").json()["pending"]
+                    if p["id"] == pending_id), None)
+        check("F4 待确认清单里也带 options（刷新后靠它把卡片重新画出来）",
+              bool(row) and len(row.get("options") or []) == len(options),
+              str(row and row.get("options"))[:150])
+
+        miss = client.post(f"/api/agent/pending/{pending_id}/approve", json={"value": ""})
+        check("F5 不带选项就放行 → 409（「同意」一个选择题等于什么都没答）",
+              miss.status_code == 409, f"status={miss.status_code}")
+        alien = client.post(f"/api/agent/pending/{pending_id}/approve", json={"value": "ghost"})
+        check("F5b 不在候选项里的 value → 409（编出来的 id 不能一路变成参数）",
+              alien.status_code == 409, f"status={alien.status_code}")
+        ok = client.post(f"/api/agent/pending/{pending_id}/approve",
+                         json={"value": account.get("id")})
+        check("F5c 选中真实候选项 → 200，回执里带 decidedValue",
+              ok.status_code == 200 and ok.json().get("decidedValue") == account.get("id"),
+              f"status={ok.status_code} {str(ok.json())[:140]}")
+
+        check("F6 没有会话 id 时不返回「最近一次选择」"
+              "（那会让 A 会话显示出 B 会话选的账号，比不显示更糟）",
+              client.get("/api/agent/selection").json().get("selection") is None,
+              str(client.get("/api/agent/selection").json())[:140])
+
+        print("=== G. 界面发起的入口（右下角「选择账号」默认态）===")
+        no_conv = client.post("/api/agent/selection/pick", json={"conversationId": ""})
+        check("G1 没有会话 id → 400（记不住的选择是假的选择：用户选完下一轮模型还在问）",
+              no_conv.status_code == 400, f"status={no_conv.status_code}")
+
+        conv = client.post("/api/conversations").json()
+        ui = client.post("/api/agent/selection/pick",
+                         json={"conversationId": conv["id"]})
+        body = ui.json() if ui.status_code == 200 else {}
+        check("G2 界面发起 → 200，且形状与 `confirm_required` 事件一致（同一套弹窗直接用）",
+              ui.status_code == 200 and body.get("kind") == "selection"
+              and len(body.get("options") or []) == len(center) and body.get("pendingId"),
+              f"status={ui.status_code} {str(body)[:160]}")
+
+        ui_pending = body.get("pendingId", "")
+        ui_row = next((p for p in client.get("/api/agent/pending").json()["pending"]
+                       if p["id"] == ui_pending), None)
+        check("G3 它同样进待确认表（复用同一套批准与 value 校验）",
+              bool(ui_row) and ui_row.get("kind") == "selection",
+              str(ui_row and ui_row.get("kind")))
+
+        bad = client.post(f"/api/agent/pending/{ui_pending}/approve", json={"value": "ghost"})
+        check("G4 换入口 **不等于** 松校验：非法 value 照样拒",
+              bad.status_code == 409, f"status={bad.status_code}")
+
+        good = client.post(f"/api/agent/pending/{ui_pending}/approve",
+                           json={"value": account.get("id")})
+        check("G5 选定后 → 200", good.status_code == 200, f"status={good.status_code}")
+
+        messages = client.get(f"/api/conversations/{conv['id']}/messages").json()["messages"]
+        notes = [m for m in messages if m.get("role") == "note"]
+        check("G6 会话里留下一条 note（模型下一轮才知道用哪个账号——否则用户白选了）",
+              len(notes) == 1 and account.get("id", "") in notes[0].get("content", ""),
+              str(messages)[:200])
+
+        sel = client.get("/api/agent/selection",
+                         params={"conversationId": conv["id"]}).json().get("selection")
+        check("G7 选中结果可查（刷新后右下角那张卡靠它画回来）",
+              bool(sel) and sel.get("value") == account.get("id"), str(sel)[:160])
 
         client.close()
     finally:

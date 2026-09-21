@@ -97,6 +97,17 @@ MAX_CONFIRM_TIMEOUT_S = 1_800.0
 不夹的话一个写错的 `timeoutS`（比如把毫秒当秒填了 `300000`）会让会话静默卡住三天。
 """
 
+MAX_CONFIRM_OPTIONS = 50
+"""一次「让用户选一个」最多给几张卡片。**超上限直接拒绝，不截断。**
+
+上限不是审美问题：候选项会**原样进 SSE 事件**，而事件是发给界面的实时流。
+一个来源若返回上千条（账号表被批量导入），弹窗会变成一堵墙，用户反而选不出来。
+
+为什么是拒绝而不是截断：这是**让用户挑一个**，截断意味着正确答案可能根本不在卡片里，
+而用户看不出来——他会以为"就这么几个"。宁可让模型收到一句能照做的话
+（"先按环境缩小范围再问"），也不要给他一份**看起来完整、其实缺了选项**的清单。
+"""
+
 _REDACT_KEYS = frozenset({
     "password", "passwd", "token", "api_key", "apikey", "secret",
     "password_enc", "fernetkey", "authorization", "cookie",
@@ -321,6 +332,19 @@ class ConfirmPlan:
     target_args_raw: dict[str, Any] = field(default_factory=dict)
     """目标参数的原样 dict，给界面预览用（可能含敏感值，界面按现状渲染）。"""
 
+    options: tuple[dict[str, Any], ...] = ()
+    """候选项。**非空 = 这次确认是"让用户挑一个"，而不是"同意 / 拒绝"**。
+
+    每一项形如 `{"value", "label", "description"?, "meta"?}`，由**注入的候选项提供方**
+    生成（`set_option_provider`）。插件只能指定"要哪一类候选项"（`optionsSource`），
+    **编不出候选项本身**——账号这类数据的真值在宿主，插件说了不算，
+    这也是它和 `target` 一样由中枢规范化、而不是信任插件返回值的原因。
+
+    为什么不让模型直接把候选写进参数：模型手里的账号信息是它自己从
+    `accounts_list` 转录的，**转录会失真**；而卡片的 `value` 之后要直接当参数用，
+    一个编出来的 id 会一路静默错下去（同族事故见 PITFALLS #62 / #67）。
+    """
+
 
 @dataclass(frozen=True)
 class ConfirmOutcome:
@@ -423,6 +447,7 @@ class ToolHub:
         self._confirm_waiter: (
             Callable[[str, float], Awaitable[ConfirmOutcome]] | None
         ) = None
+        self._option_provider: Callable[[str], list[dict[str, Any]]] | None = None
 
     # ------------------------------------------------------------ 装配
 
@@ -626,6 +651,81 @@ class ToolHub:
         """注入等待口：`(pending_id, 超时秒) → 用户答复`。同样由 approvals 层提供。"""
         self._confirm_waiter = waiter
 
+    def set_option_provider(
+        self, provider: Callable[[str], list[dict[str, Any]]]
+    ) -> None:
+        """注入候选项提供方：`来源名 → 候选项列表`（见 `ConfirmPlan.options`）。
+
+        **为什么是注入而不是直接读库**：`plugin_api` 不许依赖平台数据——它连审计写入器
+        和确认门都是注入的（模块开头的依赖方向约定）。账号表的形状属于宿主，
+        在插件 API 里出现"账号"这个词就等于把那层依赖焊死了。
+
+        **没注入就一律拒绝，不回落到"让模型自己编"**：一个编出来的 `value`
+        会被当成真实账号 id 用下去，而它不会报错，只会静静地写错地方。
+        """
+        self._option_provider = provider
+
+    def _resolve_options(self, source: str) -> tuple[dict[str, Any], ...]:
+        """把 `optionsSource` 展开成规范化候选项。**任何一步失败都拒绝，不静默降级。**
+
+        失败也要是**可自我纠正的观测**：告诉模型"来源是空的 / 未知的"，
+        它才会换成"先请用户去账号中心建一个账号"，而不是原样重试同一件事。
+        """
+        if self._option_provider is None:
+            raise _BadArguments(
+                f"候选项来源 {source!r} 不可用：宿主没有接入候选项提供方。"
+                "请改用自然语言直接问用户，不要自己编造候选项"
+            )
+        try:
+            raw = list(self._option_provider(source) or [])
+        except Exception as exc:  # noqa: BLE001 —— 来源不可用 = 参数问题，不是崩溃
+            raise _BadArguments(
+                f"候选项来源 {source!r} 取不到：{type(exc).__name__}: {exc}"
+            ) from exc
+        if not raw:
+            raise _BadArguments(
+                f"候选项来源 {source!r} 现在是**空的**（没有任何可选项）。"
+                "不要重试同一件事：先告诉用户他需要先准备什么（例如先到账号中心添加账号）"
+            )
+
+        options: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            value = str(item.get("value") or "").strip()
+            label = str(item.get("label") or "").strip()
+            if not value or not label:
+                continue
+            if value in seen:
+                raise _BadArguments(
+                    f"候选项来源 {source!r} 返回了重复的 value={value!r}："
+                    "用户点了哪一张都会歧义，先把来源去重"
+                )
+            seen.add(value)
+            option: dict[str, Any] = {"value": value, "label": label}
+            description = str(item.get("description") or "").strip()
+            if description:
+                option["description"] = description[:200]
+            meta = item.get("meta")
+            if isinstance(meta, dict) and meta:
+                option["meta"] = {
+                    str(k)[:32]: str(v)[:80] for k, v in meta.items() if v not in (None, "")
+                }
+            options.append(option)
+
+        if not options:
+            raise _BadArguments(
+                f"候选项来源 {source!r} 返回了 {len(raw)} 条，但**没有一条同时有 value 和 label**"
+                "——界面画不出卡片。这是来源侧的形状问题，不是用户的问题"
+            )
+        if len(raw) > MAX_CONFIRM_OPTIONS:
+            raise _BadArguments(
+                f"候选项来源 {source!r} 返回了 {len(raw)} 条，超过一次最多 "
+                f"{MAX_CONFIRM_OPTIONS} 张卡片的上限。请先缩小范围（例如按环境筛选）再问用户"
+            )
+        return tuple(options)
+
     # ------------------------------------------------------------ 查询
 
     @property
@@ -783,9 +883,27 @@ class ToolHub:
             target_args = _validate(target, raw.get("targetArgs") or {})
             target_raw = target_args.model_dump(mode="json")
 
+        options_source = str(
+            raw.get("optionsSource") or raw.get("options_source") or ""
+        ).strip()
+        options: tuple[dict[str, Any], ...] = ()
+        if options_source:
+            if target_name:
+                # 两者是**互斥**的两种确认，混在一起没有意义：绑定调用的确认问的是
+                # "同不同意这一组具体参数"，而选一个的问的是"用哪一个"——
+                # 选择结果要到用户点完才知道，不可能提前写进 targetArgs。
+                raise _BadArguments(
+                    "optionsSource 与 targetTool 不能同时填："
+                    "「让用户挑一个」和「预先批准一次具体调用」是两种确认。"
+                    "先用 optionsSource 问出用户要哪个，**再**用那个值去调用目标工具"
+                    "（write/dangerous 级的调用自己仍会走确认门）"
+                )
+            options = self._resolve_options(options_source)
+
         return ConfirmPlan(
             question=question, details=details, timeout_s=timeout_s,
             target=target, target_args=target_args, target_args_raw=target_raw,
+            options=options,
         )
 
     async def await_confirmation(self, pending_id: str, timeout_s: float) -> ConfirmOutcome:
@@ -1106,6 +1224,9 @@ def _confirm_view(plan: ConfirmPlan, pending_id: str) -> dict[str, Any]:
         "details": plan.details,
         "timeoutS": plan.timeout_s,
         "target": target,
+        # **非空 = 这次要用户挑一个**（界面改画卡片，不再是同意 / 拒绝）。
+        # 键名是出口口径（camelCase），消费方见 `static/js/approval-modal.js`。
+        "options": [dict(option) for option in plan.options],
     }
 
 

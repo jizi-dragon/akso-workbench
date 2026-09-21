@@ -368,6 +368,39 @@
   box-shadow: var(--shadow-panel);
 }
 
+/* 「界面操作」事件（`role = note`）：**不是谁说的话**，所以既不用用户气泡的蓝底，
+   也不用助手气泡的白卡——一条细窄的、灰调的记事行。它在会话里出现的原因是
+   用户在右下角选了账号，而模型必须知道这件事（见 approvals.NOTE_ROLE）。 */
+.message-row.note {
+  max-width: 100%;
+  animation: none; /* 它不是一次对话往返，别跟着"升起来" */
+}
+
+.message-avatar.note-avatar {
+  width: 22px;
+  height: 22px;
+  margin-top: 3px;
+  border-style: dashed;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.message-row.note .message-meta {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.bubble-note {
+  padding: 7px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--ink-1);
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
 .cite-chip {
   display: inline-block;
   font-size: 12px;

@@ -35,7 +35,7 @@ import secrets
 import threading
 import uuid
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel
@@ -43,6 +43,7 @@ from pydantic import BaseModel
 from . import db
 from .plugin_api import (
     DEFAULT_CONFIRM_TIMEOUT_S,
+    ZERO_ARGS,
     ConfirmOutcome,
     ConfirmPlan,
     ToolHub,
@@ -94,6 +95,22 @@ class PendingAction:
     decided_reason: str = ""
     """用户拒绝时填写的理由（原样，未打码——它由用户自己写下，且会回给模型）。"""
 
+    options: list[dict[str, Any]] = field(default_factory=list)
+    """这次确认的候选项。**非空 = 让用户在卡片上挑一个**（见 `plugin_api.ConfirmPlan.options`）。
+
+    **不落库**（`_record()` 的列里没有它）：与 `target_tool` / `kind` 同一条理由——
+    它是运行期事实，而 DB 迁移只增不改，不值得为它开一列。重启后遗留的 pending
+    本来就一律标 `expired`，那批卡片也就没有意义了。
+    """
+
+    decided_value: str = ""
+    """用户在卡片上选中那一项的 `value`（空 = 不是选择型确认，或还没选）。
+
+    它和 `decided_reason` 不是一回事，别混：那是用户随手写的理由（给人看的），
+    这是**要当参数用下去的 id**（给机器用的）。所以它必须原样进 `_answer()`——
+    模型靠它知道"余下的对话该用哪个账号"，而不必再问一遍。
+    """
+
     kind: str = "approval"
     """这条待确认是**谁发起的**：`approval`（宿主按风险门自动拦）/ `confirmation`（模型主动问）。
 
@@ -119,6 +136,10 @@ class PendingAction:
             "decidedAt": self.decided_at,
             "conversationId": self.conversation_id,
             "kind": self.kind,
+            # 非空 = 这条是「挑一个」。界面刷新后靠 `recoverPending()` 重新弹出来，
+            # 所以卡片数据必须跟着 `public()` 走，不能只活在当初那个 SSE 事件里。
+            "options": [dict(option) for option in self.options],
+            "decidedValue": self.decided_value,
         }
 
 
@@ -138,6 +159,13 @@ class PendingStore:
     def __init__(self) -> None:
         self._items: dict[str, PendingAction] = {}
         self._by_token: dict[str, str] = {}
+        self._selections: dict[str, dict[str, Any]] = {}
+        """会话 id → 用户在卡片上最近一次选中的那一项。
+
+        只服务界面（刷新后把右下角那张"当前账号"卡片画回来），**不落库**：
+        它记的是"这一轮对话用哪个账号"，跨应用重启本就该重新问
+        ——与模块文档里"不恢复遗留 pending"同一条理由。
+        """
         self._lock = threading.Lock()
         self._waiters: dict[str, Future[ConfirmOutcome]] = {}
         """pending_id → 正在等答复的那个对话循环。
@@ -183,6 +211,7 @@ class PendingStore:
         模型换个参数再调一次目标工具，指纹对不上，照样重新走一遍风险门。
         """
         target, target_args = plan.target, plan.target_args
+        options = [dict(option) for option in plan.options]
         with self._lock:
             self._expire_locked()
             if target is not None and target_args is not None:
@@ -192,6 +221,7 @@ class PendingStore:
             else:
                 item = self._mint(spec, args, conversation_id, summary=plan.question)
             item.kind = "confirmation"
+            item.options = options
             # 等待者与条目**同时**建好（都在锁内），见 `_waiters` 的说明
             self._waiters[item.id] = Future()
         logger.info("实时确认已登记：%s（%s → %s）",
@@ -221,12 +251,39 @@ class PendingStore:
 
     # ------------------------------------------------------------ 决策
 
-    def approve(self, pending_id: str, *, by: str = "user") -> PendingAction | None:
-        """放行：兑换单次令牌（**一次性**），并叫醒正在等答复的对话循环（如果有）。"""
+    def approve(self, pending_id: str, *, value: str = "", by: str = "user") -> PendingAction | None:
+        """放行：兑换单次令牌（**一次性**），并叫醒正在等答复的对话循环（如果有）。
+
+        `value` 只在**选择型确认**（`item.options` 非空）时有意义：它是用户在卡片上
+        点中的那一项。这里**必须校验它确实在候选项里**——一个不在候选里的 value
+        会一路变成下游的参数，而下游没有任何地方能发现它是编的。
+
+        选择型确认**必须有 value**：空 value 的"同意"没有任何含义（同意了什么？），
+        所以它和"非法 value"一样被拒。拒掉是安全的默认——宁可让用户再点一次。
+        """
+        note: str = ""
         with self._lock:
             item = self._items.get(pending_id)
             if item is None or item.status != "pending":
                 return None
+            if item.options:
+                allowed = {str(option.get("value") or "") for option in item.options}
+                if value not in allowed:
+                    logger.warning("选择型确认收到非法/缺失的 value=%r：%s（候选项 %d 个）",
+                                   value, pending_id, len(item.options))
+                    return None
+                item.decided_value = value
+                self._remember_selection_locked(item)
+                if item.kind == "selection":
+                    # **界面发起**的选择：模型没有任何工具观测可看（它没问过），
+                    # 所以必须往会话里留一条 note，否则下一轮它照样不知道用哪个账号。
+                    # 模型自己发起的那种**不留**：它马上会收到工具观测，
+                    # 再留一条就是同一件事说两遍（而且是两个会漂的事实源）。
+                    note = _selection_note(item)
+            elif value:
+                # 非选择型确认却带了 value：不是攻击面（`_answer` 根本不看它），
+                # 但它是调用方的 bug，留痕而不是静默吞掉。
+                logger.info("非选择型确认收到 value=%r，已忽略：%s", value, pending_id)
             item.status = "approved"
             item.token = secrets.token_urlsafe(24)
             item.token_expires_at = _now_ms() + TOKEN_TTL_MS
@@ -235,7 +292,63 @@ class PendingStore:
             self._by_token[item.token] = item.id
             self._record(item)
             self._settle_locked(item.id, approved=True)
-            return item
+        # 留痕放在**锁外**：它是 DB 写入，没有理由占着确认门的锁
+        if note:
+            _append_conversation_note(item.conversation_id, note)
+        return item
+
+    def request_selection(
+        self, spec: ToolSpec, options: list[dict[str, Any]],
+        conversation_id: str, question: str,
+    ) -> str:
+        """登记一次**由界面发起**的"挑一个"（右下角那张卡的默认入口）。
+
+        为什么它不是"一次确认"：没有任何对话循环在等它——用户是在**开口之前**
+        先挑账号的。所以这里**不建等待者**（`_settle_locked` 在没等待者时会提前返回，
+        见它的注释），批准它只做两件事：记住选择 + 往会话里留一条 note 让模型知道。
+
+        它借用确认门那张表是有意的：批准路径、`value` 合法性校验、"必须有 value"
+        这些安全属性**一条都不用重写**——换个入口就松开校验，才是真正危险的做法。
+        """
+        with self._lock:
+            self._expire_locked()
+            item = self._mint(spec, ZERO_ARGS(), conversation_id, summary=question)
+            item.kind = "selection"
+            item.options = [dict(option) for option in options]
+        logger.info("界面发起的选择已登记：%s（%d 个候选）", item.id, len(item.options))
+        return item.id
+
+    def _remember_selection_locked(self, item: PendingAction) -> None:
+        """记住"这个会话当前用哪个账号"（调用方必须已持有 `self._lock`）。
+
+        界面靠它在**刷新页面之后**把右下角那张卡片画回来。刻意只活在进程内：
+        用户选的是"这一轮对话用哪个账号"，跨应用重启本就该重新问一遍
+        ——与模块文档里"不恢复遗留 pending"是同一条理由。
+        """
+        conversation_id = str(item.conversation_id or "")
+        if not conversation_id:
+            return
+        option = next(
+            (dict(o) for o in item.options
+             if str(o.get("value") or "") == item.decided_value),
+            {},
+        )
+        self._selections[conversation_id] = {
+            "conversationId": conversation_id,
+            "value": item.decided_value,
+            "label": str(option.get("label") or item.decided_value),
+            "description": str(option.get("description") or ""),
+            "meta": dict(option.get("meta") or {}),
+            "pendingId": item.id,
+            "tool": item.tool,
+            "at": item.decided_at,
+        }
+
+    def selection(self, conversation_id: str) -> dict[str, Any] | None:
+        """这个会话当前选中的账号/环境（没有就返回 None）。"""
+        with self._lock:
+            found = self._selections.get(str(conversation_id or ""))
+            return dict(found) if found else None
 
     def reject(self, pending_id: str, reason: str = "", *, by: str = "user") -> PendingAction | None:
         with self._lock:
@@ -326,6 +439,20 @@ class PendingStore:
         """把答复拼成给模型看的一句话（工具观测的正文）。"""
         target = item.target_tool if item is not None else ""
         if approved:
+            chosen = (item.decided_value if item is not None else "").strip()
+            if chosen:
+                # 选择型确认的答复**不是**"同意"，而是"用这一个"。
+                # 所以观测里必须同时给出 value（机器要用的 id）和人话标签（模型转述给用户时用），
+                # 并明确"别再问一遍"——否则模型很容易把同一件事再确认一次，
+                # 而用户会觉得自己刚才那一下白点了。
+                label = next(
+                    (str(o.get("label") or "") for o in (item.options if item else [])
+                     if str(o.get("value") or "") == chosen),
+                    "",
+                )
+                return (f"用户已选定：**{label or chosen}**（value=`{chosen}`）。"
+                        "**接下来就用它**——把它当作本次任务的目标账号 / 环境，"
+                        "不要再为同一件事问用户一遍；直到用户改口为止。")
             if target:
                 return (f"用户已同意这次操作。现在可以调用 `{target}`——**参数必须与申请时"
                         "完全一致**：服务端按「工具 + 参数指纹」认领这次批准，"
@@ -606,6 +733,45 @@ def reset_store() -> None:
     _store = None
 
 
+NOTE_ROLE = "note"
+"""会话里表示"这不是谁说的话，是一件发生过的事"的消息角色。
+
+为什么不用 `user`：界面会把它画成用户自己说的话（他没说过），而模型的上下文里
+它又会被当成一条**用户指令**。它是**界面事件**，两者都不是。
+
+⚠️ 这个角色**不能直接进模型请求**——DeepSeek / OpenAI 只认 `system` / `user` /
+`assistant` / `tool`。映射发生在唯一那个扼流点（`api/routes_chat.py` 的
+`_chat_events`），别在别处再拼一遍。
+"""
+
+
+def _selection_note(item: PendingAction) -> str:
+    """界面选完账号之后留给模型的那句话。"""
+    chosen = next(
+        (o for o in item.options if str(o.get("value") or "") == item.decided_value), {})
+    label = str(chosen.get("label") or item.decided_value)
+    env = str(chosen.get("description") or "")
+    where = f"（{env}）" if env else ""
+    return (f"用户在界面上选定了执行账号：**{label}**{where}，id=`{item.decided_value}`。"
+            "后续步骤默认用它，不要再为同一件事问一遍。")
+
+
+def _append_conversation_note(conversation_id: str, note: str) -> None:
+    """把一条界面事件写进会话历史。
+
+    **失败不影响选择本身**（与 `_record` 同一条口径）：用户已经选好了，那是事实；
+    留痕失败只意味着模型下一轮可能再问一次，不该让用户看到一次报错。
+    """
+    if not conversation_id:
+        return
+    try:
+        from .services import storage
+
+        storage.insert_message(conversation_id, NOTE_ROLE, note)
+    except Exception:  # noqa: BLE001
+        logger.warning("会话留痕失败（选择本身仍然生效）：%s", conversation_id, exc_info=True)
+
+
 def install(hub: ToolHub) -> None:
     """把审计写入器 + 确认门装到工具中枢上（`get_hub()` 装配期调用一次）。
 
@@ -627,7 +793,36 @@ def install(hub: ToolHub) -> None:
     hub.set_confirmation_waiter(
         lambda pending_id, timeout_s: pending_store().wait_decision(pending_id, timeout_s)
     )
+    hub.set_option_provider(option_provider)
     _expire_orphans()
+
+
+def option_provider(source: str) -> list[dict[str, Any]]:
+    """候选项来源 → 候选项（注入给 `ToolHub`，见 `plugin_api.set_option_provider`）。
+
+    **未知来源一律抛**：`plugin_api` 会把它变成一句模型能照做的观测。
+    退回空列表是不行的——那看起来像"用户没有可选的东西"，而事实是"这个来源不存在"，
+    两者对模型意味着完全不同的下一步。
+
+    这里刻意只有 `accounts` 一个来源。要加新来源，先回答一个问题：
+    **它的真值在哪张表里？** 如果答案是"在模型嘴里"，那它就不该做成来源
+    ——那正是"让模型自己编候选项"的老路，而卡片上的 `value` 是要当参数用下去的。
+    """
+    key = str(source or "").strip().lower()
+    if key in {"accounts", "account"}:
+        from .services.accounts import account_options
+
+        return account_options()
+    raise ValueError(f"未知的候选项来源 {source!r}（目前只支持 'accounts'）")
+
+
+def current_selection(conversation_id: str) -> dict[str, Any] | None:
+    """这个会话当前选中的账号 / 环境（没有就 None）。
+
+    界面刷新后靠它把右下角那张卡片画回来——否则用户会觉得"我选过的东西丢了"，
+    而模型那边其实还记得（它看得见会话历史里那条观测）。两边的认知不能不一致。
+    """
+    return pending_store().selection(conversation_id)
 
 
 def _expire_orphans() -> None:

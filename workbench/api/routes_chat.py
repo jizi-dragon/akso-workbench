@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import AsyncIterator
 
@@ -16,6 +17,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ..approvals import NOTE_ROLE
 from ..harness.loop import run_agent_loop
 from ..harness.prompts import build_system_prompt
 from ..harness.tools import default_registry
@@ -23,6 +25,8 @@ from ..harness.types import AgentConfig
 from ..services import storage
 from ..services.deepseek import DeepSeekClient
 from ..services.settings import load_deepseek, load_max_steps
+
+logger = logging.getLogger("workbench.chat")
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -56,6 +60,32 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
+def _model_history(messages: list[dict]) -> list[dict]:
+    """把会话历史翻成**模型能收的**形状。**这是唯一那个扼流点。**
+
+    存在的理由只有一个：`note` 是**界面事件**（「用户在界面上选定了执行账号」，
+    见 `approvals.NOTE_ROLE`）——它必须进模型的上下文，否则用户先在右下角选了账号、
+    模型下一轮还是不知道用哪个；但 DeepSeek / OpenAI 只认 `system`/`user`/`assistant`/
+    `tool`，把 `note` 原样发过去**整个请求会被 400 掉**（不是少一条，是全废）。
+
+    翻译成 `user` 而不是 `system`：它在语义上是"用户做了这件事"，
+    而且中途插一条 system 在多数实现里是被忽略或报错的。
+
+    未知角色**丢掉并告警**——宁可少一条上下文，也不要发一个会让整轮对话 400 的角色。
+    """
+    out: list[dict] = []
+    for row in messages:
+        role = str(row.get("role") or "")
+        content = str(row.get("content") or "")
+        if role == NOTE_ROLE:
+            out.append({"role": "user", "content": f"（界面事件）{content}"})
+        elif role in ("user", "assistant", "system"):
+            out.append({"role": role, "content": content})
+        else:
+            logger.warning("会话历史里出现未知角色 %r，已跳过（发出去会让整轮请求失败）", role)
+    return out
+
+
 async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
     cfg = load_deepseek()
     if not cfg.ready:
@@ -64,7 +94,7 @@ async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
         return
 
     conversation_id, title_updated = _prepare_conversation(body)
-    history = storage.list_messages(conversation_id)
+    history = _model_history(storage.list_messages(conversation_id))
     storage.insert_message(conversation_id, "user", body.message)
     history = [*history, {"role": "user", "content": body.message}]
 

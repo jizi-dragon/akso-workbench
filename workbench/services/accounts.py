@@ -157,6 +157,44 @@ def get_account(account_id: str) -> dict[str, Any] | None:
     return _sanitize(row) if row else None
 
 
+def account_options(role: str = "") -> list[dict[str, Any]]:
+    """账号列表 → **选择卡片**的候选项（`request_user_confirmation` 的 `options_source="accounts"`）。
+
+    卡片上那几个字段的真值全在这里（账号 / 环境 / 环境地址 / 备注），所以形状也归本模块。
+    `plugin_api` 只认"来源名 → 候选项"这个注入接口，它不认识"账号"这个词
+    ——依赖方向必须单向（AGENTS.md 规则 7）。
+
+    `role` 给了就只取分配池里那个角色（`config` / `monitor`）；空 = 全部账号。
+
+    `value` 用**账号 id**而不是用户名：用户名可以改、也可以重名，而 id 是这张卡
+    之后要被当成参数用下去的东西——一个会漂的值当不了主键（同族事故见 PITFALLS #62）。
+    """
+    rows = pool_members(role) if role else list_accounts()
+    options: list[dict[str, Any]] = []
+    for row in rows:
+        account_id = str(row.get("id") or "").strip()
+        username = str(row.get("username") or "").strip()
+        if not account_id or not username:
+            continue
+        option: dict[str, Any] = {
+            "value": account_id,
+            "label": username,
+            "description": str(row.get("env_name") or "").strip() or "（未命名环境）",
+        }
+        meta: dict[str, Any] = {}
+        base_url = str(row.get("env_base_url") or "").strip()
+        if base_url:
+            meta["地址"] = base_url
+        if str(row.get("box") or "").strip():
+            meta["分组"] = str(row["box"]).strip()
+        if str(row.get("note") or "").strip():
+            meta["备注"] = str(row["note"]).strip()
+        if meta:
+            option["meta"] = meta
+        options.append(option)
+    return options
+
+
 # 分配池角色（账号中心「分配池」语义）：池内账号供配置/监听平台取用
 POOL_ROLES = ("config", "monitor")
 

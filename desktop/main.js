@@ -395,6 +395,12 @@ function selfDescription() {
 }
 
 function createControlServer() {
+  // 会**改状态 / 弹窗 / 开窗 / 拉起安装器**的端点。只读的 `/health`、`/whoami`、
+  // `/update-state` 不在内——扩展要从任意页面调 `/whoami` 做身份自证（ADR-0011 §D-5）。
+  const CHANGING_PATHS = new Set([
+    '/windows', '/windows/focus', '/windows/close',
+    '/update-check', '/update-install', '/extension-setup',
+  ]);
   const json = (res, code, body) => {
     // 扩展从任意页面发起的发现请求会带 Origin；这几个端点无凭据、只读，故允许跨源
     res.writeHead(code, {
@@ -410,6 +416,32 @@ function createControlServer() {
       let payload = {};
       try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
       const url = new URL(req.url, 'http://127.0.0.1');
+
+      // ⚠️ **状态变更端点一律拒带 `Origin` 的请求**（2026-09-21 实测收口）。
+      //
+      // 控制服务**无认证**，而它监听在本机回环上；`json()` 又给每个响应都加
+      // `Access-Control-Allow-Origin: *`，这里的 POST 还都是**简单请求**
+      // （无自定义头、无 JSON body）⇒ 浏览器**不预检**，跨源直接放行。
+      // 于是本机任何一个网页都能：弹更新框、让应用退出时装更新、开出可见窗口。
+      //
+      // 实测到的现象：用户报告"自动更新提示自己弹出来"，而**只要壳一启动就复现**
+      // ——因为壳没跑时 18767 根本没人听，请求静默失败；壳一起来，那个外部请求就成功了。
+      // 日志证据：壳侧收到 `/update-check`，而 Python 代理侧**一次都没有**记录
+      // （说明请求是**直接打到控制端口**的，绕过了整个后端）。
+      //
+      // 判据是"有没有 Origin"而不是 IP：我们自己的调用方（Python sidecar 的 urllib）
+      // **不发 Origin**，浏览器**一定发**（跨源 POST 必带）。所以这条闸门只挡网页，
+      // 不挡本机进程，也不需要维护白名单。
+      if (CHANGING_PATHS.has(url.pathname) && req.headers.origin) {
+        console.warn('[akso-shell] 拒绝跨源控制请求：%s %s（Origin: %s）'
+          + '——控制服务无认证，不接受网页驱动',
+          req.method, url.pathname, req.headers.origin);
+        return json(res, 403, {
+          ok: false,
+          error: '跨源请求被拒绝：本控制服务只接受本机进程调用（不带 Origin 头）',
+        });
+      }
+
       if (url.pathname === '/health') return json(res, 200, { ok: true });
 
       // 身份自证（ADR-0011 §D-4/§D-5，ADR-0012 保留）：扩展靠它确认"18765 上是不是
@@ -430,6 +462,15 @@ function createControlServer() {
         return json(res, 200, { ok: true, shell: true, ...(updateState || updater.state()) });
       }
       if (req.method === 'POST' && url.pathname === '/update-check') {
+        // 留痕：这条路上的"检查更新"**曾经没有任何日志**，于是"这个弹窗是谁弹的"
+        // 只能靠猜（2026-09-21 排查实录：用户报告弹窗，代码里找不到自动触发方）。
+        // 现在把**能指认客户端的两样东西**都记下来：
+        //   · `Origin` —— 正常路径（Python 代理的 urllib）**没有**这个头；有值就是网页；
+        //   · `User-Agent` —— 本机进程没有 Origin，只能靠它认人
+        //     （python-urllib / curl / node / electron 各有各的串）。
+        console.log('[akso-shell] 控制服务请求检查更新（Origin: %s ｜ UA: %s）',
+          req.headers.origin || '（无，本机进程调用）',
+          req.headers['user-agent'] || '（无）');
         void updater.checkAndReport()
           .then((r) => json(res, 200, { ok: true, ...r }))
           .catch((e) => json(res, 500, { ok: false, error: String(e) }));

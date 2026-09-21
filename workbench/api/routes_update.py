@@ -13,13 +13,16 @@ HTTP 探壳：账号中心每 3s 刷新一次轮询，读一个本地文件比�
 from __future__ import annotations
 
 import json
+import logging
 import time
 import urllib.request
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from .. import __version__, config
+
+logger = logging.getLogger("workbench.update")
 
 router = APIRouter(prefix="/api/update", tags=["update"])
 
@@ -39,6 +42,12 @@ _PHASE_LABEL = {
     "downloading": "正在后台下载更新…",
     "ready": "更新已就绪，退出时安装",
     "error": "检查更新失败",
+    # `checkAndReport()` 在自动更新关闭时返回这个 phase。它目前**不会**进状态文件
+    # （关闭时 phase 停在 idle），所以这一档是**防御性**的：缺了它，万一哪天壳把它写进去，
+    # 界面就会原样显示出英文内部枚举值 `disabled`（`_PHASE_LABEL.get(phase, phase)` 的兜底）。
+    "disabled": "自动更新已关闭",
+    "inactive": "桌面壳未运行",
+    "unsupported": "本进程不支持自动更新",
 }
 
 
@@ -68,6 +77,8 @@ def read_shell_state() -> dict[str, Any]:
         "percent": 0,
         "updatePending": False,
         "supported": False,
+        "autoUpdate": True,
+        "message": "",
         "lastCheckAt": 0,
         "lastError": "",
     }
@@ -87,12 +98,21 @@ def read_shell_state() -> dict[str, Any]:
         "live": True,
         "ageMs": age_ms,
         "phase": phase,
-        "label": _PHASE_LABEL.get(phase, phase),
+        # **壳给的口径优先**。这里是"同一个事实两个来源"最容易出事的地方：
+        # 壳写下来的 label 是它当下的判断（例如「自动更新已关闭」），
+        # 本地 `_PHASE_LABEL` 只是**按 phase 重算的近似**——重算会**丢掉壳知道的理由**。
+        # 2026-09-21 实测：自动更新关闭时 phase 仍是 idle，于是角标显示「未检查更新」，
+        # 用户点一下才吃到一个「已关闭」弹窗，当场问"我不是关了吗"。
+        "label": str(data.get("label") or _PHASE_LABEL.get(phase, phase)),
         "version": str(data.get("version") or ""),
         "availableVersion": str(data.get("availableVersion") or ""),
         "percent": int(data.get("percent") or 0),
         "updatePending": bool(data.get("updatePending")),
         "supported": bool(data.get("supported")),
+        # 缺字段时按 True 回落：旧壳没这个键，那时角标维持原行为（"未检查更新"），
+        # 不能因为读不到就断言"自动更新被关了"。
+        "autoUpdate": bool(data.get("autoUpdate", True)),
+        "message": str(data.get("message") or ""),
         "lastCheckAt": int(data.get("lastCheckAt") or 0),
         "lastError": str(data.get("lastError") or ""),
     }
@@ -111,14 +131,25 @@ def update_info() -> dict[str, Any]:
 
 
 @router.post("/{action}")
-def update_action(action: str) -> dict[str, Any]:
+def update_action(action: str, request: Request) -> dict[str, Any]:
     """代理「检查更新 / 立即安装」到桌面壳。
 
     action: `check` | `install`。壳不在时返回 ok=false —— UI 退化为文字提示
     （与 /api/shell/setup-helper 同一套降级哲学）。
+
+    ⚠️ **这里要留痕，而且要记下来源页面**。2026-09-21 排查实录：用户报告
+    「自动更新已关闭」弹窗自己冒出来、还冒了两次，而全仓只有账号中心的版本角标
+    会调这个路由——于是"到底是谁调的"没法回答，只能靠猜。`Referer` 一句话解决：
+    它直接指出是哪个页面发起的（角标在 `pages/accounts.html` 上）。
     """
     if action not in {"check", "install"}:
         return {"ok": False, "error": f"未知动作：{action}"}
+    if action == "check":
+        logger.info(
+            "收到检查更新请求：referer=%r ua=%r",
+            request.headers.get("referer") or "（无）",
+            (request.headers.get("user-agent") or "")[:80],
+        )
     timeout = 60 if action == "check" else 8  # 检查要等下载元数据往返，安装是即时的
     try:
         req = urllib.request.Request(

@@ -4,11 +4,19 @@ import { api } from "./api.js";
 import { renderMarkdown } from "./markdown.js";
 import { createToolTrail, initToolPalette } from "./chat-tools.js";
 import { initApprovalModal, recoverPending, requestDecision } from "./approval-modal.js";
+import {
+  PICK_ACCOUNT_EVENT,
+  clearSelection,
+  initAccountDock,
+  restoreSelection,
+  showDockError,
+} from "./account-dock.js";
 import { state } from "./app.js";
 
 const messagesEl = () => document.getElementById("messages");
 let isRunning = false;
 let chatInitialized = false;
+let pickingAccount = false;
 
 /** 决定类事件 → 弹窗入参。
  *
@@ -26,6 +34,9 @@ function decisionFromConfirm(event) {
     details: event.details || "",
     timeoutS: event.timeoutS,
     target: event.target || null,
+    // 非空 = 这次是**让用户在卡片上挑一个**（后端 `options_source` 展开的真值），
+    // 弹窗据此改画卡片而不是「同意 / 拒绝」。见 approval-modal.js 的 renderChoices。
+    options: Array.isArray(event.options) ? event.options : [],
     auditId: event.auditId || "",
   };
 }
@@ -67,9 +78,21 @@ export function initChat() {
   });
   initToolPalette(input);
   initApprovalModal();
+  initAccountDock();
+  // 右下角「选择账号」**与「换一个账号」走同一条路**：界面直接请服务端登记一次
+  // 新的选择，候选由服务端按账号表展开——这里只负责"要一个选择"，不自己组装候选项。
+  //
+  // ⚠️ 上一版「换一个账号」复用的是另一条路（把一句话放进输入框、让模型重新问）。
+  // 那是 `/api/agent/selection/pick` 还不存在时的权宜之计；用户 2026-09-21 反馈
+  // "点切换没有反应"——他现在预期的是**弹卡片**，而不是输入框里多一句话。
+  document.addEventListener(PICK_ACCOUNT_EVENT, () => {
+    void openAccountPicker();
+  });
   // 认领**遗留在服务端**的待确认：没有这一步时，一条待确认只活在当前这条 SSE
   // 流里，刷新页面它就永远没人处理了——而它是一个真实写入的闸门。
   void recoverPending();
+  // 刷新页面后把"当前账号"那张卡画回来（选择活在服务端，不该因为刷新就消失）
+  void restoreSelection(state.currentConversationId);
 
   if (!state.settings.apiKey) {
     input.placeholder = "请先在「设置」中配置 DeepSeek API Key";
@@ -116,6 +139,7 @@ export function renderConversations() {
       state.conversations = state.conversations.filter((c) => c.id !== conv.id);
       if (state.currentConversationId === conv.id) {
         state.currentConversationId = null;
+        clearSelection();
         renderMessages([]);
         setChatContext();
       }
@@ -128,10 +152,58 @@ export function renderConversations() {
   }
 }
 
+/** 右下角「选择账号」/「换一个账号」：请服务端登记一次选择，然后把卡片弹窗打开。
+ *
+ *  **会话必须先生成**：`/api/agent/selection/pick` 缺 conversationId 直接 400——
+ *  一次记不住的选择是假的选择（用户选完、下一轮模型照样不知道用哪个）。
+ *  新对话里还没有会话，所以这里先建一个：它会成为用户接下来那条消息的会话，
+ *  标题也照常由第一条用户消息补上（`routes_chat._prepare_conversation`）。
+ *
+ *  ⚠️ `local: true` 是**必须的**（用户 2026-09-21 反馈第 4 条）：这是**用户主动**
+ *  发起的选择，不是 agent 卡在等待里问的。标了它，弹窗的「稍后」就只是关掉
+ *  这个窗口，**不会**在输入框上方留一条"等你拍板"的横幅——那条横幅的语义是
+ *  "有人在等你答复"，而对一次自己点开的选择，它只会让人以为哪里卡住了。
+ */
+async function openAccountPicker() {
+  if (pickingAccount) return; // 连点两下不该开出两个弹窗
+  pickingAccount = true;
+  try {
+    let conversationId = state.currentConversationId;
+    if (!conversationId) {
+      const conv = await api.createConversation();
+      conversationId = conv.id;
+      state.currentConversationId = conversationId;
+      if (!state.conversations.some((c) => c.id === conversationId)) {
+        state.conversations.unshift({ id: conversationId, title: conv.title || "新会话" });
+      }
+      renderConversations();
+      setChatContext();
+    }
+    const data = await api.pickSelection(conversationId);
+    if (!data || !data.pendingId) throw new Error("服务端没有返回待确认 id");
+    requestDecision({
+      pendingId: String(data.pendingId),
+      kind: "selection",
+      local: true,
+      question: data.question || "要用哪个账号执行？",
+      details: data.details || "",
+      timeoutS: data.timeoutS,
+      options: Array.isArray(data.options) ? data.options : [],
+    });
+  } catch (error) {
+    // 失败**必须可见**（本仓规矩）：印在用户刚才点的那个位置上，别处冒 toast 对不上因果
+    showDockError(error.message);
+  } finally {
+    pickingAccount = false;
+  }
+}
+
 async function selectConversation(id) {
   state.currentConversationId = id;
   renderConversations();
   setChatContext();
+  // 换会话 = 换上下文：右下角那张「当前账号」跟着这一轮对话走，不跟着页面走
+  void restoreSelection(id);
   const { messages } = await api.listMessages(id);
   renderMessages(messages);
 }
@@ -154,9 +226,26 @@ function renderMessages(messages) {
   }
   for (const msg of messages) {
     if (msg.role === "user") el.appendChild(userRow(msg.content, msg.createdAt));
+    // `note` = **界面事件**（用户在右下角选了账号之类），不是谁说的话。
+    // 不单独渲染的话它会掉进下面的 assistant 分支，看起来像 AKSO 说过这句话
+    // ——而模型那边收到的也确实是一条 user 消息（见 routes_chat._model_history）。
+    else if (msg.role === "note") el.appendChild(noteRow(msg.content, msg.createdAt));
     else el.appendChild(assistantRow(msg.content, msg.createdAt, null));
   }
   el.scrollTop = el.scrollHeight;
+}
+
+function noteRow(content, createdAt) {
+  const row = document.createElement("div");
+  row.className = "message-row note";
+  row.innerHTML = `
+    <div class="message-avatar note-avatar">⌘</div>
+    <div class="message-body">
+      <div class="message-meta"><span>界面操作</span>${createdAt ? `<span>${formatTime(createdAt)}</span>` : ""}</div>
+      <div class="bubble bubble-note"></div>
+    </div>`;
+  row.querySelector(".bubble-note").textContent = content;
+  return row;
 }
 
 function userRow(content, createdAt) {

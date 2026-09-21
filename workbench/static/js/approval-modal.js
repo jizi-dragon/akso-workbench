@@ -25,6 +25,19 @@
  *   就只剩"关掉弹窗"这一条路，而关掉等于**悄悄丢掉一次确认**。
  *   收成待办条既保住了"它还在"，也没替用户作答。
  *
+ *   ## 第四种形态：**让用户挑一个**（2026-09-21）
+ *
+ *   同一条实时确认通道还承载**选择**：`request.options` 非空时，弹窗不画「同意 / 拒绝」，
+ *   而是画一栅格候选卡片（`options_source="accounts"` 时就是账号中心里的账号）。
+ *   点中一张 = 答复，答复的 `value` 就是那个账号的 id。
+ *
+ *   为什么复用它而不是新开一条通道：选择与确认的**时序完全一样**——后端有一个对话循环
+ *   正卡在等待里、有一个 pendingId、有一次超时、有一条"稍后"待办。差别只在
+ *   "用户能答什么"，而那正好就是载荷里多出来的一个 `options` 字段。
+ *
+ *   选中之后卡片会**飞**到右下角收成简化版（`account-dock.js`），用户从此一眼看得到
+ *   "这轮对话在用哪个账号"，不必去翻对话——而模型那边由 `approvals._answer()` 告知同一件事。
+ *
  *   ## 与风险门那张卡的分工（别读混）
  *
  *   - `confirmation`（模型主动问）：弹窗出现时**循环正卡在等待里**，点完模型自己继续。
@@ -39,6 +52,7 @@
  */
 
 import { api } from "./api.js";
+import { dockSelection, refreshSelection } from "./account-dock.js";
 
 /** 单条待办条的最小信息量：够标题一行 + 重新打开 */
 const pending = new Map(); // pendingId → request
@@ -46,6 +60,8 @@ let queue = []; // 等待展示的请求
 let current = null; // 当前展示的
 let dialog = null;
 let strip = null;
+let pendingDock = null;
+/** 已经选好、等弹窗关掉之后再落到右下角的那一次选择（见 `advance()`）。 */
 
 function node(tag, className, text) {
   const el = document.createElement(tag);
@@ -174,6 +190,12 @@ function buildDialog() {
   const details = node("div", "tk-decision-details");
   card.appendChild(details);
 
+  // **选择型确认**（`request.options` 非空）把候选画在这里，而不是问「同意 / 拒绝」。
+  // 它不是"要不要做"，而是"用哪一个"——给一组按钮问"同意吗"是答非所问。
+  const choices = node("div", "tk-choice-grid");
+  choices.hidden = true;
+  card.appendChild(choices);
+
   const targetBlock = node("div", "tk-decision-target");
   targetBlock.hidden = true;
   targetBlock.appendChild(node("div", "tool-section-label", "将要执行的调用（同意后按这些参数执行）"));
@@ -204,7 +226,7 @@ function buildDialog() {
   box.appendChild(card);
   document.body.appendChild(box);
 
-  const ui = { box, title, badges, question, details, targetBlock, argsEl, meta, actions, state,
+  const ui = { box, title, badges, question, details, choices, targetBlock, argsEl, meta, actions, state,
                later, deny, allow };
   return ui;
 }
@@ -228,6 +250,14 @@ function ensureDialog() {
   dialog.later.addEventListener("click", deferCurrent);
   dialog.deny.addEventListener("click", () => void decide(false));
   dialog.allow.addEventListener("click", () => void decide(true));
+  // 方向键在候选卡片之间走。卡片是栅格，但**列数由 CSS 决定**（窄屏一列、宽屏两列），
+  // 所以 JS 里算不出"上一行"，只做线性首尾相接——两种排布下都不会卡住。
+  dialog.choices.addEventListener("keydown", (event) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+    if (step === undefined) return;
+    event.preventDefault();
+    moveChoiceFocus(step);
+  });
   return dialog;
 }
 
@@ -256,26 +286,130 @@ function renderCountdown(request) {
   countdownTimer = setInterval(paint, 1000);
 }
 
+/** 一张候选卡片。整张卡就是一个 `<button>`——点它 = 选中它。
+ *
+ *  结构（三栏一行的栅格，见 `chat-tools.css` 的 `.tk-choice-card`）：
+ *
+ *      [头像] 账号名                      ✓
+ *             环境名
+ *      [地址] [分组] [备注]  ← 只在有值时出现
+ *
+ *  内容全部走 `textContent`（本模块的安全基线）：候选项里可能有用户自己填的
+ *  账号备注、环境名，那些是**用户数据**，不是模板。
+ *
+ *  2026-09-21 重做（用户："弹出 UI 太丑了"）：上一版是"一列文字的堆叠 + 一个绝对
+ *  定位的『选它』"，中文键值还用了等宽字体。现在按**账号卡片**来排版——头像给
+ *  一眼可辨的形状，环境名紧跟在账号名下面（这两样是人真正在选的东西），
+ *  地址/分组/备注降级成底部的小标签。
+ */
+function choiceCard(option) {
+  const value = String(option.value ?? "");
+  const label = String(option.label || value);
+  const card = node("button", "tk-choice-card");
+  card.type = "button";
+  card.dataset.value = value;
+
+  const avatar = node("span", "tk-choice-avatar");
+  avatar.textContent = (label.trim().slice(0, 2) || "?").toUpperCase();
+
+  const main = node("span", "tk-choice-main");
+  main.appendChild(node("span", "tk-choice-label", label));
+  if (option.description) {
+    main.appendChild(node("span", "tk-choice-desc", option.description));
+  }
+
+  const mark = node("span", "tk-choice-mark", "✓");
+
+  card.appendChild(avatar);
+  card.appendChild(main);
+  card.appendChild(mark);
+
+  const meta = option.meta && typeof option.meta === "object" ? Object.entries(option.meta) : [];
+  if (meta.length) {
+    const wrap = node("span", "tk-choice-meta");
+    for (const [key, raw] of meta) {
+      const tag = node("span", "tk-choice-tag");
+      tag.appendChild(node("span", "tk-choice-tag-key", key));
+      tag.appendChild(node("span", "tk-choice-tag-value", raw));
+      wrap.appendChild(tag);
+    }
+    card.appendChild(wrap);
+  }
+  card.addEventListener("click", () => void chooseOption(card));
+  return card;
+}
+
+/** 方向键在卡片之间移动焦点。
+ *
+ *  卡片是栅格排布，但**列数由 CSS 决定**（窄屏一列、宽屏两列），所以在 JS 里算
+ *  "上一行 / 下一行"必然算错。用线性首尾相接：左右上下都是"前一个 / 后一个"，
+ *  在两种排布下都不会卡住。
+ */
+function moveChoiceFocus(step) {
+  if (!dialog) return;
+  const cards = [...dialog.choices.querySelectorAll(".tk-choice-card")];
+  if (!cards.length) return;
+  const at = cards.indexOf(document.activeElement);
+  const next = at < 0 ? 0 : (at + step + cards.length) % cards.length;
+  cards[next].focus();
+}
+
+function chooseOption(card) {
+  if (!current) return;
+  // 矩形快照必须在这里取：`decide()` 提交成功后弹窗会被关掉，
+  // 那时这张卡已经 `display:none`，量出来是 0（见 account-dock.js 的 fly）
+  const rect = card.getBoundingClientRect();
+  void decide(true, card.dataset.value || "", rect);
+}
+
 function show(request) {
   const ui = ensureDialog();
   current = request;
 
   const isConfirmation = request.kind !== "approval";
-  ui.title.textContent = isConfirmation ? "模型请求确认" : "需要你放行";
+  const options = isConfirmation && Array.isArray(request.options) ? request.options : [];
+  const isChoice = options.length > 0;
+  const isLocalChoice = isChoice && request.local === true;
+
+  ui.title.textContent = isChoice
+    ? "选择账号"
+    : (isConfirmation ? "模型请求确认" : "需要你放行");
   ui.state.hidden = true;
   ui.state.textContent = "";
   ui.actions.hidden = false;
   ui.allow.disabled = false;
   ui.deny.disabled = false;
   ui.later.disabled = false;
+  // 选择题没有"同意"这个动作：候选本身就是答案，「同意」等于没回答。
+  ui.allow.hidden = isChoice;
+  // 「都不合适」= 拒绝（可填理由），它的价值在于**把理由回给模型**——否则模型只会
+  // 一遍遍重问同样的几个候选。但**用户自己点开**的那种选择后面没有任何东西在等，
+  // 拒绝也就没有接收方，摆着只会让人以为按了会发生什么。
+  ui.deny.hidden = isLocalChoice;
+  ui.deny.textContent = isChoice ? "都不合适" : "拒绝";
+  // 同理，「稍后」对一次自己点开的选择就只是"关掉"——它不会变成待办条。
+  ui.later.textContent = isLocalChoice ? "关闭" : "稍后";
+  ui.later.title = isLocalChoice
+    ? "关掉这个窗口。右下角那张卡还在，随时可以再打开"
+    : "先收起来（不算答复）——它不会消失，会停在输入框上方";
+  // 选择题要摆一栅格卡片，460px 的默认宽度放不下（卡片会挤成一列长条）
+  ui.box.classList.toggle("is-choice", isChoice);
 
   ui.badges.replaceChildren();
   if (request.risk) ui.badges.appendChild(riskBadge(request.risk));
   if (request.tool) ui.badges.appendChild(node("span", "tk-decision-tool mono", request.tool));
 
-  ui.question.textContent = isConfirmation
-    ? (request.question || "（模型没有说明要确认什么）")
-    : (request.summary || "（平台未给出这次调用的说明）");
+  ui.question.textContent = isChoice
+    ? (request.question || "要用哪个账号继续？")
+    : (isConfirmation
+      ? (request.question || "（模型没有说明要确认什么）")
+      : (request.summary || "（平台未给出这次调用的说明）"));
+
+  ui.choices.replaceChildren();
+  ui.choices.hidden = !isChoice;
+  if (isChoice) {
+    for (const option of options) ui.choices.appendChild(choiceCard(option));
+  }
 
   ui.details.replaceChildren();
   if (isConfirmation && request.details) {
@@ -313,6 +447,11 @@ function advance() {
   current = null;
   stopCountdown();
   if (dialog && dialog.box.open) dialog.box.close();
+  // 选择落定：**弹窗关掉之后**才画右下角那张卡，动画的起点才对得上
+  // （起点矩形在 `decide()` 里、弹窗关闭之前就取好了——关掉之后原卡片量不到几何）
+  const dock = pendingDock;
+  pendingDock = null;
+  if (dock) dockSelection(dock.selection, { fromRect: dock.fromRect });
   const next = queue.shift();
   if (next) show(next);
   paintStrip();
@@ -325,7 +464,7 @@ function deferCurrent() {
   advance();
 }
 
-async function decide(approved) {
+async function decide(approved, value = "", fromRect = null) {
   if (!current) return;
   const request = current;
   const ui = dialog;
@@ -344,16 +483,34 @@ async function decide(approved) {
   ui.state.textContent = approved ? "正在同意…" : "正在拒绝…";
 
   try {
-    if (approved) await api.approvePending(request.pendingId);
+    if (approved) await api.approvePending(request.pendingId, value);
     else await api.rejectPending(request.pendingId, reason);
     // 令牌是一次性凭证，**不回填 DOM**。确认门那条路循环本来就不需要它：
     // 服务端按「工具 + 参数指纹」认领这次批准。
     ui.state.className = `tk-decision-state is-${approved ? "allowed" : "rejected"}`;
+    const chosen = value
+      ? (request.options || []).find((option) => String(option.value) === String(value))
+      : null;
     ui.state.textContent = approved
-      ? (request.kind === "approval"
-        ? "已放行 · 现在让模型重试同一次调用即可执行"
-        : "已同意 · 模型继续")
+      ? (chosen
+        ? `已选定「${chosen.label}」· 模型按它继续`
+        : (request.kind === "approval"
+          ? "已放行 · 现在让模型重试同一次调用即可执行"
+          : "已同意 · 模型继续"))
       : "已拒绝 · 模型不会执行";
+    // 选择的结果要在**弹窗关掉之后**才落到右下角：弹窗还盖着屏幕时飞过去，
+    // 用户只会看到一张卡在遮罩底下动了一下。真正的落点在 `advance()`。
+    if (approved && chosen) {
+      pendingDock = {
+        selection: {
+          value: String(chosen.value ?? value),
+          label: chosen.label || String(value),
+          description: chosen.description || "",
+          meta: chosen.meta || {},
+        },
+        fromRect,
+      };
+    }
     pending.delete(request.pendingId);
     // 重入保护：SSE 的 `confirm_resolved` 可能在这 900ms 内也收口一次并同样
     // 排队 advance；两次都放行会把**下一条**待确认直接跳过去。
@@ -420,11 +577,18 @@ function paintStrip() {
 /* ———————————————— 对外接口 ———————————————— */
 
 /** 请求一次决定：`request` 形如
- *  `{pendingId, kind, tool, risk, question?, details?, timeoutS?, target?, summary?, args?}` */
+ *  `{pendingId, kind, local?, tool, risk, question?, details?, timeoutS?, target?,
+ *    summary?, args?, options?}`
+ *
+ *  `local: true` = **用户自己点开的选择**（右下角那张卡），不是 agent 卡在等待里问的。 */
 export function requestDecision(request) {
   if (!request || !request.pendingId) return;
   if (pending.has(request.pendingId)) return; // 重放（SSE 重连）不重复弹
-  pending.set(request.pendingId, request);
+  // **用户主动发起的选择不进待办条**。`pending` 的语义是"有人在等你答复"——它是
+  // 「稍后」的落点，会在输入框上方留一条横幅。而一次自己点开的选择背后**没有任何
+  // 东西在等**：塞进去之后，用户点「关闭」反而多出一条"等你拍板"的横幅，而他只是
+  // 把窗口关了（2026-09-21 用户反馈第 4 条："这是用户主动选择，不是 agent 发起"）。
+  if (!request.local) pending.set(request.pendingId, request);
   if (current) queue.push(request);
   else show(request);
   paintStrip();
@@ -448,9 +612,18 @@ export function settleDecision(pendingId, verdict = {}) {
     ui.state.hidden = false;
     if (verdict.approved) {
       ui.state.className = "tk-decision-state is-allowed";
-      ui.state.textContent = current.kind === "approval"
-        ? "已放行 · 现在让模型重试同一次调用即可执行"
-        : "已同意 · 模型继续";
+      const wasChoice = Array.isArray(current.options) && current.options.length > 0;
+      ui.state.textContent = wasChoice
+        ? "已选定 · 模型按它继续"
+        : (current.kind === "approval"
+          ? "已放行 · 现在让模型重试同一次调用即可执行"
+          : "已同意 · 模型继续");
+      if (wasChoice) {
+        // 答复**不是本页做出的**（比如在另一个标签页点了卡片）：本页手里没有那个 value，
+        // 但服务端有权威记录。拉回来把右下角那张卡补上——否则会出现"模型按 A 干活、
+        // 本页右下角还写着 B（或者什么都没有）"，而两边不一致比不显示更糟。
+        void refreshSelection();
+      }
     } else if (verdict.expired) {
       ui.state.className = "tk-decision-state is-stale";
       ui.state.textContent = "超时未答复 · 已按未同意处理（没有产生任何批准）";

@@ -851,3 +851,451 @@ dialog.tk-decision {
   color: var(--text-2);
   overflow-wrap: anywhere;
 }
+
+/* ============================================================
+   选择型确认：候选卡片栅格 + 右下角「当前账号」停靠卡
+   ------------------------------------------------------------
+   用户 2026-09-21：「希望将选择变为选择卡片式的，成功选择卡片后，
+   卡片 UI 则经过移动动画，变成简化版，显示在右下角。」
+   这里只有观感；**行为**在 js/approval-modal.js（栅格与提交）与
+   js/account-dock.js（停靠卡与飞行）里。
+   ============================================================ */
+/* 选择题的弹窗要宽一些：候选卡是两列栅格，460px 会被挤成一列长条，
+   用户反而看不清"有哪几个可选" */
+dialog.tk-dialog.is-choice {
+  max-width: min(720px, calc(100vw - 48px));
+}
+
+.tk-choice-grid {
+  display: grid;
+  /* 260px 起步：账号名 + 环境名 + 一排标签要放得下，否则会挤成两行碎字 */
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+  margin: 4px 0 2px;
+  /* 候选多时自己滚，**不把弹窗撑到屏幕外**——按钮必须一直看得见，
+     否则用户选完没法确认（或以为界面卡住了） */
+  max-height: min(50vh, 440px);
+  overflow-y: auto;
+  padding: 2px; /* 给 focus 轮廓留位置，不然会被 overflow 裁掉 */
+}
+
+/* 一张账号卡：三栏一行（头像 / 账号名+环境名 / 选中勾），底下一条标签带。
+   2026-09-21 重做（用户："弹出 UI 太丑了"）——上一版是一列文字堆叠 +
+   绝对定位的「选它」，中文键值还用了等宽字体，看着像调试输出。 */
+.tk-choice-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "avatar main mark"
+    "meta   meta meta";
+  align-items: center;
+  gap: 6px 12px;
+  padding: 12px 14px;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s var(--ease-out), box-shadow 0.16s var(--ease-out),
+    transform 0.16s var(--ease-out), background 0.16s var(--ease-out);
+}
+
+.tk-choice-card:hover {
+  border-color: var(--teal);
+  /* 品牌色淡染 + 一点点抬升：悬停时这张卡才"变成可点的" */
+  background: linear-gradient(var(--teal-dim), var(--teal-dim)), var(--ink-2);
+  box-shadow: 0 6px 18px rgba(7, 108, 224, 0.14);
+  transform: translateY(-1px);
+}
+
+.tk-choice-card:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.tk-choice-card:active {
+  transform: translateY(0);
+}
+
+.tk-choice-avatar {
+  grid-area: avatar;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--teal-dim);
+  color: var(--teal-strong);
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.tk-choice-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tk-choice-label {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tk-choice-desc {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tk-choice-mark {
+  grid-area: mark;
+  color: var(--teal);
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0;
+  transform: scale(0.7);
+  transition: opacity 0.16s var(--ease-out), transform 0.16s var(--ease-out);
+}
+
+.tk-choice-card:hover .tk-choice-mark,
+.tk-choice-card:focus-visible .tk-choice-mark {
+  opacity: 1;
+  transform: none;
+}
+
+.tk-choice-meta {
+  grid-area: meta;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* 地址 / 分组 / 备注降级成小标签：它们是**佐证**，不是选择依据——
+   真正在选的是上面那两行（账号名、环境名）。 */
+.tk-choice-tag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 8px;
+  background: var(--ink-1);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.tk-choice-tag-key {
+  flex: none;
+  color: var(--text-3);
+}
+
+.tk-choice-tag-value {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ 右下角停靠卡 */
+
+.account-dock {
+  position: fixed;
+  right: 22px;
+  /* ⚠️ **不是视口底部**，而是"输入区上方"。写死 `bottom: 22px` 会让卡片压在
+     输入框上（2026-09-21 用户反馈第 1 条）。这个变量由 `account-dock.js` 的
+     `keepClearOfComposer()` 按输入区**实际高度**写进来——输入区高度是变的
+     （textarea 随内容长高、提示条出现/消失），所以不能用常量。 */
+  bottom: var(--dock-bottom, 96px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  /* 容器不吃事件：它是个定位壳，不该挡住底下的对话内容 */
+  pointer-events: none;
+}
+
+.account-dock > * {
+  pointer-events: auto;
+}
+
+/* 默认态：还没选账号。**常驻可见**（用户要求"默认开放"）——虚线边框是刻意的：
+   它读起来像"这里可以填"，而不是"这是一条已有的事实"。 */
+.account-invite {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px 9px 9px;
+  background: var(--ink-2);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-l);
+  box-shadow: 0 6px 20px rgba(23, 43, 77, 0.08);
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s var(--ease-out), transform 0.18s var(--ease-out),
+    box-shadow 0.18s var(--ease-out);
+}
+
+.account-invite:hover {
+  border-style: solid;
+  border-color: var(--teal);
+  transform: translateY(-1px);
+  box-shadow: 0 12px 30px rgba(23, 43, 77, 0.16);
+}
+
+.account-invite:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.account-invite-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--teal-dim);
+  color: var(--teal-strong);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.account-invite-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.account-invite-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.account-invite-sub {
+  font-size: 11px;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+/* 选择失败时就地报警（失败必须可见），几秒后自己收回默认文案。
+   用琥珀而不是红：账号中心里没账号、会话没建起来，都是"去处理一下"而不是"出故障了"。 */
+.account-dock.has-error .account-invite {
+  border-style: solid;
+  border-color: var(--amber);
+  background: var(--amber-dim);
+}
+
+.account-dock.has-error .account-invite-icon {
+  background: rgba(217, 119, 6, 0.16);
+  color: var(--amber);
+}
+
+.account-dock.has-error .account-invite-title {
+  color: var(--amber);
+}
+
+.account-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 264px;
+  padding: 8px 12px 8px 8px;
+  background: var(--ink-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-panel);
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out);
+}
+
+.account-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 30px rgba(23, 43, 77, 0.16);
+}
+
+.account-chip:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.account-chip-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--teal-dim);
+  color: var(--teal-strong);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.account-chip-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.account-chip-label {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-chip-env {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-chip-caret {
+  color: var(--text-3);
+  transition: transform 0.18s var(--ease-out);
+}
+
+.account-dock.is-open .account-chip-caret {
+  transform: rotate(90deg);
+}
+
+/* 落定那一瞬间的一圈回执：告诉用户"就是这个，已经生效了"。
+   只播一次，之后静止——常驻动画会变成噪声。 */
+.account-dock.just-docked .account-chip::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border: 1px solid var(--teal);
+  border-radius: inherit;
+  pointer-events: none;
+  animation: account-ring 900ms var(--ease-out) forwards;
+}
+
+@keyframes account-ring {
+  from {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.16);
+  }
+}
+
+.account-panel {
+  /* 展开方向：**向上**。容器锚在底部（`bottom`），这条 `order` 让面板排到
+     卡片上面去——否则它会顶在最底下、把锚点连同输入区一起压住。 */
+  order: -1;
+  width: 264px;
+  padding: 12px 14px;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-panel);
+  animation: account-panel-in 0.18s var(--ease-out);
+}
+
+@keyframes account-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.account-panel-head {
+  margin-bottom: 8px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: var(--text-2);
+}
+
+.account-panel-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0 0 12px;
+}
+
+.account-panel-key {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.account-panel-value {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.account-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+  .account-dock {
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .account-chip,
+  .account-panel {
+    max-width: 210px;
+  }
+
+  .account-panel {
+    width: 210px;
+  }
+}
+
+/* 关掉动画的人仍然要**立刻**看到正确的结果：全部改成零时长，
+   而不是"不播动画所以看不见" */
+@media (prefers-reduced-motion: reduce) {
+  .tk-choice-card,
+  .tk-choice-mark,
+  .account-chip,
+  .account-invite,
+  .account-chip-caret {
+    transition: none;
+  }
+
+  .account-panel {
+    animation: none;
+  }
+
+  .account-dock.just-docked .account-chip::after {
+    animation: none;
+    opacity: 0;
+  }
+}

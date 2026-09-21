@@ -80,7 +80,15 @@ function state() {
   const busy = S.phase === 'checking' || S.phase === 'downloading';
   return {
     supported: S.supported,
+    // ⚠️ `autoUpdate` 与 `supported` **不是一回事**，别合并：
+    //   · autoUpdate=false → 用户把自动更新关了（本机现状，phase 停在 idle）；
+    //   · supported=false  → 这一份进程没法更新（开发态 / 未打包）。
+    // 界面只靠 phase 分不出"关掉了"和"还没检查"——两者的 phase 都是 idle，
+    // 于是角标一直写「未检查更新」，用户点一下才被告知"已关闭"（2026-09-21 实测）。
+    // 把它作为**独立字段**发出去，界面就不必去猜 message 里的中文。
+    autoUpdate: AUTO_UPDATE_ENABLED,
     phase: S.phase,
+    // 壳给的 label 是权威口径（Python 那侧有一份同名映射，别再重算一遍）
     label: PHASE_LABEL[S.phase] || S.phase,
     currentVersion: S.currentVersion,
     availableVersion: S.availableVersion,

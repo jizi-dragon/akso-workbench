@@ -39,7 +39,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import db
-from ..approvals import pending_store
+from ..approvals import current_selection, option_provider, pending_store
 from ..plugin_api import Risk, ToolContext, ToolStatus, get_hub
 
 logger = logging.getLogger("workbench.agent")
@@ -55,6 +55,31 @@ class InvokeIn(BaseModel):
 
 class RejectIn(BaseModel):
     reason: str = Field("", description="拒绝理由（会回给模型，让它别再试）")
+
+
+class ApproveIn(BaseModel):
+    """放行时提交的答复。
+
+    `value` 只对**选择型确认**有意义（那条待确认带 `options`）——它是用户在卡片上
+    点中的那一项的 value。普通确认不带它，带了也会被忽略（`approvals.approve` 里有留痕）。
+
+    ⚠️ 逐字段显式建模是硬要求：`BaseModel` **默认忽略多余字段**，漏一个字段就是
+    **静默失效**（AGENTS.md 规则 21，`AccountPatch` 漏 `box` 是已发生事故）。
+    """
+
+    value: str = Field("", description="选择型确认里用户点中的那一项（普通确认留空）")
+
+
+class PickIn(BaseModel):
+    """界面发起「挑一个账号」时的入参。
+
+    只有会话 id（挂靠）+ 可选的问题文案——**候选项不由调用方给**：它们由服务端
+    按账号表展开。让前端（或模型）把候选传进来，等于把"卡片上写着哪个账号"这件事
+    交给一个会漂的来源，而卡片上的 `value` 是要当参数用下去的。
+    """
+
+    conversationId: str = Field("", description="这次选择属于哪个会话（空 = 拒绝）")
+    question: str = Field("", description="弹窗上问什么，留空用默认文案")
 
 
 # ---------------------------------------------------------------- 目录
@@ -188,20 +213,84 @@ def pending_detail(pending_id: str) -> dict:
 
 
 @router.post("/pending/{pending_id}/approve")
-def approve_pending(pending_id: str) -> dict:
+def approve_pending(pending_id: str, body: ApproveIn | None = None) -> dict:
     """放行：返回**一次性令牌**，由调用方原样带回去重投那次调用。
 
     令牌不写进审计、不进日志、不回给模型——只回给这次 HTTP 响应。
+
+    `value` 只对**选择型确认**（待确认里带 `options`）有意义：它是用户在卡片上点中的
+    那一项。**没有 `value` 就放行不了**——"同意"一个选择题等于什么都没答，
+    与其让模型拿着空答复继续，不如让用户再点一次（`approvals.approve` 里做的校验）。
     """
-    item = pending_store().approve(pending_id)
+    item = pending_store().approve(pending_id, value=(body.value if body else "") or "")
     if item is None:
-        raise HTTPException(409, "该操作不可放行（不存在 / 已决策 / 已过期）")
+        raise HTTPException(
+            409,
+            "该操作不可放行（不存在 / 已决策 / 已过期），"
+            "或者它是一次「选择题」而提交的选项不在候选项里",
+        )
     return {
         "pendingId": item.id,
         "approvalToken": item.token,
         "expiresInMs": max(0, item.token_expires_at - item.created_at),
         "summary": item.summary,
+        "decidedValue": item.decided_value,
         "retry": "带 approvalToken 重投 POST /api/agent/invoke（或在对话里让模型重试同一次调用）",
+    }
+
+
+@router.get("/selection")
+def get_selection(conversationId: str = "") -> dict:
+    """这个会话当前选中的账号 / 环境（用户在弹窗卡片上点的那个）。
+
+    界面刷新后用 `conversationId` 问一次，把右下角那张卡片画回来。
+    **空 `conversationId` 直接返回 None**，而不是"最近一次选择"——那会让 A 会话
+    显示出 B 会话选的账号，比不显示更糟。
+    """
+    if not conversationId:
+        return {"selection": None}
+    return {"selection": current_selection(conversationId)}
+
+
+@router.post("/selection/pick")
+def pick_selection(body: PickIn) -> dict:
+    """**界面发起**的"挑一个账号"：右下角那张卡的默认入口（2026-09-21 用户要求）。
+
+    > 「在右下角选择卡片的位置，默认开放。意思是用户进入新对话时，就可以立即选择账号。」
+
+    它和模型发起的那条（`request_user_confirmation` + `options_source`）**共用同一张
+    待确认表**：候选项同样由服务端按账号表展开、`value` 同样要在候选里、批准路径
+    一行不差。区别只有一个——**没有对话循环在等它**（用户还没开口），所以批准之后
+    由服务端往会话里补一条 note，让模型下一轮知道用哪个账号。
+
+    没有会话 id 时**拒绝**：一次记不住的"选择"是假的选择——用户选完发现下一轮
+    模型还在问，会以为界面坏了。
+    """
+    conversation_id = str(body.conversationId or "").strip()
+    if not conversation_id:
+        raise HTTPException(400, "缺少 conversationId：界面发起的选账号必须挂在某个会话上，"
+                                 "否则下一次对话读不到它")
+    try:
+        options = option_provider("accounts")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not options:
+        raise HTTPException(400, "账号中心里还没有账号——先去「账号中心」加一个，再回来选")
+
+    spec = next((t for t in get_hub().specs() if t.name == CONFIRM_TOOL), None)
+    if spec is None:
+        raise HTTPException(500, f"工具 {CONFIRM_TOOL} 不在运行期中枢里")
+
+    question = str(body.question or "").strip() or "要用哪个账号执行？"
+    pending_id = pending_store().request_selection(spec, options, conversation_id, question)
+    return {
+        "pendingId": pending_id,
+        "kind": "selection",
+        "question": question,
+        "details": "选定的账号会成为这次对话的默认执行账号。",
+        # 不设超时：没有循环在等它，用户什么时候点都算数
+        "timeoutS": 0,
+        "options": options,
     }
 
 
@@ -294,3 +383,10 @@ REQUIRED_TOOLS = (
     "accounts_login",
     "accounts_browser_open",
 )
+
+#: 模型主动请求确认的那个工具（声明在 `plugins/builtins.py`）。
+#:
+#: 界面发起的"挑一个账号"（`POST /selection/pick`）要借它的 `ToolSpec`：待确认表是按
+#: spec 建的（工具名 / 插件 / 风险 / 摘要），借同一个 spec 也就**顺带复用了同一套批准
+#: 路径与 `value` 校验**——换个入口就松开校验，才是真正危险的做法。
+CONFIRM_TOOL = "request_user_confirmation"

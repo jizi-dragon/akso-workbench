@@ -90,6 +90,15 @@ class ConfirmationArgs(BaseModel):
     timeout_s: float = pa.Arg(
         "可选：等用户答复的秒数（默认 300，上限 1800）", default=0
     )
+    options_source: str = pa.Arg(
+        "可选：**让服务端生成候选项**，界面会把它们画成一张张可点的卡片"
+        "（而不是「同意 / 拒绝」）。目前只支持 `accounts` = 账号中心里的账号，"
+        "卡片上带账号 / 环境 / 环境地址 / 状态，用户点哪张、那张的账号就是答复。"
+        "用户不确定用哪个账号、或者你需要在多个环境之间选一个时用它。"
+        "注意：**不要自己编候选项**（服务端按真表生成）；也**不要**和 target_tool 同时填"
+        "——选哪一个是用户点完才知道的，没法提前写进 target_args",
+        default="",
+    )
 
 
 async def get_current_time(_: BaseModel, ctx: pa.ToolContext) -> str:
@@ -254,6 +263,8 @@ def confirmation_payload(args: ConfirmationArgs) -> dict[str, Any]:
     if args.target_tool:
         payload["targetTool"] = args.target_tool
         payload["targetArgs"] = dict(args.target_args or {})
+    if args.options_source:
+        payload["optionsSource"] = args.options_source
     if args.timeout_s:
         payload["timeoutS"] = args.timeout_s
     return payload
@@ -316,12 +327,16 @@ PLUGIN = pa.Plugin(
             name="request_user_confirmation",
             description=(
                 "【高风险任务前置】在执行敏感、不可逆或会影响真实平台的操作**之前**，"
-                "先向用户弹确认框并**等待他当场答复**（同意 / 拒绝）。"
+                "先向用户弹确认框并**等待他当场答复**（同意 / 拒绝），"
+                "也可以用来**让用户在卡片上挑一个账号 / 环境**。"
                 "适用场景：批量提交 / 删除 / 发布、修改账号或权限、提交表单、"
-                "对生产环境生效的任何写入、以及用户没说清但后果较大的动作。"
-                "用法：把将要执行的那次调用写进 target_tool + target_args，"
+                "对生产环境生效的任何写入、用户没说清但后果较大的动作，"
+                "以及**需要用户在多个账号或环境之间选一个**的时候（用 options_source）。"
+                "用法：① 确认——把将要执行的那次调用写进 target_tool + target_args，"
                 "用户同意后**直接调用 target_tool**（参数必须完全一致）即可执行，"
                 "不会再被问第二遍；用户拒绝或超时就**不要执行**，也不要绕过。"
+                "② 选择——填 options_source（如 `accounts`），用户点中的那张卡片的"
+                "值就是答复；**拿到答复后就用它继续**，不要为同一件事再问一遍。"
                 "注意：本工具买的是「先问再做」，**不能**用它代替风险门——"
                 "write/dangerous 工具自己仍会走确认门，两者互补"
             ),
