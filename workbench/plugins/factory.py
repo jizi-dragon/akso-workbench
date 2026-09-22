@@ -456,7 +456,11 @@ PLUGIN = pa.Plugin(
             handler=resolve_object,
             risk=pa.Risk.READ,
             timeout_s=60,
-            audit_extra=pa.audit_env_key("account_id"),
+            # 维度里必须带 `query`：本工具的**全部意义**就是"模型问的是哪个对象"，
+            # 而它原来的维度只有 account_id ⇒ 事后复盘时审计里查不到查了什么，
+            # 只能翻 L0 日志里的 httpx URL 反推（2026-09-22 复盘 `测试09-04` 那次实测踩到）。
+            # 纯增留痕，不改行为。`audit_extra` 的口径见 plugin_api.ToolSpec.audit_extra。
+            audit_extra=pa.audit_env_key("account_id", "query"),
         ),
         pa.ToolSpec(
             name="factory_create",
