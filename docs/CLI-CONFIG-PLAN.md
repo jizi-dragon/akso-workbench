@@ -248,7 +248,8 @@ gws doctor                                # ⚠️ 只能当信息：它的退�
 | **C3** | **合回 main 的时机** | ① M2 出结论就合（把适配层与探针先落地）② 等 M3/M4 一起合 | 决定 main 多快能拿到"适配层 + 探针"这两个**不依赖结论**的资产 |
 | **C4** | **main 上的配置工厂**在改造完成后怎么处置 | ① 冻结保留 ② 随改造逐步下线 ③ 长期并存（两条路互为备份） | 决定 `writers/` 那 13 文件 2,353 行的去向 |
 | **C5** | **`migration` 三跳要不要接成 Agent 工具**（M5） | ① 现在就接（`export`/`import` = `write`，`deploy` = **`dangerous`** 且过确认门）② 等 M3 结论 | `deploy` 是本项目**唯一一个把配置真正推上平台的动词**，接成工具前要有确认卡文案与人工清单 |
-| **C6** ★ | **要不要做一次"真机写入"来定案 M3**（见 §10.3） | ① 做（在 `标准验证环境` 上找一个**已有布局**，把它的实例原样 `save` 回去，`operation_type=20 修改`；改前先导出配置包做回滚点）② 先不做，接受 M3 停在"投影差异 vs 模型差异未分辨" | **这是唯一能把判定从"分诊标签"变成"证明"的动作**（§5 的原话）。风险：平台的 `save` 是**整份提交**语义，写错会改掉那个布局 |
+| **C6** ★ | **要不要做一次"真机写入"来定案 M3**（见 §10.3 / §11.4） | ① 做（在 `标准验证环境` 上找一个**已有布局**，把它的实例原样 `save` 回去，`operation_type=20 修改`；改前先导出配置包做回滚点）② 先不做，接受 M3 停在"写体形状未分辨" | **读侧已经能定的都定了**（§11 元素层、§12 `AK*` 词表）；剩下**唯一**读不出来的就是写体的键名与 `attrs` 是对象还是字符串 |
+| **C7** ★ | **`AK_BY_DATA_TYPE` 要不要改成"默认值 + 蓝图可覆盖"**（见 §12.3 结论 1） | ① 改（蓝图新增一个可选控件类型位；工厂那张纯查表在语义上不成立）② 先只补全 19 个值、保持纯查表（**会让 `dataType=1/3/4/17` 的字段只能建成一种控件**） | 这是**工厂现有实现的接口形状问题**，不是新通道独有——但新通道的真机数据第一次把它证出来了 |
 
 ---
 
@@ -387,3 +388,55 @@ gws doctor                                # ⚠️ 只能当信息：它的退�
 上面全部是**读侧**证据。仍然只有一件事读不出来：**`component instance save` 到底收什么形状的写体**
 ——`instances[]` 里的键是 camelCase 还是 snake_case、`attrs` 是对象还是字符串、子组件是不是要分开 save。
 **写侧的读取接口给不出答案**（`select_columns` 传 `controls` 会报列不存在，见缺陷 ⑱）。
+
+---
+
+## 12. ★★ `AK*` 词表：**工厂 D-D 卡的核心未知，读侧补全了**
+
+> 2026-09-22 第三轮真机（token 续期后）。**全部只读**：
+> `layout_control.field_id` ←→ `metadata object fields <code>.fields[].field_id`，
+> 取 `field_type` 当 dataType（⚠️ 字段表用的是 `field_id`/`field_type`，**不是** `id`/`dataType` —— 按后者连，8 个对象全部连出 0 条）。
+
+### 12.1 先纠一个我自己的错判
+
+§11.3 我写过"component 模型里控件通过 `field_id` 关联字段，**那张 `AK*` 表可能整个不需要了**"。
+**这条是错的**：`layout_control.type` 的 14062 行里，取值**全是 `AK*`**（外加 3 个 `ComponentType_*`）：
+
+- **19 个不同取值**（工厂真机只录到 **7** 个，且那 7 个是这 19 个的**真子集**）
+- 高频：`AKInput` 6133 / `AKSelectorObject` 2476 / `AKDateTime` 1892 / `AKSelectorSingle` 1422 / `AKTextArea` 731
+- 低频（工厂从没见过）：`AKRadio` 148 / `AKCheckBox` 53 / `AKRichTextEditor` 25 / `AKSelectorMulti` 23 /
+  `AKSelectorObjectMulti` 22 / `AKSwitchRadio` 348 / `AKDepartmentGroupPositionSelector` 2 / `AKSelectorDocumentType` 1
+
+⇒ **`AK*` 是这套模型的一等词汇，那张表仍然要建** —— 但**不用再"不许外推"了**，样本从 7 个变成 19 个。
+
+### 12.2 连出来的 `dataType → AK*`（**12 个 dataType / 14 个 type**）
+
+| dataType | 出现过的 type（次数） | 映射 |
+|---|---|---|
+| **1**（单行文本） | `AKInput`×85 · `AKTextArea`×59 | ⚠️ **一对多** |
+| **2**（数字） | `AKInputNumber`×4 | ✅ 唯一 |
+| **3**（是否） | `AKSwitchRadio`×54 · `AKSelectorYesNo`×29 | ⚠️ 一对多 |
+| **4**（单选） | `AKRadio`×35 · `AKSelectorSingle`×20 · `AKCheckBox`×7 · `AKSelectorMulti`×2 | ⚠️ **一对四** |
+| **5 / 7**（日期 / 日期时间） | `AKDateTime` | ✅ |
+| **8**（附件） | `AKAttachment` | ✅ |
+| **14**（引用？） | `AKSelectorObject`×3 | ✅ |
+| **15**（引用） | `AKSelectorObject`×28 | ✅ |
+| **17**（长文本） | `AKTextArea`×10 · `AKInput`×1 | ⚠️ 一对多 |
+| **18**（富文本） | `AKRichTextEditor`×1 | ✅ |
+| **23** | `AKSelectorObjectMulti`×6 | ✅ |
+
+### 12.3 三条结论（其中第一条推翻工厂现有实现的**前提**）
+
+1. 🔴 **`dataType → AK*` 不是函数**：同一个 `dataType=1` 的字段，用户可以给它 `AKInput`（单行）
+   或 `AKTextArea`（多行）；`dataType=4` 甚至有 4 种可选控件。
+   ⇒ 工厂 `writers/layouts.py` 里那张 `AK_BY_DATA_TYPE` **"纯查表"在语义上就不成立** ——
+   它必须是「**默认值 + 蓝图可覆盖**」。这不是命名问题，是**接口形状**问题
+   （蓝图需要新增一个可选的控件类型位）。
+2. ✅ **D-D 里"仍缺 `13/14/17/18/23`，不许外推"的 5 个，读侧补齐 4 个**
+   （14→`AKSelectorObject`、17→`AKTextArea`(默认)、18→`AKRichTextEditor`、23→`AKSelectorObjectMulti`；
+   13 本次未出现）。样本来源是**平台自己的存量数据**，比"从 25 份录制里数"强得多。
+3. ✅ **工厂录到的 7 个 type 全部落在这 14 个里** —— 又一次印证"同一套模型"。
+
+> ⚠️ **仍未定**：`ComponentType_Menu` / `ComponentType_MenuGroup` /
+> `ComponentType_AKSelectorMultiObjectList` 这 3 个取值**不属于字段控件**（各 1 条），
+> 说明 `layout_control` 表里混进了非字段组件。写侧要处理这一族。
