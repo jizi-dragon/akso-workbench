@@ -495,10 +495,18 @@ gws doctor                                # ⚠️ 只能当信息：它的退�
 **这两种情况的结论完全不同**：① 则整条链路可迁移；② 则**必须保留工厂的字段写入器**，
 `component` 只能接管对象/布局——那是一次**混合改造**，不是替换。
 
-判据（已就绪，只读，一次跑完）：
+判据（已就绪，只读，**指定候选**——别跑默认的 650 个，见下）：
 
 ```powershell
-.\.venv\Scripts\python.exe tools\probe_gws.py --discover-types --skip-compare --max-types 0
+.\.venv\Scripts\python.exe tools\probe_gws.py --discover-types `
+    --discover-candidates "object_field,object_fields,object_attr,field,basic_object_field" `
+    --skip-compare --max-types 0
 ```
 
 它会报「**探测到但未声明**」有哪些 —— `object_field` 在不在里面，就是答案。
+
+> ⚠️ **磁盘代价（先说清）**：CLI 把**整份响应体**写进 `~/.gws/logs/`（缺陷 ⑯）。
+> 实测 **≈3 MB / 次调用**（300 MB / 99 行），而 `list layout_control` 那种（14062 行）单次几十 MB。
+> 默认候选是「47 类 × 14 后缀 + 5 个裸 token」≈ 650 个 ⇒ **可能吃掉数 GB**。
+> 所以 `--discover-candidates` 不是可选优化，**是默认该用的姿势**。
+> （C 盘当前 48 GB 可用，不至于立刻撑爆，但 `log.max_days=3` 会让它累积。）

@@ -283,10 +283,17 @@ def probe(args: argparse.Namespace) -> int:
         rep.h("S1b · 组件类型**探测**（`metadata list` 的 47 条不完整，见 §11.1）")
         rep.p("> 实测：`layout_section` / `layout_control` / `lifecycle_status` 都是**有效类型却不在表里**，")
         rep.p("> 而它们恰恰是承重的（布局的内容本体、生命周期的状态）。")
-        rep.p("> ⚠️ 每个候选一次只读调用，默认候选约 650 次，**慢且会在平台上留请求日志**。")
+        rep.p("> ⚠️ **先把磁盘代价算清**：CLI 会把**整份响应体**写进 `~/.gws/logs/`（缺陷 ⑯），")
+        rep.p("> 实测 **≈3 MB / 次调用**，而 `list layout_control` 那种（14062 行）单次几十 MB。")
+        rep.p("> ⇒ 默认候选约 650 个，**可能吃掉数 GB**。要精确问某几个名字，用 "
+               "`--discover-candidates object_field,object_fields`。")
+        explicit = [c.strip() for c in args.discover_candidates.split(",") if c.strip()]
+        if explicit:
+            rep.p(f"- 本次**只探测指定的 {len(explicit)} 个**：`{explicit}`")
         try:
             result = client.discover_component_types(
-                on_progress=(lambda name: print(f"  探测 {name} …", flush=True)) if args.verbose else None
+                candidates=explicit or None,
+                on_progress=(lambda name: print(f"  探测 {name} …", flush=True)) if args.verbose else None,
             )
         except GwsError as exc:
             rep.p(f"- ❌ 探测失败：`{exc}`")
@@ -450,7 +457,12 @@ def main() -> int:
     parser.add_argument("--max-types", type=int, default=30, help="最多枚举多少个组件类型的实例")
     parser.add_argument(
         "--discover-types", action="store_true",
-        help="★ 探测未声明的组件类型（metadata list 只有 47 条，实际更多；每候选一次只读调用，慢）",
+        help="★ 探测未声明的组件类型（metadata list 只有 47 条，实际更多；每候选一次只读调用，慢且写日志）",
+    )
+    parser.add_argument(
+        "--discover-candidates", default="",
+        help="只探测这几个名字（逗号分隔）。**强烈建议用它**——默认候选约 650 个，"
+             "按实测 ≈3 MB/次 的日志量可能吃掉数 GB 磁盘",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="打印探测进度")
     parser.add_argument("--skip-compare", action="store_true", help="跳过与历史录制数据的对照")
