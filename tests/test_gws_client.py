@@ -23,6 +23,10 @@ from pathlib import Path
 import pytest
 
 from workbench.services.gws import (
+    MIGRATION_WRITE_VERBS,
+    OP_CREATE,
+    OP_OVERWRITE,
+    READ_ONLY_VERBS,
     GwsBinaryNotFound,
     GwsClient,
     GwsConfig,
@@ -33,7 +37,7 @@ from workbench.services.gws import (
     GwsTimeout,
     resolve_binary,
 )
-from workbench.services.gws.client import _ENV_ALLOWLIST, OP_CREATE, OP_OVERWRITE
+from workbench.services.gws.client import _ENV_ALLOWLIST
 
 FAKE_CLI = '''\
 """假 gws CLI：行为由同目录的 scenario.json 决定，每次调用追加一行 invocations.jsonl。
@@ -176,6 +180,45 @@ def test_process_exit_zero_does_not_mean_success(fake):
     """
     make, _, scenario = fake
     scenario(mode="ok", exit=0, stdout='{"code":500,"message":"组件[listlayout]的Code字段不能为空"}')
+    with pytest.raises(GwsPlatformError):
+        make().run_readonly("config", "show")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        # component instance show 的真实响应（2026-09-22 真机抓到）
+        '{"id":"3a23","code":"change_hdh_mgt_base_layout__ak","name":"默认布局","status":1}',
+        # 实例里的 code 恰好是数字 0 的情形（领域对象，不是信封）
+        '{"id":"x","code":0,"name":"某个编码为 0 的对象"}',
+        # 纯数组
+        '[{"code":"a"}]',
+    ],
+)
+def test_a_bare_object_with_its_own_code_field_is_not_an_envelope(fake, payload):
+    """★ 回归：**裸实例自带 `code` 字段**，不许被误判成平台信封。
+
+    2026-09-22 真机实测踩到：`component instance show` 回的实例里有
+    `"code": "change_hdh_mgt_base_layout__ak"`（布局编码），而当时的 `_unwrap`
+    只看"有没有 code 键" ⇒ 把一份**完全正常的响应**报成
+    「平台拒绝：… code=change_hdh_mgt_base_layout__ak」。
+
+    形态与本仓 PITFALLS 那一族一模一样：**不抛异常，看起来像"平台拒了"**——
+    而真凶是适配层自己。
+    """
+    make, _, scenario = fake
+    scenario(mode="ok", stdout=payload)
+    data = make().run_readonly("config", "show")
+    assert data is not None, "裸对象被当成信封拆掉了"
+
+
+def test_an_envelope_with_only_a_nonzero_code_is_still_a_failure(fake):
+    """fail-closed 方向：`{code: 500}` 没有 message/data，**仍然当失败抛**。
+
+    宁可把"形状奇怪的错误"当失败，也不要把失败当数据静默交给调用方。
+    """
+    make, _, scenario = fake
+    scenario(mode="ok", stdout='{"code":500}')
     with pytest.raises(GwsPlatformError):
         make().run_readonly("config", "show")
 
@@ -362,6 +405,44 @@ def test_resolve_binary_honours_env_override(tmp_path: Path, monkeypatch):
     assert resolve_binary() == fake_exe
 
 
+def test_config_from_env_reads_our_own_namespace(monkeypatch):
+    """凭据走 `WORKBENCH_GWS_*`，**不读** gws 认的 `HOST`/`APP_ID`/`APP_SECRET`。
+
+    理由就是约束 ②：`HOST` 这种名字太通用，宿主机上任何一个同名变量都会串味。
+    这里连"我们确实没读它们"也一并钉住——否则哪天有人图省事改成读 `HOST`，
+    行为会在**别人的机器上**才出问题。
+    """
+    monkeypatch.setenv("WORKBENCH_GWS_SERVICE", "https://right.example")
+    monkeypatch.setenv("WORKBENCH_GWS_APP_ID", "our-id")
+    monkeypatch.setenv("WORKBENCH_GWS_APP_SECRET", "our-secret")
+    monkeypatch.setenv("HOST", "https://wrong.example")
+    monkeypatch.setenv("APP_ID", "wrong-id")
+    cfg = GwsConfig.from_env()
+    assert cfg.service == "https://right.example"
+    assert cfg.app_id == "our-id"
+    assert cfg.app_secret == "our-secret"
+
+
+def test_config_from_env_ignores_none_overrides(monkeypatch):
+    """★ 回归：`from_env(service=args.service or None)` **不许**把环境值清成 None。
+
+    2026-09-22 实测踩到：探针里写的就是这个形状，于是凭据都在、却报「缺 service」。
+    症状是**静默的**——不抛异常，只是配置少了一项。
+    """
+    monkeypatch.setenv("WORKBENCH_GWS_SERVICE", "https://from-env.example")
+    cfg = GwsConfig.from_env(service=None, timeout_s=12.0)
+    assert cfg.service == "https://from-env.example", "None 覆盖把环境值清掉了"
+    assert cfg.timeout_s == 12.0, "非 None 的覆盖仍然要生效"
+
+
+def test_config_from_env_without_env_yields_an_empty_config(monkeypatch):
+    for key in ("WORKBENCH_GWS_SERVICE", "WORKBENCH_GWS_APP_ID", "WORKBENCH_GWS_APP_SECRET"):
+        monkeypatch.delenv(key, raising=False)
+    cfg = GwsConfig.from_env()
+    assert cfg.service is None and cfg.app_id is None and cfg.app_secret is None
+    assert len(cfg.missing()) == 3
+
+
 def test_resolve_binary_missing_gives_actionable_hint(monkeypatch, tmp_path: Path):
     """找不到时必须是**一句能照做的话**（三条处置），而不是一句"没找到"。
 
@@ -408,3 +489,111 @@ def test_every_run_forces_silent_json_mode(fake):
     make, records, _ = fake
     make().run_readonly("config", "show")
     assert records()[0]["argv"][0] == "-s"
+
+
+# ---------------------------------------------------------------- 配置迁移（导出 → 入站导入 → 部署）
+#
+# 这一族钉的是"三跳"的口径，以及**写动词不许混进只读白名单**这条结构保证。
+
+
+def test_migration_verbs_are_not_in_the_readonly_allowlist():
+    """★ **结构保证**：写平台的动词与只读白名单**互斥**。
+
+    本仓的口径：能变成硬闸门的东西，不要靠人记得。
+    没有这条，将来某次"顺手把 migration export 加进只读表"（它确实不改配置，
+    看起来人畜无害）会让 `run_readonly` 替所有调用方放行一次平台写入。
+    """
+    assert MIGRATION_WRITE_VERBS, "写动词表是空的 —— 那这条断言就成了空转"
+    assert not (MIGRATION_WRITE_VERBS & READ_ONLY_VERBS), (
+        f"写动词混进了只读白名单：{sorted(MIGRATION_WRITE_VERBS & READ_ONLY_VERBS)}"
+    )
+
+
+def test_migration_export_sends_only_the_fields_that_were_given(fake):
+    make, records, scenario = fake
+    scenario(mode="ok", stdout='{"code":0,"data":{"name":"PKG-NO-001","package_id":"p-1",'
+                                '"file_path":"p1.zip"}}')
+    pkg = make().migration_export(summary="测试摘要", owner_name="张三")
+    argv = records()[0]["argv"]
+    assert argv[:3] == ["-s", "migration", "export"]
+    body = json.loads(argv[argv.index("--data") + 1])
+    assert body == {"summary": "测试摘要", "owner_name": "张三"}
+    assert "description" not in body, "没给的字段不该出现在请求体里"
+    assert pkg.package_id == "p-1"
+    assert pkg.file_path == "p1.zip"
+
+
+def test_migration_export_without_options_sends_no_data_flag(fake):
+    make, records, scenario = fake
+    scenario(mode="ok", stdout='{"code":0,"data":{"package_id":"p-1"}}')
+    make().migration_export()
+    assert "--data" not in records()[0]["argv"]
+
+
+def test_migration_import_rejects_a_missing_file_before_spawning(fake, tmp_path: Path):
+    """Fail-Closed，而且**在起子进程之前就拒**——不拿坏路径去换一条 CLI 报错回来。"""
+    make, records, _ = fake
+    with pytest.raises(GwsError, match="不存在"):
+        make().migration_import(tmp_path / "nope.zip")
+    assert records() == []
+
+
+def test_migration_import_rejects_a_non_zip(fake, tmp_path: Path):
+    make, records, _ = fake
+    not_zip = tmp_path / "pkg.tar.gz"
+    not_zip.write_bytes(b"x")
+    with pytest.raises(GwsError, match="zip"):
+        make().migration_import(not_zip)
+    assert records() == []
+
+
+def test_migration_import_passes_the_file_and_reports_deploy_status(fake, tmp_path: Path):
+    make, records, scenario = fake
+    pkg_zip = tmp_path / "pkg.zip"
+    pkg_zip.write_bytes(b"PK\x03\x04")
+    scenario(mode="ok", stdout='{"code":0,"data":{"package_id":"p-9","name":"PKG-NO-009",'
+                                '"type":3,"deploy_status":1}}')
+    pkg = make().migration_import(pkg_zip)
+    argv = records()[0]["argv"]
+    assert argv[:3] == ["-s", "migration", "import"]
+    assert argv[argv.index("--file") + 1] == str(pkg_zip)
+    assert pkg.deploy_status == 1
+
+
+def test_migration_deploy_requires_a_package_id(fake):
+    make, records, _ = fake
+    with pytest.raises(GwsError, match="package_id"):
+        make().migration_deploy("")
+    assert records() == []
+
+
+def test_migration_deploy_has_nothing_to_confirm_with(fake):
+    """★ **部署的响应没有 `data`** ⇒ 不能用它确认生效（PITFALLS #62 同形）。
+
+    这条不是在测"函数返回 None"，是在**钉住一个事实**：
+    `deploy` 回的是 `{code, message}`，所以"部署成功了吗"这个问题
+    **在响应里无解**——只能回读平台配置。谁要是给它编一个返回值当成功证据，这条会红。
+    """
+    make, records, scenario = fake
+    scenario(mode="ok", stdout='{"code":0,"message":null}')
+    assert make().migration_deploy("p-9") is None
+    argv = records()[0]["argv"]
+    assert argv[:4] == ["-s", "migration", "deploy", "p-9"]
+
+
+def test_migration_package_does_not_invent_unknown_enums():
+    """`type` / `deploy_status` 的**取值表我们不知道**（没有真机样本）。
+
+    缺字段时必须是 `None`，**不许**给一个"看起来合理"的默认值——
+    那会变成一个凭想象写的枚举，然后被下游当判据用。
+    """
+    from workbench.services.gws import MigrationPackage
+
+    export_like = MigrationPackage.from_payload(
+        {"name": "PKG-NO-001", "package_id": "p", "file_path": "p.zip"}
+    )
+    assert export_like.type is None and export_like.deploy_status is None
+    import_like = MigrationPackage.from_payload({"package_id": "p", "deploy_status": 1})
+    assert import_like.deploy_status == 1
+    assert import_like.type is None
+    assert MigrationPackage.from_payload(None).package_id == ""

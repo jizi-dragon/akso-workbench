@@ -12,6 +12,12 @@
 from __future__ import annotations
 
 from .client import (
+    MIGRATION_WRITE_VERBS,
+    OP_CREATE,
+    OP_OVERWRITE,
+    OP_UPDATE,
+    OPERATION_TYPES,
+    READ_ONLY_VERBS,
     GwsBinaryNotFound,
     GwsClient,
     GwsConfig,
@@ -20,10 +26,18 @@ from .client import (
     GwsPlatformError,
     GwsProcessError,
     GwsTimeout,
+    MigrationPackage,
     resolve_binary,
 )
+from .shape import ShapeDiff, ShapeReport, compare_shapes, diff_key_sets, key_profile
 
 __all__ = [
+    "MIGRATION_WRITE_VERBS",
+    "OPERATION_TYPES",
+    "OP_CREATE",
+    "OP_OVERWRITE",
+    "OP_UPDATE",
+    "READ_ONLY_VERBS",
     "GwsBinaryNotFound",
     "GwsClient",
     "GwsConfig",
@@ -32,5 +46,11 @@ __all__ = [
     "GwsPlatformError",
     "GwsProcessError",
     "GwsTimeout",
+    "MigrationPackage",
+    "ShapeDiff",
+    "ShapeReport",
+    "compare_shapes",
+    "diff_key_sets",
+    "key_profile",
     "resolve_binary",
 ]

@@ -147,6 +147,7 @@ READ_ONLY_VERBS: frozenset[tuple[str, ...]] = frozenset({
     ("api-version", "recommended"),
     ("api-version", "list"),
     ("config", "show"),
+    ("config", "test"),  # 向 server 发一个 GET 探连通性——只读。
     ("auth", "status"),
     ("auth", "user-info"),
     ("auth", "public-key"),
@@ -180,6 +181,17 @@ READ_ONLY_VERBS: frozenset[tuple[str, ...]] = frozenset({
     ("aql", "query-single"),
     ("aql", "pages"),
     ("task", "show"),
+})
+
+#: **写平台的动词**（与上面那张只读白名单**互斥**）。
+#:
+#: 单独立一张表不是为了好看，是为了让"这两个集合不许相交"变成一条**可断言的**结构保证
+#: （`tests/test_gws_client.py::test_migration_verbs_are_not_in_the_readonly_allowlist`）。
+#: 本仓的口径一贯如此：能变成硬闸门的东西，不要靠人记得。
+MIGRATION_WRITE_VERBS: frozenset[tuple[str, ...]] = frozenset({
+    ("migration", "export"),   # 在平台上创建配置包记录（不改配置，但不是只读）
+    ("migration", "import"),   # 上传入站配置包（尚未生效）
+    ("migration", "deploy"),   # 🔴 部署 ⇒ 配置在这里才真正生效
 })
 
 #: 操作类型（`component instance save --operation-type`）。
@@ -271,6 +283,72 @@ class GwsConfig:
         if not self.app_secret:
             gaps.append("app_secret（与 app_id 配对）")
         return gaps
+
+    @classmethod
+    def from_env(cls, **overrides: object) -> "GwsConfig":
+        """从**我们自己的**环境变量名读配置：`WORKBENCH_GWS_SERVICE` / `_APP_ID` / `_APP_SECRET`。
+
+        ## 为什么不直接读 gws 认的 `HOST` / `APP_ID` / `APP_SECRET`
+
+        那两个名字**太通用**（约束 ②）：宿主机上任何一个恰好叫 `HOST` 的变量都会被 gws 当成
+        服务地址，而表现是"连到了不相干的平台"或"连不通"——**不报错**。
+        走 `WORKBENCH_GWS_*` 前缀，由本模块**翻译**成 gws 认的名字再注入子进程，
+        于是"哪个变量进了 gws 的环境"这件事是**我们决定的**，不是继承来的。
+
+        ⚠️ 这是**跑通用的入口**，不是产品形态。产品形态按决策卡 **C2**：
+        密钥存我们自己的库（Fernet 密文），调用时注入——见 `docs/CLI-CONFIG-PLAN.md` §9。
+
+        **`None` 覆盖项一律忽略**（不是"覆盖成 None"）：调用方常写成
+        `from_env(service=args.service or None)`，若 None 也生效，环境变量里的 service
+        会被**静默清空**——症状是"凭据都对，却报缺 service"。2026-09-22 实测踩到过。
+        """
+        env = os.environ
+        kwargs: dict[str, object] = {
+            "service": env.get("WORKBENCH_GWS_SERVICE") or None,
+            "app_id": env.get("WORKBENCH_GWS_APP_ID") or None,
+            "app_secret": env.get("WORKBENCH_GWS_APP_SECRET") or None,
+        }
+        binary = env.get("WORKBENCH_GWS_BIN")
+        if binary:
+            kwargs["binary"] = Path(binary)
+        kwargs.update({k: v for k, v in overrides.items() if v is not None})
+        return cls(**kwargs)  # type: ignore[arg-type]
+
+
+@dataclass(frozen=True)
+class MigrationPackage:
+    """一个配置迁移包在平台上的身份。三个子命令回的字段**不完全一样**，这里合成一个形状。
+
+    | 字段 | export | import | 说明 |
+    |---|---|---|---|
+    | `name` | ✅ | ✅ | 包名（形如 `PKG-NO-001`） |
+    | `package_id` | ✅ | ✅ | Guid；`deploy` 要的就是它 |
+    | `file_path` | ✅ | ❌ | **下载标识**，不是本地路径 |
+    | `type` / `deploy_status` | ❌ | ✅ | `type` 与 `deploy_status` 的**枚举值未知**（没有真机样本） |
+
+    ⚠️ `deploy_status` 的取值表**我们不知道**（只见过示例值 `1`）。
+    在拿到真机样本之前，**不要**用它做"能不能部署"的判据——那会是一个凭想象写的枚举。
+    """
+
+    name: str = ""
+    package_id: str = ""
+    file_path: str = ""
+    type: int | None = None
+    deploy_status: int | None = None
+
+    @classmethod
+    def from_payload(cls, payload: object) -> "MigrationPackage":
+        if not isinstance(payload, dict):
+            return cls()
+        raw_type = payload.get("type")
+        raw_status = payload.get("deploy_status")
+        return cls(
+            name=str(payload.get("name") or ""),
+            package_id=str(payload.get("package_id") or ""),
+            file_path=str(payload.get("file_path") or ""),
+            type=raw_type if isinstance(raw_type, int) else None,
+            deploy_status=raw_status if isinstance(raw_status, int) else None,
+        )
 
 
 class GwsClient:
@@ -417,23 +495,65 @@ class GwsClient:
             )
         return self.run(*args, **kwargs)
 
-    @staticmethod
-    def _unwrap(payload: object, args: tuple[str, ...]) -> object:
+    #: 信封的旁证键：真正的 `{code, message, data}` 信封里，`code` **绝不会单独出现**。
+    _ENVELOPE_HINT_KEYS = ("message", "data", "errorCode", "requestID", "traceId")
+
+    @classmethod
+    def _looks_like_envelope(cls, payload: object) -> bool:
+        """判断一份响应是不是平台的 `{code, message, data}` 信封。
+
+        ## ⚠️ 为什么不能只看"有没有 `code` 键"（2026-09-22 真机实测踩到）
+
+        `component instance show` 回的是一份**裸实例**，而**实例自己就有一个 `code` 字段**
+        （布局编码，字符串，如 `change_hdh_mgt_base_layout__ak`）。只看 key 存在性时：
+
+        ```
+        平台拒绝：component instance show layout layout.… → code=change_hdh_mgt_base_layout__ak
+        ```
+
+        —— 平台**什么错都没犯**，是适配层把一份正常响应读成了业务失败。
+        形态与本仓 PITFALLS 里那一族一模一样：**不抛异常、看起来像"平台拒了"**。
+
+        同一条命令族里**两种形状并存**（`component metadata list` 回信封、
+        `component instance show` 回裸对象），所以不能靠"这个命令回什么"来记，
+        只能**按载荷形状判**。
+
+        ## 判据（fail-closed 方向）
+
+        - `code` 必须是 **int**（状态码是数字；领域对象里的 `code` 是字符串编码）；
+        - 且满足其一：① 出现任一信封旁证键；② `code != 0`。
+
+        第 ② 条是**刻意偏向 fail-closed** 的：万一将来出现一个"只有 `code` 没有 message/data"
+        的错误信封，我们仍然会把它当失败抛出去，而不是当成数据静默交给调用方。
+        """
+        if not isinstance(payload, dict):
+            return False
+        code = payload.get("code")
+        if not isinstance(code, int) or isinstance(code, bool):
+            return False
+        return code != 0 or any(key in payload for key in cls._ENVELOPE_HINT_KEYS)
+
+    @classmethod
+    def _unwrap(cls, payload: object, args: tuple[str, ...]) -> object:
         """拆平台信封 `{code, message, data}`；`code != 0` 抛 :class:`GwsPlatformError`。
 
         业务失败也是 **HTTP 200**（这一点与工厂的 `egmp.client` 完全一致），
         所以**唯一**的成败信号在 `code` 里——不能拿"进程退出码 0"当成功。
+
+        但"有没有信封"本身要判（见 :meth:`_looks_like_envelope`）：
+        **裸对象直接返回**，不要硬套信封语义。
         """
-        if isinstance(payload, dict) and "code" in payload:
-            code = payload.get("code")
-            if code not in (0, "0", None) or (code is None and payload.get("message")):
-                raise GwsPlatformError(
-                    f"平台拒绝：{' '.join(args)} → code={code} message={payload.get('message')!r}",
-                    code=int(code) if isinstance(code, (int, str)) and str(code).lstrip("-").isdigit() else -1,
-                    data=payload.get("data"),
-                )
-            return payload.get("data")
-        return payload
+        if not cls._looks_like_envelope(payload):
+            return payload
+        assert isinstance(payload, dict)  # _looks_like_envelope 已保证
+        code = payload.get("code")
+        if code != 0:
+            raise GwsPlatformError(
+                f"平台拒绝：{' '.join(args)} → code={code} message={payload.get('message')!r}",
+                code=int(code) if isinstance(code, int) else -1,
+                data=payload.get("data"),
+            )
+        return payload.get("data")
 
     # ------------------------------------------------------------ 只读便捷封装
 
@@ -511,3 +631,88 @@ class GwsClient:
             "--operation-type", str(operation_type),
             expect_json=True,
         )
+
+    # ------------------------------------------------------------ 配置迁移（工厂**完全没有**的一块）
+    #
+    # ## 为什么这块值得先做
+    #
+    # 它是配置工厂的能力空白，而且**不依赖 component 实例 schema**——
+    # 也就是说，在那个决定性未知（见 docs/CLI-CONFIG-PLAN.md §5）解决之前，
+    # 这是唯一"确定能交付"的一块。
+    #
+    # ## 三跳：导出 → 入站导入 → 部署
+    #
+    # 这个形状**不是我们从手册抄的**，是 CLI 的响应体自己说出来的（2026-09-22 离线实测）：
+    #
+    # | 步 | 端点 | 响应 |
+    # |---|---|---|
+    # | 导出 | `POST /component/migration/export` | `{name, package_id, file_path}` |
+    # | 导入 | `POST /component/migration/import`（multipart，字段名 `file`） | `{package_id, name, type, deploy_status}` |
+    # | 部署 | `POST /component/migration/deploy/{package_id}` | **`{code, message}` —— 没有 `data`** |
+    #
+    # ⇒ 正好印证 [FACTORY-PLATFORM-COGNITION](../../../docs/FACTORY-PLATFORM-COGNITION.md) §7 的 **E4**：
+    # **「入站包导入 ≠ 生效」**，中间还隔着一次部署。`import` 回的那个 `deploy_status`
+    # 就是这个"还没生效"的状态位。
+    #
+    # ⚠️ **`deploy` 的成败无法由它自己的响应确认**（只回成功标志）——与本仓
+    # PITFALLS #62 同形。判断部署是否真的生效**必须回读平台配置**，不能拿 `code == 0` 交差。
+
+    def migration_export(
+        self,
+        *,
+        summary: str | None = None,
+        description: str | None = None,
+        owner_name: str | None = None,
+    ) -> "MigrationPackage":
+        """导出一个配置迁移包。**会在平台上创建一条配置包记录**（不是纯只读）。
+
+        `file_path` 是**下载标识**，不是本地路径——要拿到 zip 还得再走一次
+        `attachment` 下载（那一步**不在本模块**：它写本地磁盘，属于另一个决策面）。
+        """
+        body: dict[str, str] = {}
+        if summary:
+            body["summary"] = summary
+        if description:
+            body["description"] = description
+        if owner_name:
+            body["owner_name"] = owner_name
+        # 刻意**不**用 pydantic BaseModel 承载这个体：约束 21（必须显式建模）防的是
+        # "HTTP 请求体多了一个字段被静默忽略"，而这里的体是**我们逐字段拼出来的**，
+        # 没有"外部送进来的多余字段"可漏。加一层模型只会多一层要同步的形状。
+        args = ["migration", "export"]
+        if body:
+            args += ["--data", json.dumps(body, ensure_ascii=False)]
+        data = self.run(*args)
+        return MigrationPackage.from_payload(data)
+
+    def migration_import(self, package_zip: str | Path) -> "MigrationPackage":
+        """把一个 zip 配置包**导入**成"入站配置包"。**不生效**（见上面三跳表）。
+
+        Fail-Closed：路径不存在、不是文件、扩展名不是 `.zip` —— **一律拒**，
+        并且**在起子进程之前就拒**（不要拿一个坏路径去换一条 CLI 的报错回来）。
+        """
+        path = Path(package_zip)
+        if not path.is_file():
+            raise GwsError(f"配置包文件不存在：{path}")
+        if path.suffix.lower() != ".zip":
+            raise GwsError(f"配置包必须是 zip（CLI 的 multipart 就只收 zip）：{path.name}")
+        data = self.run("migration", "import", "--file", str(path))
+        return MigrationPackage.from_payload(data)
+
+    def migration_deploy(self, package_id: str) -> None:
+        """**部署**已导入的配置包 ⇒ 配置在这里才真正生效。
+
+        🔴 **这是本模块唯一会改变平台配置的动作。** 三件事必须说清楚：
+
+        1. 它的响应**没有 `data`**，只有 `{code, message}` ⇒ **不能用它确认生效**；
+        2. 生效与否**只能靠回读平台配置**（对照部署前的快照）；
+        3. 平台侧**没有撤销键**——配置包只支持全量迁移，回滚要靠再导一个反向包。
+           这与 [FACTORY-VERIFICATION-PLAN](../../../docs/FACTORY-VERIFICATION-PLAN.md) §7
+           记的"无撤销键资源"是同一族风险（选项集不可删、生命周期状态只能停用）。
+
+        ⚠️ 本方法**当前不做人工确认**——因为适配层还没有 `Risk` 通道。
+        等它被接成 Agent 工具时，**必须**是 `Risk.DANGEROUS` 并过确认门（铁律 6/9）。
+        """
+        if not package_id or not str(package_id).strip():
+            raise GwsError("package_id 不能为空")
+        self.run("migration", "deploy", str(package_id))
