@@ -350,7 +350,7 @@ dialog#artifact-preview { width: min(1080px, calc(100vw - 64px)); }
 }
 .apv-md table.apv-table th { background: var(--ink-3); color: var(--text-2); font-weight: 600; }
 
-/* ———— 历史任务分页（洞察页：一页 10 条 + 翻页） ———— */
+/* ———— 历史任务分页（对象分析页：一页 10 条 + 翻页） ———— */
 .ins-pager { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); margin-top: 10px; }
 .ins-pager .mbtn { padding: 5px 12px; font-size: 12.5px; }
 .ins-pager-info { color: var(--text-3); font-size: 12px; }

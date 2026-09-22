@@ -129,7 +129,7 @@ def run(body: FactoryRunIn) -> dict:
             "factory_preview_blueprint）",
         )
     if not body.confirmed:
-        raise HTTPException(409, "违反配置工厂「环境强制确认」原则：需要 UI 明确确认（confirmed=true）")
+        raise HTTPException(409, "违反配置「环境强制确认」原则：需要 UI 明确确认（confirmed=true）")
 
     workdir = config.RUNTIME_DIR / "factory" / (body.blueprint_id or uuid.uuid4().hex[:12])
     workdir.mkdir(parents=True, exist_ok=True)

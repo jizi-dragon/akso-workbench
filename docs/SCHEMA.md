@@ -146,7 +146,7 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 而 `export_backup()` 输出 **camelCase**（`envBaseUrl`，备份文件契约）。
 `routes_extension` 曾读错键 → 快照 `host` 恒空 → 扩展静默丢弃全部账号（0.2.4 实锤断点）。
 
-### 3.6 `blueprint_jobs` — 配置工厂任务（迁移 8）
+### 3.6 `blueprint_jobs` — 配置任务（迁移 8；界面上的「配置」，原「配置工厂」）
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
@@ -175,7 +175,7 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 > 重建表"，而代码**始终显式写入**该列（`'factory'`），所以默认值不会被用到。
 > 记在这里是为了让读表的人不困惑。
 
-### 3.7 `insight_runs` — 平台洞察任务（迁移 8）
+### 3.7 `insight_runs` — 对象分析任务（迁移 8；界面上的「对象分析」，原「平台洞察」）
 
 列同 `blueprint_jobs` 结构，`command` ∈ `login` / `spider`（`inventory` / `understand` 已于 2026-09-14
 下线，**历史行的这两个值仍在表里**，读取侧按原样展示、不得报错）。

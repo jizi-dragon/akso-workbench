@@ -33,6 +33,43 @@ def test_index_served(client: TestClient) -> None:
     assert "Workbench" in resp.text
 
 
+def test_module_display_names_are_object_analysis_and_config(client: TestClient) -> None:
+    """两个模块的**显示名**：`对象分析` / `配置`（2026-09-22 用户下达的更名）。
+
+    为什么值得一条判据：这两个名字散落在 **10 个文件**里——侧边栏、两个页面的 `<title>` 与
+    `<h1>`、工具清单弹窗里的**插件标题**、几条给人看的提示（设置的推理参数说明、撞预算时
+    聊天里那句话、页面的运行日志与错误）。改漏一处**不会报错**，只会让用户在两个地方看到
+    两个名字——而这正是"改名"这类需求唯一会出的错。同族：`test_old_module_id_is_gone`。
+
+    ⚠️ **只改显示名**：模块 id（`insight` / `factory`）、工具名（`factory_*` / `insight_*`）、
+    落盘目录（`…/洞察`）都**不动**——它们是模型面与审计面的事实源，改了就断掉历史留痕。
+    """
+    index = client.get("/static/index.html").text
+    # 侧边栏那两项：按**链接块**断言（缩进与换行都在，整块比字符串包含更准）
+    insight_block = index.split('id="nav-insight"')[1].split("</a>")[0]
+    factory_block = index.split('id="nav-factory"')[1].split("</a>")[0]
+    assert insight_block.strip().endswith("对象分析"), insight_block[-40:]
+    assert factory_block.strip().endswith("配置"), factory_block[-40:]
+    for page, name in (("/static/pages/insight.html", "对象分析"),
+                       ("/static/pages/factory.html", "配置")):
+        html = client.get(page).text
+        assert f"<h1>{name}</h1>" in html, (page, name)
+        assert f"<title>{name} · Workbench</title>" in html, (page, name)
+
+    # 工具清单弹窗里显示的是**插件标题**（`chat-tools.js` 的 palette-plugin-title）
+    plugins = {p["id"]: p["title"] for p in client.get("/api/agent/plugins").json()["plugins"]}
+    assert plugins["insight"] == "对象分析", plugins
+    assert plugins["factory"] == "配置", plugins
+
+    # 旧名不许再出现在**界面文件**里（注释不算——那是给读代码的人看的）
+    for path in ("/static/index.html", "/static/pages/insight.html",
+                 "/static/pages/factory.html", "/static/pages/accounts.html",
+                 "/static/js/factory.js", "/static/js/insight.js"):
+        text = client.get(path).text
+        assert "配置工厂" not in text, path
+        assert "平台洞察" not in text, path
+
+
 def test_modules_endpoint(client: TestClient) -> None:
     resp = client.get("/api/modules")
     assert resp.status_code == 200

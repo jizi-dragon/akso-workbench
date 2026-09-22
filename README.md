@@ -1,6 +1,6 @@
 # Workbench
 
-> 实施工程师的**单机工作台**：把平台洞察、配置工厂、统一账号库与多账号快捷登录合到一个桌面应用里。
+> 实施工程师的**单机工作台**：把对象分析、配置、统一账号库与多账号快捷登录合到一个桌面应用里。
 > 四个来源项目（akso-cc / mogul_simulator / akso-auto / quick-login）的能力已**全部内化**进本仓库——
 > 运行时零依赖原项目、零依赖 Node、零联网（首次装载浏览器扩展除外）。
 > 首个适配平台是阿克索 eGMP；**平台能力走插件与适配层，换平台不必改产品名与数据目录**（见下）。
@@ -27,13 +27,19 @@
 
 | 来源 | 沉淀下来的能力 | 现在是什么 |
 |---|---|---|
-| **akso-cc** | 平台洞察：登录验证 / 蜘蛛五步织网（networkx 图分析）<br>~~全量盘点~~ ~~对象三层理解~~（2026-09-14 下线，场景模糊、效果不佳） | Python 原生（`services/egmp/insight/`） |
+| **akso-cc** | 对象分析（原「平台洞察」）：登录验证 / 蜘蛛五步织网（networkx 图分析）<br>~~全量盘点~~ ~~对象三层理解~~（2026-09-14 下线，场景模糊、效果不佳） | Python 原生（`services/egmp/insight/`） |
 | **mogul_simulator** | 对话工作台、会话历史、设置 | Python 原生（fork 基线） |
-| **akso-auto** | 配置工厂：蓝图两层校验 / 幂等创建 / 拓扑编排 / Monitor 录制解读 | Python 原生（`services/egmp/writers` + `orchestrate` + `monitor`） |
+| **akso-auto** | 配置（原「配置工厂」）：蓝图两层校验 / 幂等创建 / 拓扑编排 / Monitor 录制解读 | Python 原生（`services/egmp/writers` + `orchestrate` + `monitor`） |
 | **quick-login** | 统一账号库 + 自动登录节奏门控 + 六平面隔离 | 混合：桌面数据面（Python）+ 浏览器扩展执行面 |
 
 > 四个原项目**冻结不动**：本仓库对它们只做只读引用（`adapters/*.json`）与知识迁移，绝不修改原文件。
 > 详见 [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md)。
+>
+> **改名记录（2026-09-22，用户下达）**：界面上的「平台洞察」更名为「**对象分析**」、
+> 「配置工厂」更名为「**配置**」。**只改显示名**——模块 id（`insight`/`factory`）、
+> 工具名（`insight_*`/`factory_*`）、接口路径（`/api/insight`、`/api/factory`）、
+> 落盘目录（`runtime/insight`、`…/Workbench/洞察`）全部不变，
+> 所以更早的 [规范](docs/INSIGHT-SPEC.md)、[ADR](docs/adr/) 与坑清单里出现旧名是**正常的**。
 
 ## 走向"可复用工作台"：能力都在插件与工具层
 
@@ -71,9 +77,9 @@
 1. **配一个平台环境**：账号中心 → 新增环境，填平台地址（如 `https://demo-val.example.com`）。
 2. **加账号**：同一账号 + 用户名口令。口令加密存本机，界面永不回显。
 3. **试用三个能力**：
-   - **平台洞察**：填对象编码（如 `capa_plan__c`）→ 跑「蜘蛛织网」→ 看关系网络、
+   - **对象分析**：填对象编码（如 `capa_plan__c`）→ 跑「蜘蛛织网」→ 看关系网络、
      `spider-network.drawio` 与 networkx 分析结论；
-   - **配置工厂**：上传或让 AI 生成蓝图 → 先校验 → **勾选环境确认** → 创建；
+   - **配置**：上传或让 AI 生成蓝图 → 先校验 → **勾选环境确认** → 创建；
    - **快捷登录**：按 `Alt+Q` 呼出轮盘选账号 → 用户 Chrome 里以该身份打开（或卡片上的「打开」用内置浏览器 + 免密直达）。
 4. **可选**：设置页填 DeepSeek API Key，解锁 AI 对话与蓝图生成。
 

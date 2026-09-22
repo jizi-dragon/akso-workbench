@@ -478,6 +478,37 @@
 
 ### Changed
 
+- **界面上两个模块更名：「平台洞察 → 对象分析」「配置工厂 → 配置」**（2026-09-22，用户下达
+  「UI 上做一些更名」）。**只改显示名**——模块 id（`insight` / `factory`）、工具名
+  （`insight_*` / `factory_*`）、接口路径（`/api/insight`、`/api/factory`）、
+  落盘的产物目录（`runtime/insight/…`、`我的文档\Workbench\洞察`）、
+  审计与历史数据里的 `module` 值**全部不动**：改了它们就等于让"改名前后"的留痕不可比
+  （同族教训：`insight_runs.module` 曾先后出现过三个值，见 `test_old_module_id_is_gone`）。
+
+  改了 **10 个文件**，其中最容易漏的是**工具清单弹窗里那个插件标题**——它取的是
+  `Plugin.title`（`insight.py` / `factory.py`），不在静态目录里：
+
+  | 面 | 位置 |
+  |---|---|
+  | 侧边栏两项 | `static/index.html`（`nav-insight` / `nav-factory`） |
+  | 两个模块页 | `<title>` 与 `<h1>`（`pages/insight.html`、`pages/factory.html`；顺带把「执行洞察命令」改成「执行分析命令」） |
+  | 插件显示名 | `plugins/insight.py::PLUGIN.title`、`plugins/factory.py::PLUGIN.title`（**工具清单弹窗就显示它**） |
+  | 一句给人看的提示 ×5 | 设置的推理参数说明、撞预算时聊天里那句、`factory.js` 的状态徽标与命令回显、`accounts.html` 的分配池说明 |
+  | 两条错误文案 | `routes_factory` 的 409（「违反配置…原则」）、`routes_insight` 的运行日志与 502 |
+
+  判据：`pytest tests/test_app.py::test_module_display_names_are_object_analysis_and_config`
+  —— 按**链接块**断言侧边栏两项、断言两个页面的 `<title>`/`<h1>`、断言
+  `/api/agent/plugins` 里两个插件标题，**并且**断言六个界面文件里不再出现旧名
+  （注释不算，注释是给读代码的人看的）。**反证实测**：把侧边栏改回旧名 ⇒ 该用例立刻红
+  （`1 failed`），随后字节级还原。
+  文档同步：[USER-MANUAL](docs/USER-MANUAL.md)（§2 表 + §5/§6 标题 + FAQ + 数据位置）、
+  [README](README.md)（含**改名记录**一节，说明旧名出现在 [规范](docs/INSIGHT-SPEC.md) /
+  [ADR](docs/adr/) / 坑清单里是正常的）、[API.md](docs/API.md) §6/§7 标题、
+  [PLUGIN-SDK.md](docs/PLUGIN-SDK.md) 插件表、[SCHEMA.md](docs/SCHEMA.md) §3.6/§3.7、
+  [CONFIG.md](docs/CONFIG.md) 的 `insight_workspace_root`、`docs/TOOLS.md`（`gen_tools_doc.py --write`）。
+  ⚠️ **没动**（有意）：`INSIGHT-SPEC.md`、`FACTORY-*.md`、`docs/adr/**`、`docs/PITFALLS.md`
+  等**领域/历史文档**——它们记的是能力与决策，不是界面标签。
+
 - **输入框那一行重排：模型名挪到发送键旁，下方常驻「缓存命中 / 命中率 / 上下文」三个数字**
   （2026-09-22，用户下达「模仿 DeepSeek 的 UI 美学和功能要点」）。
 

@@ -26,7 +26,7 @@ _由 learn-codebase 技能生成；**2026-09-16 复核**，锚定 `c8753ce`（v0
 
 ## Summary（定位）
 
-**Workbench（`workbench` v0.3.12，仓库 `akso-mogul`）** 是阿克索实施工程师的**单机 Windows 工作台**，把四个来源项目（akso-cc / mogul_simulator / akso-auto / quick-login）的能力**内化**为一个桌面应用：平台洞察（蜘蛛织网 + networkx 图分析）、配置工厂（蓝图校验 + 幂等创建 + 拓扑编排）、统一账号库（Fernet 加密）、多账号快捷登录（一个 Chrome 内并行身份）、Monitor 监听录制解读。
+**Workbench（`workbench` v0.3.12，仓库 `akso-mogul`）** 是阿克索实施工程师的**单机 Windows 工作台**，把四个来源项目（akso-cc / mogul_simulator / akso-auto / quick-login）的能力**内化**为一个桌面应用：对象分析（蜘蛛织网 + networkx 图分析，原「平台洞察」）、配置（蓝图校验 + 幂等创建 + 拓扑编排，原「配置工厂」）、统一账号库（Fernet 加密）、多账号快捷登录（一个 Chrome 内并行身份）、Monitor 监听录制解读。
 
 架构分工（用户定稿）：
 

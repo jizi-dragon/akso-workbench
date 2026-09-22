@@ -111,7 +111,7 @@ def _run_job(req: InsightRequest, workdir: Path) -> dict:
     # 先落一行「要做什么」：**失败也要留现场**。历史缺陷——`on_log` 只在 login 成功之后
     # 才被调用，于是任何 login 失败（地址错、网关 405/502、超时）都会让 proc.log
     # 根本不存在，界面只剩一句无从下手的「无法连通」。
-    on_log(f"洞察命令：{req.command}" + (f"（对象：{req.objects}）" if req.objects else ""))
+    on_log(f"分析命令：{req.command}" + (f"（对象：{req.objects}）" if req.objects else ""))
 
     try:
         account, base_url, username, password = _credentials(req.account_id)
@@ -221,7 +221,7 @@ def run(req: InsightRequest) -> dict:
         raise
     except Exception as exc:  # noqa: BLE001
         _finish_job(job_id, "failed")
-        raise HTTPException(502, f"洞察执行失败：{exc}") from exc
+        raise HTTPException(502, f"对象分析执行失败：{exc}") from exc
     _finish_job(job_id, outcome["status"], workspaces=outcome.get("workspaces"),
                 coverage_status=outcome.get("coverage_status", ""))
     return {"job_id": job_id, **outcome}

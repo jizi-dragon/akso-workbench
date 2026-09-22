@@ -513,7 +513,9 @@ def _create_summary(args: CreateArgs) -> str:
 
 PLUGIN = pa.Plugin(
     id=PLUGIN_ID,
-    title="配置工厂",
+    # 显示名（工具清单弹窗里就在工具名旁边）：2026-09-22 用户下达更名「配置工厂 → 配置」。
+    # id 与工具名**不动**——它们是模型面与审计面的事实源，改名会断掉历史留痕的可比性。
+    title="配置",
     description="蓝图规格与预览暂存、真机批量创建（akso-auto 能力原生化）",
     version="2.0.0",
     tools=[

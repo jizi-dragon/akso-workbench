@@ -212,7 +212,9 @@ async def list_accounts_tool(_: BaseModel, ctx: pa.ToolContext) -> str:
 
 PLUGIN = pa.Plugin(
     id=PLUGIN_ID,
-    title="平台洞察",
+    # 显示名（工具清单弹窗里就在工具名旁边）：2026-09-22 用户下达更名「平台洞察 → 对象分析」。
+    # id 与工具名不动（模型面/审计面的事实源）；能力本身没变，仍是读平台对象元数据 + 五步织网。
+    title="对象分析",
     description="读平台对象元数据、跑五步织网洞察、取回产物（akso-cc 能力原生化）",
     version="1.0.0",
     tools=[

@@ -178,7 +178,7 @@ POST /api/chat/stream   Content-Type: application/json
   能力已是本工作台自己的，接口与界面上都不该再出现上游项目名。
 - ⚠️ `status` 映射可读性存疑：`全过 → "ok"`、`全挂 → "degraded"`、`部分挂 → "missing"`（见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账）。
 
-## 6. 平台洞察 `/api/insight`（`routes_insight.py`）
+## 6. 对象分析 `/api/insight`（`routes_insight.py`）
 
 凭证链：账号 id → `account` 表 → Fernet 解密（仅内存）→ `egmp.client.login`（55 分钟 token 缓存）。
 **全程无 node、无子进程**。
@@ -230,7 +230,7 @@ POST /api/chat/stream   Content-Type: application/json
 > spider 抛 `SpiderReadErrors`，任务记 `failed`；**不会**产出一张「1 个对象节点 + 0 状态」的
 > 空网再配上 `coverage.status = complete`。
 
-## 7. 配置工厂 `/api/factory`（`routes_factory.py`）
+## 7. 配置 `/api/factory`（`routes_factory.py`）
 
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|

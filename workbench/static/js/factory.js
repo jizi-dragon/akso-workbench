@@ -10,8 +10,8 @@ async function checkHealth() {
     badge.className = `status-badge ${badgeFor(data.status)}`;
     const fail = (data.checks || []).filter((c) => !c.ok);
     badge.textContent = fail.length
-      ? `配置工厂 ${data.status}：${fail.map((c) => c.name).join('、')} 未就绪`
-      : `配置工厂就绪（${data.status}）`;
+      ? `配置 ${data.status}：${fail.map((c) => c.name).join('、')} 未就绪`
+      : `配置就绪（${data.status}）`;
   } catch (e) {
     badge.className = 'status-badge err';
     badge.textContent = `体检失败：${e.message}`;
@@ -102,7 +102,7 @@ async function run() {
     return;
   }
   log.innerHTML = '';
-  logLine(log, `$ 配置工厂 ${command} <blueprint.json> · 账号 ${account_id}`, 'sys');
+  logLine(log, `$ 配置 ${command} <blueprint.json> · 账号 ${account_id}`, 'sys');
 
   // ⚠️ 这里的字段名必须与 `POST /api/factory/run` 的**实际响应体**一致：
   //   {job_id, status, result:{success,message,artifact_dir,steps}, log_tail}

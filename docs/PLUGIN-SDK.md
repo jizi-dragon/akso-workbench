@@ -2,8 +2,10 @@
 
 _2026-09-15 定稿。锚定 `workbench/plugin_api.py`（`ToolHub`）+ `workbench/plugins/` + `workbench/approvals.py`。_
 
-> **这份文档回答**：工作台三大业务（平台洞察 / 配置工厂 / 快捷登录）是怎么"作为工具插件
+> **这份文档回答**：工作台三大业务（对象分析 / 配置 / 快捷登录）是怎么"作为工具插件
 > 挂到 Agent 上"的，以及你新增一个插件时该动哪几个文件、哪些坑必须绕开。
+> （这两个模块 2026-09-22 更名，见 [README §四个来源项目](../README.md) 的改名记录；
+> 插件 id 仍是 `insight` / `factory`。）
 
 ## 0. 一页话结论
 
@@ -184,8 +186,8 @@ def register(hub: pa.ToolHub) -> None:
 | `builtin`（通用） | `get_current_time` / `read_local_file` / `read_web_page` | read |
 | | `request_user_confirmation`（**模型主动请求实时确认**，见下方专节） | read（但会**暂停对话**等用户答复） |
 | `websearch`（自建联网检索） | `web_search`（DeepSeek API **没有**内置联网搜索，见 [research](research/deepseek-api-capabilities.md) §2） | read |
-| `insight`（平台洞察） | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
-| `factory`（配置工厂） | `factory_blueprint_spec`（**给模型的蓝图规格**，从运行期模型生成）/ `factory_preview_blueprint`（**校验+暂存+审阅材料**，一次闭合）/ `factory_resolve_object`（**对象在不在？不在就列相近的并问用户**，见 [ADR-0018](adr/0018-no-silent-object-creation.md)）/ `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
+| `insight`（对象分析） | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
+| `factory`（配置） | `factory_blueprint_spec`（**给模型的蓝图规格**，从运行期模型生成）/ `factory_preview_blueprint`（**校验+暂存+审阅材料**，一次闭合）/ `factory_resolve_object`（**对象在不在？不在就列相近的并问用户**，见 [ADR-0018](adr/0018-no-silent-object-creation.md)）/ `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
 | | `factory_create` | **dangerous** |
 | `accounts`（快捷登录） | `accounts_list` / `accounts_login` / `accounts_browser_sessions` | read |
 | | `accounts_browser_open` / `accounts_browser_close` | **write** |
@@ -360,7 +362,7 @@ def load_all(hub):
 ```
 
 **为什么坏插件必须被隔离**：插件是"可选能力"。一个插件 import 失败就崩掉整个应用，
-等于让"平台洞察装不上"升级成"工作台打不开"。
+等于让"对象分析装不上"升级成"工作台打不开"。
 
 **为什么隔离了还必须自检**：隔离的另一面是**静默**——"应用照常启动，但某个功能没了"。
 所以启动期把必需工具清单对一遍并写日志，同时暴露成 `GET /api/agent/selfcheck`：
