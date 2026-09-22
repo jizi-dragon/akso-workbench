@@ -623,7 +623,11 @@ function shortTokens(value) {
   return `${(n / 1_000_000).toFixed(0)}M`;
 }
 
-/** 重画那行：`缓存命中 X tok · NN% · ◔ 上下文 A / B（NN%）`（用户 2026-09-22 下达）。
+/** 重画那行：`缓存命中 X tok · NN% · ◔ 上下文 NN%`（用户 2026-09-22 下达）。
+ *
+ *  那个 ◔ 是**按比例填充的圆环**（占用比例 = 本轮输入 ÷ 窗口上限），旁边的百分比是同一个数；
+ *  精确 token 数进 `title`（悬停可见）。为什么比例非要画出来：`66k / 131k` 这两个数需要
+ *  用户自己做除法，而"还能聊多久"是个**看一眼就该有答案**的问题。
  *
  *  ## 三段的语义（别读混）
  *
@@ -661,15 +665,24 @@ function paintUsageStrip() {
   const window = Number(usageStrip.contextWindow) || 0;
   if (tokens && window) {
     const used = Math.round((tokens / window) * 100);
+    // 圆环只画到满圈（`--usage-ratio` 是 CSS 变量的 0–1），但**文字给真实百分比**：
+    // 超过窗口上限时用户要看到 103%，而不是被夹成 100% 让人以为"刚好满"
     const ring = document.createElement("span");
     ring.className = "usage-ring";
     ring.style.setProperty("--usage-ratio", String(Math.min(1, tokens / window)));
-    contextEl.replaceChildren(ring, document.createTextNode(
-      `上下文 ${shortTokens(tokens)} / ${shortTokens(window)}（${used}%）`));
-    contextEl.dataset.level = used >= 80 ? "high" : used >= 50 ? "warn" : "";
+    // 图标旁就是占用比例（用户 2026-09-22 下达）；**精确 token 数挪进悬浮提示**，
+    // 不丢信息，但那两个数不是"一眼要判断的东西"（判断靠比例 + 颜色）。
+    contextEl.replaceChildren(ring, document.createTextNode(`上下文 ${used}%`));
+    if (used >= 80) contextEl.dataset.level = "high";
+    else if (used >= 50) contextEl.dataset.level = "warn";
+    else delete contextEl.dataset.level;
+    contextEl.title = `上下文用量：本轮输入 ${shortTokens(tokens)} token`
+      + ` / 窗口上限 ${shortTokens(window)}（占 ${used}%）`;
   } else {
-    contextEl.textContent = "上下文 —";
+    // 没有真值时不画环：一个空环会被读成"0%"，而实际含义是"还不知道"
+    contextEl.replaceChildren(document.createTextNode("上下文 —"));
     delete contextEl.dataset.level;
+    contextEl.title = "上下文用量：本次真正发上去的输入 token / 窗口上限";
   }
   // 没有数字时**也留着这一行**（占位显示「—」）：它是常驻仪表，不是"有数据才冒出来的提示"。
   // 若按 `hasCache || tokens` 来隐藏，用户第一次发问成功时整行会**突然出现**并把输入框

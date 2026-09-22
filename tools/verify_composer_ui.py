@@ -57,6 +57,121 @@ def port_free(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) != 0
 
 
+def read_png(data: bytes) -> tuple[int, int, list[tuple[int, int, int, int]]]:
+    """解一张非交错的 8 位 PNG → (宽, 高, 逐像素 RGBA)。
+
+    **为什么自己写**：venv 里没有 Pillow / numpy（`import PIL` → ModuleNotFoundError，
+    2026-09-22 实测），而"那个圆环到底填了多少"这个问题**只能看像素**——
+    任何 CSS 值断言都证明不了它（见 `_ring_fill` 的注释）。这段只支持 Playwright
+    截图会产出的形态（8 位、color type 2/6、非交错），够用且不引入依赖。
+    """
+    import struct
+    import zlib
+
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "不是 PNG"
+    pos, idat, width, height, depth, color = 8, b"", 0, 0, 0, 0
+    while pos < len(data):
+        (size,) = struct.unpack(">I", data[pos:pos + 4])
+        tag = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + size]
+        if tag == b"IHDR":
+            width, height, depth, color, _, _, interlace = struct.unpack(">IIBBBBB", body)
+            assert depth == 8 and interlace == 0 and color in (2, 6), (depth, color, interlace)
+        elif tag == b"IDAT":
+            idat += body
+        elif tag == b"IEND":
+            break
+        pos += 12 + size
+
+    channels = 4 if color == 6 else 3
+    raw = zlib.decompress(idat)
+    stride = width * channels
+    out: list[tuple[int, int, int, int]] = []
+    prev = bytearray(stride)
+    at = 0
+    for _ in range(height):
+        filt = raw[at]
+        line = bytearray(raw[at + 1:at + 1 + stride])
+        at += 1 + stride
+        for i in range(stride):  # 五种滤波（PNG 规范 9.2）
+            a = line[i - channels] if i >= channels else 0
+            b = prev[i]
+            c = prev[i - channels] if i >= channels else 0
+            if filt == 1:
+                line[i] = (line[i] + a) & 0xFF
+            elif filt == 2:
+                line[i] = (line[i] + b) & 0xFF
+            elif filt == 3:
+                line[i] = (line[i] + (a + b) // 2) & 0xFF
+            elif filt == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pred = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[i] = (line[i] + pred) & 0xFF
+        for x in range(width):
+            px = line[x * channels:(x + 1) * channels]
+            out.append((px[0], px[1], px[2], px[3] if channels == 4 else 255))
+        prev = line
+    return width, height, out
+
+
+def _nearest(px: tuple[int, int, int, int], palette: dict[str, tuple[int, int, int]]) -> str:
+    """把一个像素判给最接近的**已知颜色**（比"看着像不像彩色"可靠得多）。"""
+    best, best_d = "?", 1 << 30
+    for name, rgb in palette.items():
+        d = sum((px[i] - rgb[i]) ** 2 for i in range(3))
+        if d < best_d:
+            best, best_d = name, d
+    return best
+
+
+# 圆环的两个已知颜色（改 CSS 里的 token 时这里要跟着改；不一致会直接红）
+TRACK_RGB = (0xD9, 0xE8, 0xF9)          # --ink-4：空的那一段
+TONE_WARN_RGB = (0xD9, 0x77, 0x06)      # --amber：50% 落在 warn 档
+# 比例 0.5 ⇒ conic-gradient 从 12 点顺时针填到 6 点：右半圈该填、左半圈该空
+RING_ANGLES_FILLED = (30, 60, 90, 120, 150)
+RING_ANGLES_EMPTY = (210, 240, 270, 300, 330)
+RING_ANGLES = RING_ANGLES_FILLED + RING_ANGLES_EMPTY
+
+
+def ring_fill(shot: bytes, tone: tuple[int, int, int]) -> dict:
+    """量一个圆环截图：**该填的角**与**该空的角**在环带上各是什么颜色。
+
+    为什么非要量像素（这条是 2026-09-22 用户报「图标应该按比例填充」之后补的）：
+    当时的断言是 `backgroundImage` 里有 `conic-gradient` 且 `--usage-ratio == 0.5`
+    ——**源码全对，画出来却不是那么回事**。内圈是用 `box-shadow: inset 0 0 0 2px <背景色>`
+    抠的，而 inset 阴影只覆盖外缘，圆心那块**没被抠掉**；12px 的图标于是一整块实心小圆，
+    比例只体现在"半块饼"上，肉眼根本读不出"这是一个按比例填充的圆"。
+    这一类失败**只有像素能分辨**：`conic-gradient` 在场 ≠ 用户看见了半圈。
+
+    自校准：元素截图是圆的**外接方框**，左上角必定在圆外 ⇒ 用那个像素当背景色，
+    不写死任何颜色。环带取半径 72% 处（外缘与圆心之间），逐角度判给最近的已知颜色。
+    """
+    import math
+
+    w, h, px = read_png(shot)
+    bg = px[0][:3]
+    palette = {"tone": tone, "track": TRACK_RGB, "bg": bg}
+    cx, cy = (w - 1) / 2, (h - 1) / 2
+    r_band = (w / 2.0) * 0.72
+    r_hole = (w / 2.0) * 0.22
+
+    def at(deg: float, radius: float) -> tuple[int, int, int, int]:
+        rad = math.radians(deg)
+        x = int(round(cx + radius * math.sin(rad)))
+        y = int(round(cy - radius * math.cos(rad)))
+        return px[y * w + x]
+
+    around = {deg: _nearest(at(deg, r_band), palette) for deg in RING_ANGLES}
+    return {
+        "size": w,
+        "bg": bg,
+        "around": around,
+        "hole": _nearest(at(45, r_hole), palette),
+        "hole_emptyside": _nearest(at(225, r_hole), palette),
+    }
+
+
 def boot(env: dict, log: pathlib.Path):
     handle = log.open("w", encoding="utf-8")
     proc = subprocess.Popen([PY, "-m", "workbench.server_entry", "--port", str(PORT)],
@@ -140,7 +255,9 @@ def main() -> int:
 
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
-            page = browser.new_page(viewport={"width": 1180, "height": 820})
+            # 4× 密度：圆环那个图标只有 14 CSS px，按 1× 截图量不出"哪半圈是什么颜色"
+            page = browser.new_page(viewport={"width": 1180, "height": 820},
+                                    device_scale_factor=4)
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
             # 拦截 SSE：**只拦这一条**，其余请求照常打到真服务（静态资源、/api/agent/cache 都是真的）
@@ -206,21 +323,34 @@ def main() -> int:
             page.click("#btn-send")
             page.wait_for_timeout(1200)
             ctx_text = page.locator("#usage-context").inner_text().strip()
-            check("H1 上下文段显示 本轮真值 / 窗口（65536 / 131072 ⇒ 66k / 131k，50%）",
-                  "66k" in ctx_text and "131k" in ctx_text and "50%" in ctx_text, ctx_text)
-            check("H2 50% 落在 warn 档（接近阈值要变色提醒）",
+            check("H1 上下文段 = 图标 + 占用比例（50%）",
+                  page.locator("#usage-context .usage-ring").count() == 1
+                  and "50%" in ctx_text, ctx_text)
+            check("H2 精确 token 数没有丢，挪进了悬浮提示",
+                  "66k" in page.locator("#usage-context").get_attribute("title", timeout=3000)
+                  and "131k" in page.locator("#usage-context").get_attribute("title"),
+                  str(page.locator("#usage-context").get_attribute("title")))
+            check("H3 50% 落在 warn 档（接近阈值要变色提醒）",
                   page.locator("#usage-context").get_attribute("data-level") == "warn",
                   str(page.locator("#usage-context").get_attribute("data-level")))
-            check("H3 圆环真的画了（conic-gradient + 比例变量）",
-                  "conic-gradient" in page.evaluate(
-                      "() => getComputedStyle(document.querySelector('#usage-context .usage-ring'))"
-                      ".backgroundImage")
-                  and page.evaluate(
-                      "() => document.querySelector('#usage-context .usage-ring')"
-                      ".style.getPropertyValue('--usage-ratio')") == "0.5",
-                  page.evaluate("() => getComputedStyle(document.querySelector("
-                                "'#usage-context .usage-ring')).backgroundImage")[:80])
-            check("H4 缓存段仍是**服务端累计真值**，没被这一轮的事件数字顶掉",
+
+            # 图标**只有像素能判**：4× 密度截图 → 自写 PNG 解码 → 逐角度判色
+            ring_png = page.locator("#usage-context .usage-ring").screenshot()
+            (ROOT / "tmp" / "composer-ring-4x.png").write_bytes(ring_png)
+            ring = ring_fill(ring_png, TONE_WARN_RGB)
+            filled_ok = [a for a in RING_ANGLES_FILLED if ring["around"][a] == "tone"]
+            empty_ok = [a for a in RING_ANGLES_EMPTY if ring["around"][a] == "track"]
+            check(f"H4 比例内那半圈**真的是填充色**（{len(filled_ok)}/5 个角度）",
+                  len(filled_ok) == len(RING_ANGLES_FILLED),
+                  f"图 {ring['size']}px，逐角度判定 {ring['around']}")
+            check(f"H5 比例外那半圈**真的是空轨道**（{len(empty_ok)}/5 个角度）"
+                  "——「一整块实心圆」与「外缘一圈背景色」都会在这里红",
+                  len(empty_ok) == len(RING_ANGLES_EMPTY),
+                  f"逐角度判定 {ring['around']}，背景 {ring['bg']}")
+            check("H6 圆心是空的（圆环不是实心饼）",
+                  ring["hole"] == "bg",
+                  f"半径 22% 处判成 {ring['hole']}（背景 {ring['bg']}）")
+            check("H7 缓存段仍是**服务端累计真值**，没被这一轮的事件数字顶掉",
                   page.locator("#usage-rate").inner_text().strip() == "75%"
                   and "3.0k" in page.locator("#usage-cache").inner_text(),
                   f"rate={page.locator('#usage-rate').inner_text()} "
@@ -238,10 +368,14 @@ def main() -> int:
                   bool(strip) and strip["height"] <= 26, str(strip and strip["height"]))
 
             check("I4 零 JS 错误（整段交互没抛出任何异常）", not errors, "; ".join(errors[:3]))
+            # 两张图都留给**肉眼复核**：整页看排版，4× 的元素图看那个圆环与它旁边那行字
+            page.locator("#usage-strip").screenshot(
+                path=str(ROOT / "tmp" / "composer-strip-4x.png"))
             page.screenshot(path=str(ROOT / "tmp" / "composer-strip.png"), full_page=False)
             browser.close()
 
-        print(f"\n截图：{ROOT / 'tmp' / 'composer-strip.png'}（肉眼复核那行字的排版）")
+        print(f"\n截图：{ROOT / 'tmp' / 'composer-strip.png'}（整页）"
+              f"与 {ROOT / 'tmp' / 'composer-strip-4x.png'}（用量行 4×）")
         client.close()
     finally:
         proc.terminate()

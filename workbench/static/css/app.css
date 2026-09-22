@@ -812,23 +812,38 @@
 .usage-strip .usage-item[data-level="mid"] { color: var(--text-2); }
 .usage-strip .usage-item[data-level="low"] { color: var(--amber); }
 
+/* 上下文占用图标：**一个按比例填充的圆环**（2026-09-22 用户下达「应该是一个圆形，
+ * 由当前上下文占模型最大上下文的比例进行填充，图标旁则是占用比例」）。
+ *
+ * ⚠️ 空心**必须用 `mask` 抠**，不能用 `box-shadow: inset 0 0 0 Npx <背景色>`：
+ * inset 阴影只盖住外缘那一圈，圆心那块会原样留着 ⇒ 12px 的图标渲染出来是
+ * **一整块实心小圆**，比例只体现在"半块饼"上，肉眼读不出"这是个按比例填充的圆"
+ * （用户就是这么发现它的，见 PITFALLS #87 —— 当时的断言只看 `backgroundImage`
+ * 里有没有 `conic-gradient`，源码全对、画出来完全不是那回事）。
+ * `mask` 抠出来的是**真透明**，不依赖任何背景色，换主题也不会露馅。 */
+.usage-ring {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 5px;
+  /* 12 点起顺时针：`--usage-ratio` 由 paintUsageStrip 写入（= 本轮输入 ÷ 窗口上限） */
+  background: conic-gradient(var(--usage-tone, var(--sky))
+                             calc(var(--usage-ratio, 0) * 1turn),
+                             var(--ink-4) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent 62%, #000 63%);
+  mask: radial-gradient(farthest-side, transparent 62%, #000 63%);
+}
+
+/* 填充色跟着档位走，与旁边那个百分比同色 —— 图标和数字各说一套颜色会让人以为是两件事 */
+.usage-context { --usage-tone: var(--sky); }
+.usage-context[data-level="warn"] { --usage-tone: var(--amber); }
+.usage-context[data-level="high"] { --usage-tone: var(--red); }
+
 /* 上下文用量：接近阈值时转琥珀/红——"还能聊多久"要能一眼看出来 */
 .usage-strip .usage-context[data-level="warn"] { color: var(--amber); }
 .usage-strip .usage-context[data-level="high"] { color: var(--red); }
-
-/* 一个小小的圆环表示上下文占用比例（DeepSeek 那行也是这个形态）。
- * 用 conic-gradient 画：零依赖、零 DOM 负担、跟着字号缩放。 */
-.usage-ring {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  display: inline-block;
-  vertical-align: -1px;
-  margin-right: 5px;
-  background: conic-gradient(var(--sky) calc(var(--usage-ratio, 0) * 1turn),
-                             rgba(0, 0, 0, 0.12) 0);
-  box-shadow: inset 0 0 0 2px var(--ink-1);
-}
 
 .send-btn {
   width: 34px;
