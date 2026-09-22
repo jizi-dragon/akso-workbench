@@ -108,11 +108,31 @@ def resolve_reference_object_id(client: Any, reference_code: str) -> str | None:
 def batch_create_fields(client: Any, *, object_id: str, fields: list[dict[str, Any]],
                         picklist_map: dict[str, str],
                         on_log: Any = None) -> dict[str, Any]:
-    """并发 5 批次创建并维护 fieldMap（code → id）；引用/选项字段先解析 ID。"""
+    """并发 5 批次创建并维护 fieldMap（code → id）；引用/选项字段先解析 ID。
+
+    ## 幂等：先读一次字段全表，已存在的**跳过并复用它的 id**（2026-09-22 真机实测）
+
+    旧实现**无条件** POST `SaveField`，于是"幂等可重跑"这句话在字段这一层是假的：
+    重跑一份已经建过字段的蓝图，平台回 **`code=500 字段名称重复`**，
+    而那个异常会**一路穿出整条管道**（连 `result.json` 都写不出来）——
+    2026-09-22 建「测试09-04」时就撞了：对象建好了、字段建好了，
+    重跑补布局时死在字段步骤，现场只剩半成品。
+
+    平台自己的字段读侧（`FieldPage`）本来就能按 code 认出来，所以这里读**一次**全表
+    （不是每个字段一次），建过的直接用它的 id 进 `fieldMap`（布局步骤要用）。
+    """
     field_map: dict[str, str] = {}
     results: list[dict[str, Any]] = []
+    existing = {str(f.get("code")): f for f in query_fields(client, object_id)}
 
     def _create(field: dict[str, Any]) -> dict[str, Any]:
+        code = str(field.get("code"))
+        found = existing.get(code)
+        if found:
+            return {"success": True, "name": field.get("name"), "code": code,
+                    "fieldId": str(found.get("id") or ""), "existing": True,
+                    "dataType": found.get("dataType"),
+                    "message": "字段已存在，复用（不重复创建）"}
         extras = collect_extras(field)
         if field.get("dataType") == 4 and field.get("picklistCode"):
             picklist_id = resolve_picklist_id(client, str(field["picklistCode"]), picklist_map)
@@ -123,14 +143,17 @@ def batch_create_fields(client: Any, *, object_id: str, fields: list[dict[str, A
             if ref_id:
                 extras["referenceObjectId"] = ref_id
         return create_field(client, object_id=object_id, name=str(field.get("name")),
-                            code=str(field.get("code")),
+                            code=code,
                             data_type=int(field.get("dataType")), extras=extras)
 
     with futures.ThreadPoolExecutor(max_workers=5) as pool:
         for field, result in zip(fields, pool.map(_create, fields), strict=True):
             if result.get("success"):
-                field_map[str(field.get("code"))] = str(result.get("fieldId") or "")
-                field_map[f"_index:{field.get('code')}"] = str(field.get("dataType"))
+                code = str(field.get("code"))
+                field_map[code] = str(result.get("fieldId") or "")
+                # 已存在的字段以**平台读回的 dataType** 为准（蓝图里可能没写对）
+                field_map[f"_index:{code}"] = str(
+                    result.get("dataType") if result.get("existing") else field.get("dataType"))
             results.append(result)
             if on_log:
                 on_log(f"   字段[{field.get('name')}] {result.get('message')}")

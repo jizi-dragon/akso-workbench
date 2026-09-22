@@ -1,0 +1,40 @@
+{
+  "description": "新建测试对象：测试09-04（标准验证环境）—— 用户在界面上明确确认「确实要新建」后，按决策卡 G1 选项① 加显式意图位重跑",
+  "objects": [
+    {
+      "name": "测试09-04",
+      "code": "test_0904__c",
+      "createIfMissing": true,
+      "fields": [
+        {
+          "name": "备注",
+          "code": "remark__c",
+          "dataType": 1,
+          "maxLength": 500
+        }
+      ],
+      "formLayout": {
+        "sections": [
+          {
+            "name": "基本信息",
+            "code": "basic_info__l",
+            "type": 1,
+            "columnsNum": 2,
+            "fields": [
+              "remark__c"
+            ]
+          }
+        ]
+      },
+      "listLayout": {
+        "name": "测试09-04列表",
+        "columns": [
+          {
+            "fieldCode": "remark__c",
+            "sort": 1
+          }
+        ]
+      }
+    }
+  ]
+}

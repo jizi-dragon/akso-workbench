@@ -154,6 +154,17 @@ def precheck_blueprint(client: Any, raw: dict[str, Any]) -> dict[str, Any]:
     ② 的意义：用户说"在对象 X 上做点什么"时，如果 X 打错了，旧行为是**静默新建一个 X**
     —— 建出来的东西对着一个空对象，而用户以为改的是他那个。实测踩过：`test_0903__c`
     如果写成 `test_0905__c`，工厂就会**建一个新对象**，而平台上看不出异常。
+
+    ## 显式意图位（`createIfMissing`，2026-09-22 晚加，决策卡 G1 选项①）
+
+    本函数是**确定性**检查，**看不见对话**：用户批准过、模型转述过，都对它无效
+    ⇒ 加这个键之前，"确认要新建"是一句**没有出口**的话（15:08 真机实测：用户答了"确认"、
+    蓝图也校验通过，创建仍被同一个理由拒回；而本平台的测试对象是**流水号命名**，
+    下一个编号必然与既有对象"相近" ⇒ 结构性误报）。
+
+    现在：对象上写了 `createIfMissing: true` ⇒ 同一份蓝图**不再被拦**；
+    相近对象仍如实记进 `overridden` 并在运行日志里留一行 —— **放行不等于装作没看见**：
+    事后看得出"这次是显式新建，且当时存在哪些相近对象"。
     """
     conflicts: list[dict[str, Any]] = []
     missing: list[dict[str, Any]] = []
@@ -161,24 +172,33 @@ def precheck_blueprint(client: Any, raw: dict[str, Any]) -> dict[str, Any]:
     idem = Idempotency(queries)
     for obj in bp.to_object_blueprints(raw):
         code = str(obj.get("code"))
+        explicit_new = bool(obj.get("createIfMissing"))
         existing = idem.object_exists(code)
         if existing:
             conflicts.append({"kind": "object", "code": code,
                               "message": f"对象编码已存在（objectId={existing.get('id')}）→ 建议后缀 _v2"})
             continue
         candidates = similar_object_codes(client, code)
+        if explicit_new:
+            message = (f"平台上**找不到对象 {code}**" +
+                       (f"；相近的有：{[c['code'] for c in candidates]}" if candidates else "") +
+                       "——蓝图已显式声明 `createIfMissing: true`（用户确认新建，不是打错字）⇒ **放行新建**")
+        else:
+            message = (f"平台上**找不到对象 {code}**" +
+                       (f"；但有几个很像的：{[c['code'] for c in candidates]}" if candidates
+                        else "；也没有找到相近的") +
+                       ("——**请先让用户确认**是要改上面某个，还是确实要新建；"
+                        "用户确认新建后，在该对象上写 `createIfMissing: true` 再重跑"
+                        if candidates else "——若确实要新建，继续即可"))
         missing.append({
             "kind": "object", "code": code, "candidates": candidates,
-            "message": (f"平台上**找不到对象 {code}**" +
-                        (f"；但有几个很像的：{[c['code'] for c in candidates]}" if candidates
-                         else "；也没有找到相近的") +
-                        ("——**请先让用户确认**是要改上面某个，还是确实要新建"
-                         if candidates else "——若确实要新建，继续即可")),
+            "createIfMissing": explicit_new, "message": message,
         })
     phase = "review" if not conflicts and not missing else "precheck"
-    blocking = [m for m in missing if m["candidates"]]
+    blocking = [m for m in missing if m["candidates"] and not m["createIfMissing"]]
+    overridden = [m["code"] for m in missing if m["candidates"] and m["createIfMissing"]]
     return {"phase": phase, "conflicts": conflicts, "missing": missing,
-            "needsObjectChoice": blocking}
+            "needsObjectChoice": blocking, "overridden": overridden}
 
 
 def run_full_workflow(client: Any, raw: dict[str, Any], *, approved: bool = True,
@@ -215,8 +235,17 @@ def run_full_workflow(client: Any, raw: dict[str, Any], *, approved: bool = True
             "success": False,
             "needsObjectChoice": blocking,
             "message": "预检查未通过：**本轮未写入任何东西**。" + "；".join(lines)
-                       + " ⇒ 请让用户选择：① 改成上面某个对象重跑；② 确认确实要新建（把 code 改成不带歧义的、或在确认后显式要求新建）。",
+                       + " ⇒ 请让用户选择：① 改成上面某个对象重跑；"
+                         "② 用户确认**确实要新建** ⇒ 在该对象上写 `createIfMissing: true` 再重跑"
+                         "（预检看不见对话，口头确认不算数，必须落到这个键上）；"
+                         "③ 或者把 code 改成不与既有对象雷同的。",
         }
+    # 显式新建放行了，但**要留痕**：日志里写清"是显式新建 + 当时存在哪些相近对象"，
+    # 否则事后回看只剩"跑通了"，看不出它本该被拦。结果里也带一份（`precheck.overridden`）。
+    for code in list(precheck.get("overridden") or []):
+        entry = next((m for m in precheck["missing"] if m["code"] == code), {})
+        near = "、".join(str(c["code"]) for c in (entry.get("candidates") or []))
+        log(f"⚠ {code}：平台上有相近对象（{near}），但蓝图显式声明 createIfMissing=true ⇒ 按**新建**执行")
     if artifact_dir is not None:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         (artifact_dir / "spec.md").write_text(bp.generate_review_spec(raw), encoding="utf-8")
@@ -259,7 +288,20 @@ def run_object_workflow(client: Any, obj: dict[str, Any], *, cp: CheckpointManag
     status_map: dict[str, str] = {}
 
     def record(step: str, fn: Any) -> Any:
-        outcome = fn()
+        """跑一步并记账。**任何异常都就地转成"这一步失败"**（2026-09-22 实测补的）。
+
+        为什么不能让异常穿出去：那样整条管道会以 traceback 结束，
+        连 `result.json` 都写不出来，而**前面几步已经写进平台**——现场只剩一个
+        "看不懂跑到哪了"的半成品（2026-09-22 建「测试09-04」时实测：重跑撞
+        `SaveField 字段名称重复`，异常一路穿到顶层，工具连结论都没打印）。
+        转成这一步的 failed 之后：日志与 `steps` 里都看得见，运行也会照常收尾。
+        """
+        try:
+            outcome = fn()
+        except Exception as exc:  # noqa: BLE001 —— 见上：宁可记成失败，也不许半路炸掉整条管道
+            outcome = {"success": False, "aborted": True,
+                       "message": f"{type(exc).__name__}: {exc}"}
+            log(f"✗ {step} 步骤异常：{outcome['message']}")
         status = "skipped" if outcome.get("skipped") else ("success" if outcome.get("success", True) else "failed")
         cp.record(f"{prefix}{step}", status, outcome.get("message", ""))
         result["steps"][step] = outcome
@@ -300,6 +342,15 @@ def run_object_workflow(client: Any, obj: dict[str, Any], *, cp: CheckpointManag
 
     obj_outcome = record("object", _object)
     object_id = obj_outcome.get("objectId", "")
+    if not object_id:
+        # 对象没拿到 id ⇒ 后面每一步都无从下手（字段/布局/生命周期都按 objectId 写）。
+        # 如实收尾，而不是拿着空 id 去平台上撞一串 500（那些 500 的成因看不出是"对象没建成"）。
+        result["steps"]["aborted"] = {
+            "success": False, "aborted": True,
+            "message": "对象步骤没有拿到 objectId ⇒ 后续步骤（字段/布局/生命周期/工作流/验证）全部跳过",
+        }
+        result["success"] = False
+        return result
 
     # 3 字段（并发 5）
     def _fields() -> dict[str, Any]:

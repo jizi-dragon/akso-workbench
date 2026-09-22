@@ -41,6 +41,15 @@ ENVELOPE_KEYS = frozenset({
     "traceid", "trace_id", "requestid", "request_id", "timestamp", "pagesize", "pageindex",
 })
 
+#: 这些键是**工厂自己的控制键**：只给编排层读，**从不发给平台**。
+#: ⇒ 它们出现在「我们声明了、真实流量从没见过」那一栏是**必然的**，不是缺口；
+#: 不排除就等于在报告里长期挂一行**永远修不掉的噪声**（而那份报告的读者是"据此判断
+#: schema 该不该改"的人，噪声会直接变成错误结论）。
+#: 加键的判据：**产品代码里从来没有任何一处把它写进请求体**。
+LOCAL_CONTROL_KEYS = frozenset({
+    "createifmissing",   # 2026-09-22 加：对象不存在时是否按新建处理（ADR-0018 §8）
+})
+
 
 @dataclass
 class EndpointShape:
@@ -96,7 +105,8 @@ def analyze(entries: list[Any]) -> list[EndpointShape]:
             seen_keys=seen, modeled_keys=declared,
             unmodeled=[k for k in seen if k.lower() not in lower_declared],
             unseen=[name for name in declared
-                    if name.lower() not in {k.lower() for k in seen}],
+                    if name.lower() not in {k.lower() for k in seen}
+                    and name.lower() not in LOCAL_CONTROL_KEYS],
             samples=bucket["samples"],
         ))
     return shapes

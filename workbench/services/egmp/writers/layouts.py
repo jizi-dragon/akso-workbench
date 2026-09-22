@@ -282,27 +282,56 @@ def read_list_columns(client: Any, listlayout_id: str) -> list[dict[str, Any]]:
 def build_list_layout(client: Any, *, object_id: str, object_code: str,
                       blueprint_layout: dict[str, Any],
                       field_map: dict[str, str]) -> dict[str, Any]:
-    """无 name 改默认布局（source=2）；有 name 新建。**先读旧列再合并**（D-B）。
+    """挑目标列表布局 → 读旧列 → 合并 → 全量提交（D-A/D-B 之后的样子）。
 
     ⚠️ `AddColumns` 是**全量替换**：不读旧列就提交 = 把平台已有的列（含平台强制列，
     例如末列的 `status_id__sys`）**清掉**，而接口照样回成功。所以这里：
     ① 读旧列 → ② 旧列原样保留（顺序不变）→ ③ 蓝图里的列按需追加 → ④ 重新编号 `sort`（从 1 起）。
     **读旧列失败时不提交**（Fail-Closed）：宁可这一步失败，也不冒清空列的风险。
+
+    ## 目标怎么挑（2026-09-22 真机实测后定的，修的是"新建列表布局必失败"）
+
+    真机事实（n=2，`test_0903__c` / `test_0904__c`）：**建对象时平台自动生成两个默认布局** ——
+    表单 `<对象code>_base_layout__ak`（默认布局）与列表 `<对象code>_table__ak`（所有的<对象名>），
+    两者 `source=2`。所以"对象上有没有列表布局"几乎总是"有"。
+
+    于是：
+    1. 蓝图给了 `name` ⇒ 先按 name 找；**找不到就退到默认（source=2）**，
+       并在 message 里**明说退到了哪一个**（不许静默改目标）；
+    2. 蓝图给了 `code` ⇒ 按 code 找；**找不到就新建**（`Listlayout/Save`）。
+       ⚠️ **平台要求 `code` 非空**（实测：`{name, objectId, source:3, status:1}` 被拒
+       —— `code=500 组件[listlayout]的Code字段不能为空`）。所以**没有 code 就不新建**
+       （Fail-Closed）：不自己编一个从没在真机见过的 code 形状（D-D 的教训）。
     """
     name = blueprint_layout.get("name")
+    code = blueprint_layout.get("code")
     layouts = get_list_layouts(client, object_id)
-    if name:
+    target: dict[str, Any] | None = None
+    created = False
+    note = ""
+
+    if code:
+        target = next((l for l in layouts if str(l.get("code")) == str(code)), None)
+    if target is None and name:
         target = next((l for l in layouts if str(l.get("name")) == str(name)), None)
-        if not target:
-            client.post(LISTLAYOUT_SAVE, {
-                "name": name, "objectId": object_id, "source": 3, "status": 1,
-            })
-            layouts = get_list_layouts(client, object_id)
-            target = next((l for l in layouts if str(l.get("name")) == str(name)), None)
-    else:
+    if target is None and code:
+        client.post(LISTLAYOUT_SAVE, {
+            "name": name or f"所有的{object_code}", "code": str(code),
+            "objectId": object_id, "source": 3, "status": 1,
+        })
+        created = True
+        layouts = get_list_layouts(client, object_id)
+        target = next((l for l in layouts if str(l.get("code")) == str(code)), None)
+    if target is None:
         target = next((l for l in layouts if l.get("source") == 2), None)
-    if not target:
-        return {"success": False, "message": "列表布局目标未找到"}
+        if target is not None and (name or code):
+            note = (f"（蓝图里的 name={name!r} / code={code!r} 平台上都没有 ⇒ "
+                    f"改用默认列表布局 {target.get('name')!r} 设列；"
+                    "要在平台上**新建**一个列表布局，得在蓝图里给出 `code`——平台要求它非空）")
+    if target is None:
+        return {"success": False, "saved": False,
+                "message": ("该对象在平台上没有列表布局，且蓝图未给 `code` ⇒ 不新建"
+                            "（`Listlayout/Save` 要求 `code` 非空，实测 code=500）")}
 
     listlayout_id = str(target.get("id"))
     try:
@@ -340,10 +369,15 @@ def build_list_layout(client: Any, *, object_id: str, object_code: str,
                for position, (field_id, path) in enumerate(merged, start=1)]
     result = set_list_columns(client, listlayout_id=listlayout_id, columns=columns)
     message = str(result.get("message") or "")
+    if created:
+        message = f"已新建列表布局 {name!r}（code={code}）；" + message
+    if note:
+        message += f"；{note}"
     if skipped:
         message += f"；⚠️ 这些字段没进列（平台上也查不到 id）：{skipped}"
     return {**result, "success": bool(result.get("success")) and not skipped,
             "keptColumns": len(old_columns), "totalColumns": len(columns),
+            "layoutId": listlayout_id, "created": created,
             "skipped": skipped, "message": message}
 
 

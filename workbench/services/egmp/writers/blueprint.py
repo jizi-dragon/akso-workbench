@@ -91,6 +91,20 @@ class ListColumnDef(BaseModel):
 class ListLayoutDef(BaseModel):
     model_config = ConfigDict(extra="allow")
     name: str | None = None
+    code: str | None = None
+    """**要在平台上新建**一个列表布局时必填（2026-09-22 真机实测）。
+
+    真机事实：建对象时平台**自动生成**默认列表布局 `<对象code>_table__ak`（`source=2`），
+    所以"设几列"通常直接改它即可（不给 `name`/`code` 就是这个行为）。
+
+    只想改默认布局的列 ⇒ `name` 与 `code` 都别写（写了 `name` 而平台上没有同名的，
+    工厂会**退回默认布局**并在步骤 message 里说明，不静默改目标）。
+
+    真要新建 ⇒ 必须给 `code`：`Listlayout/Save` **要求 code 非空**，实测
+    `{name, objectId, source, status}` 被平台拒绝 —— `code=500 组件[listlayout]的Code字段不能为空`。
+    工厂**不替你编** code（平台上新建布局的 code 形状尚无真机样本，编了就是自造词汇表）。
+    """
+
     columns: list[ListColumnDef] = Field(min_length=1)
 
 
@@ -158,6 +172,28 @@ class ObjectDef(BaseModel):
     model_config = ConfigDict(extra="allow")
     name: str
     code: str
+    createIfMissing: bool = False
+    """**用户明确确认「确实要新建」时的显式意图位**（2026-09-22 晚加，决策卡 G1 选项①）。
+
+    默认 `False` ＝「我要用这个对象」——若平台上找不到它、却**存在相近对象**，
+    预检会拦下来让用户选（防止"code 打错一个字 ⇒ 静默多出一个空对象"，ADR-0018）。
+
+    `True` ＝「这是**新建**，不是打错字」⇒ 预检不再因"存在相近对象"拦截。
+
+    ## 为什么必须有这个键（而不是靠用户在对话里点头）
+
+    预检是**确定性**检查，它**看不见对话**：用户批准过、模型转述过，都对它无效
+    ⇒ 加这个键之前，"确认要新建"是一句**没有出口**的话（2026-09-22 15:08 真机实测：
+    用户答了"确认"、蓝图也校验通过，`factory_create` 仍被同一个理由拒回）。
+
+    加了它之后，"用户说了算"才第一次变成**机器能认的凭据**：
+    模型只能在**用户明确答复之后**才写这个键，而它一旦写上，跑出来的就是新建。
+
+    ⚠️ 本期**不校验**"模型是否真的问过用户"——这仍是模型自律（与 `needs_confirmation`
+    同一条纪律，见 ADR-0016 §5）。它买到的是"**用户确认之后有路可走**"，
+    不是"没确认就走不了"。真正的强制门是确认门与预检本身。
+    """
+
     enableLifeCycle: bool = False
     enableSignatures: bool = False
     source: Literal[3] = 3

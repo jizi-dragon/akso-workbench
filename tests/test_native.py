@@ -479,3 +479,98 @@ def test_missing_object_with_similar_candidate_blocks_the_run() -> None:
     assert blocked and blocked[0]["code"] == "test_0905__c", blocked
     assert "test_0903__c" in result["message"]
     assert "test_0905__c" not in client.objects, "**拒绝写入被违反了**：错 code 的对象还是被建了出来"
+
+
+def test_explicit_create_if_missing_lets_the_run_through() -> None:
+    """★ **用户确认「确实要新建」之后必须有路可走**（决策卡 G1 选项①，2026-09-22 真机实测逼出来的）。
+
+    实测现场：用户让我建「测试09-04」，模型按规则问了"确认要新建吗"、用户答"确认"、
+    蓝图也校验通过 —— 但预检**看不见对话**，仍以"存在相近对象"拒回，且**重试多少次都一样**。
+    更糟的是本平台的测试对象是**流水号命名**（09-01/02/03），下一个编号必然"相近"
+    ⇒ 规则按原样实现时，**越按用户习惯建越建不出来**。
+
+    所以加了显式意图位 `createIfMissing`。判据三条：
+    ① 不写它 ⇒ 仍拦（上一条用例，n=1）；
+    ② 写了它 ⇒ `needsObjectChoice` 为空、那一次**真的建出来了**；
+    ③ **放行不等于装作没看见**：相近对象仍进 `overridden`，且运行日志里留一行。
+    """
+    from workbench.services.egmp import orchestrate
+
+    client = FakeEgmpClient()
+    client.objects["test_0903__c"] = {"id": "obj-0903", "name": "测试09-03", "code": "test_0903__c"}
+    blueprint = {
+        "objects": [{
+            "name": "测试09-05", "code": "test_0905__c", "createIfMissing": True,
+            "fields": [{"name": "验证文本", "code": "probe_text__c", "dataType": 1}],
+        }],
+    }
+
+    # ② 预检放行，但把"被它放过的相近对象"如实列出来（事后可追）
+    pre = orchestrate.precheck_blueprint(client, blueprint)
+    assert pre["needsObjectChoice"] == [], pre["needsObjectChoice"]
+    assert pre["overridden"] == ["test_0905__c"], pre["overridden"]
+    entry = next(m for m in pre["missing"] if m["code"] == "test_0905__c")
+    assert entry["createIfMissing"] is True and [c["code"] for c in entry["candidates"]] == ["test_0903__c"]
+
+    logs: list[str] = []
+    result = orchestrate.run_full_workflow(
+        client, blueprint, approved=True, confirmed_env=True, on_log=logs.append)
+    assert "needsObjectChoice" not in result, result
+    assert any("createIfMissing" in line for line in logs), logs
+    assert "test_0905__c" in client.objects, "显式声明新建之后，对象**必须**真的被建出来"
+
+
+def test_named_list_layout_needs_a_code_to_create() -> None:
+    """★ `Listlayout/Save` **要求 `code` 非空** —— 2026-09-22 真机实测（n=1，`test_0904__c`）。
+
+    现场：蓝图里给列表布局起了个名字（`测试09-04列表`），旧实现于是走"新建"分支，发
+    `{name, objectId, source:3, status:1}` ⇒ 平台回
+    **`code=500 组件[listlayout]的Code字段不能为空`**。而这一步前面**已经**写了对象、字段、表单布局
+    ⇒ 又落进"接口失败、前面已生效"的半成品形态（`keygate` 早就把 `LISTLAYOUT_SAVE` 标成
+    **未核**：这条分支此前从没有真机样本，今天第一次跑就撞上）。
+
+    真机事实（n=2）：建对象时平台**自动生成**默认列表布局 `<对象code>_table__ak`（`source=2`）
+    ⇒ "设几列"本来就该改它。所以现在：
+
+    | 蓝图给的 | 工厂做什么 |
+    |---|---|
+    | 都不给 | 改默认列表布局（`source=2`） |
+    | 只给 `name`，平台没有同名的 | **退回默认**，并在 message 里写明退到了谁（**不许静默换目标**） |
+    | 给了 `code` | 才调 `Listlayout/Save`，且 body 里的 `code` 非空 |
+
+    判据：① 只给 name ⇒ **一条 Save 都不发**、`created=False`、message 里出现"改用默认列表布局"；
+    ② 给了 code ⇒ 发 Save 且 `body["code"]` 非空（这正是 500 的成因）。
+    """
+    from workbench.services.egmp.writers import layouts as layouts_writer
+
+    client = FakeEgmpClient()
+    client.objects["x__c"] = {"id": "obj-x", "name": "X", "code": "x__c"}
+    client.fields_by_object["x__c"] = [{"id": "f-a", "code": "a__c", "name": "A", "dataType": 1}]
+
+    sent: list[tuple[str, dict]] = []
+    original_post = client.post
+
+    def spy(path: str, body: dict | None = None) -> Any:
+        sent.append((path, dict(body or {})))
+        return original_post(path, body)
+
+    client.post = spy  # type: ignore[method-assign]
+
+    common = dict(object_id="obj-x", object_code="x__c", field_map={},
+                  blueprint_layout={"name": "X列表",
+                                    "columns": [{"fieldCode": "a__c", "sort": 1}]})
+
+    # ① 只给 name：不许新建（缺 code 的 Save 在真机上必被拒），退回默认布局且**明说**
+    out = layouts_writer.build_list_layout(client, **common)  # type: ignore[arg-type]
+    assert [path for path, _ in sent if path.endswith("/Listlayout/Save")] == [], sent
+    assert out["created"] is False and out["layoutId"] == "listlayout-obj-x", out
+    assert "改用默认列表布局" in out["message"], out["message"]
+    assert out["success"] is True, out
+
+    # ② 给了 code：才发 Save，而且 code 必须非空（真机 500 的成因就是它为空）
+    sent.clear()
+    out2 = layouts_writer.build_list_layout(
+        client, **{**common, "blueprint_layout": {**common["blueprint_layout"], "code": "x_list__ak"}})  # type: ignore[arg-type]
+    saves = [body for path, body in sent if path.endswith("/Listlayout/Save")]
+    assert saves and saves[0]["code"] == "x_list__ak", saves
+    assert out2["created"] is True, out2

@@ -350,13 +350,17 @@ async def resolve_object(args: ResolveArgs, ctx: pa.ToolContext) -> str:
                 "found": None, "candidates": candidates,
                 "guidance": (f"平台上**找不到对象 {args.query}**。相近的有：{listing}。"
                              "⇒ 请把这几个念给用户，问他要改的是哪一个；"
-                             "**若都不是**，再问他是否要**新建**一个，得到明确答复后才动手。"),
+                             "**若都不是**，再问他是否要**新建**一个。"
+                             "★ 用户明确说要新建之后：在蓝图那个对象上写 "
+                             "`createIfMissing: true` 再重跑——预检**看不见对话**，"
+                             "口头/界面上的确认对它无效，只有这个键能让它放行。"),
             }
         return {
             "found": None, "candidates": [],
             "guidance": (f"平台上**找不到对象 {args.query}**，也没有相近的。"
                          "⇒ 先别建：请用户复核对象的 code/名称（最好让他把界面上的 code 贴过来），"
-                         "并问他是不是要**新建**；明确答复后再走创建。"),
+                         "并问他是不是要**新建**；他确认后，在蓝图那个对象上写 "
+                         "`createIfMissing: true` 再走创建。"),
         }
 
     return json.dumps(await _in_thread(_run), ensure_ascii=False)
@@ -447,7 +451,8 @@ PLUGIN = pa.Plugin(
             description=(
                 "**用户说的对象在平台上到底存不存在**——按 code 或名称查。"
                 "存在：回 id/name（工厂会复用它）；不存在：回**相近对象清单**，"
-                "此时必须先把候选念给用户、让他选，**都不对再问他是否要新建**。"
+                "此时必须先把候选念给用户、让他选，**都不对再问他是否要新建**；"
+                "用户确认新建后，在蓝图那个对象上写 `createIfMissing: true` 再重跑。"
                 "★ 规则（用户 2026-09-22 定）：对象不存在时**不许静默新建**——"
                 "工厂的对象步骤是幂等的，code 打错一个字不会报错，只会静默多出一个空对象。"
                 "写蓝图 / 调 factory_create **之前**先查一次，比事后在平台上删对象便宜"
@@ -468,7 +473,10 @@ PLUGIN = pa.Plugin(
                 "【危险】在真实平台上按蓝图批量创建对象/字段/选项集/生命周期/工作流/布局/菜单。"
                 "幂等可重跑，但会真的改平台数据，**必须经用户确认后才会执行**。"
                 "入参 blueprint_id 来自 factory_preview_blueprint 或用户在页面上的上传。"
-                "调它之前先把审阅清单讲给用户听"
+                "调它之前先把审阅清单讲给用户听。"
+                "★ 若蓝图里的对象在平台上不存在、却又存在相近对象，本工具会**拒绝写入**（零写入）"
+                "并回候选清单——那是防「code 打错一个字 ⇒ 静默多出一个空对象」。"
+                "用户确认**确实要新建**之后，在蓝图该对象上写 `createIfMissing: true` 再重跑即可放行"
             ),
             args_model=CreateArgs,
             handler=create,

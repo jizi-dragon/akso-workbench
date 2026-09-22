@@ -94,6 +94,10 @@ _NOTES: dict[str, str] = {
     # 对象
     "ObjectDef.name": "对象显示名",
     "ObjectDef.code": "对象编码，必须匹配 ^[a-z][a-z0-9_]*__c$（小写 + 下划线 + __c 结尾）",
+    "ObjectDef.createIfMissing": "**用户明确确认「确实要新建」之后**才写 true（默认 false）。"
+                                 "不写它而平台上又存在相近对象时，创建会被预检**拒绝**并回候选清单"
+                                 "——那是防「code 打错一个字就静默多出一个空对象」；"
+                                 "用户确认新建后写 true，预检即放行",
     "ObjectDef.enableLifeCycle": "是否启用生命周期（启用后平台自动生成两个不可删状态，见 lifecycle）",
     "ObjectDef.enableSignatures": "是否启用电子签名",
     "ObjectDef.source": "固定 3（自定义对象），不要改",
@@ -144,7 +148,9 @@ _NOTES: dict[str, str] = {
     "FormSectionDef.type": "固定 1",
     "FormSectionDef.columnsNum": "该部分几列（常用 2）",
     "FormSectionDef.fields": "部分里放哪些字段（**字段编码**，不是显示名）",
-    "ListLayoutDef.name": "列表布局名（可省）",
+    "ListLayoutDef.name": "列表布局名（**可省**；省了就是改平台的默认列表布局 `<对象code>_table__ak`）",
+    "ListLayoutDef.code": "**要新建**列表布局时才填（`Listlayout/Save` 要求 code 非空，实测缺它 code=500）；"
+                          "只想给默认布局设列就别填",
     "ListLayoutDef.columns": "列表列，至少 1 列",
     "ListColumnDef.fieldCode": "列对应的字段编码",
     "ListColumnDef.sort": "列顺序，越小越靠前",
@@ -318,6 +324,9 @@ def blueprint_spec() -> dict[str, Any]:
             "（工厂的对象步骤是幂等的：code 存在就复用、不存在就**建一个新的** ⇒ "
             "打错一个字不会报错，只会静默多出一个空对象。管道层还有第二道闸："
             "对象不存在但存在相近对象时，`factory_create` 会**拒绝写入**并回候选清单）",
+            "★ **用户确认「确实要新建」之后**，在该对象上写 `createIfMissing: true` 再重跑。"
+            "这是唯一能让那道闸放行的凭据——**它看不见对话**，用户批准过也不算数；"
+            "用户没明确确认过就不要写它（写它＝替他做了新建的决定）",
             "调用一次预览工具：校验通过就会暂存并返回 blueprint_id，"
             "同时给你一份给用户看的人话清单",
             "把那份清单讲给用户听（他要据此决定要不要真的创建）",

@@ -11,7 +11,7 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（81 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 真机环境坑（83 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 不再变的决策（18 篇 ADR） | [docs/adr/](docs/adr/) |
 > | 配置工厂 × Agent 的接口缺口（问题分析） | [docs/FACTORY-AGENT-GAP.md](docs/FACTORY-AGENT-GAP.md) |
 > | 配置工厂逐条验证与优化（**进行中 · L1/L2 已跑，L3 表单布局已取证到段 6 · 首次真机验证卡在 D-C ‖ 10 条卡片待裁定**） | [docs/FACTORY-VERIFICATION-PLAN.md](docs/FACTORY-VERIFICATION-PLAN.md) |
