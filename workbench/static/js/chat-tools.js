@@ -251,6 +251,13 @@ export function createToolTrail(host) {
      *  内联卡片会随输出消失，而它是一次真实写入的闸门）。
      */
     addApproval(event) {
+      // 被拦下的那张工具卡不能一直转圈：它**就停在这里**（等用户放行）。
+      // `approval_required` 带 auditId ⇒ 就地把它标成「待人工确认」。
+      // 2026-09-22（决策卡 G2）之后，这一轮会在等待期间被放行并**由服务端执行**，
+      // 那时会另起一张 action 卡（新 auditId）承载真实结果——所以这张卡停在"待人工确认"
+      // 是**准确的历史**，不是没更新。
+      const blocked = cards.get(String(event.auditId || ""));
+      if (blocked) setStatus(blocked, "needs_approval", 0);
       const row = decisionReceipt(event, "approval");
       decisions.set(String(event.pendingId || ""), row);
       openBlock().appendChild(row);
@@ -315,7 +322,7 @@ function settleReceipt(row, event) {
   if (event.approved) {
     row.dataset.state = "allowed";
     state.textContent = row.dataset.kind === "approval"
-      ? "已在弹窗里放行 · 让模型重试同一次调用即可执行"
+      ? "已在弹窗里放行 · 服务端正用相同参数执行"
       : "已在弹窗里同意 · 模型继续执行";
   } else if (event.expired) {
     row.dataset.state = "timeout";

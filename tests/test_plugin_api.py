@@ -53,14 +53,16 @@ async def write_handler(args: EchoArgs, ctx: pa.ToolContext) -> str:
     return "已写入（真的写的话）"
 
 
-def probe_plugin(risk: pa.Risk = pa.Risk.READ, timeout_s: float = 5.0) -> pa.Plugin:
+def probe_plugin(risk: pa.Risk = pa.Risk.READ, timeout_s: float = 5.0,
+                 precheck=None) -> pa.Plugin:
     return pa.Plugin(
         id="probe", title="探针插件",
         tools=[
             pa.ToolSpec(name="probe_echo", description="回显工具", args_model=EchoArgs,
                         handler=echo_handler, risk=pa.Risk.READ, timeout_s=timeout_s),
             pa.ToolSpec(name="probe_write", description="写工具（过确认门）", args_model=EchoArgs,
-                        handler=write_handler, risk=risk, timeout_s=timeout_s),
+                        handler=write_handler, risk=risk, timeout_s=timeout_s,
+                        precheck=precheck),
         ],
     )
 
@@ -280,6 +282,51 @@ def test_read_tool_never_asks(hub) -> None:
     inv = run(hub.execute("probe_echo", {"text": "ok"}))
     assert inv.status is pa.ToolStatus.OK
     assert approvals.pending_store().list("pending") == []
+
+
+# ------------------------------------------------- 前置检查（决策卡 G3，2026-09-22）
+
+def test_precheck_refuses_without_asking_the_user(hub) -> None:
+    """★ **注定失败的调用不该先问用户放行**（决策卡 G3）。
+
+    真机现场：工厂的"对象不存在但有相近对象"是**确定性**拒绝，而它跑在确认门**之后**的
+    handler 里 ⇒ 用户被要求为一次必然失败的写操作授权，点完还是同一个拒绝
+    （2026-09-22 15:08：同一份蓝图连着问了两次放行，两次都白点）。
+
+    判据三条：① 前置检查拒绝时**一条 pending 都不建**（用户不会被白问）；
+    ② handler **没被调用**；③ 拒绝理由原样成为模型看到的观测（`status=rejected`）。
+    反证：把 precheck 传 `None` 跑同一个调用 ⇒ 立刻回到"建 pending 等放行"。
+    """
+    seen: list[str] = []
+
+    async def refusal(args: EchoArgs, ctx: pa.ToolContext) -> str:
+        seen.append(args.text)
+        return "预检查未通过：平台上有相近对象 ⇒ 请先让用户确认" if args.text == "blocked" else ""
+
+    hub.add_plugin(probe_plugin(risk=pa.Risk.DANGEROUS, precheck=refusal))
+    CALLS.clear()
+
+    inv = run(hub.execute("probe_write", {"text": "blocked"}))
+    assert inv.status is pa.ToolStatus.REJECTED, inv
+    assert "预检查未通过" in inv.content
+    assert seen == ["blocked"], "前置检查没跑"
+    assert approvals.pending_store().list("pending") == [], "**用户被白问了一次放行**"
+    assert CALLS == [], f"handler 被调用了：{CALLS}"
+
+    # 放行路径不受影响：前置检查说"没意见" ⇒ 照旧走确认门
+    inv2 = run(hub.execute("probe_write", {"text": "fine"}))
+    assert inv2.status is pa.ToolStatus.NEEDS_APPROVAL, inv2
+    assert len(approvals.pending_store().list("pending")) == 1
+
+
+def test_precheck_failure_does_not_block_the_call(hub) -> None:
+    """前置检查**自己坏了**（异常/超时）必须放行——它只买"省一次白问"，不承担拦截责任。"""
+    async def broken(args: EchoArgs, ctx: pa.ToolContext) -> str:
+        raise RuntimeError("查询平台失败")
+
+    hub.add_plugin(probe_plugin(risk=pa.Risk.DANGEROUS, precheck=broken))
+    inv = run(hub.execute("probe_write", {"text": "fine"}))
+    assert inv.status is pa.ToolStatus.NEEDS_APPROVAL, inv
 
 
 # ---------------------------------------------------------------- 审计

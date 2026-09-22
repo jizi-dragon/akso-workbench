@@ -229,11 +229,16 @@ def test_tool_audit_is_written_from_the_loop(hub) -> None:
 
 
 def test_dangerous_call_pauses_and_never_executes(hub) -> None:
-    """核心安全属性：对话链路里危险工具被拦下，且**没有真的执行**。"""
+    """核心安全属性：对话链路里危险工具被拦下，且**没有真的执行**。
+
+    2026-09-22（决策卡 G2）之后这一轮会**就地等答复**（`AgentConfig.approval_wait_s`），
+    所以这里把等待调成 0.05 秒来表达"用户没答"：观测是 `timeout`、
+    那条 pending 被标 `expired` —— **绝不**"等不到就算默认同意"。
+    """
     _, events = drive([
         {"content": "我来建", "tool_calls": [call("probe_write", {"text": "对象A"})]},
         {"content": "已暂停，等你确认"},
-    ], hub)
+    ], hub, AgentConfig(max_steps=3, system_prompt="s", approval_wait_s=0.05))
 
     assert "approval_required" in types_of(events)
     gate = next(e for e in events if e["type"] == "approval_required")
@@ -243,13 +248,14 @@ def test_dangerous_call_pauses_and_never_executes(hub) -> None:
     assert "写动作" in gate["summary"]
 
     observation = next(e for e in events if e["type"] == "observation")
-    assert observation["invocation"]["status"] == "needs_approval"
+    assert observation["invocation"]["status"] == "timeout"
     assert observation["result"]["ok"] is False
 
-    # 审计里应留下一行 needs_approval，且状态可查
-    pending = approvals.pending_store().list("pending")
-    assert [p["id"] for p in pending] == [gate["pendingId"]]
-    assert pending[0]["tool"] == "probe_write"
+    # 审计里应留下一行 needs_approval（谁在什么时候被拦下），而 pending 因**超时**过期：
+    # 「超时 = 未同意」是这条用例真正钉的东西。
+    statuses = {p["id"]: p["status"] for p in approvals.pending_store().list("")}
+    assert statuses[gate["pendingId"]] == "expired", statuses
+    assert approvals.pending_store().list("pending") == []
 
 
 def test_approved_token_lets_the_same_call_through(hub) -> None:

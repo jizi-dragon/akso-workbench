@@ -224,6 +224,28 @@ class ToolSpec:
     **不放松任何安全属性**——用户看到的就是将要跑的那一次调用。
     """
 
+    precheck: Callable[[BaseModel, "ToolContext"], Awaitable[str]] | None = None
+    """可选：**在确认门之前**跑的确定性前置检查（2026-09-22 加，决策卡 G3）。
+
+    返回**空串 = 放行**；返回非空 = 这是拒绝理由，**这一次调用不会被问放行、也不会执行**，
+    理由原样成为模型看到的观测（`ToolStatus.ERROR`）。
+
+    ## 它存在的唯一理由：不要让用户为"注定失败"的写操作放行
+
+    风险门问的是"要不要做"，而**有些调用在被问之前就已经注定失败**——
+    最典型的是工厂：对象不存在但平台上存在相近对象时，`run_full_workflow` 会**拒绝写入**
+    （防"打错一个字 ⇒ 静默多出一个空对象"，[ADR-0018](../../docs/adr/0018-no-silent-object-creation.md)）。
+    而那道检查原本在 hazard 门**之后**的 handler 里跑 ⇒ 用户被要求为一次**必然失败**的写操作
+    授权，点完还是同一个拒绝（2026-09-22 15:08 真机实测：同一份蓝图连着问两次放行）。
+
+    ## 三条纪律
+
+    - **失败即放行**（异常/超时 → 当作"没意见"）：前置检查只是**省一次白问**，
+      真正的强制点在风险门与 handler 里的那一遍；前置检查读不动平台时不该把正常写操作堵死。
+    - **它不能替代确认门**：返回值没有"跳过确认"的能力，只能"提前拒绝"。
+    - **它必须是只读的**（通常是几次查询）：它在**没有用户同意**的情况下跑。
+    """
+
     def to_api(self) -> dict:
         """转为 OpenAI function calling 的 tools 声明。"""
         return {
@@ -1004,6 +1026,27 @@ class ToolHub:
             self._audit(spec, inv, _extra(spec, args))
             return inv
 
+        # 确定性前置检查（可选）：**在确认门之前**跑。
+        # 若这一步注定会被拒（工厂的"对象不存在但有相近对象"就是），先问用户放行就是白点一次
+        # ——用户被要求为一个必然失败的写操作授权（决策卡 G3，2026-09-22 真机实测）。
+        # ⚠️ 异常/超时一律**放行**：这里只是"省一次白问"，强制点在下面那道门与 handler 自己。
+        if spec.precheck is not None:
+            refusal = ""
+            try:
+                refusal = str(await asyncio.wait_for(
+                    spec.precheck(args, ctx), timeout=min(spec.timeout_s, 60.0)) or "")
+            except Exception as exc:  # noqa: BLE001 —— 前置检查自己坏了，不该堵住正常写操作
+                logger.warning("前置检查执行失败（按放行处理）：%s —— %s", name, exc)
+            if refusal:
+                inv = Invocation(
+                    tool=name, status=ToolStatus.REJECTED, content=refusal, error=refusal,
+                    audit_id=audit_id, risk=spec.risk, plugin_id=spec.plugin_id,
+                    request_id=_call_id(arguments),
+                )
+                logger.warning("前置检查拒绝：%s —— %s", name, refusal[:200])
+                self._audit(spec, inv, _extra(spec, args))
+                return inv
+
         # 确认门：风险工具没有单次令牌就不执行
         if spec.risk is not Risk.READ and self._approval_gate is not None:
             passed, pending_id, reason = self._approval_gate(
@@ -1014,10 +1057,11 @@ class ToolHub:
                     tool=name, status=ToolStatus.NEEDS_APPROVAL,
                     content=(
                         f"⏸ 工具 {name} 属于「{spec.risk.value}」级操作，已暂停等待用户确认"
-                        f"（pending_id={pending_id}）。不要在未确认前重试；"
-                        "先向用户说明将要做什么。**用户放行后，用完全相同的参数重试这一次"
-                        "调用**即可执行——服务端会按「工具 + 参数指纹」认领那次批准；"
-                        "换了参数则需要重新确认。"
+                        f"（pending_id={pending_id}）。**不要自己重试，也不要换参数**："
+                        "对话链路（SSE）里这一轮会**就地等用户放行**——放行后由服务端用"
+                        "**完全相同的参数**继续执行，真实结果会回到这一轮；"
+                        "HTTP 链路（`/api/agent/invoke`）则拿 `pendingId` 去 "
+                        f"`POST /api/agent/pending/{pending_id}/approve` 换令牌后重投那一次调用。"
                     ),
                     audit_id=audit_id, risk=spec.risk, plugin_id=spec.plugin_id,
                     pending_id=pending_id, request_id=_call_id(arguments),

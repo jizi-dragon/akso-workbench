@@ -333,6 +333,47 @@ async def _one_model_turn(
                         summary=invocation.risk_reason,
                         auditId=invocation.audit_id,
                     )
+                    # ★ 就地等答复（2026-09-22 加，决策卡 G2）。旧实现在这里**只发事件不等**
+                    # ——它假设"模型会重试同一次调用"（`claim_approved` 那条路）。实测的失败形态：
+                    # 模型把话说完这一轮就结束了，用户随后点「放行」时**没有任何人在等**，
+                    # 那条批准被搁置、界面表现为"我点了，什么都没发生"（15:08 真机实测）。
+                    # 现在与实时确认对称：等答复 → 同意则**由服务端用完全相同的参数执行**，
+                    # 用户只点一次；拒绝/超时则把答复如实写进观测，本轮结束。
+                    outcome = await registry.await_confirmation(
+                        invocation.pending_id, config.approval_wait_s)
+                    logger.info("风险确认有答复：%s → %s（approved=%s expired=%s）",
+                                invocation.pending_id, invocation.tool,
+                                outcome.approved, outcome.expired)
+                    # 答复立刻回给界面：确认卡要就地变成「已放行 / 已拒绝」，
+                    # 不能等到下一条 observation（那时用户已经在看别的东西了）
+                    yield make_event(
+                        "confirm_resolved",
+                        pendingId=invocation.pending_id,
+                        approved=outcome.approved,
+                        expired=outcome.expired,
+                        answer=outcome.answer,
+                        tool=invocation.tool,
+                        risk=invocation.risk.value,
+                    )
+                    if outcome.approved:
+                        # **执行**：重投一次同样的调用，服务端按「工具 + 参数指纹」认领那条批准
+                        # （`claim_approved`，一次性）。审计里因此有**两行**——一行 needs_approval
+                        # （谁在什么时候被拦下）、一行真实结果。这与旧实现里"模型自己重试"留下的
+                        # 两行完全同形，所以排查口径不变。
+                        retry_audit = uuid.uuid4().hex[:12]
+                        yield make_event("action", call=call, auditId=retry_audit,
+                                         tool=_tool_meta(spec, call))
+                        invocation = await registry.execute(
+                            str(call.get("name") or ""),
+                            call.get("arguments") or "{}",
+                            ToolContext(
+                                audit_id=retry_audit,
+                                source="agent",
+                                conversation_id=conversation_id,
+                            ),
+                        )
+                    else:
+                        invocation = _apply_confirmation(invocation, outcome)
 
                 yield make_event(
                     "observation",

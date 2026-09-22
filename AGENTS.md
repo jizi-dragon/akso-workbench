@@ -11,7 +11,7 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（83 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 真机环境坑（85 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 不再变的决策（18 篇 ADR） | [docs/adr/](docs/adr/) |
 > | 配置工厂 × Agent 的接口缺口（问题分析） | [docs/FACTORY-AGENT-GAP.md](docs/FACTORY-AGENT-GAP.md) |
 > | 配置工厂逐条验证与优化（**进行中 · L1/L2 已跑，L3 表单布局已取证到段 6 · 首次真机验证卡在 D-C ‖ 10 条卡片待裁定**） | [docs/FACTORY-VERIFICATION-PLAN.md](docs/FACTORY-VERIFICATION-PLAN.md) |
@@ -148,7 +148,7 @@
 | `workbench/services/egmp/writers/**`、`spec.py` | `pytest tests/test_native.py tests/test_factory_agent.py -o addopts=""`。<br>★ 给 `writers/blueprint.py` 的模型**加字段**时，必须同时补 `writers/spec.py::_NOTES` 的注解——`test_every_model_field_is_annotated` 会红，而那是对的：漏注解是**静默**的（规格照样生成，只是模型少一行说明）<br>★ **改任何请求体键名时，先跑 `python factory-tuning\tools\keygate.py`**——它静态抽出工厂的字面量请求体（**顶层** `client.post(常量, {…})`、**嵌套** `NAME.append({…})`、**词表**三层），与真机见过的键集/值集比对；**D-A（`columns`）/ D-C（`basicObjectId`）/ D-D（控件 `ctrlType`/`fieldCode` + 自造 `input`/`object` 词汇表）都是它抓出来的**，而 pytest 对这条链路零覆盖（`grep "AddColumns\|LISTLAYOUT" tests/` 零命中）。归属一律按「同 writer 模块的端点」（跨模块借样本会造假阳性，见 PITFALLS #75）；词表的「工厂词表 ↔ 真机字段」对应关系是**显式声明**的（`VOCAB_PAIRS`），没声明就是未核。响应形状用 `python factory-tuning\tools\audit_keys.py --responses` |
 | `workbench/sandbox/**` | `pytest tests/test_sandbox.py -o addopts=""`（含 slow 层：真起进程、验 Job Object 树杀） |
 | `workbench/skills/**` | `pytest tests/test_skills.py tests/test_skill_scripts.py -o addopts=""` |
-| `workbench/harness/**`、`cache.py`、`plugin_api.py`、`approvals.py` | `pytest tests/test_cache.py tests/test_agent_loop.py tests/test_agent_approval.py tests/test_user_confirmation.py`（**前缀稳定性 + 确认门两条通道 + 模型发起的实时确认**都在这里）<br>★ 动了实时确认（`needs_confirmation` / `confirm_required` / `pending_action`）还要跑 `python tools\verify_confirmation.py`——**19 项**端到端：真起生产入口、真发 HTTP、真拉三个静态文件（"打包/静态目录漏收"只在这里现形） |
+| `workbench/harness/**`、`cache.py`、`plugin_api.py`、`approvals.py` | `pytest tests/test_cache.py tests/test_agent_loop.py tests/test_agent_approval.py tests/test_user_confirmation.py`（**前缀稳定性 + 确认门两条通道 + 模型发起的实时确认**都在这里）<br>★ 动了实时确认（`needs_confirmation` / `confirm_required` / `pending_action`）**或风险门的等待语义**（`approval_required` / `approval_wait_s`）还要跑 `python tools\verify_confirmation.py`——**40 项**端到端（2026-09-22 实测 40/40）：真起生产入口、真发 HTTP、真拉三个静态文件（"打包/静态目录漏收"只在这里现形）<br>★ **风险门现在会就地等答复**（决策卡 G2）：跑任何"驱动对话循环"的用例时，`AgentConfig.approval_wait_s` 必须调小——真值 300 秒，忘了它就是"用例挂住"而不是"断言变红"（`test_user_confirmation.py` 把它默认成 0.05s 就是这个原因） |
 | `workbench/logging_setup.py`、`api/routes_logs.py`、任何 `logger.*` | `pytest tests/test_logging.py`（落盘/幂等/脱敏/关联 ID/滚动/检索/失败隔离）<br>★ 动了日志系统还要跑 `python tools\verify_logging.py`——它**真起服务、真发请求、真读日志文件**，**36 项**端到端检查（含**两条启动路径**：生产入口与开发态裸 uvicorn）。组件测试证明不了链路，PITFALLS #53 就是这么栽的 |
 | `config.SENSITIVE_PATH_PARTS`、`plugins/builtins.py`、`sandbox/policy.py` | `pytest tests/test_sensitive_paths.py`（**唯一事实源 + 只读工具的边界**） |
 | `workbench/lifecycle.py`、`api/__init__.py` 的 lifespan、`desktop/main.js`（stderr/stdio/菜单） | `pytest tests/test_lifecycle.py -o addopts=""`（**含 slow 层**：真起父子进程验"父死子退"）+ `node --check desktop\main.js` |

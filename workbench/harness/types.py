@@ -45,6 +45,18 @@ class AgentConfig(BaseModel):
     context_threshold: float = 0.8
     keep_recent_turns: int = 5
     system_prompt: str = ""
+    approval_wait_s: float = 300.0
+    """风险门（`risk >= write` 的工具被拦下）**就地等用户放行**的秒数（2026-09-22 加，决策卡 G2）。
+
+    为什么要有这个等待：旧实现只发 `approval_required` 事件、**不等**，然后指望"模型重试同一次
+    调用"（`claim_approved` 那条路）。实测的失败形态是——模型把话说完这一轮就结束了，
+    用户随后点「放行」时**没有任何人在等**，那条批准被搁置，界面表现为"我点了，什么都没发生"。
+
+    超时语义与实时确认**完全一致**：到点按**未同意**处理（`expired`），绝不默认同意。
+    300 秒与 `plugin_api.DEFAULT_CONFIRM_TIMEOUT_S` 同值：一个真人看一眼再点，够用；
+    真走开了，让这一轮结束比挂着一个不动的转圈更诚实。测试里把它调小即可（见
+    `tests/test_agent_approval.py`）。
+    """
 
     model_config = {"populate_by_name": True}
 

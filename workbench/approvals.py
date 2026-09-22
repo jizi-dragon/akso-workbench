@@ -59,6 +59,12 @@ TOKEN_TTL_MS = 5 * 60 * 1000
 PENDING_TTL_MS = 30 * 60 * 1000
 """待确认操作在界面上的可见期：30 分钟；过期后模型的重试会被要求重新申请。"""
 
+_MAX_STASHED_DECISIONS = 64
+"""`_decisions`（"答复先到一步"的暂存区）的硬上限，见 `_trim_decisions_locked`。
+
+64 是"远大于任何真实并发确认数、又小到不可能成为内存问题"的取值：
+对话链路每答一条就 `pop` 一条，只有**HTTP 面**（没有循环在等）会留下来。"""
+
 
 @dataclass
 class PendingAction:
@@ -566,19 +572,42 @@ class PendingStore:
 
         `Future.set_result` 在锁内调用是安全的：它只是把回调排进事件循环
         （`call_soon_threadsafe`），不阻塞、也不会回头抢这把锁。
+
+        ## 没人等的时候也要**存一份**（2026-09-22 改，决策卡 G2）
+
+        旧实现是"没有等待者就直接 return"——那条早退在**风险门**上是致命的：
+        风险门的待确认**从来不提前建等待者**（旧设计假设"放行之后模型会重试"），
+        于是用户放行时若那一刻没有等待者（本轮早已结束），这条答复**哪儿都不去**、
+        界面表现为"我点了放行，什么都没发生"（2026-09-22 15:08 真机实测）。
+
+        现在放行/拒绝一律存进 `_decisions`：后到的等待者（`wait_decision`）在锁内
+        先取 `_decisions`、取不到才挂 future ⇒ **答复早到一步也不会丢**。
+        `_decisions` 由 `wait_decision` 的 `finally` 清理，另有容量上限兜底（没人来取的条目）。
         """
         fut = self._waiters.pop(pending_id, None)
-        if fut is None or fut.done():
-            # 没人在等（风险门的普通待确认），或等待者已经放弃（超时后 future 被取消）
-            return
-        outcome = ConfirmOutcome(approved=approved, expired=expired, pending_id=pending_id)
-        fut.set_result(outcome)
-        # ⚠️ 还要**存一份**：答复可能先于等待者到达（界面在 `confirm_required` 事件里
-        # 就点了同意，而循环那时还没走到 `wait_decision`）。不存的话，`wait_decision`
-        # 到 `_waiters` 里已经找不到东西，只能新建一个永远不会被 resolve 的 future
-        # ——用户明明答复了，循环却干等满一个超时（实测复现过）。
-        # 清理由 `wait_decision` 的 `finally` 负责。
-        self._decisions[pending_id] = outcome
+        if fut is not None and not fut.done():
+            fut.set_result(ConfirmOutcome(approved=approved, expired=expired,
+                                          pending_id=pending_id))
+        # ⚠️ 无论有没有等待者都存一份：答复可能先于等待者到达（界面在 `confirm_required`
+        # / `approval_required` 事件里就点了，而循环那时还没走到等待）。
+        # 不存的话，等待者到 `_waiters` 里已经找不到东西，只能新建一个永远不会被 resolve 的
+        # future ——用户明明答复了，循环却干等满一个超时（PITFALLS #57 实测复现过）。
+        self._decisions[pending_id] = ConfirmOutcome(
+            approved=approved, expired=expired, pending_id=pending_id)
+        self._trim_decisions_locked()
+
+    def _trim_decisions_locked(self) -> None:
+        """给 `_decisions` 一个**硬上限**（调用方必须已持有 `self._lock`）。
+
+        谁会留在里面：**HTTP 面**批准的那些条目——那条路没有对话循环在等，
+        所以永远没人来 `pop`。数量级很小（一次批准一条），但"只增不减的字典"
+        在本仓是明确的红线（见 `AGENT-TOOL-AUDIT` 里同族的内存问题），
+        所以按插入序丢最老的。丢弃是安全的：`wait_decision` 取不到就走超时/未同意，
+        **绝不会**把"没取到答复"当成同意。
+        """
+        overflow = len(self._decisions) - _MAX_STASHED_DECISIONS
+        for _ in range(max(0, overflow)):
+            self._decisions.pop(next(iter(self._decisions)), None)
 
     def _expire_locked(self) -> None:
         now = _now_ms()

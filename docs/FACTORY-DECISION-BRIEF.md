@@ -149,5 +149,23 @@ _2026-09-22 整理。**这份文件的唯一用途：让你能用最少的阅读
 | **真机创建 测试09-04** | ✅ **建成并回读通过**：对象 `test_0904__c`（id `c3a939a8-…`）+ 字段 `remark__c` + 默认表单布局里 1 个控件（`AKInput`）+ 默认列表布局里 1 列 | [真机创建报告](../factory-tuning/reports/2026-09-22-真机创建-测试09-04.md) |
 | **G4 审计维度** | ✅ 已加 `query`（纯增留痕） | `plugins/factory.py`；`verify_factory_agent` 24/24 |
 | **顺手撞出并修掉的两个缺陷** | ✅ #82（`Listlayout/Save` 要 `code`，而那条分支从没真机跑过）/ #83（字段层"幂等"是假的 + 步骤异常穿出整条管道） | [PITFALLS #82/#83](../docs/PITFALLS.md)；真机复跑 `success=True` |
-| **G2（放行无人接手）/ G3（注定白点的放行）** | ⏳ **仍等你拍** | 本文件 §6 的两张卡 |
+| **G2（放行无人接手）/ G3（注定白点的放行）** | ✅ **已实现**（2026-09-22 晚，用户下达「执行 G2/G3」，都取卡上的 ★ 选项①） | 见下方 §8 |
+
+---
+
+## 8. ★ 执行结果（2026-09-22 晚，用户下达「执行 G2/G3」）
+
+**用户下达**：执行 G2、G3（两份卡上的 ★ 推荐选项：① 风险门在循环里等；① 被预检拒过的不进确认门）。
+
+| 卡 | 改法 | 状态 | 判据 |
+|---|---|---|---|
+| **G2** 放行之后无人接手 | `harness/loop.py` 的 `NEEDS_APPROVAL` 分支：发完 `approval_required` **就地等答复**（新增 `AgentConfig.approval_wait_s`，默认 300s，**超时＝未同意**）→ 放行则由**服务端**用相同参数重投（`claim_approved` 认领，一次性）→ 真实结果喂回模型；同时发 `confirm_resolved` 收口；`approvals._settle_locked` 改成**没等待者也存答复**（`_decisions` 加 64 上限）；界面文案同步 | ✅ 已改 | `pytest tests/test_agent_approval.py -o addopts=""`（10 passed）：`test_approved_retry_actually_executes_in_the_chat_flow` 断言"停在等待里 → 放行 → **真的执行**"且模型看到 `"ok": true` 而**不是**"请你重试"；`test_risk_gate_timeout_ends_the_turn_without_executing` 钉住"超时＝未同意" |
+| **G3** 注定白点的放行 | `plugin_api.ToolSpec` 新增可选 **`precheck`**（只读、**门前**跑、异常即放行）；`ToolHub.execute` 在风险门之前调用它，拒绝则直接回 `rejected` 观测、**不建 pending**；`factory_create` 声明 `create_precheck`（与执行时**同一段** `precheck_blueprint`） | ✅ 已改 | `pytest tests/test_plugin_api.py -o addopts=""`（31 passed）：`test_precheck_refuses_without_asking_the_user` 断言"**一条 pending 都不建**、handler 没被调用、理由是 `rejected`"，反证是 `precheck=None` 时立刻回到"建 pending 等放行" |
+| 文档同步（规则 32：改行为要改文案） | `CORE-ARCHITECTURE.md`（两次流程图 + 决定清单）、`API.md`（SSE 事件表加 `confirm_resolved`、两条链路的走法、`rejected` 的两种来源）、`PLUGIN-SDK.md`（两条链路 + 新增 precheck 一节）、`TOOLS.md`（确认门一段）、`plugin_api` 给模型的那句观测 | ✅ 已改 | `grep -rn "重试同一次调用" docs/ workbench/static/` 里**只剩 HTTP 链路**的说明（对话链路不再需要它） |
+
+**真机侧的诚实说明**：G2/G3 的验收目前是**代码级 + 单元级**（690 个用例全绿，含 `verify_confirmation.py`
+40/40 与 `verify_factory_agent.py` 24/24）。**真机复验还没做**——它需要你在界面上真的点一次放行，
+而那要等下一次"建对象"的会话；届时的判据是：点一下之后**模型直接拿到执行结果**、
+`pending_action` 里那条变成 `consumed`、日志里出现 `确认门：按已批准条目放行（认领）`。
+
 

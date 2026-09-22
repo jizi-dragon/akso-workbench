@@ -236,17 +236,25 @@ CODEBASE_OVERVIEW 的红线是「端点常量必须实证来源，不许凭观�
 模型调用风险工具
   → 无令牌 → 建 pending_action 行 + 返回 needs_approval 观测（**不执行**）
   → 界面拿 pendingId + 人话摘要问用户
-  → 放行 → 兑换**单次令牌**（一次性 / 5 分钟 / 绑定工具+参数指纹）
-  → 模型重试同一次调用（原样带令牌）→ 门开 → 真正执行
-  → 拒绝 → 记 rejected → 模型看到拒绝理由，不许重试
+  → 对话链路：这一轮**就地等答复** → 放行 ⇒ 服务端用同参数重投（按指纹认领）→ 真正执行
+  → HTTP 链路：放行 ⇒ 兑换**单次令牌**（一次性 / 5 分钟 / 绑定工具+参数指纹）→ 带令牌重投
+  → 拒绝/超时 → 记 rejected/expired → 模型看到理由，不许重试
 ```
 
 ### 两条链路的走法
 
 | 链路 | 拦截表现 | 放行动作 |
 |---|---|---|
-| 对话（SSE） | 事件 `approval_required` + `observation.invocation.status = "needs_approval"` | 界面按钮 → `POST /api/agent/pending/{id}/approve` → 让模型重试同一次调用 |
+| 对话（SSE） | 事件 `approval_required`（随后 `confirm_resolved`），**这一轮停在等待里** | 界面按钮 → `POST /api/agent/pending/{id}/approve` → **服务端**用相同参数执行并把真实结果喂回模型（用户只点一次，不必让模型重试） |
 | HTTP | `409` + `detail.pendingId/risk/summary` | `POST .../approve` 拿 `approvalToken` → 带令牌重投 `POST /api/agent/invoke` |
+
+### 前置检查（`ToolSpec.precheck`，可选，2026-09-22 加）
+
+只读、**在确认门之前**跑的确定性检查：返回非空串 = **这次调用注定失败** ⇒
+**不问用户放行、也不执行**，理由原样成为模型观测（`status=rejected`）。
+它买的是"别让用户为一次必然失败的写操作白点一次放行"（真机现场：工厂的
+"对象不存在但有相近对象"）。**失败即放行**（异常/超时按没意见处理）——
+它只省一次白问，拦截责任仍在确认门与工具自己。
 
 ### 四条硬性质（`tests/test_plugin_api.py` 逐条钉住）
 

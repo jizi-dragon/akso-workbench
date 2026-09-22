@@ -95,17 +95,23 @@ def make_call(name: str, args: dict, call_id: str = "c1") -> dict:
     return {"id": call_id, "name": name, "arguments": json.dumps(args)}
 
 
-async def _drive(hub, script: list[dict], on_confirm=None, conv: str = "conv-confirm"):
+async def _drive(hub, script: list[dict], on_confirm=None, conv: str = "conv-confirm",
+                 approval_wait_s: float = 0.05):
     """跑一轮循环；遇到 `confirm_required` 时执行 `await on_confirm(event)`。
 
     `on_confirm` 在循环已经挂起（停在 `confirm_required` 的 yield 处）时执行
     ——这正是真实世界的样子：**用户点按钮的时刻，循环正卡在等待里**。
+
+    `approval_wait_s`（**风险门**的等待秒数）在这个文件里**默认给极小值**：
+    本文件验的是"模型主动确认"，而 2026-09-22（决策卡 G2）之后风险门也会就地等答复
+    ——真值 300 秒，任何一次"危险工具没被预先批准"的调用都会把用例挂在那里。
     """
     client = ScriptedClient(script)
     events: list[dict] = []
     gen = run_agent_loop(
         [{"role": "user", "content": "开始"}], client, hub,
-        AgentConfig(system_prompt="s", max_steps=6), conversation_id=conv,
+        AgentConfig(system_prompt="s", max_steps=6, approval_wait_s=approval_wait_s),
+        conversation_id=conv,
     )
     async for event in gen:
         events.append(event)
@@ -141,8 +147,8 @@ def _last_observation(events: list[dict]) -> dict:
     return [e for e in events if e["type"] == "observation"][-1]
 
 
-def run(hub, script, on_confirm=None):
-    return asyncio.run(_drive(hub, script, on_confirm))
+def run(hub, script, on_confirm=None, approval_wait_s: float = 0.05):
+    return asyncio.run(_drive(hub, script, on_confirm, approval_wait_s=approval_wait_s))
 
 
 # ---------------------------------------------------------------- 1. 暂停 + 同意后放行
@@ -217,9 +223,10 @@ def test_timeout_is_not_consent(hub) -> None:
     # 事后补点「同意」必须失败——`approve()` 只认 pending
     assert store.approve(pending_id) is None
 
-    # 事后再调目标工具：仍要重新过风险门（说明超时没有留下任何批准）
+    # 事后再调目标工具：仍要重新过风险门（说明超时没有留下任何批准）；
+    # 而这次同样没人放行 ⇒ 风险门等到超时后按**未同意**处理（2026-09-22 G2 之后，风险门也等了）
     later = run(hub, [make_call("probe_dangerous", {"text": "对象C"})])
-    assert _last_observation(later)["invocation"]["status"] == "needs_approval"
+    assert _last_observation(later)["invocation"]["status"] == "timeout"
     assert EXECUTED == []
 
 
@@ -238,7 +245,7 @@ def test_confirming_one_call_does_not_authorize_another(hub) -> None:
 
     assert EXECUTED == [], f"换了参数仍被放行：{EXECUTED}"
     statuses = [e["invocation"]["status"] for e in events if e["type"] == "observation"]
-    assert statuses[-1] == "needs_approval"
+    assert statuses[-1] == "timeout", statuses
 
 
 def test_intent_only_confirmation_authorizes_nothing(hub, monkeypatch) -> None:
@@ -255,7 +262,7 @@ def test_intent_only_confirmation_authorizes_nothing(hub, monkeypatch) -> None:
     assert _decision(events, "confirm_resolved")["approved"] is True
     assert EXECUTED == []
     statuses = [e["invocation"]["status"] for e in events if e["type"] == "observation"]
-    assert statuses[-1] == "needs_approval", "纯意图确认不该放行任何写操作"
+    assert statuses[-1] == "timeout", f"纯意图确认不该放行任何写操作：{statuses}"
 
 
 # ---------------------------------------------------------------- 3. 宿主校验（插件绕不过）

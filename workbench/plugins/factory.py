@@ -294,6 +294,60 @@ async def create(args: CreateArgs, ctx: pa.ToolContext) -> str:
     )
 
 
+async def create_precheck(args: CreateArgs, ctx: pa.ToolContext) -> str:
+    """`factory_create` 的**前置检查**：在问用户放行**之前**跑（决策卡 G3）。
+
+    ## 为什么要有它
+
+    工厂的预检（`orchestrate.precheck_blueprint`）是**确定性**的：对象不存在、而平台上存在
+    相近对象时，`run_full_workflow` 会**拒绝写入**（防"打错一个字 ⇒ 静默多出一个空对象"，
+    [ADR-0018](../../docs/adr/0018-no-silent-object-creation.md)）。
+
+    而那道检查原本在**确认门之后**的 handler 里跑 ⇒ 用户被要求为一次**必然失败**的写操作
+    授权：点完「放行」，拿到的还是同一个拒绝理由（2026-09-22 15:08 真机实测：同一份蓝图
+    连着问了两次放行，两次都白点；见决策简报批五 G3）。
+
+    现在把它提前到门前跑一遍：**注定被拒的调用不会被问、也不会执行**，
+    拒绝理由直接成为模型的观测（含"要新建就在对象上写 `createIfMissing: true`"这条出路）。
+
+    ## 三条纪律
+
+    - **与真正执行时用同一段代码**（`precheck_blueprint`），不是第二套规则——
+      否则就会出现"门前说不许、门后说可以"这种最难查的分歧；
+    - **只读**：几次对象查询，不写平台、不落盘；
+    - **失败即放行**：读不到蓝图、账号不可用、平台查询失败时返回空串，
+      让这次调用照常走确认门 —— 前置检查只买"省一次白问"，不承担拦截责任
+      （拦截由确认门与 handler 里那一遍负责）。
+    """
+    from ..services.egmp import orchestrate
+    from ..services.egmp.client import egmp_client_for_account
+
+    path = staged_dir(str(args.blueprint_id or "").strip()) / "blueprint.json"
+    if not path.is_file():
+        return ""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+
+    def _check() -> str:
+        with egmp_client_for_account(args.account_id) as client:
+            precheck = orchestrate.precheck_blueprint(client, raw)
+        blocking = list(precheck.get("needsObjectChoice") or [])
+        if not blocking:
+            return ""
+        lines = [f"找不到对象 {item['code']}，但平台上存在相近的："
+                 + "、".join(f"{c['code']}（{c['name']}）" for c in item["candidates"])
+                 for item in blocking]
+        return ("预检查未通过（**这次调用没有被问放行、也没有写入任何东西**）："
+                + "；".join(lines)
+                + " ⇒ 请让用户选择：① 改成上面某个对象重跑；"
+                  "② 用户确认**确实要新建** ⇒ 在该对象上写 `createIfMissing: true` 再重跑；"
+                  "③ 或者把 code 改成不与既有对象雷同的。")
+
+    return await _in_thread(_check)
+
+
 async def latest_jobs(_: BaseModel, ctx: pa.ToolContext) -> str:
     """最近工厂任务（先看有没有跑过、跑成没跑成）。"""
     rows = await _in_thread(
@@ -482,6 +536,7 @@ PLUGIN = pa.Plugin(
             handler=create,
             risk=pa.Risk.DANGEROUS,
             timeout_s=900,
+            precheck=create_precheck,
             audit_extra=pa.audit_env_key("blueprint_id", "account_id"),
             summary_fn=_create_summary,
         ),

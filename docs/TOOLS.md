@@ -79,9 +79,13 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `dangerous` | 一次误调用不会报错、**会真的建出来**的批量写入（如 `factory_create`） | 同上，且**永不进入 Monitor 的可执行回放步骤** |
 
 确认门（`approvals.py`）的语义：**单次令牌**（用完即废）· **5 分钟过期** · **绑定工具名 + 参数指纹**
-（换个参数要重新申请）。对话链路发 `approval_required` 事件、HTTP 链路回 `409 + pendingId`，
+（换个参数要重新申请）。对话链路发 `approval_required` 事件、**这一轮就地等答复**（放行后由服务端
+用相同参数执行，见 [CORE-ARCHITECTURE](CORE-ARCHITECTURE.md) §确认门）；HTTP 链路回 `409 + pendingId`，
 两条链路共用 `/api/agent/pending/*`。**没有令牌，WRITE/DANGEROUS 的 handler 根本不会被调用**
 （回归断言的是"handler 调用记录为空"，不是返回码）。
+
+可选的前置检查 `ToolSpec.precheck`：只读、**在确认门之前**跑，判定"这次调用注定失败"时
+**不再问用户放行**（理由直接成为模型观测）。它只省一次白问，不承担拦截责任。
 
 > `factory_create` 与引擎侧 `confirmed=true` 是**两条独立的闸门**，不是替代关系：
 > 工具级确认门挡 Agent 链路，引擎侧挡"绕过页面直接打 HTTP"的人。

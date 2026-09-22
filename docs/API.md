@@ -323,7 +323,10 @@ autologin, has_token, monitoring, monitor_log}`；
 - `risk=read` 直接执行；`risk=write|dangerous` **没有单次令牌绝不执行**。
 - 令牌兑换链：`invoke` 得 409+`pendingId` → `approve` 得 `approvalToken` → 原样重投 `invoke`。
   令牌**一次性 / 5 分钟 / 绑定工具+参数指纹**（换个参数要重新确认）。
-- 对话链路等价走法：SSE `approval_required` 事件 → 同一套 `/pending/*` 端点 → 让模型重试同一次调用。
+- 对话链路（SSE）：`approval_required` → **这一轮就地等答复** → `confirm_resolved`；
+  放行后由**服务端**用完全相同的参数重投那次调用（按指纹认领，一次性）并把**真实结果**喂回模型
+  ——**不需要用户再发一条消息、也不需要模型自己重试**（2026-09-22 决策卡 G2）。
+  等待上限 = `AgentConfig.approval_wait_s`（默认 300s），超时按**未同意**处理。
 
 **模型主动确认（`needs_confirmation`，与上面的风险门是两套东西）**：
 
@@ -427,9 +430,13 @@ autologin, has_token, monitoring, monitor_log}`；
 {"type":"observation",                    ← 对应结果（紧随其 action）
  "result":{"ok":bool,"summary":"≤220字纯文本","status":"ok|error|needs_approval|…"},
  "invocation":{"toolCallId","tool","auditId","durationMs","risk","plugin","status","isError"}}
-{"type":"approval_required",              ← 风险工具被确认门拦下（每次一条，紧随其 observation）
+{"type":"approval_required",              ← 风险工具被确认门拦下（紧随其 action，
  "pendingId":"...","tool":"...","risk":"write|dangerous","summary":"人话摘要","auditId":"..."}
-↑ (thought/action/observation/approval_required) 可循环多轮，受 max_steps 预算约束
+                                          ← 这一轮**就地等答复**，等到之前不会发 observation）
+{"type":"confirm_resolved",               ← 答复到达（放行/拒绝/超时都发；确认卡就地收口）
+ "pendingId":"...","approved":bool,"expired":bool,"answer":"给模型看的那句话",
+ "tool":"...","risk":"..."}
+↑ (thought/action/observation/approval_required/confirm_resolved) 可循环多轮，受 max_steps 预算约束
 {"type":"final","content":"完整正文"}     ← 或 {"type":"error","message":"..."}
 {"type":"usage","usage":{...}}            ← 收尾必发一条：本轮 token 用量与**缓存命中量**
 {"type":"done","conversationId":"...","content":"...","metricId":"...","titleUpdated":bool,
@@ -447,7 +454,9 @@ autologin, has_token, monitoring, monitor_log}`；
   同一 id 也是 `GET /api/agent/audit/{id}` 的主键——即"对话里看到的那次调用"与
   "审计表里那一行"是同一条记录。
 - `invocation.status` 取 `ok|error|needs_approval|rejected|timeout|unknown_tool|bad_args`；
-  **`needs_approval` 不是失败**，是"流程中止等你确认"（见 §10 的确认门）。
+  **`needs_approval` 不是失败**，是"流程中止等你确认"（见 §10 的确认门）；
+  **`rejected` 有两种来源**：用户拒绝了那次放行，或**工具自己的前置检查**（`ToolSpec.precheck`）
+  在问放行之前就判定这次调用注定失败（见 §10 末）。
 - 工具调用**全部入审计**（`agent_audit`，`meta.source="agent"`），HTTP 面与对话面共用同一张表。
 
 ### 12.2 SSE 洞察进度流（`POST /api/insight/run-sse`）
