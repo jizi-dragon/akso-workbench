@@ -83,6 +83,13 @@ def clean_entry(entry: dict[str, Any], index: int) -> dict[str, Any]:
             # ——用户有可能把一个令牌粘进某个输入框里，那种事不该因为"它在 DOM 里"就放行
             "text": _safe_text(action),
             "tag": str(action.get("tag") or ""),
+            # 动作**自己**的时间戳（页面时钟，ms）：必须留。
+            # 2026-09-22 段 2 实测：它一度在这里被静默丢掉 ⇒ 唯一**可信**的那半条时间线没了。
+            # 为什么可信：跨"动作缓冲 ↔ 请求"的差**不可用**（两边时钟不同源，差 38–61 s，
+            # 见 PITFALLS #74）；而**同一个缓冲内部**动作之间的间隔是页面时钟自己减自己，
+            # 可用（"整 行 → 确 定" = 760 ms，"确 定 → 保 存" = 1968 ms）。
+            # 同族事故：分析层丢 `at`（selfcheck 的 H 组）。
+            "at": action.get("at"),
         })
     return {
         "seq": index,
@@ -94,6 +101,13 @@ def clean_entry(entry: dict[str, Any], index: int) -> dict[str, Any]:
         "postData": redact_body(entry.get("postData")),
         "body": redact_body(entry.get("body")),
         "precedingActions": actions,
+        # **窗口身份**（2026-09-22 新增）：这条请求来自哪一个窗口。
+        # `pageLabel` = `p1`（主页面）/`p2`…（同源新窗口），由录制侧按页面生成的闭包给出。
+        # ⚠️ 老会话（≤ 段 4 的 13 个）**没有这两个键** ⇒ 一律 `None`，而 `None` 的正确读法是
+        # **"那时还没记录窗口"**，不是"主页面"。报告里必须写成"未记录"，
+        # 否则等于用一个字段的缺省值冒充证据（同族：PITFALLS #73/#76）。
+        "pageLabel": (str(entry["pageLabel"]) if entry.get("pageLabel") else None),
+        "pageUrl": (redact_url(str(entry["pageUrl"])) if entry.get("pageUrl") else None),
     }
 
 
@@ -132,11 +146,32 @@ def main(argv: list[str] | None = None) -> int:
     raw = json.loads((source / "monitor-log.json").read_text(encoding="utf-8", errors="replace"))
     entries = raw.get("entries") or []
     stats = raw.get("filterStats") or {}
+    # 录制覆盖了哪些窗口（`_pages`）。老会话没有这个键 ⇒ 空 dict（**不是"只有主页面"**）。
+    pages_raw = raw.get("_pages") if isinstance(raw.get("_pages"), dict) else {}
+    pages = {
+        str(label): {
+            "url": (redact_url(str(info.get("url"))) if info.get("url") else None),
+            "title": (str(info.get("title")) if info.get("title") else None),
+            "primary": bool(info.get("primary")),
+            "closed": bool(info.get("closed")),
+        }
+        for label, info in pages_raw.items() if isinstance(info, dict)
+    }
 
     # 会话目录名形如 `<account8>-<stamp>`：账号那半截换成稳定假名
     head, _, stamp = source.name.partition("-")
     session_name = f"{pseudonym(head)}-{stamp or '0'}"
     out_dir = pathlib.Path(args.out) if args.out else (DATA / session_name)
+
+    # ⚠️ **空的会话不建目录**（2026-09-22 补）：`capture.py read` 会在"什么都没发生"时
+    # 也走一遍收编，于是 `data/sessions/` 会攒出一堆 0 条的目录——
+    # 它们是**噪音**：`audit_keys` / `keygate` / `report` 都要多扫一遍，
+    # 而人看目录列表时会以为"那天录到了什么"。⇒ 0 条就如实说、不落盘。
+    if not entries:
+        print(f"（{source.name} 里 0 条写请求 —— **不建会话目录**，"
+              "免得 data/sessions/ 攒出空壳）")
+        return 0
+
     out_dir.mkdir(parents=True, exist_ok=True)
 
     cleaned = [clean_entry(e, i + 1) for i, e in enumerate(entries)]
@@ -162,6 +197,9 @@ def main(argv: list[str] | None = None) -> int:
                           "（那个目录在仓库外、**不入库**；进仓库的是这份脱敏后的副本）",
         "entry_count": len(cleaned),
         "filter_stats": stats,
+        # label → {url,title,primary,closed}：这是"事后能回答『那次保存是在哪个窗口』"的依据。
+        # 空 dict 的正确读法是"这次录制没有窗口记录"，报告里写"未记录"。
+        "pages": pages,
         "note": "已脱敏：无令牌/口令/会话 id，无主机名，账号为稳定假名。见 tools/redact.py",
     }
     (out_dir / "meta.json").write_text(

@@ -58,3 +58,14 @@ node_modules/
 #     而 `redact.py` 不认为它像令牌。要打掉就在 `redact.py` 加一条键名规则。
 #   · 其余是业务内容：对象/字段/选项集的**名字本身**（如 `测试09-01`）与平台内置菜单名。
 # 仓库是**私有**的（`api.github.com/repos/...` 未认证返回 404）。
+#
+# 但 `factory-tuning/data/` 下**三类是"跑一次就有"的中间产物，不入库**（2026-09-22 加）：
+#   · `factory-runs/`  —— 每次 `run_blueprint.py` 的逐步结果（13 个文件，随跑随增）；
+#   · `layout-snapshots/` —— 布局读回的整份 JSON（20KB 级，可随时重读一次拿回来）；
+#   · `where/`         —— 页面身份探针的快照（`--diff` 用的前后对比）。
+# 判据：删掉它们，`factory-tuning/` 的工具**不丢任何能力**（重跑即得）；
+# 而 `sessions/`（脱敏后的真实流量）与 `blueprints/`（人工写的输入）**是资产，必须入库**。
+# 注意 `data/sessions/*` 里只有 `.gitkeep` 是特例：它保住空目录，别一起忽略掉。
+factory-tuning/data/factory-runs/
+factory-tuning/data/layout-snapshots/
+factory-tuning/data/where/

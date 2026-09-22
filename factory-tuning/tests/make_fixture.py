@@ -72,10 +72,51 @@ BODIES: dict[str, dict] = {
     "task_step": {"name": "部门审批", "code": "step_dept", "type": "task",
                   "participantRef": "part_dept", "dispatchMode": 20},
     "out_field": {"objectCode": "training_record__c", "outFieldCode": "dept_owner__c"},
-    "layout": {"objectId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-               "sections": [{"name": "基本信息", "code": "basic__l", "type": 1,
-                             "columnsNum": 2, "fields": ["topic__c", "attendee_count__c"]}]},
+    # ⚠️ 布局这一条**照段 2 真机抄两套形状**（F36）：新建的组件发**精简形状**、
+    # 服务端已有的组件发**完整形状**。这样 §2.5「形状谱」那条链路才**真的被跑到**，
+    # 而不是每次都在"这次没有嵌套数组"的分支上空转。
+    # ⚠️ 键名**只用实测过的**（`type` 只出现在 6 个实测 `AK*` 值里）——
+    # 样例里编一个没见过的控件类型，等于让分析器对着假的输入被验证（PITFALLS #62 同族）。
+    "layout": {
+        "objectId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "sections": [
+            # 新建的部分：真机是 **5 键**
+            {"id": "id-section-new", "name": "基本信息2", "code": "basic2__l",
+             "type": 1, "columnsNum": 2},
+            # 服务端已有的部分：真机是 **62 键**（这里只列代表键；键名全部来自真机那一份）
+            {"id": "id-section-old", "name": "工作流时间线", "code": "workflow_time__cs",
+             "type": 4, "sort": 1, "hidden": False, "expansion": False,
+             "relationId": "00000000-0000-0000-0000-000000000000", "referenceType": 0,
+             "isSimpleRelation": False, "isAssociatedMultipleRecords": False,
+             "listlayoutId": "00000000-0000-0000-0000-000000000000",
+             "selectListlayoutId": "00000000-0000-0000-0000-000000000000",
+             "selectObjectId": "00000000-0000-0000-0000-000000000000", "relationFilter": [],
+             "fieldId": None, "height": None, "gridSpan": None, "columnsNum": None,
+             "referenceFieldCode": None, "required": None, "visible": None, "readOnly": None},
+        ],
+        "controls": [
+            # 新建的控件：真机是 **8 键**
+            {"id": "id-control-new", "sectionId": "id-section-new", "code": "test_time__c",
+             "name": "测试时间", "fieldId": "id-field-time", "type": "AKDateTime",
+             "gridSpan": 2, "attrs": {"readPrettyShowType": "1"}},
+            # 服务端已有的控件：真机是 **23 键**（含 13 个 `null` 键）
+            {"id": "id-control-old", "sectionId": "id-section-old", "code": "test_file__c",
+             "name": "测试附件", "sort": 1, "fieldId": "id-field-file", "dataType": 8,
+             "type": "AKAttachment", "gridSpan": 1,
+             "attrs": {"readPrettyShowType": "1"},
+             "isRecalculateDefaultOnDependencyChange": False,
+             "visible": None, "readOnly": None, "readPretty": None, "hidden": None,
+             "hideWhenNotData": None, "required": None, "defaultValue": None,
+             "defaultValueDepFields": None, "forceAssignment": None,
+             "displayOnlyInLifecycleStatusIds": None, "externalDataConfig": None,
+             "combinationDisplayFieldId": None},
+        ],
+    },
 }
+
+#: 每个动作相对该条请求的时间（ms，页面时钟）。**样例也要有**，否则 §3.1
+#: 「动作缓冲逐格」在自检里永远走"没有带时间戳的动作"那个分支（= 没被验证）。
+ACTION_OFFSETS_MS = (-2100, -1650, -300)
 
 
 def main() -> int:
@@ -104,7 +145,13 @@ def main() -> int:
             # 样例照猜的信封写，等于让分析器对着一个假的输入形状被验证（PITFALLS #62 同族）。
             "body": {"code": 0, "errorCode": 0, "message": None, "data": True,
                      "requestID": "fixture", "traceId": "fixture"},
-            "precedingActions": [{"type": t, "tag": "BUTTON", "text": s} for t, s in actions],
+            # 动作的 `at` 是**页面时钟**（相对该条请求），与真机产物的形状一致——
+            # 少了它，§3.1 那条链路在自检里就是空转的。
+            "precedingActions": [
+                {"type": t, "tag": "BUTTON", "text": s,
+                 "at": 1767225600000 + index * 1000 + offset}
+                for (t, s), offset in zip(actions, ACTION_OFFSETS_MS, strict=False)
+            ],
         })
     (FIXTURE / "traffic.jsonl").write_text(
         "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),

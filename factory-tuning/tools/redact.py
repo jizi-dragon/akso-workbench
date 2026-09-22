@@ -56,13 +56,35 @@ SENSITIVE_KEY_EXACT: frozenset[str] = frozenset({
     "enc", "encrypted", "key", "secretkey",
 })
 
+#: **第三档：自由文本键**（整键命中）。它们**不是凭据**，而是**用户手打进去的自由文本**——
+#: 搜索框、过滤条件值、查询串。平台把用户搜的东西原样发给服务端，而人搜的经常是
+#: **人名 / 单位名 / 编号**。schema 分析要的是**键名与结构**，用不到这些值。
+#:
+#: 为什么是**整键**而不是子串：`keywordCount`、`searchableFields`、`filterOperator`
+#: 这类业务键会被子串规则误伤——**过度脱敏与脱敏不足一样是缺陷**（A/B 两组断言守的就是这条）。
+#: 也刻意**不收**过于通用的 `inputValue` / 单数 `keyword`：那更像业务字段名。
+#:
+#: 实测（2026-09-22）：一次**浏览流量**会话里出现
+#: `ListlayoutRecord/GetRecordPositionAll` 的 `{"keywords":"<真人姓名>"}`；
+#: 那个会话因此**没有 ingest**（留在 runtime，不入库）。已提交的采集数据里这类键**零命中**
+#: ——即"当时还没漏"，但管道本来是放行的。判据：selfcheck 的 A/B 两组。
+FREE_TEXT_KEY_EXACT: frozenset[str] = frozenset({
+    "keywords", "searchtext", "searchkey", "searchword", "querytext", "filtervalue",
+})
+
 
 def is_sensitive_key(name: object) -> bool:
-    """键名是否指向凭据。**这是脱敏的第一道也是主力防线**（见模块文档）。"""
+    """键名是否**不该落盘**（凭据 **或** 用户手打的自由文本，见模块文档）。
+
+    这是脱敏的第一道也是主力防线。两档判据的名称历史地叫 `SENSITIVE`，
+    但第三档（`FREE_TEXT_KEY_EXACT`）挡的是**个人数据**而不是凭据——
+    两类都不该进 git，处理方式相同（值换成 `***`），所以共用这一个入口。
+    """
     key = str(name or "").strip()
     if not key:
         return False
-    if key.lower().replace("-", "").replace("_", "") in SENSITIVE_KEY_EXACT:
+    normalized = key.lower().replace("-", "").replace("_", "")
+    if normalized in SENSITIVE_KEY_EXACT or normalized in FREE_TEXT_KEY_EXACT:
         return True
     return bool(SENSITIVE_KEY_SUBSTR_RE.search(key))
 
@@ -128,6 +150,43 @@ PSEUDONYM_RE = re.compile(r"\b(?:acct|id)-[0-9a-f]{8}(?:-\d{8}-\d{6})?\b")
 #: 而这条只放行"全小写 + 数字 + 下划线、且以平台后缀结尾"的形状。
 #: 仍然用 `fullmatch`：编码被拼进一段更长的串里就照样判红。
 PLATFORM_CODE_RE = re.compile(r"[a-z][a-z0-9_]*(?:__c|__ak|__sys)")
+
+#: **文件名 / 路径片段**形态（kebab-case slug）：`05-permissions-rules-data`
+#: 这种全小写、只由 `[a-z0-9-]` 组成、用连字符分词的串。
+#:
+#: 与 `PSEUDONYM_RE` / `PLATFORM_CODE_RE` 同一族、同样的理由、**同样只在扫描器一侧豁免**：
+#: **交叉引用兄弟笔记的文件名是写文档的日常动作**，而 ≥24 字符的 slug 恰好撞上
+#: "像令牌"的启发式 ⇒ **每写一份带交叉引用的笔记就误报一次**，而恒红的门禁等于没有门禁。
+#: 实测（2026-09-22）：`reports/gaia-v38-study/09-admin-permissions-org.md` 里两处
+#: 引用 `05-permissions-rules-data.md`，把 `scan_secrets.py` 打成**非零退出**。
+#:
+#: ⚠️ **光有"像 slug"的形状不够**（第一版就是这么写的，当场被自己的反向断言逮住）：
+#: `sk-live-acct-fb8dc317-20260921-154824-9f2c1d` 这种"假名被拼进更长串"的**真令牌形态**
+#: 同样是全小写 + 连字符 ⇒ 只按形状豁免会把它一起放行，**豁免就成了后门**
+#: （C 组两条"嵌在更长的串里照样判红"当场变红）。
+#: 所以判据是**两段**：形状是 slug **且**紧跟一个文件扩展名 / 路径分隔符
+#: ——见 `_is_doc_slug()`，它要看匹配**之外**的上下文，因此不能写成一条 `fullmatch` 正则。
+DOC_SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)+")
+
+#: 判"这是不是一个文件名"用的扩展名白名单（配合 `_is_doc_slug`）。
+DOC_SUFFIXES = (
+    ".md", ".py", ".ps1", ".mjs", ".ts", ".js", ".tsx", ".jsx",
+    ".json", ".jsonl", ".yaml", ".yml", ".toml", ".txt", ".csv", ".html", ".css",
+)
+
+
+def _is_doc_slug(text: str, start: int, end: int) -> bool:
+    """`text[start:end]` 是不是一个**文件名 / 路径片段**（扫描器侧的豁免判据）。
+
+    两段合取：① 整段是 kebab-case slug；② **紧跟着一个已知扩展名**，
+    或紧跟在路径分隔符之后。只满足 ① 不算——反向断言守的正是这件事。
+    """
+    if not DOC_SLUG_RE.fullmatch(text[start:end]):
+        return False
+    tail = text[end:end + 6].lower()
+    if any(tail.startswith(suffix) for suffix in DOC_SUFFIXES):
+        return True
+    return start > 0 and text[start - 1] in "/\\"
 
 #: 本机绝对路径（Windows 与 POSIX 两种写法）
 PATH_RE = re.compile(r"(?i)\b[A-Z]:\\(?:[^\\\s\"']+\\)*[^\\\s\"']*|/(?:home|Users|var|tmp)/[^\s\"']+")
@@ -277,6 +336,8 @@ def find_secrets(text: str, *, limit: int = 8) -> list[str]:
             and not GUID_RE.fullmatch(blob)
             and not PSEUDONYM_RE.fullmatch(blob)
             and not PLATFORM_CODE_RE.fullmatch(blob)
+            # 注意：这条要看**匹配之外**的上下文（后面跟不跟扩展名），所以不是 fullmatch。
+            and not _is_doc_slug(text, match.start(), match.end())
         ):
             hits.append(blob[:24] + "…")
             if len(hits) >= limit:

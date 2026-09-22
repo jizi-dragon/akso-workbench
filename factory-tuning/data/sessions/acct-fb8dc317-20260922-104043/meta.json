@@ -1,0 +1,12 @@
+{
+  "session": "acct-fb8dc317-20260922-104043",
+  "collected_from": "workbench 运行时目录 runtime/monitor（那个目录在仓库外、**不入库**；进仓库的是这份脱敏后的副本）",
+  "entry_count": 5,
+  "filter_stats": {
+    "total": 38,
+    "dropped": 33,
+    "trimmed": 1,
+    "full": 4
+  },
+  "note": "已脱敏：无令牌/口令/会话 id，无主机名，账号为稳定假名。见 tools/redact.py"
+}

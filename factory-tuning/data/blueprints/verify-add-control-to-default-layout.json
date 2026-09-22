@@ -1,0 +1,23 @@
+{
+  "description": "批二真机验证：往 test_0901__c 的默认布局（source=2）加一个控件 —— 验 D-C②/D-F（17 键身份键）+ D-D（AK* 控件键）+ D-E（换稳定 id）",
+  "objects": [
+    {
+      "name": "测试09-01",
+      "code": "test_0901__c",
+      "fields": [
+        { "name": "布局验证字段2", "code": "layout_probe2__c", "dataType": 1 }
+      ],
+      "formLayout": {
+        "sections": [
+          {
+            "name": "基本信息3",
+            "code": "basic_info3__cs",
+            "type": 1,
+            "columnsNum": 2,
+            "fields": ["layout_probe2__c"]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "description": "在对象 测试09-03 上新增 4 个字段，并给默认表单布局新增两个部分，把新字段全部放进去",
+  "objects": [
+    {
+      "name": "测试09-03",
+      "code": "test_0903__c",
+      "fields": [
+        { "name": "验证文本", "code": "probe_text__c", "dataType": 1 },
+        { "name": "验证数字", "code": "probe_number__c", "dataType": 2 },
+        { "name": "验证日期", "code": "probe_date__c", "dataType": 5 },
+        { "name": "验证附件", "code": "probe_file__c", "dataType": 8 }
+      ],
+      "formLayout": {
+        "sections": [
+          {
+            "name": "验证部分A",
+            "code": "probe_a__cs",
+            "type": 1,
+            "columnsNum": 2,
+            "fields": ["probe_text__c", "probe_number__c"]
+          },
+          {
+            "name": "验证部分B",
+            "code": "probe_b__cs",
+            "type": 1,
+            "columnsNum": 2,
+            "fields": ["probe_date__c", "probe_file__c"]
+          }
+        ]
+      }
+    }
+  ]
+}

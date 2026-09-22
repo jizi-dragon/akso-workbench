@@ -1,0 +1,28 @@
+{
+  "session": "acct-fb8dc317-20260922-133857",
+  "collected_from": "workbench 运行时目录 runtime/monitor（那个目录在仓库外、**不入库**；进仓库的是这份脱敏后的副本）",
+  "entry_count": 38,
+  "filter_stats": {
+    "total": 353,
+    "dropped": 315,
+    "trimmed": 10,
+    "full": 28,
+    "byPage": {
+      "p1": {
+        "total": 353,
+        "dropped": 315,
+        "trimmed": 10,
+        "full": 28
+      }
+    }
+  },
+  "pages": {
+    "p1": {
+      "url": "/admin/config/form-layout/list?_searchKey=***&bid=id-3b79d08b",
+      "title": "Akso eGMP (配置)",
+      "primary": true,
+      "closed": false
+    }
+  },
+  "note": "已脱敏：无令牌/口令/会话 id，无主机名，账号为稳定假名。见 tools/redact.py"
+}

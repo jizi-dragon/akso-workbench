@@ -1,0 +1,23 @@
+{
+  "description": "反例验证：故意把对象 code 写错（test_0905__c，正解是 test_0903__c）—— 期望：工厂**拒绝写入**、列出相近对象",
+  "objects": [
+    {
+      "name": "测试09-03",
+      "code": "test_0905__c",
+      "fields": [
+        { "name": "验证文本", "code": "probe_text__c", "dataType": 1 }
+      ],
+      "formLayout": {
+        "sections": [
+          {
+            "name": "验证部分A",
+            "code": "probe_a__cs",
+            "type": 1,
+            "columnsNum": 2,
+            "fields": ["probe_text__c"]
+          }
+        ]
+      }
+    }
+  ]
+}
