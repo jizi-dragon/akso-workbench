@@ -590,7 +590,12 @@ class BrowserPool:
 
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             output_dir = config.RUNTIME_DIR / "monitor" / f"{account_id[:8]}-{stamp}"
-            recorder = MonitorSession(entry.page, output_dir)
+            # `context` 传进去是**为了跟随新窗口**：平台用 `window.open` 开出的设计器窗口
+            # 是另一个 page，旧实现只挂 `entry.page`，那些窗口里发生的一切都录不到
+            # （2026-09-22 用户当面指出「分不清我在哪个页面窗口操作的」的根因之一）。
+            # 归属判定（同源才收）在 MonitorSession.drain() 里做——CDP 模式下这个
+            # context 是**整个 Electron 浏览器**的上下文，含工作台 UI 自己的窗口。
+            recorder = MonitorSession(entry.page, output_dir, context=entry.context)
             recorder.start()
             entry.monitor = recorder
             return {"monitoring": True, "log": str(recorder.log_path),

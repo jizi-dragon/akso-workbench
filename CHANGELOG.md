@@ -22,7 +22,44 @@
 
 > 新条目写在这里（`tools/publish_release.py` 逐字认这一行标题，说明与约束见文件顶部注释）。
 
+### Fixed
+
+- **配置工厂：布局写入器按真机线格式收口**（2026-09-22，用户逐条下达；判据 = 真机样本 + `keygate.py`）。
+  此前"表单布局"这一步在真机上**必失败**，两道坎叠在一起：
+
+  - **读**：`Layout/LayoutList` 回的是**分页信封**（`{count,…,datas:[…]}`），而 `get_form_layouts`
+    写的是 `list(client.get(…))` ⇒ 拿到的是**键名**，`layout.get("source")` 抛
+    `AttributeError: 'str' object has no attribute 'get'`。**表单一保存就断在读默认布局**
+    （此前台账记的失败形态"返回 success:False"与真机不符）。
+  - **写**：读修好之后，`SaveLayoutDetail` 被平台以 **`code=500 message=数据不存在`** 拒绝 ——
+    根因是顶层对象键发 `basicObjectId`，真机是 `objectId`。
+
+  收口内容（每条的判据见 `docs/FACTORY-DECISION-BRIEF.md` §5 与
+  `factory-tuning/reports/2026-09-22-真机验证-默认布局加控件.md`）：
+  顶层改按真机 **17 键**提交（`code`/`name`/`source`/`isMain`/`objectTypeId`… **身份键从读回的详情原样带回**）；
+  新增控件改发真机 **8 键**最小形状（`code`/`type` = `AK*`/`fieldId`/`sectionId`/`gridSpan`/`attrs`），
+  并新增 `AK_BY_DATA_TYPE` 表（实测 9 种 dataType → 7 个 `AK*`，**多对一**；未知类型 Fail-Closed 不提交）；
+  **新增"换稳定 id"这一步**（`Layout/GetStableComponentIds`，平台客户端保存新建组件前必调，工厂此前从不调）；
+  列布局改为**读旧列 → 合并 → 提交**（`AddColumns` 是全量替换，旧实现不读旧列 ⇒ 有清空列的风险），
+  且**读不到旧列就不提交**；数组键名 `columns` → 真机 **`listlayoutColumns`**；
+  布局/列表字段改为**从平台读字段全表**（此前只认"本次新建成功的字段"，其余**静默跳过**），
+  放不进去的字段进 `skipped` 并让该步可见失败；`SaveField` **不再发**真机从不发的 `isRequired`
+  （必填由控件层表达，蓝图里的必填**升级为人工项**，不静默失效）；
+  `maxLength` 上限从写死的 `17` 改为**按 dataType** 判（手册：单行文本 ≤1500、长文本/富文本 ≤32000，
+  含 `spec.py` 给模型看的注解）。
+
+  **真机验证**：`test_0903__c` 上一次跑通 —— 4 个新字段 + 默认布局**新增两个部分** + 4 个控件全部落位，
+  旧内容零丢失、布局身份（`source=2`/`isMain=true`/id）未变。
+
 ### Added
+
+- **对象不存在时不许静默新建**（2026-09-22，用户定稿；[ADR-0018](docs/adr/0018-no-silent-object-creation.md)）：
+  工厂的对象步骤是**幂等**的（code 存在→复用、不存在→**新建**），于是"code 打错一个字"的后果
+  **不是报错，而是静默多出一个空对象**。现在三层拦：① 规格文本要求先确认；
+  ② 新增只读工具 **`factory_resolve_object`**（查不到就回**相近对象清单** + 给用户的话术）；
+  ③ 预检发现"不存在但存在相近对象"时，`run_full_workflow` **拒绝写入**并回候选清单。
+  相近对象由**机械变体 + 逐个真机探测**得到（后缀/下划线/大小写 + **末位数字 ±1/±2**）——
+  因为平台**没有可枚举对象的端点**（14 个候选路径实测 404），这一限制写进了 ADR 的「诚实边界」。
 
 - **`factory-tuning/`：配置工厂调优用的平台操作采集与分析（⭐ 不属于产品）**（2026-09-20，
   用户定稿："监听功能本不属于本项目的功能，只是为了优化而做，请单独起文件夹"）。

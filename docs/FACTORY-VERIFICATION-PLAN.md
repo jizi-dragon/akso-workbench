@@ -2,6 +2,11 @@
 
 > ## 🔄 状态：进行中（L1 / L2 已跑；L3 列表布局取证跑过一半；其余待办）
 >
+> **2026-09-22 追加**：监听链路重启并两次自证可用；**段 0 取证完成**（新增事实 **F20–F25**、
+> 缺陷候选 **D-C**）；**L3 §7.4 的 A/B 悬案结案 = A**（"录到 0 条"是**没点保存**，
+> 见 [PITFALLS #73](PITFALLS.md)）；**键名审计**与**静态闸门**
+> （`factory-tuning/tools/audit_keys.py`、`keygate.py`）就位，D-A/D-C 由闸门自动抓出。
+>
 > **本文档既是方案，也是执行台账。**
 >
 > **2026-09-21 进展**：用户与 AI 协作者做了三轮真机实战（**创建对象 → 创建字段 → 创建选项集**），
@@ -14,6 +19,15 @@
 > 新增平台事实 **F16–F19**。同一场的**表单布局与生命周期状态那一半录到 0 条**（原因未分辨，
 > 见 §7 与[复盘](../factory-tuning/reports/2026-09-21-L3列表布局取证与监听失败复盘.md)），
 > **那套数据不可恢复**。**L3 表单布局 / L5 / L6 仍未跑；L4 只跑了一半。**
+>
+> **2026-09-22 追加（学习轮 + 监听链路重启）**：通读 **Gaia 产品手册 V3.8**（186 文件 / 36,895 行）
+> 并结合工厂代码建立整体认知 → [docs/FACTORY-PLATFORM-COGNITION.md](FACTORY-PLATFORM-COGNITION.md)，
+> 逐簇笔记 11 份在 `factory-tuning/reports/gaia-v38-study/`（含
+> [`11-creation-dependency-map.md`](../factory-tuning/reports/gaia-v38-study/11-creation-dependency-map.md)：
+> 51 行配置物 × 8 列依赖表 + 24 步主序列 + K1–K10 冲突 + 21 条待核）。本轮**只读**，不改产品代码。
+> 新增代码层发现 **T8 / T8b / T9 / T10**（§4），并**更正 T2 的后半句**；新增决策 E1–E6（见认知文档 §7）。
+> 监听链路已重新验明可用（自造流量 `total: 240`；口径见 factory-tuning README），
+> 真机取证按认知文档 §8 分段进行（每段 stop + 脱敏入库，**不再让用户白演示**）。
 >
 > 用户 2026-09-20 的原始指示：
 >
@@ -50,6 +64,25 @@
 | 6 | 我 | 在 §6 台账里补一行（层 / 日期 / 蓝图 id / job id / 结论） |
 
 **一条一轮，不合并。** 合并了就无法区分"是哪一层坏的"——那正是现在的问题。
+
+### ★ 裁量规则（**用户 2026-09-22 定稿，优先级最高**）
+
+> 「**产品手册只是给你借鉴，最终决策 / 差异请让我下达，以我的决定为主。**」
+
+⇒ 落到我的动作上，有**四条硬约束**：
+
+1. **手册不是裁判，是参考。** 手册 ↔ 平台真机 ↔ 工厂实现三者不一致时，
+   我的职责是**把差异摆清楚**（哪一侧是什么、证据是什么、后果可能是什么），
+   **不是**判定"谁对谁错"，更不是按手册去改代码。
+2. **凡有差异 → 一律标注「待用户下达」**，写成一张可拍板的表（差异 / 证据 / 选项 / 影响），
+   由用户选定后才进入修法。
+3. **不得以"手册这么写"为理由**单独支撑任何一条改动建议——
+   手册的条文只能与**真机证据**并列呈现，取舍权在用户。
+4. **产品代码的任何一行改动，都必须先有用户的下达。** 在此之前只产出：证据、差异表、修法选项。
+
+> 这条规则**回头生效**：本计划与各报告里此前用「🔴 与手册冲突 ⇒ 应按手册改」措辞的地方，
+> 一律**降级为「差异，待用户下达」**（例如 `maxLength` 的 1500/32000、字段类型的 16 vs 14、
+> 校验面的"半个校验器"）——**证据保留，结论收回**。
 
 ### 用户每一轮需要提供的东西（只要这三样）
 
@@ -153,18 +186,63 @@
 | 项 | 内容 |
 |---|---|
 | **测什么** | 布局**保存了并且在界面上生效**，而不是"接口没报错" |
-| **测试蓝图** | L2 的对象 + `formLayout.sections`（两个分组、分组内字段顺序）+ `listLayout.columns`（列的字段与顺序） |
-| **平台侧核对点** | ① 表单里能看到分组名与分组顺序；② 字段所在的**分组正确**、组内顺序一致；③ 列表视图的列与顺序一致；④ 系统字段（创建时间等白名单字段）也能出现在布局里 |
+| **测试蓝图** | L2 的对象 + `formLayout.sections`（两个部分、部分内字段顺序）+ `listLayout.columns`（列的字段与顺序） |
+| **平台侧核对点** | ① 表单里能看到部分名与部分顺序；② 字段所在的**部分正确**、部分内顺序一致；③ 列表视图的列与顺序一致；④ 系统字段（创建时间等白名单字段）也能出现在布局里 |
 | **接口侧证据** | `steps.formLayout` / `steps.listLayout` |
 | **不通过时看哪** | `writers/layouts.py::build_form_layout` / `build_list_layout` |
 
 **这一层的已知怀疑 —— 2026-09-21 列表布局那一半真机跑过，逐条给答案**：
 
-- ⚠️ **`build_form_layout` 的幂等性在代码层已可判定（真机待验）**：它**按 `name` 复用**分组
-  （同名 → 复用那个分组的 `id`，不新建；见 `layouts.py:72-83`），
-  而 `sections = [dict(s) for s in old_sections]` 意味着**旧分组连 `sort` 都原样复制**
-  ⇒ **蓝图里 `sections` 的书写顺序对已存在的分组完全没有影响**，工厂**做不到给已有分组重排**。
-  改名则当成**新分组追加**，旧分组**留着**（累积，不删）。
+> **★ 2026-09-22 现状（L3 至此已跑 **6 段**真机取证）**——上面那张表是**原始计划**，
+> 下面这段才是"现在到哪了"：
+>
+> - **表单布局：已充分取证**。段 0–4 共 **5 次保存**全部录到（`SaveLayoutDetail`，
+>   且抓到它前面的 `GetStableComponentIds` 协议步骤）：顶层 **17 键**、
+>   section **62 键**、控件 **23 键**（精简形状另有 5 / 8 / 14 / 15 / 16 键的实例）；
+>   见[段 2](../factory-tuning/reports/2026-09-22-真机取证-段2-新建部分与整行.md) ·
+>   [段 3](../factory-tuning/reports/2026-09-22-真机取证-段3-三条保存与AK词汇表.md) ·
+>   [段 4](../factory-tuning/reports/2026-09-22-真机取证-段4-新部分与AK补全.md)。
+> - **★ 段 5 补上了 F66 的空白**：**"新建表单布局"的完整三步线格式**已录到
+>   （建壳=不带 `id` 的 `SaveLayoutDetail`（**11 键**、`source: 3`、四空数组）→ 响应 `data` = 新 id
+>   → 带 id 保存补 section/control（17 键、`isMain: false`）；每一步引入新组件前先
+>   `GetStableComponentIds`）。见[段 5 报告](../factory-tuning/reports/2026-09-22-真机取证-段5-新建表单布局.md)。
+>   同一次采集还新增两条**待用户下达**：**N1** `source: 3` 同时出现在"新建表单布局"（真机）与工厂的
+>   列表布局写入 ⇒ `source` 更像"来源/是否自定义"而非"布局种类"；**N2**
+>   `ListlayoutRecord/GetDropdownListApiProject`（只读下拉查询）被 `QUERY_POST_PATTERNS` 的
+>   `Get.*List$` 漏掉 ⇒ 记成了"陌生 API"，是**工具侧假阳性**。
+> - **★ 2026-09-22 首次「L3 真机验证」跑到了第二道坎**（用户下达「在默认布局下增加一个控件」）：
+>   ① 新发现 **D-K · `LAYOUT_LIST` 回的是分页信封，而 `get_form_layouts` 当它是数组**
+>   （`list(dict)` 拿到键名 → `layout.get("source")` 抛 `AttributeError`）⇒ **表单布局这一步在
+>   "读默认布局"就断**，根本走不到保存；连带说明 F66 记的失败形态（「返回 `success: False` +
+>   默认表单布局未找到」）**与真机不符**。② **D-C 的"后果未验"首次有真机读数**：读侧修好后，
+>   工厂发出的 `SaveLayoutDetail` 被平台以 **`code=500 message=数据不存在`** 拒绝
+>   （浏览器真机同一端点发的是 `objectId` + **11/17 键**，工厂发 `basicObjectId` + **4 键**）
+>   ⇒ 首要嫌疑正是 **D-C①**；**D-D / D-E 尚未走到**（它们排在第二道坎之后）。
+>   ③ **平台未被弄坏**（默认布局与基线逐项一致；唯一残留是对象上多了字段 `layout_probe__c`）。
+>   全过程、判据与复现步骤见[真机验证报告](../factory-tuning/reports/2026-09-22-真机验证-默认布局加控件.md)。
+> - **★★ 2026-09-22 14:26：批一/批二/批三已按用户下达改完，且批二真机验证通过。**
+>   改了什么、每条卡的当前状态、以及**闸门自身的两处覆盖修补**（动态体识别 + "先赋值再 append"，
+>   后者由 selfcheck **K9** 当场抓到）全部记在[决定简报 §5](FACTORY-DECISION-BRIEF.md)。
+>   一句话结论：**`formLayout` 步骤第一次在真机上成功** —— 默认布局多了一个控件（10 → 11），
+>   而 **4 个部分 / 4 个布局 / 布局身份（`source=2`、`isMain=true`、id）全都没变**。
+>   **仍未做**：全量 pytest（本仓那条用例会真弹更新框到你屏幕，等用户发话）、应用侧重启
+>   （跑着的 sidecar 仍是旧模块）、**批四**（F66 新建表单布局 / D-J 数值校验 / F70 两类字段）。
+> - **核对点 ④ 已有证据**：**系统字段确实会作为控件出现在布局里**（段 4 的 `name__ak`，
+>   平台自生成 code、**没有 `dataType`**、8 键精简形状）。
+> - **列表布局**：仍只有 2026-09-21 那一次（10 列 + 末列强制 `status_id__sys`）；
+>   `AddColumns` 的真机键名 `listlayoutColumns` 已确证，且 F26 给了**免回读自检**（响应 `data` = 列数）。
+> - **本层缺陷已扩到 6 张卡**（`D-A` / `D-B` / `D-C①` / `D-D` / `D-E` / `D-F` / `D-G` 里的布局部分），
+>   闸门也从"顶层一层"扩到**三层**（`keygate.py`：顶层 / 嵌套 / 词表，另加经助手与函数返回的体）。
+>   **修法与建议顺序见[段 1 报告 §8](../factory-tuning/reports/2026-09-22-真机取证-段1-控件与半行整行.md)。**
+> - **L3 仍未验的只剩三条**：① 列表布局的 `.` 点号跨对象路径列；
+>   ② `columnsNum = 3/4` 时的 `gridSpan`（**用户 2026-09-22 定稿：只是显示形式，不追究**，见 F28）；
+>   ③ 平台"自动派生"的标准布局（**T9**，属口径决策）。
+
+- ⚠️ **`build_form_layout` 的幂等性在代码层已可判定（真机待验）**：它**按 `name` 复用**部分
+  （同名 → 复用那个部分的 `id`，不新建；见 `layouts.py:72-83`），
+  而 `sections = [dict(s) for s in old_sections]` 意味着**旧部分连 `sort` 都原样复制**
+  ⇒ **蓝图里 `sections` 的书写顺序对已存在的部分完全没有影响**，工厂**做不到给已有部分重排**。
+  改名则当成**新部分追加**，旧部分**留着**（累积，不删）。
 - ❌ **列表布局的列 `fieldCode` 允许带 `.`（点号跨对象路径）——仍未验**。本次采集到的 10 列
   **全是本对象字段**（含末列强制的 `status_id__sys`），没有一条点号路径。
 - ⚠️ **新增两条候选缺陷（见下方「本次新增」）**——其中键名那条已由真机请求体确证不符。
@@ -177,6 +255,37 @@
   端点路径、列元素形状、`sort` 基准**三项全对**，差别只在这一个键名上。
   ⚠️ 后果**未验**——`AddColumns` 是全量替换语义，最坏情形是"被当成空列表 → 清空列"，
   即又一次「接口回成功、回读才发现空」。定性方法见复盘 §9 第 2 条。
+- **D-C · `SaveLayoutDetail` 的顶层对象键不符（2026-09-22 真机确证，与 D-A 同族）**：
+  **真机发 `objectId`，工厂发 `basicObjectId`**（`writers/layouts.py:51`）。
+  而**同一个文件**里的列表布局那条（`:133` 的 `LISTLAYOUT_SAVE`）用的正是 `objectId`
+  ⇒ **同一文件内部两套口径**。真机请求体同时显示：顶层 **17 键**（工厂只发 4 键）、
+  section 单键 **62 个**（工厂只发 6 个）。
+  ⚠️ 后果**未验**（平台是忽略未知键、静默存到别处、还是报错，三种都没见过）；
+  证据与逐键对照见 [段 0 取证报告](../factory-tuning/reports/2026-09-22-真机取证-段0-默认布局保存.md)。
+- **键名审计（2026-09-22）**：把"真机见过请求体"的 **8 个端点**与工厂请求体**逐键对照** ⇒
+  **6 个两边都有的端点里，4 个完全一致，2 个不符——正是 D-A 与 D-C，且都在布局写入器里**。
+  ⇒ 这类缺陷**不是均匀分布的**，它集中在 `writers/layouts.py`——而那恰好是唯一一条
+  `grep "AddColumns\|LISTLAYOUT" tests/` **零命中**的链路。
+  判据：`python factory-tuning\tools\audit_keys.py`（**每次新增采集后重跑，对照面自动扩大**）；
+  见 [键名审计报告](../factory-tuning/reports/2026-09-22-键名审计-真机vs工厂.md)。
+- **D-D · 控件的键名与词汇表都不符（2026-09-22 段 1 真机确证，与 D-A/D-C 同族）**：
+  工厂 `layouts.py:91-97` 造的控件是 7 键，其中 **`fieldCode`**（真机叫 **`code`**）、
+  **`ctrlType`**（真机叫 **`type`**，且值域是 **`AK<组件名>`**：实测 `AKAttachment`/`AKSelectorObject`/`AKDateTime`，
+  工厂那套 `attachment`/`object`/`date` 是**自造的**）、
+  **`invisible`/`disabled`**（真机里没有这两个键，对应的是 `visible`/`readOnly`，且为 `null` 表示"不覆盖"）；
+  工厂**完全不发** `gridSpan`/`attrs`/`dataType`/`name`。
+  ⚠️ **`keygate.py` 抓不到它**——闸门只扫 `client.post(..., {字面量})` 的实参，
+  而控件是循环里 `controls.append({...})` 拼出来的 ⇒ **闸门覆盖"顶层字面量"，不覆盖"拼装的子结构"**。
+  证据与逐键对照见 [段 1 取证报告](../factory-tuning/reports/2026-09-22-真机取证-段1-控件与半行整行.md)。
+- **D-E · 少了"稳定 id"这**一整步**（2026-09-22 段 1 真机确证"平台客户端会做"，工厂不做是代码确证）**：
+  平台自己的客户端在保存新建的部分/控件前，**先调 `/api/platform/Layout/GetStableComponentIds`**
+  把浏览器里生成的 UUID 换成服务端 id（请求带 `componentType: layout_section / layout_control` 与 `componentCode`，
+  响应 `stableComponentIds: {客户端UUID → 服务端 id}`），**然后**才发 `SaveLayoutDetail`。
+  而工厂 `layouts.py:77`、`:92` 是 `str(_uuid.uuid4())` **自造 UUID 直接进请求体**，**从不调这个端点**。
+  ⚠️ 后果未验（平台可能接受、静默丢弃、或错绑），但它是 `#62/#63/#67/#69` 那一族
+  （"接口回成功、回读才发现空"）最典型的**缺步骤**形态，且与 **D-C/D-D 叠在同一条链路上**。
+  判据（可复跑）：真机序列里 `GetStableComponentIds` **在** `SaveLayoutDetail` **之前**
+  —— `python factory-tuning\tools\audit_keys.py` 能看到这两个端点。
 - **D-B · 全量替换却不读旧列（代码已确证）**：`LISTLAYOUT_COLUMNS`
   在 `writers/` 下**零调用**（全仓唯一调用方是只读洞察层 `insight/lifecycle.py:149`）。
   而**规则就写在 `layouts.py` 第 4–5 行**：「必须先读旧结构、合并新内容后再整体提交
@@ -265,7 +374,15 @@
 **涉及**：`orchestrate.py::execute_menu` / `run_full_workflow`、`writers/menus.py`、
 `plugins/factory.py` 的 `_create_summary`、`tests/test_native.py`
 
-### T2 · 顶层声明区（规则 / 权限 / 报表模板）既不执行，也不进人工配置清单
+### T2 · 顶层声明区（规则 / 权限 / 报表模板）既不执行，**运行期**也不进 `manualItems[]`
+
+> **2026-09-22 更正后半句**：原文写的是"也不进人工配置清单"，实测**只对了运行期这一半**——
+> 落盘的 `spec.md` 里「## 人工配置项（引擎不执行）」**已经**把 `rules` / `permissions` /
+> `reportTemplates` 逐条列出来了（`writers/blueprint.py:472-483`）。
+> **缺的是运行期返回值**：`run_object_workflow` 只从**对象内** `obj.get("rules")` 收集
+> （`orchestrate.py:286-287`），而顶层声明区在 `to_object_blueprints` 归一化时就被丢掉 ⇒
+> `run_full_workflow()["manualItems"]` 恒为空。
+> ⇒ 修法比原来设想的窄：**不是"补一份清单"，而是"把顶层声明区接到同一条清单管道上"**。
 
 **判据**（一行，实测输出 `False`）：
 
@@ -295,9 +412,90 @@
 | T6 | 多对象时 checkpoint 的 key 是 `f"{code}:{step}"`，单对象时**不带前缀** | 同一个 job 里对象数从 1 变多时，前缀规则变了 → 断点续跑可能重复建或漏建 |
 | T7 | `precheck_blueprint` 的冲突**只告警不阻断** | 对象编码已存在时会提示建议后缀 `_v2`，但流程继续走（幂等会跳过）→ 用户以为新建了，其实是复用了旧的 |
 
+### T8 · 生命周期「改名」这条路是断的，而且崩得很响（2026-09-22 读代码发现，**未真机复现**）
+
+**判据（两条命令）**：
+
+```powershell
+# ① 调用点用的是 PATCH + client.request
+.\.venv\Scripts\python.exe -c "import pathlib;print([l for l in pathlib.Path('workbench/services/egmp/writers/lifecycle.py').read_text(encoding='utf-8').splitlines() if 'request(' in l])"
+# 实测：['    client.request(\"PATCH\", STATUS_UPDATE, body)']      ← lifecycle.py:42
+
+# ② 但 EgmpClient 根本没有 request 方法（只有 get / post / paged_post）
+.\.venv\Scripts\python.exe -c "import inspect,pathlib,re;t=pathlib.Path('workbench/services/egmp/client.py').read_text(encoding='utf-8');print(re.findall(r'def (\w+)\(self',t))"
+# 实测：['__init__','scope','close','__enter__','__exit__','_envelope','get','post','paged_post',...]  ← 无 request
+```
+
+**后果比"改名失败"重**：`record()`（`orchestrate.py:176-181`）**不包 try**，
+所以这个 `AttributeError` 会**直穿 `run_object_workflow` 与 `run_full_workflow`**：
+
+1. 平台**已经被写入一半**（对象 / 字段 / 表单布局 / 列表布局都建完了）；
+2. job 崩在**第 6 步**，`manualItems` **永不返回**，调用方拿到的是异常而不是结果字典；
+3. 因为 `build_statuses` 也**从不返回顶层 `success`**（`lifecycle.py:79`），
+   在**没走到改名**的路径上，新增状态失败会被 `outcome.get("success", True)`
+   **洗成 `success`**（T8b，与 #62/#63/#67/#69 同形）。
+
+**为什么会一直没被发现**：`FakeEgmpClient` **恰好有** `request`
+（`tests/fakes.py:99`，只 append trace 就 `return {"ok": True}`，**不改任何状态**），
+且它预置了平台默认状态、示例蓝图恰好命中"改名"分支 ⇒ **测试全绿，实际什么都没做**（方法论 M2 的又一例）。
+
+**验证方式（不需要写平台）**：`AttributeError` 在任何 HTTP 发出**之前**抛出 ⇒
+跑一次带 `renameStatuses` 的蓝图**不会产生任何平台写入**，可以安全复现。
+但**先取演示第 3 段的真机证据**：平台对"停用/改名"到底收 `PATCH` 还是 `POST`（决定修法，见认知文档 §7 的 E5）。
+
+### T9 · 平台的"自动派生"在工厂里**零识别**（2026-09-22，来自依赖图 K10；**未真机复现**）
+
+**症状**：平台在"建对象"那一刻就已经替它铺好了东西——**系统字段**（含 `status_id__sys`）、
+**系统默认索引**、**标准列表布局**（`所有的{对象}`，Code `{对象Code}_table__ak`，**不可删**）；
+开对象类型 / 审批矩阵 / 检查表类型还会**一次铺开整族**对象与选项集。
+而工厂的管道、幂等层、`verify` **对这一切既不识别也不避让**。
+
+**判据（两条命令，实测输出如下）**：
+
+```powershell
+# ① 幂等层那三个方法**从来没人调用**（只有定义）——幂等只覆盖"对象 + 选项集"
+.\.venv\Scripts\python.exe -c "import ast,pathlib;names={'field_exists','status_exists','workflow_exists'};print('属性访问点：',[(p.as_posix(),n.lineno,n.attr) for p in pathlib.Path('workbench').rglob('*.py') for n in ast.walk(ast.parse(p.read_text(encoding='utf-8'))) if isinstance(n,ast.Attribute) and n.attr in names])"
+# 实测：属性访问点： []          ← 空列表 = 零调用方（连类内 self.xxx 都没有）
+
+# ② 八步里没有任何一步去读"平台已经生成的东西"
+Select-String -Path workbench\services\egmp\orchestrate.py -Pattern 'record\("' | ForEach-Object { $_.Line.Trim() }
+# 实测：picklists / object / fields / formLayout / listLayout / lifecycle / workflows / verify
+#       —— verify 只数"对象在 + 字段数 + 状态数"，不核对派生物
+```
+
+**后果**：**"平台已经有的东西"在工厂眼里等于不存在** ⇒ 它把 **D-B**（全量替换、不读旧列）
+与**幂等缺口**（重跑会重复建字段/状态/工作流，而**状态不可删、只能停用**）同时放大。
+
+**来源**：[`factory-tuning/reports/gaia-v38-study/11-creation-dependency-map.md`](../factory-tuning/reports/gaia-v38-study/11-creation-dependency-map.md) §1.3 / §3 K10。
+
+### T10 · "状态还没建就先建列表布局"这条组合风险（2026-09-22，来自依赖图 K2；**未真机复现**）
+
+**判据（一条命令，实测输出如下）**：
+
+```powershell
+Select-String -Path workbench\services\egmp\orchestrate.py -Pattern 'record\("' | ForEach-Object { $_.Line.Trim() }
+# 实测顺序：… formLayout(235) → listLayout(241) → lifecycle(258) …
+# 而 `enableLifeCycle` 是第 2 步（object，:216）**随建对象请求**一起发出去的
+# ⇒ 第 5 步建列表布局时：对象**已开生命周期**，却**一个状态都没有**（`status_map` 仍为空）
+```
+
+**为什么这不是"顺序不好看"**：它正撞在 **F16**（开了生命周期的对象，列表布局里「状态」列
+**不可移除**、**新建时也被强制要求添加**）上，再叠上 **D-A**（工厂发 `columns`，真机是
+`listlayoutColumns`）与 **D-B**（全量替换、不读旧列）⇒ 最坏情形是**把平台强制列清掉**，
+即又一次「接口回成功、回读才发现空」。
+
+**修法**：**「读旧列 → 合并 → 提交」**，**不是**把 `status_id__sys` 硬编码进去
+（强制列**随对象变**：开了生命周期才有状态列）。
+
+**定性方法**：演示第 2 段（新建列表布局并保存）——预期端点与判读口径见认知文档 §8。
+
 ---
 
 ## 5. 需要你拍板的决策（跑之前先定，避免中途返工）
+
+> 2026-09-22 新增 **E1–E5**（权限规则簇 / 自动化簇 / 停用与流转矩阵 / 配置包口径 / T8 修法），
+> 与本文档 D1–D5 合并看 → [整体认知 §7](FACTORY-PLATFORM-COGNITION.md)。
+
 
 | # | 决策 | 选项 | 影响 |
 |---|---|---|---|
@@ -321,6 +519,11 @@
 | L4 生命周期 | — | — | 部分（只验了"开关 → 状态provision"，**没验**新增/重命名状态）。2026-09-21 用户演示了"新增两个 + 停用一个"但**未录到** | — | — |
 | L5 工作流 | — | — | 待办 | — | — |
 | L6 菜单/声明区 | — | — | 待办（T1/T2 仍未真机复现） | — | — |
+| **段 0 · 接口自证**（保存默认表单布局） | 2026-09-22 | 会话 `acct-fb8dc317-20260922-101457`（`total 105 / trimmed 1`） | **通过**：`POST /Layout/SaveLayoutDetail` 被录到，`precedingActions` **完整连贯**（配置管理→测试09-01→表单布局→默认布局→保存） | 新增事实 **F20–F25**；新增缺陷候选 **D-C** | 见[段 0 报告](../factory-tuning/reports/2026-09-22-真机取证-段0-默认布局保存.md) |
+| **段 1 · 控件形状**（1 个部分 + 4 个半行控件） | 2026-09-22 | 会话 `acct-fb8dc317-20260922-102423`（`total 50 / trimmed 2 / full 5` → 7 条） | **通过且超出预期**：`controls` 4 个元素、`sections` 2 个（新建 `basic_info__cs`，`type=1`）**全部录到** | 新增事实 **F28–F35**；新增缺陷候选 **D-D**（控件键名与词汇表都不符） | 见[段 1 报告](../factory-tuning/reports/2026-09-22-真机取证-段1-控件与半行整行.md) |
+| **段 2 · 新建部分 + 整行控件**（1 个部分 + 3 个整行控件） | 2026-09-22 | 会话 `acct-fb8dc317-20260922-104043`（`total 38 / trimmed 1 / full 4` → 5 条） | **通过**：`sections` 3 个（新建 `basic_info2__cs`）、`controls` 7 个（其中 3 个新建）；**半行/整行映射钉死**（`gridSpan` = 1 / 2）；**`GetStableComponentIds` 入参+出参+落点三段闭环** | 新增事实 **F36–F45**；**D-E** 从"平台会做"升级为"**可照抄**"；**D-D** 补 `AK*` 两词 + 两套形状实例 | 见[段 2 报告](../factory-tuning/reports/2026-09-22-真机取证-段2-新建部分与整行.md) |
+| **段 3 · 一次点击三条保存**（无改动保存 + 两处宽度改动） | 2026-09-22 | 会话 `acct-fb8dc317-20260922-105154`（`total 52 / trimmed 3 / full 4` → 7 条） | **通过且推翻了我自己的读法**：3 条保存的差异**全部可解释**；**`dataType ↔ AK*` 补全到 7 组 / 5 类型**；键数**不是**"新建/已有"的标志（同控件同批发过 14/15/16/23 键） | 新增事实 **F46–F52**；**更正 F36 的因果读法**；**D-D 的 `AK*` 表可建**（仍缺 7 个 dataType，继续 Fail-Closed） | 见[段 3 报告](../factory-tuning/reports/2026-09-22-真机取证-段3-三条保存与AK词汇表.md) |
+| **段 4 · 新部分 + 两个控件**（第三个部分 + 文本/数字控件 + 一个系统字段控件） | 2026-09-22 | 会话 `acct-fb8dc317-20260922-110842`（`total 15 / trimmed 1 / full 2` → 3 条） | **通过**：`AK*` 补到 **9 个 dataType / 7 类型**（`1→AKInput`、`2→AKInputNumber`）；**稳定 id 的第二个样本**，并发现该调用是**增量的**；新建组件也可以是完整形状 | 新增事实 **F53–F57**；**D-E 改为"按增量实现"**；D-D 的表基本可建（仍缺 5 个 dataType） | 见[段 4 报告](../factory-tuning/reports/2026-09-22-真机取证-段4-新部分与AK补全.md) |
 
 > ⚠️ **本次覆盖的一个缺口，必须说清楚**：三轮实战**都没有走 `/api/factory/run` 的蓝图路径**，
 > 而是直接调了 `orchestrate` 用的那几个写入口（`objects.create_object` /
@@ -337,8 +540,12 @@
   而工厂**没有"停用"这个动词**——`build_statuses` 从不传 `is_enabled=False`，`update_status`
   只被用于重命名。⇒ 平台上"退休一个状态"的唯一手段，工厂做不到（AGENTS.md 规则 36 同族）。
 - ⚠️ **监听的可见范围有限，且"录到 0 条"不会报警（2026-09-21 实测）**：
-  ① `classify()` 丢掉**所有 GET**（F13）；② `flush()` **只在 `stop()` 时**调用，中途崩了整个会话丢光
-  ⇒ 采用「**做一项、停一次**」（`ingest.py --session <名>` 支持按名收，分段不会漏）；
+  ① `classify()` 丢掉**所有 GET**（F13）；② ~~`flush()` **只在 `stop()` 时**调用，中途崩了整个会话丢光~~
+  → **2026-09-22 更正**：页面关闭也会触发 `stop()`（`monitor.py:133` 的 `page.on("close", self.stop)`），
+  实测关窗后会话目录里照样有 `monitor-log.json` / `filter-stats.json`。**真正的丢失窗口只有"整个应用被强杀/崩溃"**。
+  ⚠️ 同时注意：**实时 `stats` 是快照、不是最终账**——同一次会话实测"实时读到 `total 240` / 落盘 `filter-stats.json` 是 `517`"
+  ⇒ 结论一律以**落盘后的 `filter-stats.json`** 为准。
+  ⇒ 仍然采用「**做一项、停一次**」（`ingest.py --session <名>` 支持按名收，分段不会漏）；
   ③ 挂载发生在 `_do_open`（内部已 `goto` 完平台）**之后**
   ⇒ **不能用"新开窗口的加载流量"来验证监听是否工作**；
   ④ 本次有一段**录到 0 条**、原因未分辨（两种解释见
@@ -355,6 +562,30 @@
   逐层测不会让这件事变松。
 - **测试期间建议用一个专门的平台环境**（不是生产）。这一点由你决定，但要说出来：
   蓝图里的操作是**真实写入**，回滚手段只有平台侧手工删除。
+- 🔴 **工厂建出来的对象，业务端默认"看不见"（2026-09-22 手册确认）**：对象的查看/创建/编辑与
+  字段级权限**必须由人逐项加进权限集**（`03_管理员指南\02_权限配置.md §对象与字段权限`），
+  否则对象在业务端根本不出现。⇒ 这不是"工厂少建了一个东西"，而是"**建完了但没人能用**"；
+  也因此**人工配置清单必须条目化到"对象 X 的查看/创建/编辑 + 字段 A 的查看"这一粒度**
+  （决策 E1 的前提）。
+- 🔴 **工厂的产出物是"配置包"，不是"已生效的系统"（2026-09-22 手册确认）**：配置包
+  **只支持全量迁移**，且「入站包导入 ≠ 生效」，还要走**校验 → 部署**；生产环境
+  **禁止访问配置管理模块**（`03_管理员指南\07_配置迁移.md`、`03_系统设置.md §1.10`）。
+  ⇒ 复现性取决于**包版本号规则与目标侧部署前校验**，而不取决于工厂建得多干净（决策 E4）。
+- ⚙️ **录制的盲区：非 POST 方法只认"已建模的路径"（2026-09-22 预检，判据可跑）**：
+  `monitor.py::classify()` 对 PATCH / PUT / DELETE **只有路径逐字命中 `writers/endpoints.py` 的 57 条
+  常量**才录，否则**静默 DROP**（实测 `PATCH /api/config/lifecycle/Status/Update` → `RECORD_TRIMMED`，
+  `PATCH …/Status/ChangeStatus` → `DROP`；57 条里还有 5 条带 `{}` 模板、永远匹配不上真实路径）。
+  ⇒ **文档串里的「陌生 API 完整保留」只对 POST 成立**。
+  ⇒ **这是自指陷阱**：用录制去发现"平台用哪个方法"，而录制只认得已知路径的方法。
+  ⇒ **L4「停用走不走 PATCH」有三种结局，解读口径必须事前定死**（见
+  [整体认知 §8](FACTORY-PLATFORM-COGNITION.md)）：录到写请求 = 答案到手；
+  **界面真的变了但没录到** = 平台用的是"非 POST + 未建模路径"（这本身就是答案）；
+  界面也没变 = 那一步没生效，**重做**。
+  ⚠️ **不要用 `dropped` 增量去判**（它把 GET 一起算了，一次探测 `total 240 / dropped 233`）。
+- ⚙️ **工具提示**：`factory-tuning\tests\selfcheck.py` 的 D 组会**真的**调 `report.py --fixtures`，
+  于是每次自检都在 `reports/` 里留下一份**当日日期**的 `*-SAMPLE-*.md`。
+  那是**合成样例**，不是采集分析结果——别把它读成"今天采到了数据"。
+  （形态与 PITFALLS #71 同族：**跑一次检查就在仓库里留下痕迹**，而检查本身是绿的。）
 
 ---
 
@@ -384,12 +615,65 @@
 | **F17** | 生命周期**创建时自带「开始」「关闭」两个状态** | 用户 2026-09-21 |
 | **F18** | 🔴 **生命周期状态不可删除，只能停用** —— 又一个**无撤销键**的资源 | 用户 2026-09-21 |
 | **F19** | 生命周期**进入时默认先进入「开始」状态**（L5 的 `bindToStatusCode` 判据要用它） | 用户 2026-09-21 |
+| **F20** | `Layout/SaveLayoutDetail` 的响应 `data` 是**布局 id**（不是 `true`）——与 `SaveBasicObject`/`SaveField`（F2）**不同** | 段 0 真机（2026-09-22） |
+| **F21** | 表单布局保存是**整份提交**，顶层 17 键：`id`/`objectId`/`code`/`name`/`labelCol`/`source`/`status`/`objectTypeId`/`controls`/`sections`/`pages`/`isMain`/`activePageCode`/`activeSectionCode`/`formEditStatus`/`skipRequiredValidation`/`rules` | 段 0 真机 |
+| **F22** | 「默认布局」记录的 **`source = 2`**，且 **`isMain = true`**（工厂 `find_default_form_layout` 正是按 `source==2` 找的） | 段 0 真机 |
+| **F23** | section 的**部分类型**：`type = 4` = 「工作流时间线」（关系型，带 `relationId`/`listlayoutId`/`selectListlayoutId`/`selectObjectId` 四个指针） | 段 0 真机 |
+| **F24** | section 带 **`gridSpan` / `columnsNum` / `labelCols`** 三个宽度相关键（本次全 `null`）⇒ 宽度语义要在**有字段控件的布局**上取（段 1） | 段 0 真机 |
+| **F25** | 单页面场景：`pages: []` 而 `sections` 直接挂在布局上 ⇒ 手册 `01D §3`「可以不建页面」**得到真机支持** | 段 0 真机 |
+| **F26** | **`Listlayout/AddColumns` 的响应 `data` 是"平台实际接受的列数"（int）**，与提交的列数一致 ⇒ **免回读的自检信号**：发出去几列 vs 平台回几列，能在**同一次调用里**暴露"键名错了/被当空列表" | 响应信封审计（2026-09-22） |
+| **F27** | **`ObjectPicklist/save` 的响应 `data` 可能是 `bool(true)` 也可能是 `str('')`** ⇒ 任何"把 `data` 当 id"的写法都会拿到空串（工厂已按 #67 走 OpenAPI 回读，正确） | 响应信封审计（2026-09-22） |
+| **F28** | **「半行/整行」= 控件层 `gridSpan`**：**半行 = `1`、整行 = `2`**（两个部分的 `columnsNum` 都是 2 ⇒ 它是**以列为单位的跨列数**）。⚠️ 仍未验：`columnsNum = 3/4` 时整行是否 = 3/4、`gridSpan` 缺省时按几算、它与 `columnsNum` 是否同义 —— **用户 2026-09-22 定稿：整行/半行只是控件的显示形式，不作为追究项**（上面三条只留作边界，**不要再为它设计实验**） | 段 1 + 段 2 真机 + 用户裁定 |
+| **F29** | 控件的键集**按需出现**，判据是**"服务端是否已经认识这个组件"**：**新建 = 8 键**（`id`/`sectionId`/`code`/`name`/`fieldId`/`type`/`gridSpan`/`attrs`），**已有 = 23 键**（多出 `sort`/`dataType`/`isRecalculateDefaultOnDependencyChange` + 12 个 `null`）；**部分（section）同理：新建 5 键 / 已有 62 键**。⇒ 形状**不取决于控件种类** | 段 1 + 段 2 真机（**同一 code 的两种形状**） |
+| **F30** | 控件 `type` 的值域是 **`AK<组件名>`**（实测 `AKAttachment` / `AKSelectorObject` / `AKDateTime`） | 段 1 真机 |
+| **F31** | 控件级配置装在 **`attrs`** 里（`readPrettyShowType` / `objectId` / `listLayoutId` / `createRecordMode`…），且**内部 id 的值带一对字面引号**（`'"id-…"'`）——平台既有形状，不是脱敏造成的 | 段 1 真机 |
+| **F32** | 新建「详情部分」`type = 1`、`columnsNum = 2`（**与工厂硬编码一致**）；**不填 Code 时平台自生成**（如 `basic_info__cs`） | 段 1 真机 |
+| **F33** | 一次会话里可能出现**两条** `SaveLayoutDetail`（段 1：相隔 **29 ms**，均 `200 / code=0`）。**2026-09-22 段 2 更正**：段 2 里**一次「保 存」点击只发一条**，而段 1 那两条的**形状差异**（#1 精简 8 键 → #2 完整 23 键）说明它是平台的「**提交 → 回显 → 再提交**」，**不是两次人工点击**。⚠️ 两段各一个样本 ⇒「为什么那一次是两条」仍不下定论；**工厂不要为对齐真机而模仿发两条** | 段 1 + 段 2 真机 |
+| **F34** | 控件里那 13 个 `null` 键与手册 `01D §5.1`「控件通用配置」**逐项对应**（只读/隐藏/渲染/无数据隐藏/生命周期显隐/必填/阅读模式…）⇒ **手册语义 ↔ 真机键名在控件层也对齐**，且平台用"键在、值为 null"表示"不覆盖" | 手册 + 段 1 真机 |
+| **F35** | 两个**未建模**端点：`ListlayoutRecord/GetDropdownListApiProject`、`Layout/GetStableComponentIds`（都在保存流程里触发） | 段 1 真机 |
+| **F36** | **新建组件发"精简形状"、服务端已有组件发"完整形状"**（同一 code 在两段里：部分 5 键 ↔ 62 键、控件 8 键 ↔ 23 键）⇒ 形状取决于**服务端是否已经认识它**，**不取决于控件种类**。⚠️ **2026-09-22 段 3 更正**：键数其实是「**客户端模型物化到什么程度**」——同一控件在**同一次点击的三条保存**里发过 **14 / 15 / 16 / 23** 键，平台**都接受**（见 F48）。"新建 ↔ 精简"只是**相关**，不是因果 | 段 1 + 段 2 真机（**段 3 更正**） |
+| **F37** | 新建控件**不带 `sort` / `dataType`**（**数组顺序即顺序**），只带 `type`（`AK*`）⇒ 平台能从 `fieldId` / `type` 反推 `dataType` | 段 2 真机 |
+| **F38** | `Layout/GetStableComponentIds` 全文：入参 `{componentIds: {<客户端 UUID>: {objectId, layoutCode, componentType, componentCode}}}` → 出参 `data.stableComponentIds`（**同键 → 服务端 id**）；`componentType ∈ {layout_section, layout_control}` | 段 2 真机（入参 + 出参） |
+| **F39** | **保存体里新建组件的 `id` = `GetStableComponentIds` 返回的稳定 id**（4/4 逐条相符），浏览器自造 UUID **不进保存体** ⇒ 这一步是平台客户端的**必经步骤** | 段 2 真机（入参 / 出参 / 落点**三段闭环**） |
+| **F40** | 该端点**只对新建组件**调用（已存在的那 4 个控件不在入参里）⇒ 工厂只需对**新**组件调 | 段 2 真机 |
+| **F41** | 每新建一个控件引发一次 `ListlayoutRecord/GetDropdownListApiProject`（`{"pageIndex":1,"pageSize":1000}`，**查询型 POST**）：段 1 四控件 = 4 次、段 2 三控件 = 3 次 ⇒ 它是只读查询，却因不在 `QUERY_POST_PATTERNS` 里被归为"陌生写"（`RECORD_FULL`）⇒ 监听噪声分类的已知缺口 | 段 1 + 段 2 真机 |
+| **F42** | 新词汇 2 个：**`AKSelectorSingle`**（选项）、**`AKSelectorYesNo`**（是否）⇒ `AK*` 累计 **6** 个。⚠️ 这两条**不带 `dataType`**，**推不出**映射（补齐办法见段 2 报告 §9） | 段 2 真机 |
+| **F43** | 动作缓冲原文（段 2）：`click 整 行 → click INPUT → change INPUT → click 确 定 → click 保 存` ⇒ 与演示者自述一致；确认「整行」是在**控件配置对话框**里选的 | 段 2 真机 |
+| **F44** | ⚠️ **测量口径**：09-22 三个会话里"最后一次 DOM 动作 → 请求"的差是 **44.5 / 38.4 / 61.4 s**，而 09-21 六个会话是 **0.1–3.1 s**（本段 5 条请求的观测跨度仅 **14 ms**）⇒ `timestamp` 与 `precedingActions.at` **跨边界不可当因果**；两个候选机制都未排除，见段 2 报告 §6 与 PITFALLS #74 | 11 个会话真机 |
+| **F45** | `stats` 只统计**已被分发**的事件 ⇒ README 记的"实时 240 vs 落盘 517"同源；且"读 `total` 验证录制"这个动作**自己会推动分发**（`monitor_start` / `session()` 都走 `_submit`）⇒ **读到 0 不能证明什么都没发生** | 代码 + 段 2 真机 |
+| **F46** | 一次会话里出现 **3 条** `SaveLayoutDetail`（相隔 **19 / 46 / 77 ms**）⇒ **保存条数不固定**（段 1 = 2、段 2 = 1、段 3 = 3）。**不要假设"一次点击 = 一条"**，也不要把多发的那几条当重试 | 段 3 真机 |
+| **F47** | 那三条的差异**全部可解释**：#1 带**改动前**状态（两处 `gridSpan` = 2）、#2 与 #3 内容相同、#3 是 #2 的**键补全版** | 段 3 真机 |
+| **F48** | **键集 = 客户端模型的物化程度**（不是"新建/已有"的标志）：同一控件在同一批里发过 **14 / 15 / 16 / 23** 键，平台**全部 `200/code=0`** ⇒ 工厂**不必**凑齐 23 键，但**键名必须对**。缺的键全是**可空可选键**（`visible`/`readOnly`/`readPretty`/`hidden`/`hideWhenNotData`/`required`/`defaultValue`/`externalDataConfig`/`combinationDisplayFieldId`） | 段 3 真机（**更正 F36**） |
+| **F49** | **`dataType ↔ AK*` 实测 7 组 / 5 个类型**：3→`AKSelectorYesNo`、4→`AKSelectorSingle`、5→`AKDateTime`、7→`AKDateTime`、8→`AKAttachment`、15→`AKSelectorObject`、16→`AKSelectorObject` | 段 1 + 段 3 真机 |
+| **F50** | 该映射**不是双射**（5/7 共用 `AKDateTime`；15/16 共用 `AKSelectorObject`）⇒ D-D 的表形是 **dataType → type（多对一）**，不是双向表 | 段 3 真机 |
+| **F51** | **没有新建组件的那次保存里没有 `GetStableComponentIds`** ⇒ 反向印证 F40「该端点只对新建组件调用」 | 段 3 真机 |
+| **F52** | 段 3 的**测量教训**：实时 `stats` 连读四次 `0`，而请求在 **9 秒后**才发出 —— **0 只表示"截至此刻没有"，不是"这次没有"**；权威读数永远是 `stop` 落盘后的 `filter-stats.json`。**不要用一次 0 去推翻操作者的说法** | 段 3 真机 |
+| **F53** | **`dataType 1 → AKInput`、`2 → AKInputNumber`** ⇒ `AK*` 实测到 **9 个 dataType / 7 个类型**（仍缺 13/14/17/18/23，**继续 Fail-Closed**）。命名规律是 `AK` + 组件英文名，**但不可外推** | 段 4 真机 |
+| **F54** | **`GetStableComponentIds` 是增量的**：只对"**还没有服务端 id**"的组件调用（段 4 只发 **1** 个，而那次新建了 1 部分 + 2 控件；段 2 发 4 个）⇒ **D-E 应按增量实现**，多调不会报错但会与真机行为不一致 | 段 2 + 段 4 真机 |
+| **F55** | 稳定 id 闭环**第二个样本**：请求键 == 响应键，保存体里的 `id` **逐字**等于响应值 | 段 4 真机 |
+| **F56** | **新建组件可以是完整形状**（段 4：新部分 62 键、新控件 23 键、另一个新控件 8 键）⇒ **再次印证 F48**（键数 ≠ 新旧，是模型物化程度） | 段 4 真机 |
+| **F57** | 平台自生成 code 的系统字段控件（`name__ak`）**可以没有 `dataType`**，但有 `type`（`AKInput`）⇒ 工厂**不能**把 `dataType` 当作"定 `type` 的唯一依据"；取不到时应报错，不许退化成 `input` | 段 4 真机 |
+| **F58** | **控件 = 引用的那个字段的投影**（用户 2026-09-22 提示，已在数据上逐词对上）：字段 `code`/`name`/`dataType` **同名同值**搬到控件上；`isRequired`→`required`、`invisible`→`visible`、`editable`→`readOnly`（**改名/取反**）；控件只多 `sectionId`/`gridSpan`/`sort` 三样 | 字段 93 键（`FieldsByCodes` 响应）＋ 段 1–4 控件 |
+| **F59** | ★ **D-D 的成因是"跨层串词"，不是瞎猜**：`invisible` 是**字段层**的合法键（控件层叫 `visible`）⇒ 工厂把它搬进控件请求体，接口**照样 200**。⇒ 判据只能按"**它在这条请求的哪一层出现过**"（`keygate.py` 现在正是这么做的） | 段 1–4 真机 + 代码 |
+| **F60** | 字段那 93 键里**没有任何"控件类型"键**（`AK*` 只出现在 `SaveLayoutDetail` 请求体）⇒ 控件 `type` **必须由工厂派生/实测**，那张 `dataType → AK*` 表**仍然必要** | 全量采集扫描 |
+| **F61** | 字段元数据里还有**工厂完全没有概念**的两样东西：**`dataType 19`**（任务类型 / 工作流版本）与**第三套词汇 `componentType`**（`ComponentType_Object` / `ComponentType_Workflow_Version`，多数为 `None`）⇒ 工厂那张 14 项 dataType 表**本身就不完整** | 字段 93 键 |
+| **F62** | **真机 `SaveField` 请求体的词表**（11 条样本，去重后）：`code` / `dataType` / `disabled` / `invisible` / `name` / `objectId` / `statisticsArrange` **必有**，`format` / `minValue` / `maxValue` / `picklistId` / `referenceObjectId` / `objectRelation` / `setDefaultValue` / `formulaScript` **按字段类型出现**，另有平台自带的 `__observed`。★ **`isRequired` 一条都没出现过** —— 而字段**读侧** 93 键里**有** `isRequired` ⇒ 写入侧与读取侧的词表**不一致**（"必填"很可能是在**布局控件**上设的，控件层确实有 `required`，见 F58） | 09-21 真机 11 条 |
+| **F63** | ⚠️ **闸门的一个"已声明盲区"里住着缺陷**：`keygate.py` 原来只认 `client.post(常量, {字面量})`，于是**对象与字段的创建体**（走工厂自己的助手 `created_id(client, path=常量, body=变量)`）**一条都没被检查过**。2026-09-22 扩展后（同函数字典字面量 + 一层函数返回 + `extended` 标注），`SaveField` 立刻报出 **🔴 `isRequired`**，而 `SaveBasicObject` 报 **✅ 一致**（8 键与真机逐字相同）⇒ **"未核"不是安全，是待还的债** | 代码 + 真机对照 |
+| **F64** | **真机数据里出现过的 `dataType` 共 11 个：1 / 2 / 3 / 4 / 5 / 7 / 8 / 15 / 16 / 18 / 19**（扫描全部运行时会话的所有请求体与响应体）。与工厂那张 14 项表对比：工厂有而**从未观测**的是 `13 / 14 / 17 / 23`；**观测到而工厂表里没有的是 `19`**（只出现在 `FieldsByCodes` 的字段元数据里，`componentType = ComponentType_Object` / `ComponentType_Workflow_Version`） | 全量真机扫描 |
+| **F65** | **`AK*` 是"只写"词汇（在现有全部采集里）**：它**只**出现在 `Layout/SaveLayoutDetail` 的**请求体**；平台自己的读接口（`FieldsByCodes` 响应、`GetFormInstance` 响应…）**一次都没返回过它**。⚠️ **但布局的读接口从未被录到**（设计器打开时读一次，那一次不在录制窗口里）⇒ **待取证**：重开一次设计器即可回答"`AK*` 到底能不能读回来"——这对 D-D 的修法是决定性的（能读就不必维护表） | 全量运行时日志扫描 |
+| **F66** | **表单布局与列表布局的能力不对称**：工厂**能新建列表布局**（`build_list_layout` → `LISTLAYOUT_SAVE` + `source: 3`），却**不能新建表单布局**（`build_form_layout` 只按 `source == 2` 找默认布局，找不到就返回 `success: False` + "默认表单布局未找到"）。⇒ 蓝图能描述布局，但"新建一个表单布局"这个动词**不存在**。<br>★ **2026-09-22 段 5 已把线格式录到**（此前那次因"读完忘了重开监听"丢失）：**"新建"与"改已有的"是同一个端点，只差一个 `id`** —— ① 建壳 = **不带 `id`** 的 `SaveLayoutDetail`（顶层 **11 键**，`source: 3`、`name: "新建表单布局"`、`labelCol: 3`、`controls/sections/pages/rules` 四个空数组），**响应 `data` 直接返回新布局 id**；② 之后带该 `id` 保存（顶层 **17 键**、`isMain: false`）逐步补 section 与 control；③ 每次保存"含新组件"之前先调 `GetStableComponentIds` 把客户端 UUID 换成服务端 id。取证与逐键样本见 [段 5 报告](../factory-tuning/reports/2026-09-22-真机取证-段5-新建表单布局.md) | 代码 + 全量日志扫描 + **段 5 真机** |
+| **F67** | **控件类型不是 `dataType` 的函数**：手册对每个类型都写「选择控件：**必填**」，且**两处给了两个候选**（§5.4 `文本框` / `多行文本框`；§5.8 `是否选择器` / `是否单选按钮`）⇒ `dataType → AK*` 只能当**默认值表**（真机那 9 个恰好都落在手册说的"通常/建议"那个上，双向印证）。⚠️ 手册**全库没有任何 `AK*`**（判据须 `-CaseSensitive`，见 PITFALLS #78），线格式仍只能从流量取 | 手册 `01D §5.x` + 真机 |
+| **F68** | **蓝图无处表达"这个字段用哪个控件"**：`FormSectionDef` 只有 `name`/`code`/`type`/`columnsNum`/`fields`，`fields` 是字段 code 列表 ⇒ 想指定"多行文本框 / 单选按钮"**无处可写**，工厂只能发默认值。这是**能力缺口**（不是缺陷） | 代码 + F67 |
+| **F69** | ★ **`maxLength` 的上限被写成了 `17`**（`blueprint.py:48` 的 `ge=1, le=17`），而手册写着**单行文本最多 1500、长文本/富文本最多 32000** ⇒ **>17 全被本地校验拒掉**；且 `spec.py:116` 把这条**错规则**写进了给模型看的注解 ⇒ 人与模型被**同一条错规则**挡住。**判据可跑**：`FieldDef(…, maxLength=1500)` → `ValidationError`，换成 `17` → 通过；手册侧 `Select-String -Pattern "最多支持"` → 1500 / 32000 / 32000。⚠️ 与其它卡不同，这条的后果**已可判定**（纯本地校验，不碰平台） | 手册 + 代码 + 判据 |
+| **F70** | **手册 §3 共 16 种字段类型，工厂 `DATA_TYPES` 只有 14 项**（`blueprint.py:20` = 1/2/3/4/5/7/8/13/14/15/16/17/18/23）⇒ 缺的正好两种：**统计（Statistics，手册 §3.13）** 与 **组件（Component，§3.16）**。⇒ 工厂**没有创建这两类字段的能力**；而报错文案写的是「**非法 dataType**」——**它把"我们不支持"说成了"平台不允许"**（文案与事实不符，属规则 32 那一族） | 手册 `01B §3` 16 节 + 代码 |
+| **F71** | **推断（标注为推断）**：实测字段载荷里 `dataType 19` 的两条**都带 `componentType`**（`relation_object_id__ak`→`ComponentType_Object`、`workflow_config_id__sys`→`ComponentType_Workflow_Version`）⇒ **19 很可能是"组件"类型**，且组件的判别落在 **`componentType`** 上（与 `dataType` 正交）。⚠️ **未证**：需要真机在界面上建一个**组件字段**才能定。⇒ 这也意味着 `AK*` 的 Fail-Closed 表将来还要覆盖这一类 | 字段 93 键（共现）+ **推断** |
+| **F72** | **手册在字段层给了至少 9 处数值硬限制，工厂一处都没校验**：文本 `maxLength ≤ 1500`；长文本/富文本 `≤ 32000`；数字最大值 `≤ 99999999999999`；对象多选默认最多选 `100`（可调 `1-1000`）；附件数量 `1-100`、单个 `1-2048MB`；查找「一个对象最多 **5** 条关系 / 每条最多 **8** 个字段 / 一个源对象最多被 **8** 条引用」；统计「一个对象最多 **10** 个」；树形「最多 **5** 层」；帮助内容 `0-500` 字符。而 `validate()` **只做结构性检查**（编码正则/重复、dataType 合法、引用必填、`max>min`、布局引用存在），`FieldDef` 的 `max`/`attachmentCount`/`attachmentSize`/`decimalPlaces` **全部无界**，`helpContent` 连字段都没有（靠 `extra="allow"` 透传）⇒ **"半个校验器"**（详见 `docs/FACTORY-PLATFORM-COGNITION.md` L2 表） | 手册 `01B §2.2/§3.x` + 代码 |
 
 > **F18 把"无撤销键资源"从一个变成两个**：选项集（F4 / PITFALLS #68）与生命周期状态。
 > 对这两者，**"试探"与"生产写入"是同一件事**——能用读接口判定的问题，不要用写试探。
 > 反过来，**列表布局的列是可改的（有撤销键）**，所以对它的受控写入试探风险等级不同。
 
-**三条派生的工程口径**（比事实本身更重要）：
+**五条派生的工程口径**（比事实本身更重要）：
 
 1. **判"成功"必须看平台回读，不能看接口返回** —— F1/F2/F8 合起来意味着
    "接口回 `data:true`"与"东西真的建对了"是两件事。
@@ -397,3 +681,23 @@
    本次先靠读侧 schema 正确预测了 `minValue`/`maxValue`，又正确推出了 `scale`。
 3. **先拿到界面请求体，再改代码** —— 这个下午的 #62/#63/#67/#69 四条的成因完全一样：
    **照着猜的信封/键名写代码**，而症状一律是"接口回成功、回读才发现空"。
+4. **（2026-09-22 追加）分清"一串人工操作"与"一次页面事件"，唯一依据是 Δt。**
+   分析器一度把时间戳丢掉（`analyze/model.py` 的 `Entry` 没有 `at`），于是
+   `…-210820` 那 8 条**全在 165ms 内**的**页面渲染**被读成了"用户依次配了 10 列"。
+   对照 `acct-fb8dc317-…-160313`：20 条写请求跨 **221 秒**、`SaveField` 每 15–33 秒一次、
+   后面 0–3 秒紧跟一次 `FieldPage` 回读——**那才是人的节奏**。
+   ⇒ D-A 的键名结论不变（比的是平台自己的线格式），但**F16 的"请求体"那一半证据降级**：
+   它只能证明"状态列在该布局里"，不能单独证明"新建时被强制添加"。
+   详见 [L3 复盘 §11（后补更正）](../factory-tuning/reports/2026-09-21-L3列表布局取证与监听失败复盘.md)。
+   判据：`factory-tuning/tests/selfcheck.py` 的 **H 组** + 报告 §3 的「距上条(ms)」列。
+
+5. **（2026-09-22 追加 · 对第 4 条的边界收窄）Δt 只在"同一批分发的事件之间"可用。**
+   实测：09-22 三个布局会话里"动作缓冲里最后一次点击"与"请求时间戳"差 **38–61 秒**，
+   而同一批请求的观测跨度只有 **14 毫秒**（09-21 的六个会话则是 0.1–3.1 秒）。
+   两个候选机制**都还没被排除**：**(a)** sync-Playwright 的事件只在 worker **进入 Playwright 调用**时才被分发，
+   而 `browser_pool.py:166` 的 `self._jobs.get()` **没有超时**；**(b)** 触发保存的操作**不在缓冲里**
+   （键盘 / iframe / shadow DOM 的点击都不进缓冲）。
+   ⇒ **可用**：同批事件之间的相对间隔、以及"这批请求的先后顺序"（顺序另有**内容语义**背书：
+   3× 下拉查询 → `GetStableComponentIds` → `SaveLayoutDetail`）；
+   **不可用**：跨"动作缓冲 ↔ 请求"的时间差 —— **不许**再拿它推人工节奏或"用户犹豫了"。
+   ⇒ 新增 [PITFALLS #74](PITFALLS.md)；详见[段 2 报告 §6](../factory-tuning/reports/2026-09-22-真机取证-段2-新建部分与整行.md)。

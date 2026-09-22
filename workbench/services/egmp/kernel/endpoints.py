@@ -46,6 +46,11 @@ MENU_SORT = "/api/platform/Menu/Sort"
 LAYOUT_LIST = "/api/platform/Layout/LayoutList"
 LAYOUT_DETAIL = "/api/platform/Layout/LayoutDetail"  # ⚠ 双参数缺一 500
 LAYOUT_SAVE_DETAIL = "/api/platform/Layout/SaveLayoutDetail"  # 全量替换
+#: 保存**新建**组件前必须先调它：把浏览器里生成的 UUID 换成服务端 id。
+#: 2026-09-22 真机实测（n=10）：请求体 `{"componentIds": {<客户端UUID>: {objectId, layoutCode,
+#: componentType, componentCode}}}`，`componentType` ∈ `layout_section` / `layout_control`；
+#: 响应 `data.stableComponentIds` 回映射。**增量语义**：只报本次新增的组件（实测 8/5/1/2 个）。
+LAYOUT_STABLE_IDS = "/api/platform/Layout/GetStableComponentIds"
 LISTLAYOUT_LIST = "/api/platform/Listlayout/List"
 LISTLAYOUT_COLUMNS = "/api/platform/Listlayout/Columns"
 LISTLAYOUT_SAVE = "/api/platform/Listlayout/Save"

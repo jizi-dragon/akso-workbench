@@ -20,6 +20,10 @@ CODE_STATUS_RE = re.compile(r"^status_[a-z][a-z0-9_]*__c$")
 DATA_TYPES = {1, 2, 3, 4, 5, 7, 8, 13, 14, 15, 16, 17, 18, 23}
 REFERENCE_TYPES = {13, 15, 16, 23}
 
+#: 文本长度上限 —— `[手册]` `01B_对象字段.md`：**单行文本 ≤1500**；**长文本 / 富文本 ≤32000**。
+#: ⚠️ 2026-09-22 之前这里没有这张表，而 `FieldDef.maxLength` 写死了 `le=17`（D-I）。
+MAX_LENGTH_BY_DATA_TYPE = {1: 1500, 17: 32000, 18: 32000}
+
 
 class OptionDef(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -45,7 +49,11 @@ class FieldDef(BaseModel):
     isRequired: bool = False
     invisible: bool = False
     disabled: bool = False
-    maxLength: int | None = Field(None, ge=1, le=17)
+    #: 文本长度上限。⚠️ **这里刻意不写 `le=17`**（2026-09-22 修，D-I）：
+    #: 旧值把上限钉在 17，而手册 `01B_对象字段.md` 写着**单行文本 ≤1500、长文本/富文本 ≤32000**
+    #: ⇒ 长度 >17 的合法字段**全被本地校验拒掉**（错误拒真）。
+    #: 上限**按 dataType 判**，见 `validate_blueprint` 里的数值边界检查（Layer 2）。
+    maxLength: int | None = Field(None, ge=1)
     format: str | None = None
     max: float | None = None
     min: float | None = None
@@ -299,6 +307,20 @@ def validate_blueprint(raw: dict[str, Any]) -> list[Issue]:
             if dt == 2 and field.get("max") is not None and field.get("min") is not None \
                     and field["max"] <= field["min"]:
                 issues.append(Issue(level="error", path=fpath, message="数字字段 max 必须大于 min"))
+            # ---- 文本长度上限：**按 dataType 判**（D-I，2026-09-22）----
+            # 为什么从 pydantic 层挪到这里：类型相关的规则放 Layer 1 只能写成"一刀切"，
+            # 而旧的一刀切是 `le=17` —— 与手册的 1500/32000 差两个数量级（错误拒真）。
+            limit = MAX_LENGTH_BY_DATA_TYPE.get(int(dt or 0))
+            if field.get("maxLength") is not None:
+                if limit is None:
+                    issues.append(Issue(
+                        level="warning", path=fpath,
+                        message=f"maxLength 只适用于文本族（1 单行文本 / 17 长文本 / 18 富文本）；"
+                                f"dataType={dt} 上平台不会使用它"))
+                elif int(field["maxLength"]) > limit:
+                    issues.append(Issue(
+                        level="error", path=fpath,
+                        message=f"maxLength 超出该类型上限：{field['maxLength']} > {limit}（dataType={dt}）"))
 
         # 布局引用字段必须存在（系统字段白名单）
         valid = field_codes | SYSTEM_FIELD_WHITELIST

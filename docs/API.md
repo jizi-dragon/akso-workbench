@@ -291,7 +291,7 @@ autologin, has_token, monitoring, monitor_log}`；
 ## 10. Agent 工具层 `/api/agent`（`routes_agent.py`）
 
 > **单一事实源**：工具清单来自**工具插件中枢** `plugin_api.ToolHub`（`workbench/plugins/`
-> 五个插件装配，共 22 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
+> 五个插件装配，共 23 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
 > schema、审计三处读的是同一份定义。插件 SDK 契约见 [PLUGIN-SDK.md](PLUGIN-SDK.md)。
 
 | 方法 | 路径 | 请求 | 说明 |
@@ -337,7 +337,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - HTTP 链路（`POST /invoke`）：本端点**不等待**，直接 409 + `confirm` 内容；
   调用方自己看 `GET /pending` 决定何时 `approve`（同意同样会预先批准那次目标调用）。
 
-**工具清单（22 个工具，按插件）**：
+**工具清单（23 个工具，按插件）**：
 
 | 插件 | 工具 | 风险 |
 |---|---|---|

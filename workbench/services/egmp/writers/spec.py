@@ -110,10 +110,12 @@ _NOTES: dict[str, str] = {
     "FieldDef.name": "字段显示名",
     "FieldDef.code": "字段编码（本对象内唯一；建议小写 + 下划线）",
     "FieldDef.dataType": "字段类型码，见规格里的 dataTypes",
-    "FieldDef.isRequired": "是否必填",
+    "FieldDef.isRequired": "是否必填（⚠️ 平台写入侧无此键：真机 SaveField 从不发 isRequired，"
+                           "必填落在布局控件层；工厂目前把它**上报为人工项**，不在字段上生效）",
     "FieldDef.invisible": "是否隐藏",
     "FieldDef.disabled": "是否只读",
-    "FieldDef.maxLength": "文本长度上限（1~17，dataType=1 时用）",
+    "FieldDef.maxLength": "文本长度上限：单行文本 ≤1500、长文本/富文本 ≤32000（手册 01B；"
+                          "其它类型不适用，填了会被忽略）",
     "FieldDef.format": "文本格式约束",
     "FieldDef.max": "数字字段最大值（dataType=2；必须大于 min）",
     "FieldDef.min": "数字字段最小值（dataType=2）",
@@ -136,12 +138,12 @@ _NOTES: dict[str, str] = {
     "OptionDef.operations": "固定 1",
     "OptionDef.sort": "排序号，越小越靠前",
     # 布局
-    "FormLayoutDef.sections": "表单分组，至少 1 个",
-    "FormSectionDef.name": "分组显示名",
-    "FormSectionDef.code": "分组编码",
+    "FormLayoutDef.sections": "表单部分，至少 1 个",
+    "FormSectionDef.name": "部分显示名",
+    "FormSectionDef.code": "部分编码",
     "FormSectionDef.type": "固定 1",
-    "FormSectionDef.columnsNum": "该分组几列（常用 2）",
-    "FormSectionDef.fields": "分组里放哪些字段（**字段编码**，不是显示名）",
+    "FormSectionDef.columnsNum": "该部分几列（常用 2）",
+    "FormSectionDef.fields": "部分里放哪些字段（**字段编码**，不是显示名）",
     "ListLayoutDef.name": "列表布局名（可省）",
     "ListLayoutDef.columns": "列表列，至少 1 列",
     "ListColumnDef.fieldCode": "列对应的字段编码",
@@ -218,7 +220,7 @@ _MODEL_GROUPS: tuple[tuple[str, type[BaseModel], str], ...] = (
     ("picklists[]（顶层）", PicklistDef, "多个对象共享的选项集"),
     ("objects[].picklists[].options[]", OptionDef, "选项集的取值"),
     ("objects[].formLayout", FormLayoutDef, "表单布局"),
-    ("objects[].formLayout.sections[]", FormSectionDef, "表单分组"),
+    ("objects[].formLayout.sections[]", FormSectionDef, "表单部分"),
     ("objects[].listLayout", ListLayoutDef, "列表布局"),
     ("objects[].listLayout.columns[]", ListColumnDef, "列表列"),
     ("objects[].lifecycle", LifecycleDef, "生命周期"),
@@ -310,6 +312,12 @@ def blueprint_spec() -> dict[str, Any]:
     return {
         "how_to_use": [
             "写一份蓝图 JSON（对象/字段/布局/生命周期/工作流/菜单）",
+            "★ **先确认对象存在**：蓝图里的对象 code 若是「用户说的那个已有对象」，"
+            "先用 `factory_resolve_object` 查一次——**查不到就停下来问用户**，"
+            "把相近的候选念给他选；都不对再问是否要新建。"
+            "（工厂的对象步骤是幂等的：code 存在就复用、不存在就**建一个新的** ⇒ "
+            "打错一个字不会报错，只会静默多出一个空对象。管道层还有第二道闸："
+            "对象不存在但存在相近对象时，`factory_create` 会**拒绝写入**并回候选清单）",
             "调用一次预览工具：校验通过就会暂存并返回 blueprint_id，"
             "同时给你一份给用户看的人话清单",
             "把那份清单讲给用户听（他要据此决定要不要真的创建）",

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid as _uuid
 from pathlib import Path
 from typing import Any
@@ -95,9 +96,67 @@ def topological_sort_objects(objects: list[dict[str, Any]]) -> list[dict[str, An
     return [by_code[code] for code in ordered]
 
 
+def _code_variants(code: str) -> list[str]:
+    """给一个对象 code 生成"长得像"的候选（**机械可得**，按形状不按语义）。
+
+    为什么不用"平台的对象列表接口"：2026-09-22 实测**平台没有可枚举对象的端点**——
+    14 个候选路径（`BasicObject/{List,GetList,Query,Search,PageList,GetPageList,…}`）
+    GET/POST 全 404，openapi 那条 `/BasicObject/list` 回空。所以"相似"只能靠：
+    ① 后缀变体（`x` ↔ `x__c`）、② 下划线/大小写变体、③ **末位数字 ±1/±2**
+    （实测这条最有用：`test_0904__c` 能因此发现 `test_0903__c`），然后**逐个真机探测**。
+    探测数有上限（下面的 `limit`），不会把一个错误 code 放大成几十次请求。
+    """
+    base = re.sub(r"(__c|__ak|__sys)$", "", code or "")
+    variants: list[str] = []
+    for stem in (base, base.lower(), base.replace("_", "")):
+        if not stem:
+            continue
+        for suffix in ("__c", ""):
+            variants.append(f"{stem}{suffix}")
+    numbers = list(re.finditer(r"\d+", base))
+    if numbers:
+        last = numbers[-1]
+        width = len(last.group(0))
+        value = int(last.group(0))
+        for delta in (-1, 1, -2, 2):
+            if value + delta < 0:
+                continue
+            swapped = f"{base[:last.start()]}{value + delta:0{width}d}{base[last.end():]}"
+            variants.extend([f"{swapped}__c", swapped])
+    seen: list[str] = []
+    for variant in variants:
+        if variant and variant != code and variant not in seen:
+            seen.append(variant)
+    return seen
+
+
+def similar_object_codes(client: Any, code: str, limit: int = 5) -> list[dict[str, str]]:
+    """平台上**确实存在**的、与 `code` 相近的对象（逐个探测，最多 `limit` 个）。"""
+    queries = GaiaQueries(client)
+    found: list[dict[str, str]] = []
+    for variant in _code_variants(code):
+        if len(found) >= limit:
+            break
+        try:
+            info = queries.get_object_info(variant)
+        except Exception:  # noqa: BLE001 —— 探测失败就当不存在（不阻断主流程）
+            info = None
+        if info:
+            found.append({"code": variant, "name": str(info.get("name") or ""),
+                          "id": str(info.get("id") or "")})
+    return found
+
+
 def precheck_blueprint(client: Any, raw: dict[str, Any]) -> dict[str, Any]:
-    """预检查：平台已有名称/编码冲突（name-resolver.js 口径；失败不阻断只告警）。"""
-    conflicts: list[dict[str, str]] = []
+    """预检查：① 平台已有名称/编码冲突（**失败不阻断，只告警**）；
+    ② ★ **蓝图里的对象在平台上不存在**时，列出相近对象交人选择（2026-09-22 用户定的规则）。
+
+    ② 的意义：用户说"在对象 X 上做点什么"时，如果 X 打错了，旧行为是**静默新建一个 X**
+    —— 建出来的东西对着一个空对象，而用户以为改的是他那个。实测踩过：`test_0903__c`
+    如果写成 `test_0905__c`，工厂就会**建一个新对象**，而平台上看不出异常。
+    """
+    conflicts: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
     queries = GaiaQueries(client)
     idem = Idempotency(queries)
     for obj in bp.to_object_blueprints(raw):
@@ -106,7 +165,20 @@ def precheck_blueprint(client: Any, raw: dict[str, Any]) -> dict[str, Any]:
         if existing:
             conflicts.append({"kind": "object", "code": code,
                               "message": f"对象编码已存在（objectId={existing.get('id')}）→ 建议后缀 _v2"})
-    return {"phase": "review" if not conflicts else "precheck", "conflicts": conflicts}
+            continue
+        candidates = similar_object_codes(client, code)
+        missing.append({
+            "kind": "object", "code": code, "candidates": candidates,
+            "message": (f"平台上**找不到对象 {code}**" +
+                        (f"；但有几个很像的：{[c['code'] for c in candidates]}" if candidates
+                         else "；也没有找到相近的") +
+                        ("——**请先让用户确认**是要改上面某个，还是确实要新建"
+                         if candidates else "——若确实要新建，继续即可")),
+        })
+    phase = "review" if not conflicts and not missing else "precheck"
+    blocking = [m for m in missing if m["candidates"]]
+    return {"phase": phase, "conflicts": conflicts, "missing": missing,
+            "needsObjectChoice": blocking}
 
 
 def run_full_workflow(client: Any, raw: dict[str, Any], *, approved: bool = True,
@@ -132,6 +204,19 @@ def run_full_workflow(client: Any, raw: dict[str, Any], *, approved: bool = True
                 cp.record(str(step.get("step")), "success", "断点恢复注入")
 
     precheck = precheck_blueprint(client, raw)
+    # ★ 用户 2026-09-22 定的规则：**"对象不存在"不许静默新建**——若平台上存在相近的对象，
+    # 先停下来让用户选（是改那个相近的，还是确实要新建），本轮**一个字节都不写**。
+    blocking = list(precheck.get("needsObjectChoice") or [])
+    if blocking:
+        lines = [f"找不到对象 {item['code']}，但平台上存在相近的："
+                 + "、".join(f"{c['code']}（{c['name']}）" for c in item["candidates"])
+                 for item in blocking]
+        return {
+            "success": False,
+            "needsObjectChoice": blocking,
+            "message": "预检查未通过：**本轮未写入任何东西**。" + "；".join(lines)
+                       + " ⇒ 请让用户选择：① 改成上面某个对象重跑；② 确认确实要新建（把 code 改成不带歧义的、或在确认后显式要求新建）。",
+        }
     if artifact_dir is not None:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         (artifact_dir / "spec.md").write_text(bp.generate_review_spec(raw), encoding="utf-8")
@@ -225,6 +310,9 @@ def run_object_workflow(client: Any, obj: dict[str, Any], *, cp: CheckpointManag
             cp.record(f"{prefix}field:{field_result.get('code')}",
                       "success" if field_result.get("success") else "failed",
                       field_result.get("message", ""))
+        # 字段层"表达不了"的东西（当前是：必填 isRequired，见 D-H）**升级成人工项**，
+        # 而不是静默失效 —— 它会出现在编排结果与检查表里。
+        manual_items.extend(outcome.get("notes") or [])
         return {**outcome, "success": all(r.get("success") for r in outcome["results"])}
 
     fields_outcome = record("fields", _fields)

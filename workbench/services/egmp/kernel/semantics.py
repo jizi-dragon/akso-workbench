@@ -83,7 +83,7 @@ LAYOUT_CODE_SUFFIXES = ("_table__ak", "_base_layout__ak")
 # 剥掉布局后缀后，依次补这些后缀去验证对象编码是否存在（首个命中即确认）
 OBJECT_SUFFIX_CANDIDATES = ("__c", "__ak", "__sys", "")
 CODE_PREFIXES = {
-    "layout_": "布局", "part_": "表单分组", "option_": "选项集", "lifecycle_": "生命周期",
+    "layout_": "布局", "part_": "表单部分", "option_": "选项集", "lifecycle_": "生命周期",
     "workflow_": "工作流", "status_": "状态", "action_": "用户动作",
 }
 INIT_STATUS_SUFFIX = "init_status__c"  # 初始状态（系统默认不可删）

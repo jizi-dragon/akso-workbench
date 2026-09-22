@@ -33,14 +33,14 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 > 手改会在下一次 `--check` 时被判为不一致——这正是设计意图（清单只能来自代码）。
 
 <!-- TOOLS-TABLE:BEGIN —— 由 tools/gen_tools_doc.py 生成，勿手改；改插件后跑 --write -->
-> 实测（由运行期工具中枢生成）：**5 个插件 / 22 个工具**。风险分布：19 read · 2 write · 1 dangerous；装配失败：无。
+> 实测（由运行期工具中枢生成）：**5 个插件 / 23 个工具**。风险分布：20 read · 2 write · 1 dangerous；装配失败：无。
 
 | 插件 | 标题 | 版本 | 工具数 | 负责什么 |
 |---|---|---|---|---|
 | `builtin` | 内置工具 | 1.1.0 | 4 | 与业务无关的通用能力：时间、读本地文件、读网页正文、请求用户确认 |
 | `websearch` | 联网检索 | 1.1.0 | 1 | 自建联网检索（DeepSeek API 不支持内置 web_search，故由本工作台实现） |
 | `insight` | 平台洞察 | 1.0.0 | 6 | 读平台对象元数据、跑五步织网洞察、取回产物（akso-cc 能力原生化） |
-| `factory` | 配置工厂 | 2.0.0 | 6 | 蓝图规格与预览暂存、真机批量创建（akso-auto 能力原生化） |
+| `factory` | 配置工厂 | 2.0.0 | 7 | 蓝图规格与预览暂存、真机批量创建（akso-auto 能力原生化） |
 | `accounts` | 快捷登录 | 1.0.0 | 5 | 账号库清单、平台登录验证、托管浏览器会话（quick-login 能力内化） |
 
 | 工具 | 插件 | 风险 | 需确认门 | 超时 | 干什么 | 参数 |
@@ -58,6 +58,7 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `factory_jobs` | factory | read | — | 15s | 最近的配置工厂任务（状态/时间），用于确认此前是否已经创建过 | — |
 | `factory_list_blueprints` | factory | read | — | 20s | 列出已暂存的蓝图（id/名称/涉及对象）。含**用户在配置工厂页面上传的**那些，所以用户说自己传了一份时用它确认 | `limit` |
 | `factory_preview_blueprint` | factory | read | — | 90s | 提交一份蓝图：**校验 → 暂存 → 出一份给用户看的审阅清单**，一次完成 | `blueprint` |
+| `factory_resolve_object` | factory | read | — | 60s | **用户说的对象在平台上到底存不存在**——按 code 或名称查。存在：回 id/name（工厂会复用它） | `account_id`、`query` |
 | `factory_status` | factory | read | — | 30s | 某个工厂任务的详情：状态、日志末尾、断点续跑 checkpoint | `job_id`、`log_lines` |
 | `factory_create` | factory | **dangerous** | ✅ 宿主拦下 | 900s | 【危险】在真实平台上按蓝图批量创建对象/字段/选项集/生命周期/工作流/布局/菜单 | `blueprint_id`、`account_id` |
 | `insight_accounts` | insight | read | — | 15s | 列出工作台账号库里的账号（id/用户名/环境），用于确定 account_id | — |

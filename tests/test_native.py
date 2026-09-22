@@ -437,3 +437,45 @@ def test_trim_body_leaves_small_bodies_untouched() -> None:
     small = json.dumps({"code": 0, "data": True})
     assert trim_body(small) == small
     assert trim_body(None) is None
+
+
+# ------------------------------------------- 对象不存在时不许静默新建（用户规则 2026-09-22）
+
+
+def test_missing_object_with_similar_candidate_blocks_the_run() -> None:
+    """★ **对象不存在时不许静默新建** —— 用户 2026-09-22 定的规则。
+
+    规则原文：「当用户描述的对象不存在时，要给用户提出找不到该对象，并列举出相似对象给用户选择，
+    并询问用户若都不存在时，是否需要新建。」
+
+    **为什么必须钉住**：对象步骤是幂等的（code 存在→复用，不存在→**新建**），
+    于是"code 打错一个字"的后果**不是报错**，而是**静默多出一个空对象**，
+    而用户以为改的是他那个（2026-09-22 实测踩过：跑之前先只读核对才没出事）。
+
+    判据两条：① 相近对象能被**机械**找到（末位数字 ±1/±2 的变体逐个探测）；
+    ② 有候选时 `run_full_workflow` **拒绝执行**、回候选清单，且**一个对象都没建**。
+    """
+    from workbench.services.egmp import orchestrate
+
+    client = FakeEgmpClient()
+    client.objects["test_0903__c"] = {"id": "obj-0903", "name": "测试09-03", "code": "test_0903__c"}
+
+    # ① 机械相似：`test_0905__c` 的 ±2 变体命中 `test_0903__c`
+    candidates = orchestrate.similar_object_codes(client, "test_0905__c")
+    assert [c["code"] for c in candidates] == ["test_0903__c"], candidates
+
+    # ② 有候选 ⇒ 拒绝写入，并把候选交回给人选
+    blueprint = {
+        "objects": [{
+            "name": "测试09-03", "code": "test_0905__c",
+            "fields": [{"name": "验证文本", "code": "probe_text__c", "dataType": 1}],
+            "formLayout": {"sections": [{"name": "验证部分A", "code": "probe_a__cs",
+                                        "type": 1, "columnsNum": 2, "fields": ["probe_text__c"]}]},
+        }],
+    }
+    result = orchestrate.run_full_workflow(client, blueprint, approved=True, confirmed_env=True)
+    assert result["success"] is False
+    blocked = result.get("needsObjectChoice") or []
+    assert blocked and blocked[0]["code"] == "test_0905__c", blocked
+    assert "test_0903__c" in result["message"]
+    assert "test_0905__c" not in client.objects, "**拒绝写入被违反了**：错 code 的对象还是被建了出来"

@@ -11,10 +11,13 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（71 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
-> | 不再变的决策（17 篇 ADR） | [docs/adr/](docs/adr/) |
+> | 真机环境坑（81 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 不再变的决策（18 篇 ADR） | [docs/adr/](docs/adr/) |
 > | 配置工厂 × Agent 的接口缺口（问题分析） | [docs/FACTORY-AGENT-GAP.md](docs/FACTORY-AGENT-GAP.md) |
-> | 配置工厂逐条验证与优化（**进行中 · L1/L2 已跑，L3 列表布局取证跑过一半**） | [docs/FACTORY-VERIFICATION-PLAN.md](docs/FACTORY-VERIFICATION-PLAN.md) |
+> | 配置工厂逐条验证与优化（**进行中 · L1/L2 已跑，L3 表单布局已取证到段 6 · 首次真机验证卡在 D-C ‖ 10 条卡片待裁定**） | [docs/FACTORY-VERIFICATION-PLAN.md](docs/FACTORY-VERIFICATION-PLAN.md) |
+> | **平台五层操作已学清单（答题卡 + 反哺清单：端点/线格式/样本量 n/工厂差距）** | [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md) |
+> | **★ 待下达决定简报（决策卡汇总：批一/批二/批三 + 三个待答问题）** | [docs/FACTORY-DECISION-BRIEF.md](docs/FACTORY-DECISION-BRIEF.md) |
+> | 配置工厂 × 平台的整体认知（Gaia V3.8 手册逐面 × 工厂实现 × 缺口） | [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) |
 > | 平台操作录制与分析（**不属于产品**） | [factory-tuning/](factory-tuning/README.md) |
 > | 核心 Agent 架构与分层契约 | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
 > | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
@@ -134,7 +137,7 @@
 ```powershell
 # 基线（动手前 + 改完后各跑一次）
 .\.venv\Scripts\python.exe -m pytest -o addopts=""        # 全量；默认 addopts 跳过 slow 层
-.\.venv\Scripts\ruff.exe check .                          # ★ lint —— 先探一次，见 §4（这条会漂）
+.\.venv\Scripts\uv.exe tool run ruff check .              # ★ lint —— 先探一次，见 §4（这条会漂；2026-09-22 实测走这条）
 .\.venv\Scripts\python.exe tools\gen_tools_doc.py         # 工具清单/数字 == 运行期中枢
 .\.venv\Scripts\python.exe tools\verify_packaging.py      # 打包静态核对 13 项
 ```
@@ -142,7 +145,7 @@
 | 你改了什么 | 必须额外跑 |
 |---|---|
 | `workbench/plugins/**` | `tools\gen_tools_doc.py --write`（重生成 [docs/TOOLS.md](docs/TOOLS.md) 清单块）**+** 确认 `server.spec` 的 `hiddenimports` 有该模块 **+** `REQUIRED_TOOLS`。<br>★ 动了配置工厂的工具面（`factory_*`）还要跑 `pytest tests/test_factory_agent.py -o addopts=""` **与** `python tools\verify_factory_agent.py`（**24 项**端到端：真起生产入口、真发 HTTP、**真去磁盘上看那份暂存的蓝图在不在**——"返回了个 id 但没落盘"是本条链路最可能的假通过）——它们钉的是**那条链路通不通**（蓝图 → `blueprint_id` → 创建），而不只是每个工具自己对不对（[ADR-0017](docs/adr/0017-factory-agent-interface.md)） |
-| `workbench/services/egmp/writers/**`、`spec.py` | `pytest tests/test_native.py tests/test_factory_agent.py -o addopts=""`。<br>★ 给 `writers/blueprint.py` 的模型**加字段**时，必须同时补 `writers/spec.py::_NOTES` 的注解——`test_every_model_field_is_annotated` 会红，而那是对的：漏注解是**静默**的（规格照样生成，只是模型少一行说明） |
+| `workbench/services/egmp/writers/**`、`spec.py` | `pytest tests/test_native.py tests/test_factory_agent.py -o addopts=""`。<br>★ 给 `writers/blueprint.py` 的模型**加字段**时，必须同时补 `writers/spec.py::_NOTES` 的注解——`test_every_model_field_is_annotated` 会红，而那是对的：漏注解是**静默**的（规格照样生成，只是模型少一行说明）<br>★ **改任何请求体键名时，先跑 `python factory-tuning\tools\keygate.py`**——它静态抽出工厂的字面量请求体（**顶层** `client.post(常量, {…})`、**嵌套** `NAME.append({…})`、**词表**三层），与真机见过的键集/值集比对；**D-A（`columns`）/ D-C（`basicObjectId`）/ D-D（控件 `ctrlType`/`fieldCode` + 自造 `input`/`object` 词汇表）都是它抓出来的**，而 pytest 对这条链路零覆盖（`grep "AddColumns\|LISTLAYOUT" tests/` 零命中）。归属一律按「同 writer 模块的端点」（跨模块借样本会造假阳性，见 PITFALLS #75）；词表的「工厂词表 ↔ 真机字段」对应关系是**显式声明**的（`VOCAB_PAIRS`），没声明就是未核。响应形状用 `python factory-tuning\tools\audit_keys.py --responses` |
 | `workbench/sandbox/**` | `pytest tests/test_sandbox.py -o addopts=""`（含 slow 层：真起进程、验 Job Object 树杀） |
 | `workbench/skills/**` | `pytest tests/test_skills.py tests/test_skill_scripts.py -o addopts=""` |
 | `workbench/harness/**`、`cache.py`、`plugin_api.py`、`approvals.py` | `pytest tests/test_cache.py tests/test_agent_loop.py tests/test_agent_approval.py tests/test_user_confirmation.py`（**前缀稳定性 + 确认门两条通道 + 模型发起的实时确认**都在这里）<br>★ 动了实时确认（`needs_confirmation` / `confirm_required` / `pending_action`）还要跑 `python tools\verify_confirmation.py`——**19 项**端到端：真起生产入口、真发 HTTP、真拉三个静态文件（"打包/静态目录漏收"只在这里现形） |
@@ -173,7 +176,7 @@
 | 项 | 实际情况 |
 |---|---|
 | Python | `.\.venv\Scripts\python.exe`（**不在 PATH**；AI 直接敲 `python` 会拿到系统里另一个解释器） |
-| **`ruff` / `uv` 在不在 venv 里？** | ⚠️ **这条会漂，别背命令——先探一次**：<br>`Get-ChildItem .venv\Scripts -Filter "uv*.exe","ruff*.exe"`<br>**2026-09-20 实测**：`ruff.exe` **存在**（0.16.0）→ 用 `.\.venv\Scripts\ruff.exe check .`；`uv.exe` **不存在**（只有 `uvicorn.exe`，`python -m uv` 报 `No module named uv`）。若哪天 `uv.exe` 回来，回退是 `.\.venv\Scripts\uv.exe tool run ruff check .`。<br>**为什么写这么啰嗦**：这条口径在本仓**已翻转过三次**（见 PITFALLS #50）——它是**环境事实**，而环境会变。**两条都记着**，别只记一条 |
+| **`ruff` / `uv` 在不在 venv 里？** | ⚠️ **这条会漂，别背命令——先探一次**：<br>`Get-ChildItem .venv\Scripts -Filter "uv*.exe","ruff*.exe"`<br>**2026-09-20 实测**：`ruff.exe` **存在**（0.16.0）→ 用 `.\.venv\Scripts\ruff.exe check .`；`uv.exe` **不存在**（只有 `uvicorn.exe`，`python -m uv` 报 `No module named uv`）。若哪天 `uv.exe` 回来，回退是 `.\.venv\Scripts\uv.exe tool run ruff check .`。<br>**2026-09-22 实测（又翻回来了）**：`ruff.exe` **不存在**、`uv.exe` **存在**（还有 `uvw.exe` / `uvx.exe`；`python -m ruff` 报 `No module named ruff`）→ 本次用的是 **`.\.venv\Scripts\uv.exe tool run ruff check .`**，实测 `All checks passed!`（exit 0）。<br>**为什么写这么啰嗦**：这条口径在本仓**已翻转过三次**（见 PITFALLS #50）——它是**环境事实**，而环境会变。**两条都记着**，别只记一条 |
 | pytest 汇总行 | `addopts` 已有 `-q -m 'not slow'`；**再加 `-q` 会进 ultra-quiet，连 `=== N passed ===` 都不打印**。要看汇总行用 `-o addopts=""` |
 | slow 层 | 默认跳过。全量：`-o addopts=""`；只跑慢层：`-m slow`（无慢层用例时 pytest 以 **exit 5** 退出，这是刻意的守卫，不是故障） |
 | 解释器口径 | `.python-version`（= 3.12）是**唯一真源**，`tests/test_python_version_contract.py` 断言它与 CI 逐字一致。开发机是 3.14 —— **两边跳过项不同，"本地全绿"推不出"CI 全绿"** |
@@ -197,6 +200,11 @@
   不要在它下面插中文标题或注释——抽取结果会变回空字符串，而且**静默不报错**。
 - **PITFALLS 条目要有判据**："症状 / 根因 / 判据 / 处置 / 推广"五段，
   其中**判据**是可执行的一行命令或一个断言。没有判据的坑记不下来。
+- **用"标题"当锚点插入新节时，必须把原标题写回**（2026-09-22 实录：同一次会话里犯了 **3 次**）。
+  形态是 **静默** 的——新内容进去了、原标题没了、正文照旧、**没有任何报错**；
+  只有"跑一遍标题清单"才看得出来（该文件此后会少一节，而读的人以为它不存在）。
+  判据（改完任何文档立刻跑一次）：`Select-String -Path <文件> -Pattern '^#{2,3} '` ——
+  **逐行看编号是否连续**（`§0 → §1 → §1.5 → §2 …`）。本次三次都靠这条才发现并修回。
 
 ---
 

@@ -75,6 +75,11 @@ class StatusArgs(BaseModel):
     log_lines: int = pa.Arg("回传日志末尾多少行", default=60, ge=0, le=400)
 
 
+class ResolveArgs(BaseModel):
+    account_id: str = pa.Arg("凭证来源账号 id（决定查哪个平台环境）")
+    query: str = pa.Arg("用户说的对象 **code 或名称**（例如 `test_0903__c` / `测试09-03`）")
+
+
 async def _in_thread(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return await asyncio.to_thread(lambda: fn(*args, **kwargs))
 
@@ -302,6 +307,61 @@ async def latest_jobs(_: BaseModel, ctx: pa.ToolContext) -> str:
 # ---------------------------------------------------------------- 插件声明
 
 
+async def resolve_object(args: ResolveArgs, ctx: pa.ToolContext) -> str:
+    """查"用户说的这个对象在平台上到底存不存在"；不存在就**列出相近的**交人选择。
+
+    ## 这条是用户 2026-09-22 定的规则（原话）
+
+    > 「当用户描述的对象不存在时，要给用户提出找不到该对象，并列举出相似对象给用户选择，
+    > 并询问用户若都不存在时，是否需要新建。」
+
+    ## 为什么必须有它（实测风险）
+
+    工厂的对象步骤是**幂等**的：code 存在就复用、不存在就**建一个新的**。
+    于是"用户把 code 打错一个字"的后果不是报错，而是**静默多出一个空对象**，
+    而用户以为改的是他那个。2026-09-22 我手工踩过一次这个坑（跑之前先只读核对才没出事）。
+
+    ## 返回值的用法
+
+    它返回的就是**给用户看的话术素材**：`found` 有值时按它的 code 写蓝图；
+    `candidates` 有值时必须**先把候选念给用户**、让他选；都没有时**先问是否要新建**。
+    管道层还有第二道闸：`run_full_workflow` 在"对象不存在但存在相近对象"时**拒绝写入**
+    （见 `orchestrate.precheck_blueprint` 的 `needsObjectChoice`）。
+    """
+    from ..services.egmp import orchestrate
+    from ..services.egmp.client import egmp_client_for_account
+    from ..services.egmp.queries import GaiaQueries
+
+    def _run() -> dict[str, Any]:
+        with egmp_client_for_account(args.account_id) as client:
+            info = GaiaQueries(client).get_object_info(args.query)
+            if info:
+                return {
+                    "found": {"code": str(info.get("code") or args.query),
+                              "name": str(info.get("name") or ""),
+                              "id": str(info.get("id") or "")},
+                    "candidates": [],
+                    "guidance": "对象存在 ⇒ 蓝图里用这个 code，工厂会**复用**它、不会新建。",
+                }
+            candidates = orchestrate.similar_object_codes(client, args.query)
+        if candidates:
+            listing = "、".join(f"{c['code']}（{c['name']}）" for c in candidates)
+            return {
+                "found": None, "candidates": candidates,
+                "guidance": (f"平台上**找不到对象 {args.query}**。相近的有：{listing}。"
+                             "⇒ 请把这几个念给用户，问他要改的是哪一个；"
+                             "**若都不是**，再问他是否要**新建**一个，得到明确答复后才动手。"),
+            }
+        return {
+            "found": None, "candidates": [],
+            "guidance": (f"平台上**找不到对象 {args.query}**，也没有相近的。"
+                         "⇒ 先别建：请用户复核对象的 code/名称（最好让他把界面上的 code 贴过来），"
+                         "并问他是不是要**新建**；明确答复后再走创建。"),
+        }
+
+    return json.dumps(await _in_thread(_run), ensure_ascii=False)
+
+
 def _create_summary(args: CreateArgs) -> str:
     """`factory_create` 的确认摘要：**说清将要建出什么**，而不是复述参数。
 
@@ -381,6 +441,22 @@ PLUGIN = pa.Plugin(
             risk=pa.Risk.READ,
             timeout_s=30,
             audit_extra=pa.audit_env_key("job_id"),
+        ),
+        pa.ToolSpec(
+            name="factory_resolve_object",
+            description=(
+                "**用户说的对象在平台上到底存不存在**——按 code 或名称查。"
+                "存在：回 id/name（工厂会复用它）；不存在：回**相近对象清单**，"
+                "此时必须先把候选念给用户、让他选，**都不对再问他是否要新建**。"
+                "★ 规则（用户 2026-09-22 定）：对象不存在时**不许静默新建**——"
+                "工厂的对象步骤是幂等的，code 打错一个字不会报错，只会静默多出一个空对象。"
+                "写蓝图 / 调 factory_create **之前**先查一次，比事后在平台上删对象便宜"
+            ),
+            args_model=ResolveArgs,
+            handler=resolve_object,
+            risk=pa.Risk.READ,
+            timeout_s=60,
+            audit_extra=pa.audit_env_key("account_id"),
         ),
         pa.ToolSpec(
             name="factory_create",

@@ -31,7 +31,6 @@ def create_field(client: Any, *, object_id: str, name: str, code: str, data_type
     body: dict[str, Any] = {
         "name": name, "code": code, "dataType": data_type, "objectId": object_id,
         "invisible": False, "disabled": False,
-        "isRequired": (extras or {}).get("isRequired", False),
         "statisticsArrange": {"id": 1},
     }
     body.update(extras or {})
@@ -50,9 +49,17 @@ def query_fields(client: Any, object_id: str) -> list[dict[str, Any]]:
 
 
 def collect_extras(field: dict[str, Any]) -> dict[str, Any]:
-    """按 dataType 抽取类型专属参数（collectExtras 口径）。"""
+    """按 dataType 抽取类型专属参数（collectExtras 口径）。
+
+    ⚠️ **`isRequired` 不在这里了**（2026-09-22 真机实证，D-H）：平台自己的客户端在
+    **11 条 `SaveField`** 里**一次都没发过**它；而字段**读侧** 93 键里**有** `isRequired`
+    ⇒ 写入侧与读取侧词表不一致。手册口径是「**必填**落在**控件层**（布局里那个控件的 `required`）」，
+    不是字段写入体。
+    ⇒ 所以这里不再拼它；蓝图里的 `isRequired` 由 `batch_create_fields` **如实上报**成人工项
+    （**不许静默失效**——见 AGENTS.md 规则 4 的同族要求）。
+    """
     data_type = field.get("dataType")
-    extras: dict[str, Any] = {"isRequired": bool(field.get("isRequired"))}
+    extras: dict[str, Any] = {}
     if field.get("maxLength") is not None:
         extras["maxLength"] = field["maxLength"]
     if field.get("format"):
@@ -127,4 +134,14 @@ def batch_create_fields(client: Any, *, object_id: str, fields: list[dict[str, A
             results.append(result)
             if on_log:
                 on_log(f"   字段[{field.get('name')}] {result.get('message')}")
-    return {"fieldMap": field_map, "results": results}
+    # ⚠️ 蓝图里声明了必填的字段：**如实上报**，别让它静默失效（D-H）。
+    # 为什么现在表达不了：真机 `SaveField` 从不发 `isRequired`，而**写侧控件**的样本里也没有
+    # 承载"必填"的键（读侧控件 33 键有 `required`）⇒ 在拿到写侧证据之前**不猜键名**，
+    # 改为把它变成一条**人工项**（会出现在编排结果与检查表里）。
+    required_but_unexpressed = [str(f.get("code")) for f in fields if f.get("isRequired")]
+    notes: list[str] = []
+    if required_but_unexpressed:
+        notes.append("必填（isRequired）在写入侧暂无表达：真机 SaveField 从不发该键，"
+                     "而平台把必填放在控件层（读侧有 required、写侧尚无样本）⇒ "
+                     f"这些字段的必填**需要人工在布局里设置**：{required_but_unexpressed}")
+    return {"fieldMap": field_map, "results": results, "notes": notes}

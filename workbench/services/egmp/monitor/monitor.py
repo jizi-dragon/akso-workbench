@@ -5,6 +5,30 @@
 - RECORD_TRIMMED：已知 API（本包 writers 端点集合），响应体 >10KB 裁剪；
 - RECORD_FULL：陌生 API 完整保留（known=False）。
 每条记录附 precedingActions（最近 5 条 DOM click/change，页面注入 1s 同步）。
+
+## 多窗口（2026-09-22 追加）：录到的每一条都必须能说出"来自哪个窗口"
+
+背景是用户当面指出的一句话：「**现在都分不清我在哪个页面窗口操作的**」。查下来这不是细心
+问题，是**结构性盲区**：
+
+- 产品接口 `/api/browser/sessions` 只回 `page.title()`，而平台**所有页面标题都是
+  `Akso eGMP (配置)`**；URL / target id / 窗口 id 一个字段都没有；
+- 录制引擎原先只挂 `entry.page` **一个** page（`browser_pool.py::_do_open_cdp` 靠
+  `blank.html?w=acc-<账号>` 标记页定位它）；
+- 全仓 `context.on("page")` 零命中、壳侧 `desktop/main.js` 未设 `setWindowOpenHandler`
+  ⇒ 平台 `window.open` 真开出的新窗口**一条都录不到**，而 `filter-stats.json` 里是干净的 0。
+
+⇒ 现在：**主页面 + 同源新窗口一起录**，每条记录带 `pageLabel` / `pageUrl`，
+`monitor-log.json` 顶层再落一份 `_pages`（label → url/title），事后能反查"那次保存是在哪个窗口"。
+
+两条约束下的实现取舍（**都不是风格偏好，是硬约束**）：
+
+1. `docs/CORE-ARCHITECTURE.md` 规则 24：**事件回调内禁止连接调用**（`page.evaluate` /
+   `page.url` 重入 = worker 死锁）。所以监听器是**按页面生成的闭包**，`label` 随闭包进来
+   ——回调里**一个连接调用都不需要**就能标出身份；新页面只**入队**，归属判定留给 `drain()`。
+2. 动作缓冲是**每个 document 一份**（导航即丢）。所以出栈按页面分别做，并且在发现
+   `window.__aksoActionBuffer` 不见了时**就地重新注入**——否则"平台内跳一次页，
+   之后所有动作都挂不上"，而那正是判定"这条记录对应哪次点击"的唯一依据。
 """
 
 from __future__ import annotations
@@ -16,6 +40,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..writers import endpoints as W
 
@@ -82,6 +107,17 @@ def trim_body(body: Any) -> Any:
     return body
 
 
+def origin_of(url: str) -> str:
+    """`scheme://host:port`；空串 = 判不了（**调用方必须据此放弃判定，不许猜**）。"""
+    try:
+        parts = urlsplit(str(url or ""))
+    except ValueError:
+        return ""
+    if not parts.scheme or not parts.netloc:
+        return ""
+    return f"{parts.scheme}://{parts.netloc}"
+
+
 ACTION_BUFFER_JS = """
 (() => {
   if (window.__aksoActionBuffer) return;
@@ -100,97 +136,265 @@ ACTION_BUFFER_JS = """
 })();
 """
 
+#: 出栈 + **顺带报告注入是否还在**。导航会把 `window.__aksoActionBuffer` 冲掉，
+#: 而"冲掉了"这件事只有把 `present` 一起要回来才知道（旧版只 splice，拿回空数组，
+#: 与"用户确实没点"无法区分）⇒ 于是跳页之后所有动作都静默消失。
+_ACTION_DRAIN_JS = """
+(() => {
+  const present = Boolean(window.__aksoActionBuffer);
+  const items = present ? window.__aksoActionBuffer.splice(0) : [];
+  return { present: present, items: items };
+})();
+"""
+
+
+def _new_stats() -> dict[str, int]:
+    return {"total": 0, "dropped": 0, "trimmed": 0, "full": 0}
+
 
 class MonitorSession:
-    """一次录制会话：page 监听 → monitor-log.json（运行中纯数组覆盖写）。
+    """一次录制会话：page（+ 同源新窗口）监听 → monitor-log.json。
 
     sync-Playwright 约束（血泪）：事件回调（request/response）内禁止再调连接方法
     （response.text() / page.evaluate 都是重入——会死锁 worker 线程）。因此：
-    - 回调只做内存入队（response 对象延迟补捞）；
-    - 真正的响应体抓取与动作缓冲出栈由 drain() 完成，调用方须在
+    - 回调只做内存入队（response 对象延迟补捞）；页面身份由**闭包携带的 label** 给出，
+      回调内不做任何连接调用；
+    - 真正的响应体抓取、动作缓冲出栈、新窗口归属判定由 drain() 完成，调用方须在
       worker 线程的"作业间隙"（非事件分发中）周期调用。
     """
 
-    def __init__(self, page: Any, output_dir: Path,
-                 on_log: Callable[[str], None] | None = None) -> None:
+    def __init__(self, page: Any, output_dir: Path, on_log: Callable[[str], None] | None = None,
+                 context: Any = None) -> None:
         self.page = page
+        self.context = context          # 跟随新窗口要枚举它；None = 只录主页面（旧行为）
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = self.output_dir / "monitor-log.json"
         self.checkpoints_path = self.output_dir / "checkpoints.jsonl"
         self.entries: list[dict[str, Any]] = []
-        self.stats = {"total": 0, "dropped": 0, "trimmed": 0, "full": 0}
+        self.stats: dict[str, Any] = {**_new_stats(), "byPage": {}}
         self._lock = threading.Lock()
         self._on_log = on_log or (lambda line: None)
-        self._pending_bodies: list[tuple[dict[str, Any], Any]] = []  # (entry, response)
-        self._actions_dirty = False  # 动作缓冲待出栈标记
+        self._pending_bodies: list[tuple[dict[str, Any], Any]] = []
+        self._dirty_pages: set[str] = set()          # 待出栈动作缓冲的页面 label
+        self._tracks: dict[int, dict[str, Any]] = {}  # id(page) → {"label", "page", "primary"}
+        self._meta: dict[str, dict[str, Any]] = {}    # label → {"url", "title"}
+        self._pending_pages: list[Any] = []           # context.on("page") 只入队，drain 里判定
+        self._primary_label: str | None = None
         self._active = True
 
-    def start(self) -> None:
-        self.page.evaluate(ACTION_BUFFER_JS)
-        self.page.on("request", self._on_request)
-        self.page.on("response", self._on_response)
-        self.page.on("close", self.stop)
-        self.checkpoint("start")
-        self._on_log(f"Monitor 录制开始 → {self.log_path}")
+    # ------------------------------------------------------------ 挂载与跟随
 
-    def _on_request(self, request: Any) -> None:
+    def start(self) -> None:
+        """挂监听 → **再**注入（顺序不能反，见下）。
+
+        旧版是 `page.evaluate(注入)` 在前、`page.on(...)` 在后。差别在于：sync-Playwright
+        的事件**只在 worker 进入一次 Playwright 调用时才分发**，所以 evaluate 这一刻会把
+        "上一次作业之后堆起来的事件"一次性泵出来——挂在后面的监听**接不到它们**
+        （旧的 recorder 已 `_active=False` 丢弃，新的还没挂上）。反过来的顺序，
+        泵出来的事件正好落进刚挂好的监听里。
+        """
+        self._attach(self.page, primary=True)
+        if self.context is not None:
+            try:
+                self.context.on("page", self._on_new_page)   # 纯入队（规则 24）
+            except Exception as exc:  # noqa: BLE001 —— 跟随失败不该挡住录制
+                self._on_log(f"⚠️ 新窗口跟随未挂上（{exc}）——本次只录主页面")
+            self._adopt_existing()
+        self.page.evaluate(ACTION_BUFFER_JS)
+        self._refresh_meta()
+        self.checkpoint("start")
+        self._on_log(f"Monitor 录制开始 → {self.log_path}"
+                     f"（页面 {len(self._tracks)} 个：{', '.join(self._meta)}）")
+
+    def _attach(self, page: Any, primary: bool = False) -> str:
+        label = "p1" if primary else f"p{len(self._tracks) + 1}"
+        self._tracks[id(page)] = {"label": label, "page": page, "primary": primary}
+        self._meta[label] = {"url": None, "title": None}
+        self.stats["byPage"][label] = _new_stats()
+        if primary:
+            self._primary_label = label
+        page.on("request", self._req_handler(page, label))
+        page.on("response", self._res_handler(page, label))
+        # **只有主页面关闭才结束录制**；子窗口关闭只摘掉它自己（旧版一律 self.stop
+        # ⇒ 关掉一个弹出的设计器窗口会把整场录制停掉，而且 stop 会落盘 + 折检查点）。
+        page.on("close", self._close_handler(page, label, primary))
+        return label
+
+    def _req_handler(self, page: Any, label: str) -> Callable[[Any], None]:
+        def handler(request: Any) -> None:
+            self._on_request(request, label)
+        return handler
+
+    def _res_handler(self, page: Any, label: str) -> Callable[[Any], None]:
+        def handler(response: Any) -> None:
+            self._on_response(response, label)
+        return handler
+
+    def _close_handler(self, page: Any, label: str, primary: bool) -> Callable[..., None]:
+        def handler(*_args: Any) -> None:
+            self._on_page_closed(page, label, primary)
+        return handler
+
+    def _on_page_closed(self, page: Any, label: str, primary: bool) -> None:
+        if primary:
+            self.stop()
+            return
+        self._tracks.pop(id(page), None)
+        self._dirty_pages.discard(label)
+        self._on_log(f"窗口关闭：{label}（{self._meta.get(label, {}).get('url')}）——录制继续")
+
+    def _on_new_page(self, page: Any) -> None:
+        """`context.on("page")` 回调：**只入队**（连接调用一律留到 drain）。"""
+        self._pending_pages.append(page)
+
+    def _adopt_existing(self) -> None:
+        """已在场的同源页面（例如开始监听前就开着的窗口）也纳入录制。"""
+        try:
+            pages = list(self.context.pages)
+        except Exception:  # noqa: BLE001
+            return
+        self._pending_pages.extend(p for p in pages if id(p) not in self._tracks)
+
+    def _same_origin_as_primary(self, page: Any) -> bool:
+        base = origin_of(self._meta.get(self._primary_label or "", {}).get("url") or "")
+        if not base:
+            return False
+        try:
+            return origin_of(page.url) == base
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _adopt_pending(self) -> None:
+        """在 drain（作业间隙）里给新页面定性：**只收同源**。
+
+        为什么必须卡同源：CDP 模式下 `entry.context` 是**整个 Electron 浏览器**的上下文，
+        里面还有工作台 UI 自己的窗口（`http://127.0.0.1:18765/`，每 3 秒拉一次
+        `/api/browser/sessions`）。不卡同源就会把**产品自己的界面流量**录进来，
+        既污染采集，又让"这条记录来自哪个窗口"重新变得不可信。
+        """
+        pending, self._pending_pages = self._pending_pages, []
+        for page in pending:
+            if id(page) in self._tracks:
+                continue
+            try:
+                if page.is_closed():
+                    continue
+            except Exception:  # noqa: BLE001
+                continue
+            if not self._same_origin_as_primary(page):
+                self._on_log(f"跳过非平台同源页面：{self._safe_url(page)}")
+                continue
+            label = self._attach(page)
+            try:
+                page.evaluate(ACTION_BUFFER_JS)
+            except Exception:  # noqa: BLE001 —— 页面正在跳转
+                pass
+            self._refresh_meta([label])
+            self._on_log(f"新窗口纳入录制：{label} → {self._meta.get(label, {}).get('url')}")
+
+    @staticmethod
+    def _safe_url(page: Any) -> str:
+        try:
+            return str(page.url)
+        except Exception:  # noqa: BLE001
+            return "（URL 读不到）"
+
+    def _refresh_meta(self, labels: list[str] | None = None) -> None:
+        """刷新页面 URL/标题（**只在作业间隙调用**）。"""
+        for rec in list(self._tracks.values()):
+            label = rec["label"]
+            if labels is not None and label not in labels:
+                continue
+            page = rec["page"]
+            try:
+                self._meta[label]["url"] = str(page.url)
+                self._meta[label]["title"] = str(page.title())
+            except Exception:  # noqa: BLE001 —— 跳转中/已关闭
+                pass
+
+    # ------------------------------------------------------------ 事件入队
+
+    def _on_request(self, request: Any, label: str) -> None:
         if not self._active:
             return
         url = request.url
         path = url.split("://", 1)[-1]
         path = "/" + path.split("/", 1)[1] if "/" in path else "/"
         method = request.method.upper()
-        self.stats["total"] += 1
         verdict = classify(method, path)
-        if verdict == "DROP":
-            self.stats["dropped"] += 1
-            return
-        self.stats["trimmed" if verdict == "RECORD_TRIMMED" else "full"] += 1
-        post_data = None
-        try:
-            post_data = request.post_data
-        except Exception:  # noqa: BLE001
-            pass
         with self._lock:
-            self._actions_dirty = True
+            self.stats["total"] += 1
+            self.stats["byPage"].setdefault(label, _new_stats())["total"] += 1
+            if verdict == "DROP":
+                self.stats["dropped"] += 1
+                self.stats["byPage"][label]["dropped"] += 1
+                return
+            key = "trimmed" if verdict == "RECORD_TRIMMED" else "full"
+            self.stats[key] += 1
+            self.stats["byPage"][label][key] += 1
+            self._dirty_pages.add(label)
+            post_data = None
+            try:
+                post_data = request.post_data
+            except Exception:  # noqa: BLE001
+                pass
             self.entries.append({
                 "method": method, "path": path, "url": url,
                 "timestamp": int(time.time() * 1000),
                 "direction": "request",
                 "postData": post_data,
                 "known": verdict == "RECORD_TRIMMED",
+                # 页面身份：`label` 来自闭包（回调内零连接调用）；`pageUrl` 是**最近一次
+                # `drain()` 刷新到的**那个 URL —— 也就是"这条请求发出时页面上大概在哪"，
+                # 精度到一个 drain 间隔。要精确的当前 URL 看 `_pages`，别拿这个当逐条精确值。
+                "pageLabel": label,
+                "pageUrl": self._meta.get(label, {}).get("url"),
                 "precedingActions": None,  # drain() 时统一补捞（避免事件内 evaluate）
             })
 
-    def _on_response(self, response: Any) -> None:
+    def _on_response(self, response: Any, label: str) -> None:
         if not self._active:
             return
         url = response.url
         with self._lock:
+            # 先在同页面的条目里找（同一 URL 可能同时出现在平台页和工作台页上）
             entry = next((e for e in reversed(self.entries)
-                          if e["url"] == url and e.get("body") is None), None)
+                          if e.get("pageLabel") == label and e["url"] == url
+                          and e.get("body") is None), None)
             if entry is None:
                 return
             entry["status"] = response.status
             # 响应体不在此处抓取（重入禁令）——登记后由 drain() 补捞
             self._pending_bodies.append((entry, response))
 
+    # ------------------------------------------------------------ 作业间隙
+
     def drain(self) -> None:
-        """作业间隙调用（worker 线程、非事件分发中）：补捞动作缓冲与响应体。"""
+        """作业间隙调用（worker 线程、非事件分发中）：跟随新窗口 + 补捞动作与响应体。"""
         if not self._active:
             return
-        # 1) 动作缓冲出栈 → 挂到最近的无动作条目
-        if self._actions_dirty:
-            self._actions_dirty = False
+        self._refresh_meta()
+        if self.context is not None:
+            self._adopt_pending()
+        # 1) 动作缓冲出栈 → 挂到**同一个页面**最近的无动作条目
+        for label in sorted(self._dirty_pages):
+            self._dirty_pages.discard(label)
+            rec = next((r for r in self._tracks.values() if r["label"] == label), None)
+            if rec is None:
+                continue
             try:
-                buffer = list(self.page.evaluate(
-                    "() => window.__aksoActionBuffer ? window.__aksoActionBuffer.splice(0) : []"
-                ))[-5:]
+                pulled = rec["page"].evaluate(_ACTION_DRAIN_JS)
+                buffer = list((pulled or {}).get("items") or [])[-5:]
+                if not (pulled or {}).get("present"):
+                    # 导航把注入冲掉了：就地补回，否则此后该页面的动作全是空的
+                    rec["page"].evaluate(ACTION_BUFFER_JS)
             except Exception:  # noqa: BLE001 —— 页面可能正在跳转
                 buffer = []
             with self._lock:
                 for entry in reversed(self.entries):
+                    if entry.get("pageLabel") != label:
+                        continue
                     if entry.get("precedingActions") is None:
                         entry["precedingActions"] = buffer
                     else:
@@ -219,14 +423,39 @@ class MonitorSession:
             return 1
         return sum(1 for _ in self.checkpoints_path.read_text(encoding="utf-8").splitlines())
 
+    def pages_summary(self) -> dict[str, Any]:
+        """本次录制**覆盖了哪些页面**（label → url/title/是否主页面）。
+
+        这个字典就是"事后能回答『你那次保存是在哪个窗口』"的依据：它随日志一起落盘，
+        而不是只活在内存里。
+        """
+        return {
+            label: {
+                "url": meta.get("url"), "title": meta.get("title"),
+                "primary": bool(next((r["primary"] for r in self._tracks.values()
+                                      if r["label"] == label), False)),
+                "closed": not any(r["label"] == label for r in self._tracks.values()),
+            }
+            for label, meta in self._meta.items()
+        }
+
     def flush(self) -> None:
         with self._lock:
             self.log_path.write_text(json.dumps(
-                {"entries": self.entries, "_actions": [], "filterStats": self.stats},
+                {"entries": self.entries, "_actions": [], "_pages": self.pages_summary(),
+                 "filterStats": self.stats},
                 ensure_ascii=False, indent=1,
             ), encoding="utf-8")
 
     def stop(self, *_args: Any) -> None:
+        """结束录制并落盘。
+
+        ⚠️ **监听器刻意不摘**：`stop` 既可能被作业调用，也可能是某个 page 的 `close`
+        事件回调（在事件分发中）。在分发中调 `page.remove_listener` 属于"回调内碰连接
+        对象"那一类动作（规则 24 的边界），而 sync 包装下 `remove_listener` 的处理器
+        身份也不可靠（`_wrap_handler` 每次都会新建包装体）。因此沿用**`_active` 早退**：
+        监听器留着，但 `self._active is False` 之后一律立即返回，不会再写任何条目。
+        """
         self._active = False
         self.checkpoint("user-query")
         self.flush()

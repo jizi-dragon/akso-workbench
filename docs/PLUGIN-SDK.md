@@ -172,7 +172,7 @@ def register(hub: pa.ToolHub) -> None:
 
 ---
 
-## 3. 现有五个插件与 22 个工具
+## 3. 现有五个插件与 23 个工具
 
 > 实时清单以运行期 `get_hub()` 实例为准（`len(hub.plugins)` / `len(hub.specs())`），
 > 或直接看 **[docs/TOOLS.md](TOOLS.md)**（由 `tools/gen_tools_doc.py` 从运行期生成，`tests/test_tools_doc.py` 钉住）。
@@ -185,12 +185,12 @@ def register(hub: pa.ToolHub) -> None:
 | | `request_user_confirmation`（**模型主动请求实时确认**，见下方专节） | read（但会**暂停对话**等用户答复） |
 | `websearch`（自建联网检索） | `web_search`（DeepSeek API **没有**内置联网搜索，见 [research](research/deepseek-api-capabilities.md) §2） | read |
 | `insight`（平台洞察） | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
-| `factory`（配置工厂） | `factory_blueprint_spec`（**给模型的蓝图规格**，从运行期模型生成）/ `factory_preview_blueprint`（**校验+暂存+审阅材料**，一次闭合）/ `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
+| `factory`（配置工厂） | `factory_blueprint_spec`（**给模型的蓝图规格**，从运行期模型生成）/ `factory_preview_blueprint`（**校验+暂存+审阅材料**，一次闭合）/ `factory_resolve_object`（**对象在不在？不在就列相近的并问用户**，见 [ADR-0018](adr/0018-no-silent-object-creation.md)）/ `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
 | | `factory_create` | **dangerous** |
 | `accounts`（快捷登录） | `accounts_list` / `accounts_login` / `accounts_browser_sessions` | read |
 | | `accounts_browser_open` / `accounts_browser_close` | **write** |
 
-统计：4 + 1 + 6 + 6 + 5 = **22 个工具 / 5 个插件**。
+统计：4 + 1 + 6 + **7** + 5 = **23 个工具 / 5 个插件**。
 
 实时清单：`GET /api/agent/tools`（含参数说明与风险）；插件维度：`GET /api/agent/plugins`。
 
