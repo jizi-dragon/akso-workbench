@@ -71,12 +71,36 @@ export const api = {
       body: JSON.stringify({ conversationId: conversationId || "", question }),
     }),
 
+  /** 上传一个附件（multipart）。**不要走 jsonFetch**：它写死了
+   *  `Content-Type: application/json`，而 multipart 的 boundary 必须由浏览器自己生成。 */
+  async uploadAttachment(file, conversationId = "") {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    form.append("conversationId", conversationId || "");
+    const res = await fetch("/api/attachments", { method: "POST", body: form });
+    let payload = null;
+    try { payload = await res.json(); } catch { /* 非 JSON 错误体 */ }
+    if (!res.ok) {
+      const detail = payload && payload.detail;
+      const error = new Error(typeof detail === "string" ? detail : `上传失败（${res.status}）`);
+      error.status = res.status;
+      throw error;
+    }
+    return payload;
+  },
+  listAttachments: (conversationId = "") =>
+    jsonFetch(`/api/attachments?conversationId=${encodeURIComponent(conversationId || "")}`),
+  deleteAttachment: (id) =>
+    jsonFetch(`/api/attachments/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** 原文件的 URL（图片在对话里直接 <img> 显示它） */
+  attachmentRawUrl: (id) => `/api/attachments/${encodeURIComponent(id)}/raw`,
+
   /** SSE 流式对话：onEvent(event) 回调每个事件 */
-  async streamChat({ conversationId, message }, onEvent) {
+  async streamChat({ conversationId, message, attachmentIds = [] }, onEvent) {
     const res = await fetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversationId, message }),
+      body: JSON.stringify({ conversationId, message, attachmentIds }),
     });
     if (!res.ok || !res.body) {
       throw new Error(`对话请求失败（${res.status}）`);

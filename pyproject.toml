@@ -15,6 +15,12 @@ dependencies = [
     "playwright>=1.49",
     "python-multipart>=0.0.18",
     "networkx>=3.0",
+    # 附件解析（2026-09-22，用户下达「核心 agent 能力增强：用户会传 word/pdf/excel/markdown」）
+    # 三个都是**纯 Python 轮子**（无 C 扩展、无外部二进制）⇒ 打包只需同步 hiddenimports，
+    # 不需要额外运行时依赖。判据：`tools/verify_packaging.py` 的 P7（插件/依赖漏打）。
+    "python-docx>=1.1",   # .docx：段落/表格/标题
+    "openpyxl>=3.1",      # .xlsx：表名/维度/单元格
+    "pypdf>=5.1",         # .pdf：逐页文本（双栏/表格会串行，见方案 §5 的诚实边界）
 ]
 
 [project.optional-dependencies]

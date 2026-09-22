@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
   逐列适配并对未知 `NOT NULL` 无默认值列填中性值，避免接管旧库时 IntegrityError。
 - `checksum` 按 sqlx 语义取迁移 SQL 的 SHA-384 摘要。
 
-### 迁移账（1–20，全部已应用）
+### 迁移账（1–21，全部已应用）
 
 | # | 名称 | 内容 | 血统 |
 |---|---|---|---|
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | 18 | `rename_factory_module_id` | 数据行改写：`blueprint_jobs.module` 由 `akso-auto` / `egmp-native` 统一为 `factory` | 模块 id 改名 |
 | 19 | `sandbox_run_audit` | 新建 `sandbox_run`（沙箱执行审计：策略/退出码/耗时/**树杀手段**/输出摘要）+ 索引 | 沙箱（[ADR-0014](adr/0014-sandbox-for-untrusted-code.md)） |
 | 20 | `skill_audit` | 新建 `skill_audit`（**能力供给链**留痕：上传/安装/卸载/删除）+ 索引 | Skill 共享库 |
+| 21 | `attachments` | 新建 `attachments`（用户交给 agent 的**文件/图片**：名字/mime/字节/sha256/解析状态/正文长度/坐标 JSON）+ 索引 | [Agent 文件输入](AGENT-FILE-INPUT-PLAN.md) |
 
 > **迁移 1–6 为 fork 历史，按不可变纪律保留**。其中 `documents` / `doc_chunks` / `qa_metrics`
 > 的知识库相关功能**源码已删**（表仅留存、不再读写）；`knowledge_nodes` / `knowledge_edges` /
@@ -359,7 +360,40 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 > **Skill 文件本身不入库也不入 git**：落在 `<DATA_DIR>/skills/{library,installed}/`。
 > 表里只存"元数据 + 动作"——**文件才是权威**，表被清掉还能靠扫描目录重建，反过来不行。
 
-### 3.15 已下线但表仍在（勿恢复业务代码）
+### 3.15 `attachments` — 用户交给 agent 的文件/图片（迁移 21）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | TEXT | PK | `att-<8 hex>`；引用标记 `[附件 att-xxxxxxxx：名字]` 里用的就是它 |
+| `conversation_id` | TEXT | NOT NULL DEFAULT `''` | 所属会话；`_pending` = **还没绑定**（新会话的第一条消息之前上传） |
+| `name` | TEXT | NOT NULL DEFAULT `''` | 用户给的原始文件名（**只用于显示**，从不参与路径拼接） |
+| `stored_name` | TEXT | NOT NULL DEFAULT `''` | 落盘名 `<id>__<slug(原名)>`（服务端生成，见下） |
+| `mime` | TEXT | NOT NULL DEFAULT `''` | 由扩展名推出（白名单见 `services/parsing.SUPPORTED`） |
+| `kind` | TEXT | NOT NULL DEFAULT `''` | `image` / `document` / `workbook` / `pdf` / `sheet` / `text` |
+| `bytes` | INTEGER | NOT NULL DEFAULT `0` | 上传字节数 |
+| `sha256` | TEXT | NOT NULL DEFAULT `''` | 内容指纹（验收脚本用它证明"读回来的就是传上去的"） |
+| `status` | TEXT | NOT NULL DEFAULT `'stored'` | `parsed`（抽到正文）/ `stored`（无可读正文，如图片） |
+| `parse_note` | TEXT | NOT NULL DEFAULT `''` | 解析的**不完美**之处（截断 / 扫描件 / 失败原因）——**必须让模型看见** |
+| `text_chars` | INTEGER | NOT NULL DEFAULT `0` | 解析出的正文长度 |
+| `locator` | TEXT | NOT NULL DEFAULT `'{}'` | **坐标目录** JSON：页 / 工作表 / 表 / 段，各带 `offset`+`chars`（读侧按它复算） |
+| `created_at` | INTEGER | NOT NULL | |
+
+索引：`idx_attachments_conversation`、`idx_attachments_created_at`。
+
+**正文（唯一真源）落在磁盘**：`<RUNTIME_DIR>/attachments/<会话 id>/<id>__<安全名>`
+（原件）+ `<id>.text`（解析产物）。表被清掉还能靠扫目录重建，反过来不行——
+与 `skill_audit` 同一条纪律。
+
+**三条不可妥协的校验**（`services/attachments.store()`）：
+① 扩展名白名单 **+ 魔数复核**（改后缀骗不过去）+ OOXML 的 zip 体检；
+② 大小（20 MB）/ 数量（每轮 5 个）；
+③ **路径不信任**：会话目录名只允许 `[A-Za-z0-9_-]`，读回时用 `Path.is_relative_to` 复查。
+
+**绑定语义**（2026-09-22 联调踩过的坑）：`_pending` 是**真值**，所以"未绑定"的判定必须
+同时认空串与它；且绑定要**连文件一起搬**到会话目录——路径是从 `conversation_id` 推出来的，
+只改库不搬文件就会去新目录找一个还在旧目录的文件（表现：`No such file or directory`）。
+
+### 3.16 已下线但表仍在（勿恢复业务代码）
 
 | 表 | 来源迁移 | 现状 |
 |---|---|---|

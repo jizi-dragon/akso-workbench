@@ -94,6 +94,23 @@ ADAPTERS_DIR = Path(os.environ.get("WORKBENCH_ADAPTERS") or (PROJECT_ROOT / "ada
 RUNTIME_DIR = DATA_DIR / "runtime"  # 子进程日志 / 蓝图暂存 / env 导出
 DESKTOP_PORTS_PATH = RUNTIME_DIR / DESKTOP_PORTS_NAME  # 壳公布的实际端口（ADR-0011 §D-3）
 
+# ---------------------------------------------------------------- 附件（用户交给 agent 的文件）
+#
+# 2026-09-22，用户下达「核心 agent 能力增强：用户会直接传图片或文件（word/pdf/markdown/excel）」。
+#
+# 为什么落在 runtime/ 而不是让用户挑目录：**用户不提供路径**。上传接口只收字节流，
+# 落盘名由服务端生成（`<id>__<slug(原名)>`），路径永远在 ATTACHMENTS_DIR 之内——
+# 这条与沙箱、只读工具用的是同一套"路径不信任"口径（config.is_sensitive_path 的同族）。
+ATTACHMENTS_DIR = RUNTIME_DIR / "attachments"
+ATTACHMENTS_MAX_BYTES = 20 * 1024 * 1024
+"""单个文件上限 20 MB：上传体验与解析耗时的折中（更大的建议切分或转 CSV）。"""
+ATTACHMENTS_MAX_PER_TURN = 5
+"""一轮最多带几个：再多模型也读不过来，而每个都要占上下文。"""
+ATTACHMENTS_MAX_TEXT_CHARS = 200_000
+"""解析出的正文硬上限（防"一份 500 页 PDF 把内存和上下文一起吃掉"）。"""
+ATTACHMENTS_INLINE_CHARS = 12_000
+"""进上下文的**内联**预算：超过它的部分不塞，改成"摘要 + 定位目录 + 用工具按需取"。"""
+
 STATIC_DIR = Path(__file__).parent / "static"
 
 

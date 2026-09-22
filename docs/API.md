@@ -108,9 +108,39 @@ DeepSeek 的上下文缓存按"**完整匹配**一个缓存前缀单元"命中�
 
 ```
 POST /api/chat/stream   Content-Type: application/json
-{ "conversationId": "可选，缺省则新建", "message": "用户问题" }
+{ "conversationId": "可选，缺省则新建", "message": "用户问题",
+  "attachmentIds": ["att-1a2b3c4d"] }   ← 可选：这一轮带的附件（见 §3.1）
 → 200 text/event-stream（无 Cache-Control 缓存；X-Accel-Buffering: no）
 ```
+
+> **顺序是承重的**（2026-09-22 真机联调踩到）：服务端**先把这条用户消息落库、
+> 再整段历史过一次扼流点**（`_request_history`）。反过来写（先取史 → 过硬点 → 再追加新消息）
+> 会让**恰好是这一轮的附件**绕过展开——图片只变成一个文件名，而单元测试全绿。
+
+## 3.1 附件（用户交给 agent 的文件/图片）`/api/attachments`（`routes_attachments.py`）
+
+> 2026-09-22 用户下达的核心能力：用户会直接传图片或文件（word / excel / pdf / markdown）给 agent。
+> 方案与判据见 [AGENT-FILE-INPUT-PLAN.md](AGENT-FILE-INPUT-PLAN.md)。
+
+| 方法 | 路径 | 请求 | 响应 |
+|---|---|---|---|
+| POST | `/api/attachments` | multipart：`file` + `conversationId`（可空） | `{ok, attachment:{id,name,kind,mime,bytes,status,parseNote,textChars,locator,createdAt}, marker}` |
+| GET | `/api/attachments?conversationId=` | — | `{total, attachments:[…]}` |
+| GET | `/api/attachments/{id}/raw` | — | 原始字节（`FileResponse`；图片在对话里直接显示它） |
+| DELETE | `/api/attachments/{id}` | — | `{ok:true, id}`（**真删**：原件 + 解析产物 + 表行） |
+
+**约定与边界**：
+
+- `conversationId` 留空 ⇒ 落到"未绑定"的 `_pending`；**发言时绑定**并**连文件一起搬**到会话目录
+  （路径是从 `conversation_id` 推出来的，只改库不搬文件 = 之后读不到）。
+- 类型白名单 + **魔数复核** + OOXML zip 体检；单文件 ≤ 20 MB；拒收一律 4xx **且说清原因**
+  （`不支持的文件类型` / `文件是空的` / `内容与扩展名不符` / `这不是一个有效的 .docx`）。
+- **不接受任何来自 URL 的路径**：`id` 只用来查表，文件名来自表，读回时再做包含关系复查。
+- 附件正文**不进日志**；进模型时按 `MarkerRe` 展开——**只有最新一轮**展开（图片 → `image_url`，
+  文档 → 文件头 + 正文（有上限）+ 坐标目录 + 解析说明），历史轮只留一句"这份文件已交过"。
+  这条取舍的理由是账单与前缀缓存（见 [CORE-ARCHITECTURE §不变量](CORE-ARCHITECTURE.md) 与方案 §2.1）。
+- 模型侧三个动词：`attachment_list` / `attachment_read`（按页/工作表/表/行/字符区间取）。
+  跨会话读取**一律拒**（数据串台是静默的）。
 
 ## 4. 回答反馈 `POST /api/feedback`（`routes_chat.py`）
 
@@ -291,7 +321,7 @@ autologin, has_token, monitoring, monitor_log}`；
 ## 10. Agent 工具层 `/api/agent`（`routes_agent.py`）
 
 > **单一事实源**：工具清单来自**工具插件中枢** `plugin_api.ToolHub`（`workbench/plugins/`
-> 五个插件装配，共 23 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
+> 五个插件装配，共 25 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
 > schema、审计三处读的是同一份定义。插件 SDK 契约见 [PLUGIN-SDK.md](PLUGIN-SDK.md)。
 
 | 方法 | 路径 | 请求 | 说明 |
@@ -340,7 +370,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - HTTP 链路（`POST /invoke`）：本端点**不等待**，直接 409 + `confirm` 内容；
   调用方自己看 `GET /pending` 决定何时 `approve`（同意同样会预先批准那次目标调用）。
 
-**工具清单（23 个工具，按插件）**：
+**工具清单（25 个工具，按插件）**：
 
 | 插件 | 工具 | 风险 |
 |---|---|---|

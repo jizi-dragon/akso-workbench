@@ -172,7 +172,7 @@ def register(hub: pa.ToolHub) -> None:
 
 ---
 
-## 3. 现有五个插件与 23 个工具
+## 3. 现有五个插件与 25 个工具
 
 > 实时清单以运行期 `get_hub()` 实例为准（`len(hub.plugins)` / `len(hub.specs())`），
 > 或直接看 **[docs/TOOLS.md](TOOLS.md)**（由 `tools/gen_tools_doc.py` 从运行期生成，`tests/test_tools_doc.py` 钉住）。
@@ -190,7 +190,7 @@ def register(hub: pa.ToolHub) -> None:
 | `accounts`（快捷登录） | `accounts_list` / `accounts_login` / `accounts_browser_sessions` | read |
 | | `accounts_browser_open` / `accounts_browser_close` | **write** |
 
-统计：4 + 1 + 6 + **7** + 5 = **23 个工具 / 5 个插件**。
+统计：6 + 1 + 6 + **7** + 5 = **25 个工具 / 5 个插件**。
 
 实时清单：`GET /api/agent/tools`（含参数说明与风险）；插件维度：`GET /api/agent/plugins`。
 

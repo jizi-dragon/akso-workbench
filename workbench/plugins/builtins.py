@@ -1,4 +1,4 @@
-"""内置工具插件：与业务无关的通用能力（时间 / 读文件 / 读网页 / 请求用户确认）。
+"""内置工具插件：与业务无关的通用能力（时间 / 读文件 / 读网页 / 读附件 / 请求用户确认）。
 
 前三个工具从 `harness/tools.py` 迁到这里，行为有**一处收紧**：
 
@@ -12,10 +12,17 @@
   而"读一份用户指定的报表/日志"是真实且高频的用法，过度打扰会让人习惯性点"放行"，
   反而把确认门用废。这里选择"按内容形态设边界"，把人的注意力留给真正改平台的操作
   （`factory_create` / `accounts_browser_open`）。
+
+2026-09-22 新增两个附件工具（用户下达「核心 agent 能力增强：用户会直接传图片或文件」）：
+`attachment_list` / `attachment_read`。它们与 `read_local_file` 的分工是：
+**用户交上来的**（有受控的落盘位置与会话归属）走附件工具；**用户机器上的任意路径**走
+`read_local_file`（敏感路径仍然一律拒）。
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -250,6 +257,128 @@ def _extract_text(html: str) -> tuple[str, str]:
     return extractor.title.strip(), "\n".join(extractor.parts)
 
 
+# ---------------------------------------------------------------- 附件（用户传上来的文件）
+
+
+class AttachmentListArgs(BaseModel):
+    """无参数：列的就是**当前会话**的附件。"""
+
+
+class AttachmentReadArgs(BaseModel):
+    attachment_id: str = pa.Arg("附件 id（形如 att-1a2b3c4d，从 attachment_list 或用户消息里拿）")
+    unit: str = pa.Arg("按什么取：chars（字符区间，默认）/ page / sheet / table / line",
+                       default="chars")
+    index: int = pa.Arg("page / table / line 的序号（从 1 起）", default=0, ge=0)
+    name: str = pa.Arg("sheet 的工作表名（unit=sheet 时用）", default="")
+    start: int = pa.Arg("unit=chars 时的起始字符偏移；unit=line 时的起始行号（从 1 起）",
+                        default=0, ge=0)
+    max_chars: int = pa.Arg("本次最多回多少字符", default=6000, ge=200, le=40000)
+
+
+def _attachment_row(attachment_id: str, ctx: pa.ToolContext) -> dict[str, Any]:
+    """取附件并做**会话归属校验**。
+
+    为什么必须校验：附件是按会话存的，而模型手上的 id 可能是上一段对话里的。
+    不校验的话，用户在 A 会话里传的报价单会被 B 会话的模型读出来——
+    这是"数据串台"，它的表现是模型答得头头是道但内容来自别处。
+    """
+    from ..services import attachments as store
+
+    att = store.get(str(attachment_id or "").strip())
+    if att is None:
+        raise ValueError(f"没有这个附件：{attachment_id}（用 attachment_list 看当前有哪些）")
+    current = str(ctx.conversation_id or "")
+    owner = str(att.get("conversation_id") or "")
+    if current and owner and owner != current:
+        raise ValueError(
+            f"附件 {attachment_id} 属于另一个会话（不属于当前这段对话）⇒ 拒绝读取。"
+            "请让用户在当前会话里重新上传")
+    return att
+
+
+async def attachment_list(_: BaseModel, ctx: pa.ToolContext) -> str:
+    """当前会话里用户交过哪些文件（id / 名字 / 类型 / 规模 / 解析状态）。"""
+    from ..services import attachments as store
+
+    def run() -> list[dict[str, Any]]:
+        rows = store.list_for(str(ctx.conversation_id or ""))
+        return [{
+            "id": r.get("id"), "name": r.get("name"), "kind": r.get("kind"),
+            "bytes": r.get("bytes"), "status": r.get("status"),
+            "textChars": r.get("text_chars"), "note": r.get("parse_note") or "",
+            "locator": store.locator(r),
+        } for r in rows]
+
+    rows = await asyncio.to_thread(run)
+    return json.dumps({"total": len(rows), "attachments": rows}, ensure_ascii=False, default=str)
+
+
+def _slice_by_unit(text: str, locator: dict[str, Any], args: AttachmentReadArgs) -> tuple[str, str]:
+    """按坐标取一段，返回 (正文, 定位说明)。**取不到就明说取不到**（不返回空串糊过去）。"""
+    unit = str(args.unit or "chars").lower()
+    if unit == "chars":
+        begin = int(args.start or 0)
+        return text[begin:begin + args.max_chars], f"字符 {begin}–{begin + args.max_chars}"
+    if unit == "line":
+        lines = text.splitlines()
+        begin = max(1, int(args.start or 1))
+        chunk = lines[begin - 1: begin - 1 + max(1, args.max_chars // 60)]
+        return "\n".join(chunk), f"第 {begin} 行起（共 {len(lines)} 行）"
+    key, wanted = ("page", int(args.index or 0)) if unit == "page" else (None, 0)
+    if unit == "page":
+        entry = next((p for p in locator.get("pages") or []
+                      if int(p.get("page") or 0) == wanted), None)
+        label = f"第 {wanted} 页"
+    elif unit == "sheet":
+        entry = next((s for s in locator.get("sheets") or []
+                      if str(s.get("sheet") or "") == str(args.name or "")), None)
+        label = f"工作表 {args.name!r}"
+    elif unit == "table":
+        entry = next((t for t in locator.get("tables") or []
+                      if int(t.get("table") or 0) == int(args.index or 0)), None)
+        label = f"表 {int(args.index or 0)}"
+    else:
+        return "", f"未知的 unit={unit!r}（可选：chars / page / sheet / table / line）"
+    if entry is None:
+        return "", (f"**没有 {label}**（可能不存在、也可能超出解析范围）——"
+                    "不要据此推断内容；用 locator 里列出的坐标重试")
+    begin = int(entry.get("offset") or 0)
+    chars = int(entry.get("chars") or 0)
+    return text[begin:begin + min(chars, args.max_chars)], label
+
+
+async def attachment_read(args: AttachmentReadArgs, ctx: pa.ToolContext) -> str:
+    """按页 / 工作表 / 表 / 行 / 字符区间取附件正文——**长文件靠它，而不是靠一次性全塞**。"""
+    from ..services import attachments as store
+
+    def run() -> dict[str, Any]:
+        att = _attachment_row(args.attachment_id, ctx)
+        text = store.parsed_text(att)
+        locator = store.locator(att)
+        if not text:
+            return {"ok": False, "attachment": att.get("name"), "kind": att.get("kind"),
+                    "note": att.get("parse_note") or "这份附件没有可读文本",
+                    "textChars": 0,
+                    "hint": "图片直接看（多模态）；扫描件/空文件请让用户换一种格式"}
+        chunk, label = _slice_by_unit(text, locator, args)
+        clipped = len(chunk) > args.max_chars
+        return {
+            "ok": bool(chunk),
+            "attachment": att.get("name"),
+            "attachmentId": att.get("id"),
+            "unit": args.unit, "range": label,
+            "textChars": int(att.get("text_chars") or 0),
+            "note": att.get("parse_note") or "",
+            "text": chunk[:args.max_chars],
+            "clipped": clipped,
+            "hint": ("这一段已截到 max_chars，继续取请把 start/偏移往后推"
+                     if clipped else "需要别的位置就换 unit/index（页 / 工作表 / 表 / 行）"),
+        }
+
+    result = await asyncio.to_thread(run)
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
 # ---------------------------------------------------------------- 请求用户确认
 
 
@@ -288,8 +417,8 @@ async def request_user_confirmation(args: ConfirmationArgs, ctx: pa.ToolContext)
 PLUGIN = pa.Plugin(
     id=PLUGIN_ID,
     title="内置工具",
-    description="与业务无关的通用能力：时间、读本地文件、读网页正文、请求用户确认",
-    version="1.1.0",
+    description="与业务无关的通用能力：时间、读本地文件、读网页正文、读用户交的附件、请求用户确认",
+    version="1.2.0",
     tools=[
         pa.ToolSpec(
             name="get_current_time",
@@ -322,6 +451,32 @@ PLUGIN = pa.Plugin(
             risk=pa.Risk.READ,
             timeout_s=40,
             audit_extra=pa.audit_env_key("url"),
+        ),
+        pa.ToolSpec(
+            name="attachment_list",
+            description=(
+                "**用户在对话里交给你的文件/图片**有哪些（id、名字、类型、规模、解析状态、坐标目录）。"
+                "先看这个再决定怎么读——用户说「那份表」「这个 PDF」时，id 就在这里。"
+                "只列**当前会话**的附件"
+            ),
+            args_model=AttachmentListArgs,
+            handler=attachment_list,
+            risk=pa.Risk.READ,
+            timeout_s=15,
+        ),
+        pa.ToolSpec(
+            name="attachment_read",
+            description=(
+                "按坐标读附件正文：`unit=page/sheet/table/line/chars`。"
+                "**长文件必须用它按需取**（内联在上下文里的只有开头一段）；"
+                "取不到时它会明说「没有这一页/这张表」，**不要**据此猜内容。"
+                "回答里要说出处（第几页 / 哪张表 / 第几行）时，坐标也从这里来"
+            ),
+            args_model=AttachmentReadArgs,
+            handler=attachment_read,
+            risk=pa.Risk.READ,
+            timeout_s=30,
+            audit_extra=pa.audit_env_key("attachment_id", "unit"),
         ),
         pa.ToolSpec(
             name="request_user_confirmation",

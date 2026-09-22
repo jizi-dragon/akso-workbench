@@ -368,6 +368,49 @@ CREATE TABLE IF NOT EXISTS skill_audit (
 CREATE INDEX IF NOT EXISTS idx_skill_audit_created_at ON skill_audit(created_at);
 CREATE INDEX IF NOT EXISTS idx_skill_audit_capability ON skill_audit(capability_id);
 """),
+
+    (21, "attachments", """
+-- 用户交给 agent 的文件/图片（2026-09-22，用户下达「核心 agent 能力增强」）。
+--
+-- ## 为什么单独一张表，而不是把内容塞进 messages.content
+--
+-- `messages.content` 是 TEXT，而模型要收的是**多模态 content parts**（图片是 image_url）。
+-- 塞进去会同时打破三件事：DB 的类型、`estimate_tokens()` 的估算、
+-- 以及**前缀缓存**（I1：已发出的 messages 前缀永不改写，每轮变一次 = 每轮全 miss，
+-- 成本 ×50）。所以分工是：
+--
+--   messages.content  → 仍然只是**文本**，里面留一句引用：`[附件 att-3f2a：培训记录.xlsx]`
+--   attachments       → 文件的**元数据 + 解析产物**（正文在磁盘上，这一行只存坐标与规模）
+--   请求构建那一刻（唯一扼流点 `routes_chat._model_history`）→ 把**最新一轮**的引用展开成 parts
+--
+-- ## 磁盘上的正文是唯一真源
+--
+-- 与 skill_audit 同一条纪律：文件落在 `<RUNTIME_DIR>/attachments/<会话>/<id>__<安全名>`，
+-- 表里只存元数据。表被清掉还能靠扫目录重建；反过来不行。
+--
+-- ## locator 为什么是 JSON 文本
+--
+-- 它是"回答能指到出处"的坐标（页/表/行/标题）。不同文件类型坐标不同（PDF 是页、
+-- xlsx 是表+区域、docx 是段落序号），用一张稀疏表去表达会立刻长出四张表；
+-- 而它**只被工具读**、不参与查询条件 ⇒ 存 JSON 文本，读侧统一 `json.loads`。
+CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    stored_name TEXT NOT NULL DEFAULT '',
+    mime TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT '',
+    bytes INTEGER NOT NULL DEFAULT 0,
+    sha256 TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'stored',
+    parse_note TEXT NOT NULL DEFAULT '',
+    text_chars INTEGER NOT NULL DEFAULT 0,
+    locator TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_created_at ON attachments(created_at);
+"""),
 ]
 
 

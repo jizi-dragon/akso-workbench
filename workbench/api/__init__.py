@@ -37,6 +37,7 @@ def _optional_routers(app: FastAPI) -> None:
     from . import (  # noqa: F401 —— 显式列出便于检索
         routes_accounts,
         routes_agent,
+        routes_attachments,
         routes_browser,
         routes_extension,
         routes_factory,
@@ -53,6 +54,7 @@ def _optional_routers(app: FastAPI) -> None:
         ("modules", routes_modules),
         ("insight", routes_insight),
         ("factory", routes_factory),
+        ("attachments", routes_attachments),
         ("accounts", routes_accounts),
         ("browser", routes_browser),
         ("agent", routes_agent),

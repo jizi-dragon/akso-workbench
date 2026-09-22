@@ -598,6 +598,111 @@
   backdrop-filter: blur(8px);
 }
 
+/* 拖拽悬停：整条输入区亮起来（否则用户不知道"能不能往这儿拖"） */
+.composer-wrap.is-dropping {
+  background: rgba(7, 108, 224, 0.08);
+  box-shadow: inset 0 0 0 2px rgba(7, 108, 224, 0.35);
+}
+
+/* —— 附件条（2026-09-22：用户会直接传图片或文件）——
+ * 位置在输入框**上方**：它是"这一轮要带什么"的清单，与发送按钮同一条视线。
+ * 一条 chip = 缩略图/图标 + 文件名 + 状态（已解析多少字 / 扫描件读不出字 / 上传中）。 */
+.attach-strip {
+  max-width: 860px;
+  margin: 0 auto 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.attach-chip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px 7px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--ink-2);
+  max-width: 320px;
+}
+
+.attach-chip.is-uploading {
+  border-style: dashed;
+  color: var(--text-3);
+}
+
+.attach-thumb {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.attach-glyph {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.05);
+  font-size: 16px;
+}
+
+.attach-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.attach-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 210px;
+}
+
+.attach-meta {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.attach-remove {
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.attach-remove:hover {
+  color: var(--red);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* 上传/解析失败的提示：就地显示，不弹窗（"再试一次"级别的事，不值得打断打字） */
+.composer-notice {
+  max-width: 860px;
+  margin: 0 auto 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-m);
+  border: 1px solid rgba(220, 90, 90, 0.45);
+  background: rgba(220, 90, 90, 0.08);
+  color: var(--text-1);
+  font-size: 12.5px;
+}
+
+.attach-btn {
+  margin-left: 6px;
+}
+
 .composer {
   max-width: 860px;
   margin: 0 auto;

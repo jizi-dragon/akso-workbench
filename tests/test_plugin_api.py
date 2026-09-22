@@ -436,10 +436,18 @@ def test_real_hub_risk_grading() -> None:
 
 
 def test_real_hub_schema_budget() -> None:
-    """工具 schema 是真实的 token 成本：给个预算上限，涨上去要有人知道。"""
+    """工具 schema 是真实的 token 成本：给个预算上限，涨上去要有人知道。
+
+    上限的历次调整（每次都是**有意识的**，不是顺手抬）：
+    - 24 → **26**（2026-09-22）：新增 `attachment_list` / `attachment_read`
+      ——用户下达的「用户会直接传图片或文件，agent 要真的读到」；没有这两个动词，
+      长文件只能靠内联截断，等于是"能传不能读"。
+    ⚠️ 下次再涨之前先问：**能不能靠插件白名单把工具面按场景裁剪**
+    （`hub.list_api_for(plugins)` 已经支持），而不是继续抬这个数字。
+    """
     hub = pa.get_hub()
     payload = json.dumps(hub.list_api_for(None), ensure_ascii=False)
-    assert len(hub.specs()) <= 24, f"工具数 {len(hub.specs())} 已超预算，考虑拆分插件白名单"
+    assert len(hub.specs()) <= 26, f"工具数 {len(hub.specs())} 已超预算，考虑拆分插件白名单"
     assert len(payload) < 24_000, f"工具 schema 体积 {len(payload)} 字符，偏大"
 
 

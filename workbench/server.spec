@@ -53,6 +53,15 @@ hiddenimports = [
     "uvicorn.lifespan",
     "uvicorn.lifespan.on",
     "anyio._backends._asyncio",
+    # 附件解析（2026-09-22，用户下达「用户会传 word/pdf/excel/markdown」）：
+    # 这三个是在**函数体里 import** 的（`services/parsing.py` 故意延迟导入——没装依赖时
+    # 不该让整个模块 import 失败），PyInstaller 的静态分析对函数体内的导入**能**看到，
+    # 但这里显式列出来是"体检"而不是"补救"：漏收的后果是**打包后传文件才失败**，
+    # 而开发机上永远复现不了（`.venv` 里装着）。lxml 是 python-docx 的二进制依赖，
+    # 由 PyInstaller 自带的 hook 收。
+    "docx",
+    "openpyxl",
+    "pypdf",
 ]
 
 ms_pw = Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright"

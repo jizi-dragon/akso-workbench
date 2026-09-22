@@ -47,6 +47,7 @@ from typing import Any
 from .. import cache, logging_setup
 from ..plugin_api import Risk, ToolContext, ToolHub, ToolStatus
 from ..services.deepseek import DeepSeekClient
+from .context import content_to_text
 from .safety import SafetyGate
 from .types import AgentConfig, make_event
 
@@ -448,7 +449,10 @@ def _apply_confirmation(invocation, outcome) -> Any:
 
 
 async def _summarize(client: DeepSeekClient, messages: list[dict], meter: UsageMeter) -> str:
-    text = "\n".join(f"{m.get('role')}: {m.get('content')}" for m in messages)
+    # content 可能是多模态 parts（用户传了图片）⇒ 统一走 `content_to_text` 压成文本，
+    # 否则摘要里会出现 `[{'type': 'image_url', ...}]` 这种把 base64 塞进摘要的形态。
+    text = "\n".join(f"{m.get('role')}: {content_to_text(m.get('content'))}"
+                     for m in messages)
     summary = await client.chat(
         [
             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},

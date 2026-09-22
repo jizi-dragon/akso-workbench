@@ -85,6 +85,13 @@ def _map_error(status: int, body: str) -> DeepSeekError:
 
 
 def _to_api_message(msg: dict) -> dict:
+    """历史行 → 模型请求体。
+
+    `content` 既可以是字符串，也可以是 **content parts**（多模态）。后者是 2026-09-22 加的
+    ——用户要能直接传图片：实测 `deepseek-flash` 收 `{"type": "image_url"}` 并**真的看得懂**
+    （8×8 红色 PNG ⇒ 回答"红色"，n=1）。parts 由唯一扼流点
+    `routes_chat._model_history` 组装（**只有最新一轮**带附件，见那里的说明）。
+    """
     if msg.get("role") == "tool":
         return {"role": "tool", "tool_call_id": msg.get("tool_call_id"), "content": msg.get("content")}
     if msg.get("role") == "assistant" and msg.get("tool_calls"):

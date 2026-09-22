@@ -33,11 +33,11 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 > 手改会在下一次 `--check` 时被判为不一致——这正是设计意图（清单只能来自代码）。
 
 <!-- TOOLS-TABLE:BEGIN —— 由 tools/gen_tools_doc.py 生成，勿手改；改插件后跑 --write -->
-> 实测（由运行期工具中枢生成）：**5 个插件 / 23 个工具**。风险分布：20 read · 2 write · 1 dangerous；装配失败：无。
+> 实测（由运行期工具中枢生成）：**5 个插件 / 25 个工具**。风险分布：22 read · 2 write · 1 dangerous；装配失败：无。
 
 | 插件 | 标题 | 版本 | 工具数 | 负责什么 |
 |---|---|---|---|---|
-| `builtin` | 内置工具 | 1.1.0 | 4 | 与业务无关的通用能力：时间、读本地文件、读网页正文、请求用户确认 |
+| `builtin` | 内置工具 | 1.2.0 | 6 | 与业务无关的通用能力：时间、读本地文件、读网页正文、读用户交的附件、请求用户确认 |
 | `websearch` | 联网检索 | 1.1.0 | 1 | 自建联网检索（DeepSeek API 不支持内置 web_search，故由本工作台实现） |
 | `insight` | 平台洞察 | 1.0.0 | 6 | 读平台对象元数据、跑五步织网洞察、取回产物（akso-cc 能力原生化） |
 | `factory` | 配置工厂 | 2.0.0 | 7 | 蓝图规格与预览暂存、真机批量创建（akso-auto 能力原生化） |
@@ -50,6 +50,8 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `accounts_login` | accounts | read | — | 90s | 用账号库的账号验证平台登录连通并预热 token（httpx 直连，不开浏览器） | `account_id` |
 | `accounts_browser_close` | accounts | **write** | ✅ 宿主拦下 | 30s | 关闭某账号的托管浏览器窗口（登录态保留）。注意：用户手动开的窗口也会被关掉 | `account_id` |
 | `accounts_browser_open` | accounts | **write** | ✅ 宿主拦下 | 180s | 在内置 Chromium 里以该账号身份打开平台（自动登录 + 会话持久化） | `account_id`、`headful` |
+| `attachment_list` | builtin | read | — | 15s | **用户在对话里交给你的文件/图片**有哪些（id、名字、类型、规模、解析状态、坐标目录） | — |
+| `attachment_read` | builtin | read | — | 30s | 按坐标读附件正文：`unit=page/sheet/table/line/chars`。**长文件必须用它按需取**（内联在上下文里的只有开头一段） | `attachment_id`、`unit`、`index`、`name`、`start`、`max_chars` |
 | `get_current_time` | builtin | read | — | 5s | 获取当前日期与时间（本地时区） | — |
 | `read_local_file` | builtin | read | — | 30s | 读取本地文本文件。**敏感路径一律拒绝**（数据库/登录态/token 缓存/账号备份/浏览器 profile/SSH 与云凭据） | `path` |
 | `read_web_page` | builtin | read | — | 40s | 读取公开网页正文（用于核实 NMPA/FDA/ICH 等官方监管页面原文），返回标题、来源与正文文本 | `url` |

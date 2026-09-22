@@ -11,13 +11,14 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（85 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 真机环境坑（86 条，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 不再变的决策（18 篇 ADR） | [docs/adr/](docs/adr/) |
 > | 配置工厂 × Agent 的接口缺口（问题分析） | [docs/FACTORY-AGENT-GAP.md](docs/FACTORY-AGENT-GAP.md) |
 > | 配置工厂逐条验证与优化（**进行中 · L1/L2 已跑，L3 表单布局已取证到段 6 · 首次真机验证卡在 D-C ‖ 10 条卡片待裁定**） | [docs/FACTORY-VERIFICATION-PLAN.md](docs/FACTORY-VERIFICATION-PLAN.md) |
 > | **平台五层操作已学清单（答题卡 + 反哺清单：端点/线格式/样本量 n/工厂差距）** | [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md) |
 > | **★ 待下达决定简报（决策卡汇总：批一/批二/批三 + 三个待答问题）** | [docs/FACTORY-DECISION-BRIEF.md](docs/FACTORY-DECISION-BRIEF.md) |
 > | 配置工厂 × 平台的整体认知（Gaia V3.8 手册逐面 × 工厂实现 × 缺口） | [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) |
+> | **★ 用户传图片/文件给 agent（方案 + 判据 + 已知限制）** | [docs/AGENT-FILE-INPUT-PLAN.md](docs/AGENT-FILE-INPUT-PLAN.md) |
 > | 平台操作录制与分析（**不属于产品**） | [factory-tuning/](factory-tuning/README.md) |
 > | 核心 Agent 架构与分层契约 | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
 > | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
@@ -145,6 +146,8 @@
 | 你改了什么 | 必须额外跑 |
 |---|---|
 | `workbench/plugins/**` | `tools\gen_tools_doc.py --write`（重生成 [docs/TOOLS.md](docs/TOOLS.md) 清单块）**+** 确认 `server.spec` 的 `hiddenimports` 有该模块 **+** `REQUIRED_TOOLS`。<br>★ 动了配置工厂的工具面（`factory_*`）还要跑 `pytest tests/test_factory_agent.py -o addopts=""` **与** `python tools\verify_factory_agent.py`（**24 项**端到端：真起生产入口、真发 HTTP、**真去磁盘上看那份暂存的蓝图在不在**——"返回了个 id 但没落盘"是本条链路最可能的假通过）——它们钉的是**那条链路通不通**（蓝图 → `blueprint_id` → 创建），而不只是每个工具自己对不对（[ADR-0017](docs/adr/0017-factory-agent-interface.md)） |
+| **附件链路**：`services/attachments.py`、`services/parsing.py`、`api/routes_attachments.py`、`api/routes_chat.py` 的扼流点 | `pytest tests/test_attachments.py -o addopts=""`（**24 条**：落盘/拒收/解析坐标/展开成 parts/按坐标取/会话隔离）**+** `python tools\verify_attachments.py`（**20 项**端到端：真起生产入口、真发 multipart、**字节级**读回、四条拒收、扼流点展开）<br>★ **这条链路上"函数对"与"链路通"是两件事**：2026-09-22 真机联调抓到两个单测看不见的缺陷（`_pending` 未绑定 / **这一轮的消息绕过扼流点**）——见 [AGENT-FILE-INPUT-PLAN](docs/AGENT-FILE-INPUT-PLAN.md) §6.1。**改这条链路后必须另跑一次真机联调**（`tmp\live_attachment_check.py` 那套：传图问色、传表问数、问文件里没有的东西） |
+| ★ 给 `services/parsing.py` **加一个新的文件类型** | 三处一起改：`SUPPORTED` 白名单 + 对应的 `_parse_*`（**必须给 locator 记 `offset`/`chars`**，否则"第 N 页"不可复算）+ `tests/test_attachments.py` 的 C 组加一条"抽到正文 **且** 坐标切得回原文" |
 | `workbench/services/egmp/writers/**`、`spec.py` | `pytest tests/test_native.py tests/test_factory_agent.py -o addopts=""`。<br>★ 给 `writers/blueprint.py` 的模型**加字段**时，必须同时补 `writers/spec.py::_NOTES` 的注解——`test_every_model_field_is_annotated` 会红，而那是对的：漏注解是**静默**的（规格照样生成，只是模型少一行说明）<br>★ **改任何请求体键名时，先跑 `python factory-tuning\tools\keygate.py`**——它静态抽出工厂的字面量请求体（**顶层** `client.post(常量, {…})`、**嵌套** `NAME.append({…})`、**词表**三层），与真机见过的键集/值集比对；**D-A（`columns`）/ D-C（`basicObjectId`）/ D-D（控件 `ctrlType`/`fieldCode` + 自造 `input`/`object` 词汇表）都是它抓出来的**，而 pytest 对这条链路零覆盖（`grep "AddColumns\|LISTLAYOUT" tests/` 零命中）。归属一律按「同 writer 模块的端点」（跨模块借样本会造假阳性，见 PITFALLS #75）；词表的「工厂词表 ↔ 真机字段」对应关系是**显式声明**的（`VOCAB_PAIRS`），没声明就是未核。响应形状用 `python factory-tuning\tools\audit_keys.py --responses` |
 | `workbench/sandbox/**` | `pytest tests/test_sandbox.py -o addopts=""`（含 slow 层：真起进程、验 Job Object 树杀） |
 | `workbench/skills/**` | `pytest tests/test_skills.py tests/test_skill_scripts.py -o addopts=""` |

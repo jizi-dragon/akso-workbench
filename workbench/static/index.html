@@ -118,14 +118,20 @@
             <div class="messages" id="messages">
               <div class="chat-loading"><span class="spin">◌</span> 正在初始化…</div>
             </div>
-            <div class="composer-wrap">
-              <div class="composer">
-                <textarea id="composer-input" rows="1" placeholder="输入你的问题…（Enter 发送，Shift+Enter 换行）"></textarea>
+            <div class="composer-wrap" id="composer-wrap">
+              <!-- 附件条：选好文件先显示在这里（名字/大小/解析状态），发送时才带走
+                   （2026-09-22 用户下达「用户会直接传图片或文件」，见 js/attachments.js） -->
+              <div class="attach-strip" id="attach-strip" hidden></div>
+              <div class="composer" id="composer">
+                <textarea id="composer-input" rows="1" placeholder="输入你的问题…（可粘贴/拖入图片或文件；Enter 发送，Shift+Enter 换行）"></textarea>
                 <div class="composer-footer">
                   <div class="tool-palette-anchor" id="tool-palette-anchor">
                     <button class="tool-palette-btn" id="btn-tool-palette" type="button" aria-haspopup="dialog" aria-expanded="false" title="可用工具清单（点工具名即插入输入框）">工具</button>
+                    <button class="tool-palette-btn attach-btn" id="btn-attach" type="button" title="添加图片或文件（word / excel / pdf / markdown / 文本 / 图片）">📎 附件</button>
+                    <input type="file" id="attach-input" multiple hidden
+                           accept=".md,.markdown,.txt,.csv,.docx,.xlsx,.pdf,.png,.jpg,.jpeg,.webp">
                   </div>
-                  <div class="composer-hint">Enter 发送 · Shift+Enter 换行</div>
+                  <div class="composer-hint">Enter 发送 · Shift+Enter 换行 · 可粘贴/拖入文件</div>
                   <button class="send-btn" id="btn-send" title="发送">➤</button>
                 </div>
               </div>

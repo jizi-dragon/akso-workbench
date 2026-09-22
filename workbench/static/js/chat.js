@@ -1,6 +1,7 @@
 /** 合规对话视图：消息渲染 + SSE 流式 + 审计轨迹 + 反馈 */
 
 import { api } from "./api.js";
+import { createAttachTray } from "./attachments.js";
 import { renderMarkdown } from "./markdown.js";
 import { createToolTrail, initToolPalette } from "./chat-tools.js";
 import { initApprovalModal, recoverPending, requestDecision } from "./approval-modal.js";
@@ -58,12 +59,26 @@ export function initChat() {
 
   const input = document.getElementById("composer-input");
   const send = document.getElementById("btn-send");
+
+  // 附件条（2026-09-22 用户下达「用户会直接传图片或文件」）：三条入口 + 发送时带走。
+  // 错误就地报在输入框上方（`onError`），不弹窗——上传失败是"再试一次"级别的事，
+  // 不值得打断用户正在打字的动作。
+  const tray = createAttachTray({
+    strip: document.getElementById("attach-strip"),
+    input: document.getElementById("attach-input"),
+    button: document.getElementById("btn-attach"),
+    getConversationId: () => state.currentConversationId,
+    onError: (message) => showComposerNotice(message),
+  });
+
   const submit = () => {
     const text = input.value.trim();
-    if (!text || isRunning) return;
+    if (isRunning) return;
+    // 只有附件、没有文字也要能发（"看看这张图"是最自然的用法，而用户不该被迫配一句话）
+    if (!text && tray.isEmpty()) return;
     input.value = "";
     input.style.height = "auto";
-    void sendMessage(text);
+    void sendMessage(text || "（见附件）", tray.ids(), () => tray.clear());
   };
   send.addEventListener("click", submit);
   input.addEventListener("keydown", (e) => {
@@ -76,6 +91,34 @@ export function initChat() {
     input.style.height = "auto";
     input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
   });
+
+  // 入口②：粘贴（截图之后最自然的动作）
+  input.addEventListener("paste", (event) => {
+    const files = [...(event.clipboardData?.files || [])];
+    if (!files.length) return;
+    event.preventDefault();
+    void tray.addFiles(files);
+  });
+
+  // 入口③：拖拽（文件已经在资源管理器里选好了）
+  const wrap = document.getElementById("composer-wrap");
+  if (wrap) {
+    const stop = (event) => { event.preventDefault(); event.stopPropagation(); };
+    wrap.addEventListener("dragover", (event) => {
+      stop(event);
+      wrap.classList.add("is-dropping");
+    });
+    wrap.addEventListener("dragleave", (event) => {
+      stop(event);
+      wrap.classList.remove("is-dropping");
+    });
+    wrap.addEventListener("drop", (event) => {
+      stop(event);
+      wrap.classList.remove("is-dropping");
+      void tray.addFiles(event.dataTransfer?.files);
+    });
+  }
+
   initToolPalette(input);
   initApprovalModal();
   initAccountDock();
@@ -307,9 +350,24 @@ function scrollToBottom() {
   el.scrollTop = el.scrollHeight;
 }
 
+/** 输入框上方的一条就地提示（附件上传/解析失败走它）。
+ *
+ *  为什么不弹窗：上传失败是"换一个文件或再试一次"级别的事，而用户此刻正在打字——
+ *  一个模态框会把他的输入打断，而他多半只是拖错了文件。8 秒后自动消失。 */
+function showComposerNotice(message) {
+  const wrap = document.getElementById("composer-wrap");
+  if (!wrap) return;
+  wrap.querySelectorAll(".composer-notice").forEach((el) => el.remove());
+  const notice = document.createElement("div");
+  notice.className = "composer-notice";
+  notice.textContent = String(message || "");
+  wrap.prepend(notice);
+  window.setTimeout(() => notice.remove(), 8000);
+}
+
 // ———— 流式发送 ————
 
-async function sendMessage(text) {
+async function sendMessage(text, attachmentIds = [], onSent = null) {
   if (isRunning) return;
   isRunning = true;
   document.getElementById("chat-running-badge").hidden = false;
@@ -383,10 +441,13 @@ async function sendMessage(text) {
   };
 
   try {
-    await api.streamChat({ conversationId, message: text }, (event) => {
+    await api.streamChat({ conversationId, message: text, attachmentIds }, (event) => {
       if (event.type === "start") {
         conversationId = event.conversationId;
         state.currentConversationId = conversationId;
+        // 附件已经跟着这条消息发出去了（服务端也把它们绑到了这个会话上）
+        // ⇒ 输入框上的那条附件条该清空，否则用户会以为"还没发出去"
+        onSent?.();
       } else if (event.type === "token") {
         content += event.text;
         segmentText += event.text;
