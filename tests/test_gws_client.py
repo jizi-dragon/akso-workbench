@@ -503,21 +503,66 @@ def test_every_run_forces_silent_json_mode(fake):
 # 都是有效类型却不在表里，而它们恰恰是承重的。
 
 
-def test_component_type_exists_is_true_when_the_list_call_succeeds(fake):
+def test_component_type_meta_returns_none_for_a_missing_type(fake):
+    """`component metadata show <type>` 对不存在的类型回 `null` ⇒ 我们回 None。"""
     make, records, scenario = fake
-    scenario(mode="ok", stdout='{"code":0,"data":[{"id":"x"}]}')
+    scenario(mode="ok", stdout='{"code":0,"data":null}')
+    assert make().component_type_meta("field") is None
+    assert records()[0]["argv"] == ["-s", "component", "metadata", "show", "field"]
+
+
+def test_component_type_meta_returns_the_metadata_including_parent(fake):
+    """真机实测：`layout_control` 的 `parent_code` 是 `layout`
+    —— `metadata list` 里看不到这层父子关系（那 47 条的 parent_code 全是 null）。"""
+    make, _, scenario = fake
+    scenario(mode="ok", stdout=json.dumps({"code": 0, "data": {
+        "component_type": "layout_control", "name_cn": "布局控件",
+        "sort": 1853, "parent_code": "layout",
+    }}, ensure_ascii=False))
+    meta = make().component_type_meta("layout_control")
+    assert meta and meta["parent_code"] == "layout"
+
+
+def test_component_type_exists_uses_the_cheap_metadata_probe_by_default(fake):
+    """★ **默认必须是廉价探测**（`metadata show`），不是 `instance list`。
+
+    这不是性能偏好，是**磁盘安全**：实测 CLI 把整份响应体写进日志（缺陷 ⑯），
+    `instance list layout_control` 一次 14062 行 ≈ 几十 MB，而 `metadata show` 几百字节。
+    探测 650 个候选时，两者差**数 GB**。
+    这条断言钉的就是"别哪天顺手改回 list"。
+    """
+    make, records, scenario = fake
+    scenario(mode="ok", stdout='{"code":0,"data":{"component_type":"layout_control"}}')
     ok, reason = make().component_type_exists("layout_control")
     assert ok and reason == ""
+    assert records()[0]["argv"] == ["-s", "component", "metadata", "show", "layout_control"]
+    assert "instance" not in records()[0]["argv"]
+
+
+def test_component_type_exists_strict_mode_still_uses_instance_list(fake):
+    """要确认"不光存在、还能取到实例"时才走 list（并接受它的体积）。"""
+    make, records, scenario = fake
+    scenario(mode="ok", stdout='{"code":0,"data":[{"id":"x"}]}')
+    ok, _ = make().component_type_exists("layout_control", strict=True)
+    assert ok
     assert records()[0]["argv"] == ["-s", "component", "instance", "list", "layout_control"]
 
 
 def test_component_type_exists_is_false_and_keeps_the_reason(fake):
     """**不存在的类型与没权限是不同的处置**，所以原因必须带回来，不能静默吞。"""
     make, _, scenario = fake
-    scenario(mode="ok", exit=1, stderr="组件类型不存在: layout_foo")
+    scenario(mode="ok", exit=1, stderr="获取组件实例列表失败: code=500, Component metadata not found")
+    ok, reason = make().component_type_exists("layout_foo", strict=True)
+    assert ok is False
+    assert "Component metadata not found" in reason
+
+
+def test_component_type_exists_treats_a_platform_error_on_the_cheap_path_as_missing(fake):
+    make, _, scenario = fake
+    scenario(mode="ok", stdout='{"code":500,"message":"Component metadata not found"}')
     ok, reason = make().component_type_exists("layout_foo")
     assert ok is False
-    assert "layout_foo" in reason
+    assert "metadata" in reason.lower() or "500" in reason
 
 
 @pytest.mark.parametrize(
@@ -552,32 +597,46 @@ def test_discover_component_types_separates_declared_from_undeclared(fake):
     make, records, scenario = fake
     scenario(
         mode="ok",
-        stdout='{"code":0,"data":[{"id":"x"}]}',
+        stdout='{"code":0,"data":null}',
         routes={
             "component metadata list": {
                 "stdout": json.dumps({"code": 0, "data": [
-                    {"component_type": "layout", "name_cn": "表单布局"},
-                    {"component_type": "object", "name_cn": "对象"},
+                    {"component_type": "layout", "name_cn": "表单布局", "parent_code": None},
+                    {"component_type": "object", "name_cn": "对象", "parent_code": None},
                 ]}, ensure_ascii=False),
             },
-            # 未声明但真实存在
-            "component instance list layout_section": {"stdout": '{"code":0,"data":[{"id":"s"}]}'},
-            "component instance list layout_control": {"stdout": '{"code":0,"data":[{"id":"c"}]}'},
-            # 不存在的
-            "component instance list layout_field": {"exit": 1, "stderr": "组件类型不存在"},
+            # 未声明但真实存在（parent_code 揭示层级）
+            "component metadata show layout_section": {
+                "stdout": json.dumps({"code": 0, "data": {
+                    "component_type": "layout_section", "parent_code": "layout", "sort": 1851,
+                }}, ensure_ascii=False),
+            },
+            "component metadata show layout_control": {
+                "stdout": json.dumps({"code": 0, "data": {
+                    "component_type": "layout_control", "parent_code": "layout", "sort": 1853,
+                }}, ensure_ascii=False),
+            },
+            "component metadata show object_field": {
+                "stdout": json.dumps({"code": 0, "data": {
+                    "component_type": "object_field", "parent_code": "object", "sort": 701,
+                }}, ensure_ascii=False),
+            },
         },
     )
     result = make().discover_component_types(
-        candidates=["layout_section", "layout_control", "layout_field", "object"]
+        candidates=["layout_section", "layout_control", "object_field", "layout_foo", "object"]
     )
     assert result["declared_names"] == ["layout", "object"]
-    assert result["undeclared_but_real"] == ["layout_control", "layout_section"]
-    assert "layout_field" in result["probed_missing"]
+    assert result["undeclared_but_real"] == ["layout_control", "layout_section", "object_field"]
+    assert "layout_foo" in result["probed_missing"]
+    # parent_code 归组 —— 这就是"list 只给根、子类型靠 show"的实证
+    assert result["by_parent"]["layout"] == ["layout_control", "layout_section"]
+    assert result["by_parent"]["object"] == ["object_field"]
     # `object` 已声明 ⇒ 不该被重复探测
     probed = [r["argv"][-1] for r in records()
-              if r["argv"][:4] == ["-s", "component", "instance", "list"]]
+              if r["argv"][:4] == ["-s", "component", "metadata", "show"]]
     assert "object" not in probed
-    assert result["probed_total"] == 3
+    assert result["probed_total"] == 4
 
 
 def test_discover_component_types_default_candidates_cover_the_known_three():

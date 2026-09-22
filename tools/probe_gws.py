@@ -283,10 +283,9 @@ def probe(args: argparse.Namespace) -> int:
         rep.h("S1b · 组件类型**探测**（`metadata list` 的 47 条不完整，见 §11.1）")
         rep.p("> 实测：`layout_section` / `layout_control` / `lifecycle_status` 都是**有效类型却不在表里**，")
         rep.p("> 而它们恰恰是承重的（布局的内容本体、生命周期的状态）。")
-        rep.p("> ⚠️ **先把磁盘代价算清**：CLI 会把**整份响应体**写进 `~/.gws/logs/`（缺陷 ⑯），")
-        rep.p("> 实测 **≈3 MB / 次调用**，而 `list layout_control` 那种（14062 行）单次几十 MB。")
-        rep.p("> ⇒ 默认候选约 650 个，**可能吃掉数 GB**。要精确问某几个名字，用 "
-               "`--discover-candidates object_field,object_fields`。")
+        rep.p("> ⚠️ **磁盘代价已不再是问题**：默认走 `component metadata show <type>`（**几百字节**），")
+        rep.p("> 而不是 `instance list`（`layout_control` 一次 14062 行 ≈ 几十 MB）。")
+        rep.p("> 2026-09-22 实测：`metadata show` 对存在的类型回元数据、对不存在的回 `null`。")
         explicit = [c.strip() for c in args.discover_candidates.split(",") if c.strip()]
         if explicit:
             rep.p(f"- 本次**只探测指定的 {len(explicit)} 个**：`{explicit}`")
@@ -299,12 +298,17 @@ def probe(args: argparse.Namespace) -> int:
             rep.p(f"- ❌ 探测失败：`{exc}`")
         else:
             rep.raw("component-types-discovered", result)
-            rep.p(f"- 已声明：**{len(result['declared_names'])}** 类")
+            rep.p(f"- 已声明（`metadata list`）：**{len(result['declared_names'])}** 类 —— 它们**只是根类型**")
             rep.p(f"- 探测了 **{result['probed_total']}** 个候选")
-            rep.p(f"- 🔎 **探测到但未声明：{len(result['undeclared_but_real'])}** 类 —— "
-                  f"`{result['undeclared_but_real']}`")
+            rep.p(f"- 🔎 **探测到但未声明：{len(result['undeclared_but_real'])}** 类")
             rep.p("")
-            rep.p("> ★ **这一栏就是「只看 metadata list 会漏掉什么」的答案。**")
+            rep.p("| 父类型（`parent_code`） | 子类型 |")
+            rep.p("|---|---|")
+            for parent, children in sorted((result.get("by_parent") or {}).items()):
+                rep.p(f"| `{parent or '(根)'}` | {', '.join(f'`{c}`' for c in children)} |")
+            rep.p("")
+            rep.p("> ★ **`metadata list` 只列根类型**——那 47 条的 `parent_code` 全是 `null`，")
+            rep.p("> 子类型（`layout_section` / `layout_control` / `object_field` …）只能经 `metadata show` 看见。")
             rep.p("> 第一轮只读 `metadata list`，我据此判过「component 模型里没有 section/control」——**那是错的**。")
 
     # -------- S2 每类实例数

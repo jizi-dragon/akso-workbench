@@ -623,15 +623,52 @@ class GwsClient:
 
     # ------------------------------------------------------------ 组件类型发现
 
-    def component_type_exists(self, component_type: str) -> tuple[bool, str]:
+    def component_type_meta(self, component_type: str) -> dict | None:
+        """`component metadata show <type>` —— **廉价**的存在性探测。
+
+        ## 为什么它是首选（2026-09-22 真机实测）
+
+        | 探法 | 返回 | 代价（含 CLI 写日志） |
+        |---|---|---|
+        | `component instance list <type>` | 该类型**全部实例** | **MB 级**（`layout_control` 14062 行） |
+        | **`component metadata show <type>`** | 一条元数据 / `null` | **几百字节** |
+
+        实测判据：存在的类型回 `{component_type, name_cn, name_en, sort, parent_code}`；
+        **不存在回 `null`**（`field` → `null`；`不存在的类型xyz` → `null`）。
+        于是"探测 650 个候选"从**数 GB 日志**降到**几十 KB**。
+
+        ## 它顺带揭示了模型的层级
+
+        `component metadata list` 里 47 条的 `parent_code` **全是 `null`**，
+        而 `show` 会给出真实父子关系：
+
+        ```
+        layout_control   → parent_code: "layout"      (sort 1853)
+        lifecycle_status → parent_code: "lifecycle"   (sort 901)
+        object_field     → parent_code: "object"      (sort 701)
+        ```
+
+        ⇒ **`metadata list` 只列"根类型"**，子类型只能经 `show` 看见。
+        这正是我第一轮判错的原因（那 47 条里确实没有 `section`/`control`）。
+        """
+        data = self.run_readonly("component", "metadata", "show", component_type)
+        return data if isinstance(data, dict) and data else None
+
+    def component_type_exists(self, component_type: str, *, strict: bool = False) -> tuple[bool, str]:
         """探测某个 `component_type` 是否可用（**只读**）。返回 `(是否存在, 失败原因)`。
 
-        存在的判据是 `component instance list <type>` 能跑通；
-        跑不通就把原因原样带回来（**不要**静默吞掉——"不存在"与"没权限"是不同的处置）。
+        - 默认走 :meth:`component_type_meta`（**廉价**，几百字节）；
+        - `strict=True` 走 `component instance list`（拉全表，**MB 级**）——
+          只在"我不光要它存在、还要确认能取到实例"时才用。
+
+        **环境问题（超时/未配置/找不到二进制）一律向上抛**，不吞成"类型不存在"——
+        那会输出一份"看起来完整、其实少了东西"的清单（本仓最忌的静默变差）。
         """
         try:
-            self.run_readonly("component", "instance", "list", component_type)
-            return True, ""
+            if strict:
+                self.run_readonly("component", "instance", "list", component_type)
+                return True, ""
+            return self.component_type_meta(component_type) is not None, ""
         except (GwsPlatformError, GwsProcessError) as exc:
             reason = getattr(exc, "stderr_tail", "") or str(exc)
             return False, reason.strip()[:200]
@@ -661,11 +698,15 @@ class GwsClient:
         只看那张表会得出"component 模型里没有 section/control"的**错误结论**——
         我第一轮就是这么判的，直到去探测才发现。
 
-        命名约定看起来是 `<父类型>_<子类型>`（`layout` → `layout_section` / `layout_control`；
-        `lifecycle` → `lifecycle_status`），所以这里按这个形状**生成候选并逐个探测**。
+        ## 为什么现在可以把候选放大
 
-        ⚠️ 探测是**只读**的（`component instance list`），但每个候选一次调用——
-        默认的 `COMPONENT_SUBTYPE_HINTS` 有 14 个后缀，47 类 × 14 ≈ 650 次，别在紧凑循环里调它。
+        `component metadata list` 只列**根类型**（47 条的 `parent_code` 全是 `null`），
+        子类型要看 `component metadata show <type>`。而后者**只回几百字节**，
+        所以"650 个候选"从**数 GB 日志**降到**几十 KB**（见 :meth:`component_type_meta`）。
+
+        命名约定是 **`<父类型>_<子类型>`**（`layout` → `layout_section` / `layout_control`；
+        `lifecycle` → `lifecycle_status`；`object` → `object_field`），
+        所以这里按这个形状生成候选并逐个探测。
         """
         declared = self.component_types()
         declared_names = [
@@ -681,7 +722,7 @@ class GwsClient:
             # 二进制里出现过的裸 token（`object` / `layout` / `section` / `control` / `status`）
             candidates.extend(COMPONENT_BARE_HINTS)
 
-        found: list[str] = []
+        found: list[dict] = []
         missing: dict[str, str] = {}
         seen: set[str] = set(declared_names)
         for cand in candidates:
@@ -690,16 +731,31 @@ class GwsClient:
             seen.add(cand)
             if on_progress is not None:
                 on_progress(cand)
-            ok, reason = self.component_type_exists(cand)
-            if ok:
-                found.append(cand)
+            meta = None
+            try:
+                meta = self.component_type_meta(cand)
+            except (GwsPlatformError, GwsProcessError) as exc:
+                missing[cand] = (getattr(exc, "stderr_tail", "") or str(exc)).strip()[:200]
+                continue
+            if meta:
+                found.append(meta)
             else:
-                missing[cand] = reason
+                missing[cand] = "metadata show 回 null（类型不存在）"
+
+        # 按 parent_code 归组：这棵树就是"list 只给根、子类型要靠 show"的实证
+        by_parent: dict[str, list[str]] = {}
+        for meta in found:
+            parent = str(meta.get("parent_code") or "")
+            by_parent.setdefault(parent, []).append(str(meta.get("component_type")))
 
         return {
             "declared": declared,
             "declared_names": declared_names,
-            "undeclared_but_real": sorted(found),
+            "undeclared": sorted(found, key=lambda m: int(m.get("sort") or 0)),
+            "undeclared_but_real": sorted(
+                str(m.get("component_type")) for m in found
+            ),
+            "by_parent": {k: sorted(v) for k, v in by_parent.items()},
             "probed_missing": missing,
             "probed_total": len(seen) - len(declared_names),
         }

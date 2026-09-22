@@ -345,23 +345,46 @@ gws doctor                                # ⚠️ 只能当信息：它的退�
 | **`layout_control`** | ✅ **14062 个实例 / 35 列** |
 | **`lifecycle_status`** | ✅ **3433 个实例 / 18 列** |
 
-> ### 11.1.1 ★ **`component metadata list` 那张表是不完整的**（别再只看它）
+> ### 11.1.1 ★ **`component metadata list` 只列"根类型"**（别再只看它）
 >
 > 47 条里**没有**上面那三个，而它们恰恰是**承重的**（布局的内容本体、生命周期的状态）。
-> 命名约定看起来是 **`<父类型>_<子类型>`**（`layout` → `layout_section` / `layout_control`；
-> `lifecycle` → `lifecycle_status`）。
+>
+> **2026-09-22 第二轮真机把机理查清了**：那 47 条的 `parent_code` **全是 `null`** ——
+> 它是**根类型清单**。子类型只能经 `component metadata show <type>` 看见，而 `show` 会给出真实父子关系：
+>
+> | 子类型 | `parent_code` | `sort` | `name_cn` |
+> |---|---|---|---|
+> | `layout_section` | `layout` | 1851 | （布局部分） |
+> | `layout_control` | `layout` | 1853 | 布局控件 |
+> | `lifecycle_status` | `lifecycle` | 901 | 生命周期状态 |
+> | **`object_field`** | **`object`** | **701** | **对象字段** |
+>
+> 命名约定 = **`<父类型>_<子类型>`**。
 >
 > ⚠️ **我第一轮就是这么栽的**：只读 `metadata list`，据此写下"component 模型里没有 section/control"——
 > **那句话是错的**，而且它会把结论推向"这个通道覆盖不了布局"。
 >
 > ⇒ 已把它变成可复跑的能力（不是"记住要小心"）：
-> `GwsClient.component_type_exists()` + `GwsClient.discover_component_types()`，
-> 探针加 `--discover-types`。**发现结果里"已声明"与"探测到但未声明"必须分开报**
+> `GwsClient.component_type_meta()` / `component_type_exists()` / `discover_component_types()`，
+> 探针加 `--discover-types`。**发现结果里「已声明」与「探测到但未声明」必须分开报**
 > —— 合成一列就等于把这条教训又抹掉了。
 >
 > 判据：`pytest tests/test_gws_client.py -k discover -o addopts=""`
-> （含一条"环境问题不许被读成类型不存在"的断言——超时/未配置若被吞成 `False`，
-> 会输出一份**看起来完整、其实少了东西**的清单）。
+> （含"环境问题不许被读成类型不存在"与"**默认必须走廉价探测**"两条断言）。
+>
+> ### 11.1.2 ★ **廉价探测：`metadata show` 而不是 `instance list`**
+>
+> | 探法 | 返回 | 代价（CLI 会把**整份响应体**写日志，缺陷 ⑯） |
+> |---|---|---|
+> | `component instance list <type>` | 该类型**全部实例** | **MB 级**（`layout_control` 14062 行） |
+> | **`component metadata show <type>`** | 一条元数据 / **`null`** | **几百字节** |
+>
+> 实测判据：`metadata show field` → `null`；`metadata show 不存在的类型xyz` → `null`；
+> `metadata show layout_control` → 元数据。⇒ **存在性探测便宜了约 4 个数量级。**
+>
+> ⚠️ **但候选规模仍是短板**：默认候选 ≈ 650 个，而**每个候选要起一次子进程**（实测约 1 秒），
+> 串行跑完 ≈ **10 分钟**。2026-09-22 实跑时因超时被中止。
+> ⇒ **要问具体名字就用 `--discover-candidates`**；要全量枚举得先把并发或批量化做出来（未做）。
 
 ⇒ **component 模型的结构与工厂完全不同**：
 
@@ -468,7 +491,7 @@ gws doctor                                # ⚠️ 只能当信息：它的退�
 | 工厂端点（`kernel/endpoints.py`） | component 类型 | 读侧状态 |
 |---|---|---|
 | `SAVE_BASIC_OBJECT` | `object` | ✅ 归一后覆盖 **0.88**，仅 `summaryFields` 待查 |
-| `SAVE_FIELD` | **❓ 未知** | 🔴 **见下** |
+| `SAVE_FIELD` | **`object_field`**（60864 实例 / 88 列） | ✅ **已确认在模型里**，见 §13.1；逐键对照**待做** |
 | `OBJECT_PICKLIST` / `PICKLIST_SAVE` | `picklist` | ✅ 元素层覆盖 **0.80**，仅 `operations` 待查 |
 | `SAVE_LAYOUT_DETAIL` | `layout` + **`layout_section`** + **`layout_control`** | ✅ 部分 **A**（覆盖 0.84）/ 控件 B（覆盖 0.83） |
 | `LISTLAYOUT_ADD_COLUMNS` | `listlayout`（`columns_json`） | ⚠️ 列元素存在**JSON 字符串里**，要解析后比；`{fieldId,fieldPath,sort}` 三个键的形状对得上 |
@@ -479,34 +502,40 @@ gws doctor                                # ⚠️ 只能当信息：它的退�
 | 权限族（工厂**零端点**） | `permission_set`（229 实例） | ⚪ 纯增量，决策卡 **E1** |
 | 自动化族（工厂**零端点**） | `linkage_rule` / `web_action` / `notice_message_template` | ⚪ 纯增量，决策卡 **E2** |
 
-### 13.1 🔴 M3 的第一个未决问题：**字段用什么写？**
+### 13.1 ✅ **已答：字段在 component 模型里 —— `object_field`（60864 实例 / 88 列）**
 
-`SAVE_FIELD` 是工厂八步管道里的**第二步**，而 **`component metadata list` 的 47 类里没有任何字段类**：
+> 2026-09-22 第三轮真机。`SAVE_FIELD` 是工厂八步管道的**第二步**，
+> 而 `component metadata list` 的 47 类里**没有任何字段类型**。当时我列了两种可能，
+> 并说"这两种情况的结论完全不同"：
+>
+> 1. 存在**未声明**的字段类型（命名约定 `<父类型>_<子类型>` ⇒ 候选 `object_field`）⇒ 整条链路可迁移；
+> 2. 字段**不在** component 模型里 ⇒ **必须保留工厂的字段写入器**，那是一次**混合改造**，不是替换。
+>
+> **答案是 ①。**
+>
+> ```
+> component metadata show object_field
+>   → {"component_type":"object_field","name_cn":"对象字段","sort":701,"parent_code":"object"}
+> component instance list object_field
+>   → 60864 行 / 88 列
+> ```
+>
+> 那 88 列里，工厂 `SaveField` 发过的键**逐个都有对应**：
+> `data_type` / `object_id` / `picklist_id` / `reference_object_id` / `formula_script` /
+> `max_value` / `min_value` / `scale` / `max_length` / `is_required` / `invisible` /
+> `format` / `default_val_dep_fields` / `return_type` / `only_select_leaf_node` / `sort` …
+>
+> ⇒ **结论：整条链路可迁移，不需要混合改造。**
+> 这是本次评估里**最改变工作量估算**的一条：
+> 决策卡 **C6** 从"要不要试一次写"变成"**要不要开始按 component 模型重写 `writers/`**"。
+>
+> ⚠️ **仍未做**：`object_field` 的 88 列与工厂 `SaveField` 的 **11 键**没有逐键对照
+> （本轮时间用在了类型发现上）。而且现有的元素层对照入口支持的是"数组元素"，
+> 而 `SaveField` 是**整份体**——**需要补一个"按端点比对整份体"的入口**（尚未实现）。
+> 这是下一轮的第一件事。
 
-- 裸 `field` / `fields` 探测 → ❌ 都不存在；
-- `object` 组件实例的 56 个键里**没有** `fields` 数组（它是对象的开关与属性）；
-- 字段只能通过 `metadata object fields <code>` **读**（返回 `fields[]`，53 键，用 `field_id`/`field_type`）。
-
-⇒ **两种可能，必须分辨**：
-
-1. 存在一个**未声明**的字段类型（命名约定 `<父类型>_<子类型>` ⇒ 候选 `object_field` / `object_fields`）；
-2. 字段**根本不在 component 模型里**，仍然只能走私有的 `SaveField`。
-
-**这两种情况的结论完全不同**：① 则整条链路可迁移；② 则**必须保留工厂的字段写入器**，
-`component` 只能接管对象/布局——那是一次**混合改造**，不是替换。
-
-判据（已就绪，只读，**指定候选**——别跑默认的 650 个，见下）：
-
-```powershell
-.\.venv\Scripts\python.exe tools\probe_gws.py --discover-types `
-    --discover-candidates "object_field,object_fields,object_attr,field,basic_object_field" `
-    --skip-compare --max-types 0
-```
-
-它会报「**探测到但未声明**」有哪些 —— `object_field` 在不在里面，就是答案。
-
-> ⚠️ **磁盘代价（先说清）**：CLI 把**整份响应体**写进 `~/.gws/logs/`（缺陷 ⑯）。
-> 实测 **≈3 MB / 次调用**（300 MB / 99 行），而 `list layout_control` 那种（14062 行）单次几十 MB。
-> 默认候选是「47 类 × 14 后缀 + 5 个裸 token」≈ 650 个 ⇒ **可能吃掉数 GB**。
-> 所以 `--discover-candidates` 不是可选优化，**是默认该用的姿势**。
+> **操作教训（我自己踩的）**：默认候选 ≈ 650 个，**每个候选起一次子进程**（实测约 1 秒），
+> 串行跑完 ≈ **10 分钟**，本轮实跑时因超时被中止。
+> `metadata show` 已经把**单次代价**降了 4 个数量级，但**调用次数**没降。
+> ⇒ 要问具体名字就用 `--discover-candidates`；全量枚举得先把并发或批量化做出来（**未做**）。
 > （C 盘当前 48 GB 可用，不至于立刻撑爆，但 `log.max_days=3` 会让它累积。）
