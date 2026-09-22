@@ -363,13 +363,17 @@ def test_resolve_binary_honours_env_override(tmp_path: Path, monkeypatch):
 
 
 def test_resolve_binary_missing_gives_actionable_hint(monkeypatch, tmp_path: Path):
-    """找不到时必须是**一句能照做的话**（三条处置），而不是一句"没找到"。"""
-    monkeypatch.delenv("WORKBENCH_GWS_BIN", raising=False)
-    monkeypatch.setenv("WORKBENCH_DATA", str(tmp_path / "empty-data"))
-    monkeypatch.setattr("shutil.which", lambda _name: None)
-    from workbench import config
+    """找不到时必须是**一句能照做的话**（三条处置），而不是一句"没找到"。
 
-    assert not (config.RUNTIME_DIR / "gws").exists()
+    ⚠️ 这里**必须把候选路径也清空**，不能只靠"这台机器上恰好没装 gws"——
+    那是**环境事实**，而这台机器一旦真装了 gws（`install.ps1` 会装到
+    `%LOCALAPPDATA%\\gws` 或 `%ProgramFiles%\\gws`），这条用例就会无缘无故变红。
+    本仓已经为"守环境而不是守契约"栽过一次（`test_adapter_paths_exist`，见
+    CODEBASE_OVERVIEW 的历史验收基线），不要重犯。
+    """
+    monkeypatch.delenv("WORKBENCH_GWS_BIN", raising=False)
+    monkeypatch.setattr("workbench.services.gws.client._binary_candidates", lambda: [])
+    monkeypatch.setattr("shutil.which", lambda _name: None)
     with pytest.raises(GwsBinaryNotFound) as exc:
         resolve_binary()
     text = str(exc.value)
