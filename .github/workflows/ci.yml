@@ -25,7 +25,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `cli-config` 是 2026-09-22 起的**短期并行分支**（基于 gws CLI 重建配置能力，
+    # 见 docs/CLI-CONFIG-PLAN.md）。列在这里的理由与上面第 3 条取舍一致：
+    # 不列它 = 那一周的提交**完全没有门禁**，而"靠人记得跑"正是 CI 要消灭的东西。
+    # ⚠️ **该分支合回 main（或废弃）时，把这一项删掉**——留着它会变成一条永远不会触发的死配置。
+    branches: [main, cli-config]
   pull_request:
   workflow_dispatch:
 

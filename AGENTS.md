@@ -19,6 +19,7 @@
 > | **★ 待下达决定简报（决策卡汇总：批一/批二/批三 + 三个待答问题）** | [docs/FACTORY-DECISION-BRIEF.md](docs/FACTORY-DECISION-BRIEF.md) |
 > | 配置工厂 × 平台的整体认知（Gaia V3.8 手册逐面 × 工厂实现 × 缺口） | [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) |
 > | **★ 用户传图片/文件给 agent（方案 + 判据 + 已知限制）** | [docs/AGENT-FILE-INPUT-PLAN.md](docs/AGENT-FILE-INPUT-PLAN.md) |
+> | **★ 基于 gws CLI 重建配置能力（分支 `cli-config` · 适配层+只读探针已落地 · 下一步卡在 AppId/SecretKey）** | [docs/CLI-CONFIG-PLAN.md](docs/CLI-CONFIG-PLAN.md) |
 > | 平台操作录制与分析（**不属于产品**） | [factory-tuning/](factory-tuning/README.md) |
 > | 核心 Agent 架构与分层契约 | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
 > | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
