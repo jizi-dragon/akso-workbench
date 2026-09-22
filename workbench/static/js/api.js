@@ -36,7 +36,9 @@ export const api = {
   savePrompt: (prompt) =>
     jsonFetch("/api/settings/prompt", { method: "PUT", body: JSON.stringify({ prompt }) }),
   /** 缓存与用量概览（含命中率；命中价是未命中价的 1/50） */
-  getCache: (days = 7) => jsonFetch(`/api/agent/cache?days=${days}`),
+  getCache: (days = 7, conversationId = "") =>
+    jsonFetch(`/api/agent/cache?days=${days}`
+      + (conversationId ? `&conversationId=${encodeURIComponent(conversationId)}` : "")),
 
   /** 工具目录：插件 → 工具（含风险分级）与装配失败清单 */
   listTools: () => jsonFetch("/api/agent/tools"),

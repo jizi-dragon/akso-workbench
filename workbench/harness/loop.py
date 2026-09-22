@@ -129,6 +129,7 @@ async def run_agent_loop(
                     ),
                 )
                 usage = meter.finish()
+                usage.update(_context_usage(meter, config))
                 meter.stats.persist()
                 yield make_event("usage", usage=usage)
                 return
@@ -142,9 +143,27 @@ async def run_agent_loop(
                     # 用量在**收尾时**发一条：命中量要等所有 LLM 调用（含摘要重算）都结束
                     # 才有完整答案；提前发会让前端显示一个偏低的数字
                     usage = meter.finish()
+                    usage.update(_context_usage(meter, config))
                     meter.stats.persist()
                     yield make_event("usage", usage=usage)
                     return
+
+
+def _context_usage(meter: UsageMeter, config: AgentConfig) -> dict:
+    """上下文用量（输入框下方那行常驻指标用，2026-09-22）。
+
+    `contextTokens` 取**平台回的 `prompt_tokens`**（最近一次调用），不是估算：
+    它同时包含系统提示词 + 冻结摘要 + 原文历史 + 工具 schema ——
+    也就是"这一次到底发了多少上去"。估算值会偏低，而用户是拿这个数判断"还能聊多久"。
+    """
+    tokens = int(getattr(meter.stats, "last_prompt_tokens", 0) or 0)
+    window = int(config.context_window_tokens or 0)
+    return {
+        "contextTokens": tokens,
+        "contextWindow": window,
+        "contextThreshold": float(config.context_threshold or 0),
+        "contextRatio": round(tokens / window, 4) if window else 0.0,
+    }
 
 
 def _with_system_prompt(messages: list[dict], system_prompt: str) -> list[dict]:

@@ -142,7 +142,16 @@ export function initChat() {
     input.disabled = true;
   }
   const badge = document.getElementById("chat-model-badge");
-  if (badge) badge.textContent = state.settings.model || "deepseek-v4-flash";
+  if (badge) {
+    badge.textContent = state.settings.model || "deepseek-flash";
+    // 模型名在发送键旁边（2026-09-22 用户下达）——点它去设置里换模型。
+    // 为什么给一个跳转而不是就地下拉：换模型会**改变这一轮的行为与价格**，
+    // 值得看一眼设置页里的其它参数，而不是在输入框边上误点一下就换掉。
+    badge.addEventListener("click", () => {
+      document.querySelector('.nav-item[data-view="settings"]')?.click();
+    });
+  }
+  void refreshUsageStrip();
 
   renderEmpty();
 }
@@ -247,6 +256,7 @@ async function selectConversation(id) {
   setChatContext();
   // 换会话 = 换上下文：右下角那张「当前账号」跟着这一轮对话走，不跟着页面走
   void restoreSelection(id);
+  void refreshUsageStrip({ reset: true }); // 用量行也跟着换（它统计的是**这一段对话**）
   const { messages } = await api.listMessages(id);
   renderMessages(messages);
 }
@@ -506,6 +516,13 @@ async function sendMessage(text, attachmentIds = [], onSent = null) {
         // 用量在 final/error 之后单独发一条：命中量要等所有模型调用（含摘要重算）
         // 都结束才是完整答案，提前显示会给出一个偏低的数字
         usage = event.usage || null;
+        // 那行常驻指标：上下文两段用**本轮真值**，缓存两段用**会话累计**（去服务端取）
+        Object.assign(usageStrip, {
+          contextTokens: event.usage?.contextTokens || 0,
+          contextWindow: event.usage?.contextWindow || 0,
+        });
+        paintUsageStrip();
+        void refreshUsageStrip();
       } else if (event.type === "done") {
         metricId = event.metricId || null;
         if (event.titleUpdated && conversationId) {
@@ -580,4 +597,112 @@ function usageChip(usage, host) {
     chip.remove();
   });
   return chip;
+}
+
+/* ———————————————— 输入框下方那行常驻用量 ———————————————— */
+
+/** 这一行的**累计状态**：缓存两段是"本会话累计"，上下文两段是"最近一次请求"。
+ *
+ *  为什么要一个模块级状态：这两组数字**来源不同、寿命也不同**——
+ *  缓存来自服务端（刷新页面还能取回来），上下文只在本轮结束时才有真值（服务端不存它，
+ *  因为它每轮都变）。用一个状态对象 + patch 合并，比在每个调用点各拼一份载荷清楚。 */
+const usageStrip = {
+  cacheHitTokens: 0,
+  cacheMissTokens: 0,
+  hitRate: 0,
+  promptTokens: 0,
+  contextTokens: 0,
+  contextWindow: 0,
+};
+
+/** 数字压成短形态：1234 → 1.2k、484000000 → 484M（DeepSeek 那行也是这个口径）。 */
+function shortTokens(value) {
+  const n = Number(value) || 0;
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(0)}M`;
+}
+
+/** 重画那行：`缓存命中 X tok · NN% · ◔ 上下文 A / B（NN%）`（用户 2026-09-22 下达）。
+ *
+ *  ## 三段的语义（别读混）
+ *
+ *  | 段 | 是什么 | 来源 |
+ *  |---|---|---|
+ *  | 缓存命中 | 本会话输入里**从缓存读**的 token（命中价是未命中价的 1/50） | `/api/agent/cache?conversationId`（会话累计） |
+ *  | 命中率 | 命中 /（命中+未命中）——**直接等于省下的比例** | 同上 |
+ *  | 上下文 | 本次真正发上去的输入 token / 窗口上限（**平台回的真值**，不是估算） | `usage` 事件的 `context*` |
+ */
+function paintUsageStrip() {
+  const strip = document.getElementById("usage-strip");
+  if (!strip) return;
+  const cacheEl = document.getElementById("usage-cache");
+  const rateEl = document.getElementById("usage-rate");
+  const contextEl = document.getElementById("usage-context");
+
+  const hit = Number(usageStrip.cacheHitTokens) || 0;
+  const miss = Number(usageStrip.cacheMissTokens) || 0;
+  const hasCache = hit + miss > 0;
+  if (hasCache) {
+    const pct = Math.round((Number(usageStrip.hitRate) || 0) * 100);
+    const level = pct >= 60 ? "good" : pct >= 20 ? "mid" : "low";
+    cacheEl.textContent = `缓存命中 ${shortTokens(hit)} tok`;
+    cacheEl.dataset.level = level;
+    rateEl.textContent = `${pct}%`;
+    rateEl.dataset.level = level;
+  } else {
+    cacheEl.textContent = "缓存命中 —";
+    rateEl.textContent = "—";
+    delete cacheEl.dataset.level;
+    delete rateEl.dataset.level;
+  }
+
+  const tokens = Number(usageStrip.contextTokens) || 0;
+  const window = Number(usageStrip.contextWindow) || 0;
+  if (tokens && window) {
+    const used = Math.round((tokens / window) * 100);
+    const ring = document.createElement("span");
+    ring.className = "usage-ring";
+    ring.style.setProperty("--usage-ratio", String(Math.min(1, tokens / window)));
+    contextEl.replaceChildren(ring, document.createTextNode(
+      `上下文 ${shortTokens(tokens)} / ${shortTokens(window)}（${used}%）`));
+    contextEl.dataset.level = used >= 80 ? "high" : used >= 50 ? "warn" : "";
+  } else {
+    contextEl.textContent = "上下文 —";
+    delete contextEl.dataset.level;
+  }
+  // 没有数字时**也留着这一行**（占位显示「—」）：它是常驻仪表，不是"有数据才冒出来的提示"。
+  // 若按 `hasCache || tokens` 来隐藏，用户第一次发问成功时整行会**突然出现**并把输入框
+  // 往上顶一格——那种跳动比三个「—」更难看，而且用户会以为"这行是刚刚才有的功能"。
+  strip.hidden = false;
+  strip.title = hasCache
+    ? `本会话输入 ${usageStrip.promptTokens || 0} token`
+      + `（命中 ${hit} / 未命中 ${miss}）· 命中价是未命中价的 1/50`
+    : "";
+}
+
+/** 把**本会话累计**的缓存数字取回来（切会话、刷新页面、每轮收尾后各一次）。
+ *
+ *  为什么不让前端自己累加：`usage` 事件的命中量是"本轮"的，而用户要看的是
+ *  "这段对话到现在省了多少"——自己累加会在刷新/切会话后归零，也会在重试时算重。
+ *  服务端 `deepseek_usage` 表本来就是权威。 */
+async function refreshUsageStrip({ reset = false } = {}) {
+  if (reset) {
+    // 换了会话 ⇒ 上一轮的上下文数字作废（它属于那一段对话），缓存也重新取
+    Object.assign(usageStrip, {
+      cacheHitTokens: 0, cacheMissTokens: 0, hitRate: 0, promptTokens: 0,
+      contextTokens: 0, contextWindow: 0,
+    });
+  }
+  const conversationId = state.currentConversationId || "";
+  try {
+    const data = await api.getCache(7, conversationId);
+    Object.assign(usageStrip, {
+      cacheHitTokens: data.cacheHitTokens, cacheMissTokens: data.cacheMissTokens,
+      hitRate: data.hitRate, promptTokens: data.promptTokens,
+    });
+  } catch {
+    /* 用量是"锦上添花"：取不到就不显示，绝不影响对话 */
+  }
+  paintUsageStrip();
 }

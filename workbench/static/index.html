@@ -113,7 +113,6 @@
               <span class="badge badge-amber" id="chat-running-badge" hidden>
                 <span class="spin">◌</span>&nbsp;生成中
               </span>
-              <span class="badge mono" id="chat-model-badge">deepseek-v4-flash</span>
             </header>
             <div class="messages" id="messages">
               <div class="chat-loading"><span class="spin">◌</span> 正在初始化…</div>
@@ -125,15 +124,30 @@
               <div class="composer" id="composer">
                 <textarea id="composer-input" rows="1" placeholder="输入你的问题…（可粘贴/拖入图片或文件；Enter 发送，Shift+Enter 换行）"></textarea>
                 <div class="composer-footer">
-                  <div class="tool-palette-anchor" id="tool-palette-anchor">
+                  <div class="composer-left tool-palette-anchor" id="tool-palette-anchor">
                     <button class="tool-palette-btn" id="btn-tool-palette" type="button" aria-haspopup="dialog" aria-expanded="false" title="可用工具清单（点工具名即插入输入框）">工具</button>
                     <button class="tool-palette-btn attach-btn" id="btn-attach" type="button" title="添加图片或文件（word / excel / pdf / markdown / 文本 / 图片）">📎 附件</button>
                     <input type="file" id="attach-input" multiple hidden
                            accept=".md,.markdown,.txt,.csv,.docx,.xlsx,.pdf,.png,.jpg,.jpeg,.webp">
                   </div>
-                  <div class="composer-hint">Enter 发送 · Shift+Enter 换行 · 可粘贴/拖入文件</div>
-                  <button class="send-btn" id="btn-send" title="发送">➤</button>
+                  <div class="composer-right">
+                    <!-- 模型名放在发送键旁边（2026-09-22 用户下达：仿 DeepSeek 的输入区排版）。
+                         它是**当前生效的模型**，点一下去设置页改。 -->
+                    <button class="model-chip" id="chat-model-badge" type="button"
+                            title="当前模型（点击去设置里更换）">deepseek-flash</button>
+                    <button class="send-btn" id="btn-send" title="发送">➤</button>
+                  </div>
                 </div>
+              </div>
+              <!-- 常驻用量行（用户 2026-09-22 下达）：缓存命中量 / 命中率 / 上下文用量。
+                   数字来自 `usage` 事件；刷新页面后由 /api/agent/cache?conversationId 补回来。 -->
+              <div class="usage-strip" id="usage-strip" hidden>
+                <span class="usage-item" id="usage-cache" title="本会话输入 token 里从缓存命中的部分（命中价是未命中价的 1/50）">—</span>
+                <span class="usage-sep">·</span>
+                <span class="usage-item" id="usage-rate" title="缓存命中率：越接近 100% 越省">—</span>
+                <span class="usage-sep">·</span>
+                <span class="usage-item usage-context" id="usage-context"
+                      title="上下文用量：本次真正发上去的输入 token / 窗口上限">—</span>
               </div>
             </div>
           </section>

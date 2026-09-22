@@ -126,6 +126,22 @@ def main() -> int:
         check("A5 附件条显示状态（已解析多少字 / 扫描件读不出字）",
               "statusText" in attach_js and "扫描件" in attach_js)
 
+        print("=== A2. 输入区的排版契约（2026-09-22 用户下达的 UI 优化）===")
+        app_css = client.get("/static/css/app.css").text
+        check("A6 模型名在**发送键旁边**（不再挂在页头）",
+              'class="model-chip"' in index and 'id="chat-model-badge"' in index
+              and index.index('id="chat-model-badge"') < index.index('id="btn-send"')
+              and 'id="chat-model-badge"' not in index.split('class="chat-header"')[1]
+              .split("</header>")[0])
+        check("A7 输入框下方有常驻用量行（缓存命中 / 命中率 / 上下文）",
+              all(k in index for k in ('id="usage-strip"', 'id="usage-cache"',
+                                       'id="usage-rate"', 'id="usage-context"')))
+        check("A8 三段数字都有真实来源（不是写死的占位）",
+              "refreshUsageStrip" in chat_js and "paintUsageStrip" in chat_js
+              and "contextTokens" in chat_js and "getCache" in api_js)
+        check("A9 用量行字号 ≥12px（用户明确抱怨过「蚂蚁字」）",
+              ".usage-strip" in app_css and "font-size: 12px" in app_css)
+
         print("=== B. 真的落盘、真的读得回 ===")
         png = tiny_png()
         res = client.post("/api/attachments",

@@ -71,7 +71,11 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 | PUT | `/api/settings` | `{apiKey?, model?, temperature?}` | `{ok:true, settings:{…}}`（`model` 会归一为官方现行名，见下） |
 | GET | `/api/settings/prompt` | — | `{prompt, default, custom, chars}`——`prompt` 是**当前生效**的那一份 |
 | PUT | `/api/settings/prompt` | `{prompt}` | 同上；**空串 = 恢复基线** |
-| GET | `/api/agent/cache?days=7` | — | `{days, answers, promptTokens, cacheHitTokens, cacheMissTokens, completionTokens, summaryCalls, hitRate, savedRatio}` |
+| GET | `/api/agent/cache?days=7&conversationId=` | — | `{days, conversationId, answers, promptTokens, cacheHitTokens, cacheMissTokens, completionTokens, summaryCalls, hitRate, savedRatio}` |
+
+> `conversationId` 非空 ⇒ **只统计这一段对话**。输入框下面那行常驻指标（缓存命中量 /
+> 命中率 / 上下文用量，2026-09-22）靠它拿"本会话累计"，也靠它做到**刷新页面后数字还在**
+> （`usage` 事件只在收尾发一次，刷新就没了）。
 
 - `adoptRate`：`feedback==1 的比例 × 100` 取整；无任何评分时为 `null`。
 - `apiKey` 明文回传（本机信任边界内的既有契约）——**这是 web 版能力的遗留形态**，见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账。
@@ -479,7 +483,11 @@ autologin, has_token, monitoring, monitor_log}`；
 - **`usage` 在 final/error 之后单独发**：命中量要等所有模型调用（工具轮次 + 历史摘要重算）
   都结束才是完整答案，提前发会给出一个偏低的数字。字段：
   `{calls, promptTokens, cacheHitTokens, cacheMissTokens, completionTokens, reasoningTokens,
-  hitRate, summaryCalls}`（见 §2.3 与 [research/deepseek-api-capabilities.md](research/deepseek-api-capabilities.md)）。
+  hitRate, summaryCalls}`（见 §2.3 与 [research/deepseek-api-capabilities.md](research/deepseek-api-capabilities.md)）
+  **加上上下文用量**（2026-09-22，输入框下方那行常驻指标用）：
+  `{contextTokens, contextWindow, contextThreshold, contextRatio}` ——
+  `contextTokens` 取**平台回的 `prompt_tokens`**（最近一次调用），**不是估算**：
+  它同时含系统提示词 + 冻结摘要 + 原文历史 + 工具 schema，是"这一次到底发了多少上去"的真值。
 - **`action` ↔ `observation` 靠 `invocation.auditId` 对齐**（前端卡片就地更新用），
   同一 id 也是 `GET /api/agent/audit/{id}` 的主键——即"对话里看到的那次调用"与
   "审计表里那一行"是同一条记录。

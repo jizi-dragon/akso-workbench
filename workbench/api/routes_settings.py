@@ -78,6 +78,10 @@ def put_prompt(body: PromptBody) -> dict:
 
 
 @router.get("/agent/cache")
-def cache_overview(days: int = 7) -> dict:
-    """近 N 天的 token 用量与**缓存命中率**（命中价是未命中价的 1/50，见 cache.py）。"""
-    return cache.usage_overview(max(1, min(days, 90)))
+def cache_overview(days: int = 7, conversationId: str = "") -> dict:
+    """近 N 天的 token 用量与**缓存命中率**（命中价是未命中价的 1/50，见 cache.py）。
+
+    `conversationId` 非空 ⇒ 只统计这一段对话：输入框下方那行常驻指标（用户 2026-09-22
+    下达的 UI 优化）靠它，也靠它做到"刷新页面之后数字还在"。
+    """
+    return cache.usage_overview(max(1, min(days, 90)), conversation_id=conversationId)

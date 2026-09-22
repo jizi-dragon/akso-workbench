@@ -410,6 +410,53 @@ def test_usage_accumulates_across_tool_turns(hub) -> None:
     assert usage["promptTokens"] == 200
 
 
+def test_usage_event_carries_context_usage_for_the_composer_strip(hub) -> None:
+    """`usage` 事件必须带**上下文用量**四件套（输入框下方那行常驻指标，2026-09-22）。
+
+    为什么单有一条：`tools/verify_attachments.py` 的 A8 只是**静态**断言
+    「chat.js 里出现了 `contextTokens` 这个字符串」——它证明前端**读**了这个字段，
+    完全证明不了后端**发**了它（少一个键时前端只会安静地显示「上下文 —」，
+    不报错、不变红）。这条钉的是**发出方**，且用的是平台真值 `prompt_tokens`。
+    """
+    client = FakeClient([{"content": "答"}], usage={
+        "prompt_tokens": 4096, "prompt_cache_hit_tokens": 3000,
+        "prompt_cache_miss_tokens": 1096, "completion_tokens": 50,
+    })
+    events = asyncio.run(collect(run_agent_loop(
+        [{"role": "user", "content": "问"}], client, hub,
+        AgentConfig(system_prompt="s", context_window_tokens=8192,
+                    context_threshold=0.8),
+        conversation_id="conv-ctx",
+    )))
+    usage = next(e for e in events if e["type"] == "usage")["usage"]
+    assert usage["contextTokens"] == 4096, "必须是平台回的 prompt_tokens，不是估算"
+    assert usage["contextWindow"] == 8192
+    assert usage["contextThreshold"] == 0.8
+    assert usage["contextRatio"] == 0.5
+    # 上下文取**最近一次**调用，缓存取**累计** —— 两者口径不同是刻意的
+    assert usage["promptTokens"] == 4096
+
+
+def test_context_usage_is_zero_safe_without_a_window(hub) -> None:
+    """窗口配成 0（老配置）时不许除零，`contextRatio` 给 0 而不是崩掉/NaN。
+
+    JSON 里出现 `NaN` 会让 `JSON.parse` 在前端**直接抛错**，整条流断掉——
+    比"少显示一个数字"严重得多。
+    """
+    client = FakeClient([{"content": "答"}], usage={
+        "prompt_tokens": 100, "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 100, "completion_tokens": 5,
+    })
+    events = asyncio.run(collect(run_agent_loop(
+        [{"role": "user", "content": "问"}], client, hub,
+        AgentConfig(system_prompt="s", context_window_tokens=0),
+        conversation_id="conv-ctx0",
+    )))
+    usage = next(e for e in events if e["type"] == "usage")["usage"]
+    assert usage["contextRatio"] == 0.0
+    assert usage["contextTokens"] == 100, "没有窗口也不该把真实用量吞掉"
+
+
 def test_usage_is_persisted(hub) -> None:
     """用量要落库，否则设置页的命中率永远是 0。"""
     client = FakeClient([{"content": "答"}], usage={

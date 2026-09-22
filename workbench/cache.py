@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from . import db
 from .services.storage import now_ms
@@ -204,6 +205,13 @@ class UsageStats:
     summary_calls: int = 0
     """其中用于「重算历史摘要」的调用数（这些是纯开销，应当趋近于 0）。"""
     latency_ms: int = 0
+    last_prompt_tokens: int = 0
+    """**最近一次**调用的 `prompt_tokens` —— 也就是"这一轮实际发上去的上下文有多大"。
+
+    为什么用它而不是自己估：这是**平台回的真值**，而 `estimate_tokens` 只是估算
+    （CJK 按字、英文按词）。界面上"上下文用量"那个数字必须是真的，否则用户会照着
+    一个偏低的数去判断"还能聊多久"。
+    """
 
     def add(self, usage: dict) -> None:
         """累计一次 API 响应的 usage（Chat Completions 与 Responses 两种口径都吃）。"""
@@ -219,6 +227,7 @@ class UsageStats:
             miss = max(0, int(prompt or 0) - int(hit or 0))
         hit = int(hit or 0)
         miss = int(miss or 0)
+        self.last_prompt_tokens = int(prompt or (hit + miss))
         self.cache_hit_tokens += hit
         self.cache_miss_tokens += miss
         self.prompt_tokens += int(prompt or (hit + miss))
@@ -261,20 +270,32 @@ class UsageStats:
             logger.warning("用量入账失败", exc_info=True)
 
 
-def usage_overview(days: int = 7) -> dict:
-    """近 N 天的缓存命中概览（设置页与 `/api/agent/cache` 用）。"""
+def usage_overview(days: int = 7, conversation_id: str = "") -> dict:
+    """近 N 天的缓存命中概览（设置页与 `/api/agent/cache` 用）。
+
+    `conversation_id` 非空时**只统计这一段对话** —— 输入框下面那行常驻的
+    「缓存命中 / 命中率 / 上下文用量」（2026-09-22 用户下达）要的是"这段对话花了多少"，
+    而不是"最近 7 天所有对话加起来"。它同时是**刷新页面后还能看到**那份数字的来源
+    （`usage` 事件只在回答收尾时发一次，刷新就没了）。
+    """
     since = now_ms() - days * 86_400_000
+    where = "created_at >= ?"
+    params: list[Any] = [since]
+    if conversation_id:
+        where += " AND conversation_id = ?"
+        params.append(str(conversation_id))
     row = db.query_one(
         "SELECT COUNT(*) AS n, SUM(prompt_tokens) AS prompt, SUM(cache_hit_tokens) AS hit, "
         "SUM(cache_miss_tokens) AS miss, SUM(completion_tokens) AS completion, "
-        "SUM(summary_calls) AS summary_calls FROM deepseek_usage WHERE created_at >= ?",
-        (since,),
+        "SUM(summary_calls) AS summary_calls FROM deepseek_usage WHERE " + where,
+        tuple(params),
     ) or {}
     hit = int(row.get("hit") or 0)
     miss = int(row.get("miss") or 0)
     total = hit + miss
     return {
         "days": days,
+        "conversationId": conversation_id,
         "answers": int(row.get("n") or 0),
         "promptTokens": int(row.get("prompt") or 0),
         "cacheHitTokens": hit,
