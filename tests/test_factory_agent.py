@@ -154,15 +154,34 @@ def test_review_material_is_produced_before_the_approval(hub) -> None:
 
 
 def test_create_confirmation_summary_talks_about_the_blueprint(hub) -> None:
-    """危险操作的确认摘要要说"将要建出什么"，而不是复述 `blueprint_id`。"""
+    """危险操作的确认摘要要说"将要建出什么"，而不是复述 `blueprint_id`。
+
+    ★ 2026-09-22 用户下达：「弹出的蓝图/审核界面，请你不要放一堆文字上去，请设计排版，
+    言简意赅，用户在执行时没有时间去仔细看 UI 上比蚂蚁还小的字」
+    ⇒ 摘要的形状**本身**也是契约（见 `plugin_api.ToolSpec.summary_fn`）：
+    **第一行标题 + `·` 开头的要点，最多 5 行、每行不超过 90 字**。弹窗按它排版，
+    所以这里同时钉住"说什么"和"长什么样"。
+    """
     blueprint_id = _payload(_call(hub, "factory_preview_blueprint",
                                   {"blueprint": json.dumps(GOOD_BLUEPRINT)}))["blueprint_id"]
     spec = hub.get("factory_create")
     args = spec.args_model(blueprint_id=blueprint_id, account_id="acc-1")
     text = approvals.summarize(spec, {}, model=args)
-    assert "1 个对象" in text and "2 个字段" in text, text
-    assert "training_record__c" in text
+
+    # 说什么：对象名 + 编码、字段数量、布局
+    assert "培训记录" in text and "training_record__c" in text, text
+    assert "字段 2 个" in text, text
+    assert "布局" in text and "列表 2 列" in text, text
     assert "blueprint_id" not in text, "又把参数名当摘要了"
+
+    # 长什么样：标题 1 行 + 要点若干，总行数 ≤5、每行 ≤90 字（"不堆文字"的正面判据）
+    lines = [line for line in text.split("\n") if line.strip()]
+    assert len(lines) <= 5, f"摘要 {len(lines)} 行，弹窗一屏读不完：{lines}"
+    assert not lines[0].startswith("·"), "第一行必须是标题，不是要点"
+    for line in lines[1:]:
+        assert line.startswith("· "), f"要点行必须以 `· ` 开头（弹窗按它排版）：{line}"
+    for line in lines:
+        assert len(line) <= 90, f"这一行 {len(line)} 字，弹窗里会变成一坨：{line}"
 
 
 def test_create_summary_falls_back_instead_of_breaking_the_gate(hub, tmp_path) -> None:

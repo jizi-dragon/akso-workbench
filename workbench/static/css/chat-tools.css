@@ -511,25 +511,96 @@ dialog.tk-decision {
 }
 
 .tk-decision-tool {
-  font-size: 11.5px;
-  color: var(--text-2);
-  overflow-wrap: anywhere;
-}
-
-.tk-decision-question {
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.7;
-  color: var(--text-1);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.tk-decision-details {
   font-size: 12px;
-  line-height: 1.7;
   color: var(--text-2);
-  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 标题：**唯一必须被读到的那一行**。
+ * 2026-09-22 用户下达：「不要放一堆文字上去……没有时间去仔细看 UI 上比蚂蚁还小的字」
+ * ⇒ 标题 16px/600（原来 14px/500 且和整段说明共用同一个块），行高 1.45 而不是 1.7
+ * （密排的长段落才是"蚂蚁字"的观感来源）。 */
+.tk-decision-question {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+/* 要点列表：每行一件事。
+ * 13.5px 是**下限之上的**取值（正文 16px 的 84%）；再小就是本条要修的那个毛病。 */
+.tk-decision-points {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tk-point {
+  position: relative;
+  padding-left: 13px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.tk-point::before {
+  content: "·";
+  position: absolute;
+  left: 2px;
+  color: var(--text-3);
+}
+
+/* 「展开其余 N 条」：渐进披露的落点。刻意做成**文字按钮**而不是大按钮——
+ * 它不该和「放行 / 拒绝」抢注意力。焦点环必须留着（键盘用户靠它）。 */
+.tk-more {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--sky);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.tk-more:hover { text-decoration: underline; }
+
+.tk-more:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* 「技术参数（blueprint_id、account_id）」：**默认收起**。
+ * 旧实现把 JSON 直接摊在弹窗里（等宽 11px + 220px 滚动区）——在"几秒钟做判断"的场景里
+ * 它是纯噪声；但它又是唯一可核对的事实，所以留着，只是不再挡路。 */
+.tk-disclosure {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.tk-disclosure:hover { color: var(--text-1); text-decoration: underline; }
+
+.tk-disclosure:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* 一句"点了会发生什么"。风险门与实时确认的文案不同（谁接手不一样），但都是这一行。 */
+.tk-decision-details {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-3);
   overflow-wrap: anywhere;
 }
 
@@ -543,13 +614,13 @@ dialog.tk-decision {
 }
 
 .tk-decision-target .tool-args {
-  max-height: 220px;
+  max-height: 200px;
   overflow: auto;
   margin: 0;
 }
 
 .tk-decision-meta {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-3);
 }
 
@@ -564,7 +635,7 @@ dialog.tk-decision {
 }
 
 .tk-decision-state {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-2);
   overflow-wrap: anywhere;
 }

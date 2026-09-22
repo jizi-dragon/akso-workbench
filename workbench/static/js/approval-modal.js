@@ -170,6 +170,62 @@ function askRejectReason(targetText) {
   });
 }
 
+/* ———————————————— 说明文字 → 标题 + 要点 ———————————————— */
+
+/** 要点先露几条：超出的折起来（渐进披露）。
+ *
+ *  用户 2026-09-22 原话：「弹窗不要放一堆文字上去……用户在执行时没有时间去仔细看
+ *  UI 上比蚂蚁还小的字」。4 条是"一屏扫完还能记住"的量级；再多就不是读，是翻。 */
+const MAX_POINTS = 4;
+
+/** 一行的最大长度：超过它就不再当"一句话"，而是按句读切开。
+ *  纯文本长行在弹窗里换行后会变成一坨，切句之后每行一件事。 */
+const POINT_MAX_CHARS = 88;
+
+function textLines(raw) {
+  return String(raw ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+/** 按中英文句读切句（不用 lookbehind：老引擎上会直接语法报错）。 */
+function splitSentences(text) {
+  const out = [];
+  let buffer = "";
+  for (const ch of text) {
+    buffer += ch;
+    if ("。；;！!？?".includes(ch)) {
+      if (buffer.trim()) out.push(buffer.trim());
+      buffer = "";
+    }
+  }
+  if (buffer.trim()) out.push(buffer.trim());
+  return out;
+}
+
+/** 标题 = 第一行（弹窗按 16px 加粗渲染，所以它必须自成一句）。 */
+function headlineOf(primary) {
+  return textLines(primary)[0] || "（没有说明）";
+}
+
+/** 要点 = `primary` 的其余行 + `details`，双向都支持 `·`/`-`/`*` 前缀。
+ *
+ *  为什么还要切句：`details` 常常是模型写的一整段散文（换行都没有），
+ *  不切的话它就会以"一大坨"的形态出现——那正是用户抱怨的东西。 */
+function briefingPoints(primary, details) {
+  const lines = [...textLines(primary).slice(1), ...textLines(details)];
+  const points = [];
+  for (const line of lines) {
+    const marked = /^[·•*\-–—]\s*/.test(line);
+    const text = line.replace(/^[·•*\-–—]\s*/, "");
+    if (!text) continue;
+    if (marked || text.length <= POINT_MAX_CHARS) points.push(text);
+    else points.push(...splitSentences(text));
+  }
+  return points;
+}
+
 /* ———————————————— 弹窗本体 ———————————————— */
 
 function buildDialog() {
@@ -191,6 +247,16 @@ function buildDialog() {
 
   const question = node("div", "tk-decision-question");
   card.appendChild(question);
+  // 要点列表（`·` / `-` 开头的行，以及被切开的长段落）。
+  // 2026-09-22 用户下达：「弹出的蓝图/审核界面，请你不要放一堆文字上去，请设计排版，
+  // 言简意赅，用户在执行时没有时间去仔细看 UI 上比蚂蚁还小的字」
+  // ⇒ 说明文字一律**先给标题、再给要点**，超过 MAX_POINTS 条折起来（渐进披露）。
+  const points = node("ul", "tk-decision-points");
+  card.appendChild(points);
+  const more = node("button", "tk-more");
+  more.type = "button";
+  more.hidden = true;
+  card.appendChild(more);
   const details = node("div", "tk-decision-details");
   card.appendChild(details);
 
@@ -200,12 +266,27 @@ function buildDialog() {
   choices.hidden = true;
   card.appendChild(choices);
 
+  // 技术参数（`blueprint_id` / `account_id` 这类 UUID）：**默认收起**。
+  // 旧实现把它摊在脸上（等宽 11px + 220px 滚动区），在"几秒钟做判断"的场景里
+  // 它就是纯噪声——但它又是唯一可核对的事实，所以留着，只是不再挡路。
+  const argsToggle = node("button", "tk-disclosure");
+  argsToggle.type = "button";
+  argsToggle.hidden = true;
+  argsToggle.setAttribute("aria-expanded", "false");
+  card.appendChild(argsToggle);
+
   const targetBlock = node("div", "tk-decision-target");
   targetBlock.hidden = true;
-  targetBlock.appendChild(node("div", "tool-section-label", "将要执行的调用（同意后按这些参数执行）"));
   const argsEl = node("pre", "tool-args");
   targetBlock.appendChild(argsEl);
   card.appendChild(targetBlock);
+
+  argsToggle.addEventListener("click", () => {
+    const open = targetBlock.hidden;
+    targetBlock.hidden = !open;
+    argsToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    argsToggle.textContent = (open ? "▾ " : "▸ ") + (argsToggle.dataset.label || "技术参数");
+  });
 
   const meta = node("div", "tk-decision-meta");
   card.appendChild(meta);
@@ -230,7 +311,8 @@ function buildDialog() {
   box.appendChild(card);
   document.body.appendChild(box);
 
-  const ui = { box, title, badges, question, details, choices, targetBlock, argsEl, meta, actions, state,
+  const ui = { box, title, badges, question, points, more, details, choices,
+               argsToggle, targetBlock, argsEl, meta, actions, state,
                later, deny, allow };
   return ui;
 }
@@ -403,11 +485,35 @@ function show(request) {
   if (request.risk) ui.badges.appendChild(riskBadge(request.risk));
   if (request.tool) ui.badges.appendChild(node("span", "tk-decision-tool mono", request.tool));
 
-  ui.question.textContent = isChoice
+  const primary = isChoice
     ? (request.question || "要用哪个账号继续？")
     : (isConfirmation
       ? (request.question || "（模型没有说明要确认什么）")
       : (request.summary || "（平台未给出这次调用的说明）"));
+  ui.question.textContent = headlineOf(primary);
+
+  // 要点：其余的行 + `details`，逐条渲染；超过 MAX_POINTS 条先折起来。
+  ui.points.replaceChildren();
+  const points = briefingPoints(primary, isChoice ? "" : request.details);
+  ui.points.hidden = points.length === 0;
+  points.forEach((text, index) => {
+    const li = node("li", "tk-point", text);
+    if (index >= MAX_POINTS) li.hidden = true;
+    ui.points.appendChild(li);
+  });
+  ui.more.hidden = points.length <= MAX_POINTS;
+  ui.more.textContent = `展开其余 ${Math.max(0, points.length - MAX_POINTS)} 条`;
+  ui.more.setAttribute("aria-expanded", "false");
+  ui.more.onclick = () => {
+    const expanded = ui.more.getAttribute("aria-expanded") === "true";
+    [...ui.points.children].forEach((li, index) => {
+      if (index >= MAX_POINTS) li.hidden = expanded;
+    });
+    ui.more.setAttribute("aria-expanded", expanded ? "false" : "true");
+    ui.more.textContent = expanded
+      ? `展开其余 ${points.length - MAX_POINTS} 条`
+      : "收起";
+  };
 
   ui.choices.replaceChildren();
   ui.choices.hidden = !isChoice;
@@ -415,28 +521,34 @@ function show(request) {
     for (const option of options) ui.choices.appendChild(choiceCard(option));
   }
 
+  // 一句话说清"点了会发生什么"。风险门与实时确认的**区别在谁接手**，所以文案必须不同
+  // （抄错方向会让人对着一个已经复活的循环干等）：
+  //   · 风险门：循环就地等 → 放行后**服务端**用相同参数执行（2026-09-22 决策卡 G2）
+  //   · 实时确认：循环就地等 → 点完**模型**自己接着往下走
   ui.details.replaceChildren();
   if (isConfirmation && request.details) {
-    ui.details.textContent = request.details;
-    ui.details.hidden = false;
+    ui.details.hidden = true; // details 已经进了上面的要点列表，这里不再重复一遍
   } else if (!isConfirmation) {
-    // 风险门的说明必须点破"点完之后还要做什么"，否则用户会以为模型会自己接着跑
-    ui.details.textContent = "放行不会自动重发这次调用——本轮对话已经结束。"
-      + "放行后在输入框里让模型重试同一次调用（参数要一样）即可执行；"
-      + "换了参数需要重新确认。";
+    ui.details.textContent = "放行后立即用相同参数执行，结果回到这一轮对话。超时按未同意处理。";
     ui.details.hidden = false;
   } else {
     ui.details.hidden = true;
   }
 
   const target = isConfirmation ? request.target : null;
-  const argsJson = target && target.args && Object.keys(target.args).length
-    ? JSON.stringify(target.args)
-    : (request.args ? JSON.stringify(request.args) : "");
-  if (argsJson) {
-    ui.argsEl.textContent = prettyArgs(argsJson);
-    ui.targetBlock.hidden = false;
+  const argSource = (target && target.args && Object.keys(target.args).length)
+    ? target.args
+    : (request.args || {});
+  const argKeys = Object.keys(argSource);
+  if (argKeys.length) {
+    ui.argsEl.textContent = prettyArgs(JSON.stringify(argSource));
+    ui.argsToggle.dataset.label = `技术参数（${argKeys.join("、")}）`;
+    ui.argsToggle.textContent = "▸ " + ui.argsToggle.dataset.label;
+    ui.argsToggle.setAttribute("aria-expanded", "false");
+    ui.argsToggle.hidden = false;
+    ui.targetBlock.hidden = true;
   } else {
+    ui.argsToggle.hidden = true;
     ui.targetBlock.hidden = true;
   }
 

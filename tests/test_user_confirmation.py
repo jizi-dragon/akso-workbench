@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -667,18 +668,59 @@ def test_event_contract_names_are_in_sync() -> None:
 
 
 def test_confirmation_card_wording_is_not_copied_from_the_risk_gate() -> None:
-    """两类决定的**文案不能互抄**——它们要人做的事是相反的。
+    """两类决定的**文案不能互抄**——它们要人做的事不一样。
 
-    风险门：本轮对话**已经结束**，用户放行后还得再发一条消息让模型重试。
-    实时确认：循环**正卡在等待里**，用户点完模型自己就继续。
+    2026-09-22（决策卡 G2）**之前**：风险门那条得说"本轮对话已经结束，放行后还得让模型重试"。
+    G2 之后两条**都在循环里等**，区别变成"**谁接手**"：
+
+    | 决定 | 放行之后 |
+    |---|---|
+    | 风险门（宿主拦下） | **服务端**用完全相同的参数执行，结果回到这一轮 |
+    | 实时确认（模型问） | **模型**自己接着往下走 |
 
     抄错方向的后果是让人对着一个已经复活的循环干等，或者反过来以为还要再发一句。
-    改造后这些文案都在**弹窗**里（`approval-modal.js`）——测试跟着搬到那里。
     """
     modal = _read("workbench/static/js/approval-modal.js")
-    assert "本轮对话已经结束" in modal, "风险门那条没告诉用户「放行后还得让模型重试」"
+    assert "服务端" in modal and "相同参数执行" in modal, "风险门那条没说清「放行后由谁执行」"
     assert "模型继续" in modal, "确认那条没告诉用户「点完模型自己会继续」"
     assert "未同意" in modal, "超时的语义没写清（超时 = 没有产生任何批准）"
+    assert "本轮对话已经结束" not in modal, (
+        "还在写旧口径：G2 之后风险门也在循环里等，本轮**没有**结束")
+
+
+def test_decision_modal_is_scannable_not_a_wall_of_text() -> None:
+    """★ 弹窗必须**可扫读**，不许把说明文字堆成一大坨（2026-09-22 用户下达）。
+
+    > 「弹出的蓝图/审核界面，请你不要放一堆文字上去，请设计排版，言简意赅，
+    >  用户在执行时没有时间去仔细看 UI 上比蚂蚁还小的字」
+
+    确认框是一次**真实写入的闸门**，用户只有几秒钟做判断，所以这条把它变成四条判据
+    （都是源码级——本仓没有 DOM 测试环境，前端断言一律这样钉）：
+
+    ① 说明文字被切成**标题 + 要点**（`headlineOf` / `briefingPoints`，长段落按句读切开）；
+    ② 要点**超过 4 条折起来**（渐进披露：`MAX_POINTS` + `tk-more` + `aria-expanded`）；
+    ③ 技术参数（UUID 那堆）**默认收起**（`tk-disclosure`）——旧实现是把 JSON 直接摊在脸上；
+    ④ 字号有**下限**：标题 ≥15px、要点 ≥13px、次要文字 ≥12px。
+       这一条是"蚂蚁字"的正面判据，改小了就红。
+    """
+    modal = _read("workbench/static/js/approval-modal.js")
+    assert "headlineOf" in modal and "briefingPoints" in modal, "说明文字没有被切成标题 + 要点"
+    assert "MAX_POINTS = 4" in modal, "要点没有条数上限（一屏读不完就等于没写）"
+    assert "tk-more" in modal and 'aria-expanded' in modal, "长要点没有渐进披露的落点"
+    assert "tk-disclosure" in modal, "技术参数没有收起的入口"
+
+    css = _read("workbench/static/css/chat-tools.css")
+
+    def font_px(selector: str) -> float:
+        match = re.search(
+            re.escape(selector) + r"\s*\{[^}]*font-size:\s*([\d.]+)px", css, re.S)
+        assert match, f"{selector} 没有可判定的 font-size"
+        return float(match.group(1))
+
+    assert font_px(".tk-decision-question") >= 15, "标题字号回到 14px 了"
+    assert font_px(".tk-point") >= 13, "要点字号低于 13px（用户抱怨的就是这个）"
+    assert font_px(".tk-decision-details") >= 12
+    assert font_px(".tk-decision-meta") >= 12
 
 
 def test_approval_is_a_modal_not_an_inline_card() -> None:

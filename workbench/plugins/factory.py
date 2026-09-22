@@ -420,22 +420,95 @@ async def resolve_object(args: ResolveArgs, ctx: pa.ToolContext) -> str:
     return json.dumps(await _in_thread(_run), ensure_ascii=False)
 
 
-def _create_summary(args: CreateArgs) -> str:
-    """`factory_create` 的确认摘要：**说清将要建出什么**，而不是复述参数。
+def _account_label(account_id: str) -> str:
+    """账号 id → 「环境名 · 用户名」（**绝不带凭据**，只这两列）。读不到就回空串。"""
+    try:
+        row = db.query_one(
+            "SELECT a.username AS username, e.name AS env_name "
+            "FROM account a JOIN platform_env e ON e.id = a.env_id WHERE a.id = ?",
+            (account_id,),
+        ) or {}
+    except Exception:  # noqa: BLE001 —— 摘要里少一行环境名，绝不能影响确认流程
+        return ""
+    env = str(row.get("env_name") or "").strip()
+    user = str(row.get("username") or "").strip()
+    return " · ".join(p for p in (env, user) if p)
 
-    通用的 `approvals.summarize()` 口径是"工具描述 + 参数 + 风险级"，
-    对这里等于没说——用户要判断的不是"blueprint_id 是多少"，而是"这一按下去会多出什么"。
-    所以从暂存的蓝图里现算要点。**读不到就回空串**：摘要退化成通用口径即可，
-    绝不能因为读文件失败而让危险操作连确认框都弹不出来。
+
+def _create_summary(args: CreateArgs) -> str:
+    """`factory_create` 的确认摘要：**第一行是标题，`·` 开头的行是要点**。
+
+    形状约定见 `plugin_api.ToolSpec.summary_fn`（弹窗按它排版）。
+
+    ## 为什么是"标题 + 要点"而不是一句话（2026-09-22 用户下达）
+
+    > 「弹出的蓝图/审核界面，请你不要放一堆文字上去，请设计排版，言简意赅，
+    >  用户在执行时没有时间去仔细看 UI 上比蚂蚁还小的字」
+
+    确认框是**一次真实写入的闸门**，用户只有几秒钟做判断。所以这里只给：
+    标题（在哪个环境、建什么）+ 每行一件事（编码 / 字段 / 布局 / 引擎不执行的部分），
+    长清单一律"数量 + 前几个名字"，剩下的留在审阅材料 `review_markdown` 里。
     """
     from ..services.egmp.writers import spec as spec_mod
 
     try:
         path = staged_dir(args.blueprint_id) / "blueprint.json"
         data = json.loads(path.read_text(encoding="utf-8"))
-        return spec_mod.blueprint_summary_line(data)
     except Exception:  # noqa: BLE001 —— 摘要失败不该阻断确认流程
         return ""
+    try:
+        objects = spec_mod.to_object_blueprints(data)
+        h = spec_mod.blueprint_highlights(data)
+    except Exception:  # noqa: BLE001
+        return ""
+
+    def _name(obj: dict[str, Any]) -> str:
+        name = str(obj.get("name") or "").strip()
+        code = str(obj.get("code") or "").strip()
+        return f"{name}（{code}）" if name and code else (name or code or "（未命名）")
+
+    def _few(items: list[str], limit: int = 3) -> str:
+        return "、".join(items[:limit]) + ("…" if len(items) > limit else "")
+
+    # ── 标题：在哪个环境、建什么（一行）
+    env = _account_label(args.account_id)
+    if len(objects) == 1:
+        head = f"新建对象 {_name(objects[0])}"
+    else:
+        head = f"新建 {len(objects)} 个对象：{_few([_name(o) for o in objects])}"
+    points: list[str] = [f"· 环境：{env}"] if env else []
+
+    # ── 要点：每个对象一行（编码 + 字段/布局/工作流的量）
+    for obj in objects[:3]:
+        bits: list[str] = []
+        fields = [str(f.get("code") or "") for f in obj.get("fields") or []]
+        if fields:
+            bits.append(f"字段 {len(fields)} 个（{_few(fields, 2)}）")
+        layout_bits: list[str] = []
+        form = obj.get("formLayout") or {}
+        if form:
+            layout_bits.append(f"表单 {len(form.get('sections') or [])} 个部分")
+        list_layout = obj.get("listLayout") or {}
+        if list_layout:
+            layout_bits.append(f"列表 {len(list_layout.get('columns') or [])} 列")
+        if layout_bits:
+            bits.append("布局 " + " + ".join(layout_bits))
+        lifecycle = obj.get("lifecycle") or {}
+        statuses = len(lifecycle.get("statuses") or []) + len(lifecycle.get("renameStatuses") or [])
+        if statuses:
+            bits.append(f"状态变更 {statuses} 项")
+        if obj.get("workflows"):
+            bits.append(f"工作流 {len(obj['workflows'])} 条")
+        prefix = "· " if len(objects) == 1 else f"· {_name(obj)}："
+        points.append(prefix + (("；".join(bits)) if bits else "（只建对象，无字段/布局）"))
+    if len(objects) > 3:
+        points.append(f"· 另有 {len(objects) - 3} 个对象（见审阅清单）")
+
+    # ── 只承诺引擎真的会做的事：菜单/规则/权限/报表模板一律标成"要人工配"
+    if h.get("needsManual"):
+        points.append("· **引擎不执行**（需人工配）：" + "、".join(h["needsManual"]))
+
+    return "\n".join([head, *points[:5]])
 
 
 PLUGIN = pa.Plugin(
