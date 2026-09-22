@@ -19,6 +19,56 @@ let isRunning = false;
 let chatInitialized = false;
 let pickingAccount = false;
 
+/** 附件标记 —— 与 `services/attachments.MARKER_RE` **逐字对应**（改一处必须改两处）。
+ *
+ *  库里那条用户消息存的是 `……看看这个 [附件 att-8b763c25：编制.xlsx]`：
+ *  记号是给**模型**和**工具**用的坐标，不是给人看的。界面要在气泡外把它画成一个 chip，
+ *  所以这里必须能认出来——否则用户刷新页面后会看到一串 `[附件 att-…：…]` 原文。 */
+const ATTACH_MARKER_RE = /\[附件 (att-[0-9a-f]{8})：([^\]\n]{0,120})\]/g;
+const IMAGE_NAME_RE = /\.(png|jpe?g|webp)$/i;
+
+/** 消息里的一个附件 chip：图片给缩略图，其余给文件名；点开是原文件。 */
+function attachChip(id, name) {
+  const chip = document.createElement("a");
+  chip.className = "attach-chip msg-attach";
+  chip.href = api.attachmentRawUrl(id);
+  chip.target = "_blank";
+  chip.rel = "noopener";
+  chip.title = `${name}（点开看原文件）`;
+  if (IMAGE_NAME_RE.test(String(name || ""))) {
+    chip.appendChild(Object.assign(document.createElement("img"),
+      { className: "attach-thumb", src: api.attachmentRawUrl(id), alt: name }));
+  } else {
+    chip.appendChild(Object.assign(document.createElement("span"),
+      { className: "attach-glyph", textContent: "📄" }));
+  }
+  chip.appendChild(Object.assign(document.createElement("span"),
+    { className: "attach-name", textContent: name }));
+  return chip;
+}
+
+/** 找（没有就建）那条消息里的附件容器：**在文字气泡上方**，与输入框上的附件条同一个形状。 */
+function attachmentsBox(row) {
+  const body = row.querySelector(".message-body");
+  let box = body.querySelector(".msg-attachments");
+  if (!box) {
+    box = document.createElement("div");
+    box.className = "msg-attachments";
+    body.insertBefore(box, body.querySelector(".bubble"));
+  }
+  return box;
+}
+
+/** 正文拆成「给人看的文字」+「附件清单」——标记**不留在气泡里**。 */
+function splitMarkers(content) {
+  const found = [];
+  const plain = String(content ?? "").replace(ATTACH_MARKER_RE, (_, id, name) => {
+    found.push({ id, name });
+    return "";
+  }).trim();
+  return { plain, attachments: found };
+}
+
 /** 决定类事件 → 弹窗入参。
  *
  *  `confirm_required`（模型主动问）与 `approval_required`（宿主风险门）**都走弹窗**，
@@ -278,7 +328,11 @@ function renderMessages(messages) {
     return;
   }
   for (const msg of messages) {
-    if (msg.role === "user") el.appendChild(userRow(msg.content, msg.createdAt));
+    if (msg.role === "user") {
+      // 存下来的用户消息里带附件标记 ⇒ 拆出来画成 chip（不画的话用户看到的是 att-xxxx）
+      const { plain, attachments } = splitMarkers(msg.content);
+      el.appendChild(userRow(plain, msg.createdAt, attachments));
+    }
     // `note` = **界面事件**（用户在右下角选了账号之类），不是谁说的话。
     // 不单独渲染的话它会掉进下面的 assistant 分支，看起来像 AKSO 说过这句话
     // ——而模型那边收到的也确实是一条 user 消息（见 routes_chat._model_history）。
@@ -301,7 +355,7 @@ function noteRow(content, createdAt) {
   return row;
 }
 
-function userRow(content, createdAt) {
+function userRow(content, createdAt, attachments = []) {
   const row = document.createElement("div");
   row.className = "message-row user";
   row.innerHTML = `
@@ -311,6 +365,8 @@ function userRow(content, createdAt) {
       <div class="bubble bubble-user"></div>
     </div>`;
   row.querySelector(".bubble-user").textContent = content;
+  // 附件画在文字**上方**：读的时候先看到"我给了它什么"，再看我问了什么
+  for (const att of attachments) attachmentsBox(row).appendChild(attachChip(att.id, att.name));
   return row;
 }
 
@@ -385,7 +441,11 @@ async function sendMessage(text, attachmentIds = [], onSent = null) {
   const el = messagesEl();
   if (el.querySelector(".empty-state")) el.innerHTML = "";
 
-  el.appendChild(userRow(text, Date.now()));
+  // ⚠️ 这一行要留着引用：`attachment` 事件回来时，chip 是往**这条**气泡里画的。
+  // 服务端逐条发 `attachment` 就是为这件事（此前前端把它整个忽略 ⇒ 用户发完文件，
+  // 消息里看不出带了什么，只能靠输入框里那条**已经被清空**的附件条回忆）。
+  const userRowEl = userRow(text, Date.now());
+  el.appendChild(userRowEl);
   const assistantRowEl = document.createElement("div");
   assistantRowEl.className = "message-row";
   assistantRowEl.innerHTML = `
@@ -458,6 +518,11 @@ async function sendMessage(text, attachmentIds = [], onSent = null) {
         // 附件已经跟着这条消息发出去了（服务端也把它们绑到了这个会话上）
         // ⇒ 输入框上的那条附件条该清空，否则用户会以为"还没发出去"
         onSent?.();
+      } else if (event.type === "attachment") {
+        // 服务端逐条告知"这个附件跟着这条消息走了" ⇒ 当场画进「我」那条气泡。
+        // 与服务端存进库里的那个标记是**同一件事的两种呈现**（刷新后由 splitMarkers 画回来）。
+        attachmentsBox(userRowEl).appendChild(attachChip(event.attachmentId, event.name));
+        scrollToBottom();
       } else if (event.type === "token") {
         content += event.text;
         segmentText += event.text;

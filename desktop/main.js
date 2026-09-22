@@ -247,6 +247,19 @@ function createMain() {
   mainWindow.loadURL(serverUrl('/'));
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('closed', () => { mainWindow = null; });
+
+  // 页面里所有 `target="_blank"` / `window.open` 一律**交给系统浏览器**，壳里不再开新窗口。
+  // 原先没有这个 handler，走的是 Electron 默认行为（自己开一个无地址栏的窗口）：
+  // 那个窗口没有返回路径、也拿不到应用状态，用户会以为"应用又开了一个自己"；
+  // 而本应用里这类链接不少（回答里的 Markdown 链接、产物预览、
+  // 以及消息气泡里那个"点开看原文件"的附件 chip）。
+  // 系统浏览器里看图/PDF 有缩放、另存为，也更不容易让人误会。
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
 }
 
 function toggleWheel() {

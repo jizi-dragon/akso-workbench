@@ -257,7 +257,13 @@ def _history(conversation: str, rows: list[tuple[str, str]]) -> list[dict]:
 
 
 def test_image_attachment_becomes_an_image_part_in_the_newest_turn() -> None:
-    """★ "agent 真的拿到了图片"的判据：**请求体里是 image_url**，不是一句文件名。"""
+    """★ "agent 真的拿到了图片"的判据：**请求体里是 image_url**，不是一句文件名。
+
+    顺带钉住那句随图片一起发的提示——它**是承重的**：模型会先调 `attachment_list`，
+    看到图片 `textChars=0` 就推断"文件空的/坏的"并**拒绝看图**（2026-09-22 真机实录：
+    「看不出颜色——这个文件只有 168 字节、textChars=0，像是空文件或损坏的图」，
+    而像素明明就在上下文里）。所以提示里必须明说"像素在下面、别拿元数据当结论"。
+    """
     row = upload("conv-d", "截图.png", tiny_png())
     history = _history("conv-d", [
         ("user", "看看这张图 " + store.reference_marker(row)),
@@ -268,6 +274,11 @@ def test_image_attachment_becomes_an_image_part_in_the_newest_turn() -> None:
     assert "image_url" in kinds, kinds
     url = next(p for p in content if p["type"] == "image_url")["image_url"]["url"]
     assert url.startswith("data:image/png;base64,"), url[:40]
+    note = "\n".join(p.get("text", "") for p in content)
+    assert "见图" in note and "图片" in note, note
+    assert "能不能读" not in note and "textChars" not in note, (
+        "提示里不要提起'能不能读'——2026-09-22 实测：带这层解释的那版提示之后，"
+        "模型当轮就回「看不出颜色……像是空文件或损坏的图」（把念头递给了它）")
 
 
 def test_document_attachment_inlines_text_and_coordinates(tmp_path: Path) -> None:
@@ -296,9 +307,40 @@ def test_older_turns_do_not_resend_the_file(tmp_path: Path) -> None:
     old_text = "\n".join(p.get("text", "") for p in old_parts)
     assert not any(p["type"] == "image_url" for p in old_parts), (
         "历史轮重发了图片（每轮都要重发一遍 ⇒ 账单与上下文一起爆）")
-    assert "更早的轮次" in old_text and first["id"] in old_text, old_text
+    assert "你在那一轮看过它的像素" in old_text and first["id"] in old_text, old_text
     assert isinstance(newest, list) and any(p["type"] == "image_url" for p in newest)
     assert second["id"] in "\n".join(p.get("text", "") for p in newest)
+
+
+def test_older_image_note_must_not_tell_the_model_it_never_saw_it() -> None:
+    """旧轮次的图片引用话术：**不能说成"内容没有发过"**（2026-09-22 真机联调抓到）。
+
+    现场实录：模型答对了纯蓝色块与黑方块，第三轮却**主动撤回**——
+    「前两轮关于色块和形状的图片，我并没有真的读取附件内容，回答是瞎猜的」。
+    原因是旧轮那句与文档共用的话术写着「已交过你、**正文**没有重复发送、要看内容用
+    `attachment_read`」：图片没有"正文"，而 `attachment_read` 也给不了像素
+    ⇒ 模型读到的是"我从来没见过这张图"，于是把**自己正确的感知**否掉了。
+
+    判据（两条，都是可执行的字符串断言）：① 图片的旧轮提示必须说清"**你当时看过**、
+    现在看不到细节、要再看请让用户重贴"；② 不许把 `attachment_read` 说成能看图，
+    也不许出现「正文没有重复发送」这种对图片不成立的措辞。
+    """
+    att = upload("conv-note", "旧图.png", tiny_png())
+    history = _history("conv-note", [
+        ("user", "第一张 " + store.reference_marker(att)),
+        ("assistant", "蓝色"),
+        ("user", "再看看这个表格"),
+    ])
+    old = history[0]["content"]
+    text = "\n".join(p.get("text", "") for p in (old if isinstance(old, list) else []))
+
+    assert "看过它的像素" in text, text
+    assert "重新贴" in text, text
+    assert "正文没有重复发送" not in text, (
+        "这句话对图片不成立（图片没有正文），模型会据此否掉自己刚才的答案")
+    assert "attachment_read" not in text or "给不了像素" in text, (
+        "不许把 attachment_read 说成能看图——它只回文件名与类型")
+
 
 
 def test_estimate_tokens_counts_the_image() -> None:
@@ -355,6 +397,20 @@ def test_attachment_list_shows_only_this_conversation() -> None:
     payload = _call_tool("attachment_list", {}, "conv-g1")
     names = [a["name"] for a in payload["attachments"]]
     assert names == ["甲.md"], names
+
+
+def test_attachment_list_tells_the_model_images_have_no_text_but_are_visible() -> None:
+    """`attachment_list` 里图片那条必须自带"没有文本 ≠ 读不出"（2026-09-22 真机实录）。
+
+    模型看到 `textChars: 0` 会推断"这个是空文件/损坏的图"，于是**拒绝看图**——
+    实录回答「看不出颜色——这个文件只有 168 字节、textChars=0，像是空文件或损坏的图」，
+    而同一会话的下一问它又答对了"正方形"（说明像素确实在）。**工具回什么，模型就信什么**，
+    所以这句话必须由工具自己说清，不能指望模型去猜。
+    """
+    upload("conv-g3", "证据.png", tiny_png())
+    row = _call_tool("attachment_list", {}, "conv-g3")["attachments"][0]
+    assert row["kind"] == "image" and row["textChars"] == 0
+    assert "像素" in row["note"] and "不要用本工具判断" in row["note"], row["note"]
 
 
 def test_cross_conversation_read_is_refused() -> None:

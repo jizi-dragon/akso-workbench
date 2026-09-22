@@ -98,6 +98,18 @@ def _attachment_parts(att_id: str, name: str, *, inline: bool) -> list[dict]:
              f"（{parsing.type_label(parsing.extension_of(str(att.get('name'))))}，"
              f"{(int(att.get('bytes') or 0)) / 1024:.0f} KB）")
     if not inline:
+        # 旧轮次的那句话**必须按类型分开写**（2026-09-22 真机联调抓到）：
+        # 原来图片与文档共用一句「已交过你、正文没有重复发送、要看内容用 attachment_read」，
+        # 而**图片根本没有"正文"可读**——模型读到这句会得出"我那时并没有真的看到它"，
+        # 于是在下一轮**主动撤回自己刚才答对的内容**：真机实录「前两轮关于色块和形状的图片，
+        # 我并没有真的读取附件内容，回答是瞎猜的」。它答对了（纯蓝 / 正方形都不是能猜出来的），
+        # 这句提示却让它把自己的正确感知否掉——**一句不准确的引用话术，代价是用户对整条链的信任**。
+        if att.get("kind") == "image":
+            return [{"type": "text", "text":
+                     f"[附件 {att_id}：{label} —— **你在那一轮看过它的像素**，本轮不重复发送"
+                     "（同一张图每轮重发会让账单和上下文一起涨）。现在你看不到它的细节了；"
+                     "确实需要再看一次，就告诉用户把这张图**重新贴一遍**"
+                     "（`attachment_read` 只能给出文件名与类型，给不了像素）。]"}]
         return [{"type": "text", "text":
                  f"[附件 {att_id}：{label} —— 这份文件在**更早的轮次**里已交给过你，"
                  "正文没有重复发送。要看内容用 `attachment_read`（可按页 / 工作表 / 行范围取），"
@@ -112,7 +124,13 @@ def _attachment_parts(att_id: str, name: str, *, inline: bool) -> list[dict]:
 
         mime = str(att.get("mime") or "image/png")
         return [
-            {"type": "text", "text": f"[附件 {att_id}：{label} —— 这是用户交上来的图片，直接看它]"},
+            # 这句提示要**短、且不要提起"能不能读"**（2026-09-22 真机量的）：
+            # 曾经写过一版带解释的长句（"不要用 attachment_list 的 textChars 判断它能不能读…"），
+            # 结果那一轮的回答变成「看不出颜色——这个文件只有 168 字节、textChars=0，
+            # 像是空文件或损坏的图」——**提示自己把"读不出"这个念头递给了模型**。
+            # 现在只留一句正向指令；"图片没有文本、像素直接在下面"那句挪进了
+            # `attachment_list` 的输出里（只有模型真的去调那个工具时才会看到）。
+            {"type": "text", "text": f"[附件 {att_id}：{label} —— 用户交上来的图片，见图]"},
             {"type": "image_url",
              "image_url": {"url": f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"}},
         ]

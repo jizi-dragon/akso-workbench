@@ -703,6 +703,28 @@
   margin-left: 6px;
 }
 
+/* —— 消息里那一条附件（"我发过哪几个文件"）——
+ * 与输入框上方那条是**同一个 chip 形状**（.attach-chip），只是位置在气泡里、且是 `<a>`
+ * （点开看原文件）。2026-09-22 补：服务端的 `attachment` 事件此前前端**没人接**，
+ * 于是用户发完文件后消息里看不出带了什么；刷新后更糟——库里存的是
+ * `[附件 att-8b763c25：编制.xlsx]` 这种给模型用的记号，会原样显示成一串乱码。 */
+.msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.msg-attach {
+  text-decoration: none;
+  max-width: 260px;
+}
+
+.msg-attach:hover {
+  border-color: var(--sky);
+}
+
 .composer {
   max-width: 860px;
   margin: 0 auto;

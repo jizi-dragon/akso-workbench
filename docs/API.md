@@ -457,6 +457,11 @@ autologin, has_token, monitoring, monitor_log}`；
 ```
 （前置）若未配置 API Key： {"type":"error","message":"请先在设置中配置 DeepSeek API Key。"} → {"type":"done"}
 {"type":"start","conversationId":"..."}
+{"type":"attachment","attachmentId":"att-xxxxxxxx","name":"编制.xlsx"}   ← 0..N 条，紧跟在 start 之后
+                                         每个"这一轮真的带上了的附件"一条（顺序 = 标记顺序）。
+                                         界面靠它把 chip 画进「我」那条消息里
+                                         ——与库里那条正文上的 `[附件 att-…：名]` 标记
+                                         是**同一件事的两种呈现**（刷新后由标记画回来）。
 {"type":"token","text":"..."}            ← 0..N 次（增量正文）
 {"type":"thought","text":"..."}          ← 可选：模型在工具调用前的说明
 {"type":"action","call":{"id","name","arguments"},          ← 工具调用（每次一条）

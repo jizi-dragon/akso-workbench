@@ -224,8 +224,15 @@ def main() -> int:
                              (history2[0]["content"] if isinstance(history2[0]["content"], list)
                               else [{"type": "text", "text": history2[0]["content"]}]))
         new_text = "\n".join(p.get("text", "") for p in history2[-1]["content"])
-        check("D3 历史轮不重发（只留一句引用）",
-              "更早的轮次" in old_text and "image_url" not in json.dumps(history2[0], ensure_ascii=False))
+        # ⚠️ 旧轮那句引用是**按类型分写**的（2026-09-22，PITFALLS #89）：图片说"你当时看过像素"，
+        # 文档说"这份文件更早给过你"。原来两者共用一句话，图片那条被模型读成
+        # "我从来没见过这张图"，于是它**撤回自己刚答对的答案**。
+        # 所以这里要分别断言，不能只找"更早的轮次"那四个字。
+        check("D3 历史轮不重发（图片说清「看过像素」、且不带 image_url）",
+              "看过它的像素" in old_text
+              and "更早的轮次" not in old_text
+              and "image_url" not in json.dumps(history2[0], ensure_ascii=False),
+              old_text[:200])
         check("D4 最新轮的文档正文与坐标都进了上下文",
               "培训结束" in new_text and "坐标目录" in new_text, new_text[:200])
 

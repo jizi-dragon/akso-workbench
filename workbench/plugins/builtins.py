@@ -302,12 +302,26 @@ async def attachment_list(_: BaseModel, ctx: pa.ToolContext) -> str:
 
     def run() -> list[dict[str, Any]]:
         rows = store.list_for(str(ctx.conversation_id or ""))
-        return [{
-            "id": r.get("id"), "name": r.get("name"), "kind": r.get("kind"),
-            "bytes": r.get("bytes"), "status": r.get("status"),
-            "textChars": r.get("text_chars"), "note": r.get("parse_note") or "",
-            "locator": store.locator(r),
-        } for r in rows]
+        out = []
+        for r in rows:
+            kind = str(r.get("kind") or "")
+            row = {
+                "id": r.get("id"), "name": r.get("name"), "kind": kind,
+                "bytes": r.get("bytes"), "status": r.get("status"),
+                "textChars": r.get("text_chars"), "note": r.get("parse_note") or "",
+                "locator": store.locator(r),
+            }
+            # ⚠️ 图片**必须自带一句"没有文本不等于读不出"**（2026-09-22 真机实测）：
+            # 模型看到 `textChars: 0` 会推断"这个文件是空的/损坏的"，然后**拒绝看图**
+            # ——实录「看不出颜色 —— 这个文件只有 168 字节、textChars=0，像是空文件或损坏的图」，
+            # 而像素其实就在它的上下文里（同一轮的下一问它又答对了"正方形"）。
+            # 工具回什么，模型就信什么；这里少一句话，代价是整条图片链路看起来是坏的。
+            if kind == "image":
+                row["note"] = (f"{row['note']} 图片没有可提取文本（`textChars` 恒为 0）；"
+                               "它的**像素直接随消息给你看**，能看就直接答，"
+                               "不要用本工具判断它是否有效。").strip()
+            out.append(row)
+        return out
 
     rows = await asyncio.to_thread(run)
     return json.dumps({"total": len(rows), "attachments": rows}, ensure_ascii=False, default=str)

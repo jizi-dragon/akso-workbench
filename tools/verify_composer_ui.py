@@ -27,6 +27,7 @@ r"""输入区的**真渲染**验证：模型名在发送键旁、下方那行用
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import pathlib
@@ -190,26 +191,64 @@ def boot(env: dict, log: pathlib.Path):
     return proc, handle, False
 
 
-# —— SSE 夹具：与 `harness/loop.py` 发出的**同一批事件、同一批键** ——
-# `usage` 的四个键逐字抄自 `_context_usage()`；键名写错时前端只会安静地显示「—」，
-# 所以夹具里的形状必须由后端那侧的用例来钉（见模块 docstring）。
-SSE_FIXTURE = "".join(
-    "data: " + json.dumps(ev, ensure_ascii=False) + "\n\n"
-    for ev in [
-        {"type": "status", "message": "生成中"},
-        {"type": "token", "text": "收到。"},
-        {"type": "final", "content": "收到。"},
-        {"type": "usage", "usage": {
-            "calls": 1, "promptTokens": 65536,
-            "cacheHitTokens": 65000, "cacheMissTokens": 536,
-            "completionTokens": 12, "reasoningTokens": 0,
-            "hitRate": 0.9918, "summaryCalls": 0,
-            "contextTokens": 65536, "contextWindow": 131072,
-            "contextThreshold": 0.8, "contextRatio": 0.5,
-        }},
-        {"type": "done", "metricId": "m-verify", "titleUpdated": False},
-    ]
-)
+# —— SSE 夹具：与 `routes_chat._chat_events` 发出的**同一批事件、同一批键、同一顺序** ——
+# `start` 必须在最前面：前端在它里面拿到 `conversationId` 并清空附件条
+# （第一版夹具漏了它 ⇒ 发完消息附件条不走，J7 直接红——夹具不忠实，测试就会撒谎）。
+# `attachment` 逐条跟着 `start`（服务端就是在这里告诉界面"这几个文件跟着这条消息走了"）。
+# `usage` 的四个键逐字抄自 `harness/loop.py::_context_usage()`；键名写错时前端只会安静地
+# 显示「—」，所以夹具里的形状必须由后端那侧的用例来钉（见模块 docstring）。
+SSE_EVENTS = [
+    {"type": "start", "conversationId": "{conv}"},
+    {"type": "status", "message": "生成中"},
+    {"type": "token", "text": "收到。"},
+    {"type": "final", "content": "收到。"},
+    {"type": "usage", "usage": {
+        "calls": 1, "promptTokens": 65536,
+        "cacheHitTokens": 65000, "cacheMissTokens": 536,
+        "completionTokens": 12, "reasoningTokens": 0,
+        "hitRate": 0.9918, "summaryCalls": 0,
+        "contextTokens": 65536, "contextWindow": 131072,
+        "contextThreshold": 0.8, "contextRatio": 0.5,
+    }},
+    {"type": "done", "metricId": "m-verify", "titleUpdated": False},
+]
+
+
+def sse_fixture(conversation_id: str, attachments: list[tuple[str, str]]) -> str:
+    """把事件拼成 SSE 正文。
+
+    两处必须是**真的**，否则测试会撒谎：
+    - `conversationId`：前端拿到它就去 `/api/agent/cache?conversationId=…` 取本会话累计，
+      填个假 id 会让用量行当场变回「—」（H7 红——那是夹具的错，不是产品的错）；
+    - `attachment`：真实 `_chat_events` 是**逐个附件**发一条（`for att_id, name in
+      iter_markers(user_text)`），漏掉它们等于把"界面能画出附件"从测试里挖掉。
+    """
+    events = [{k: (conversation_id if v == "{conv}" else v) for k, v in ev.items()}
+              for ev in SSE_EVENTS]
+    start = events[0]
+    rest = events[1:]
+    markers = [{"type": "attachment", "attachmentId": aid, "name": name}
+               for aid, name in attachments]
+    return "".join("data: " + json.dumps(ev, ensure_ascii=False) + "\n\n"
+                   for ev in [start, *markers, *rest])
+
+
+def tiny_png() -> bytes:
+    """8×8 纯红 PNG：走**真**上传链路（服务端会验魔数），且足够小。"""
+    import struct
+    import zlib
+
+    size = 8
+    raw = b"".join(b"\x00" + b"\xff\x00\x00" * size for _ in range(size))
+
+    def chunk(tag: bytes, payload: bytes) -> bytes:
+        return (struct.pack(">I", len(payload)) + tag + payload
+                + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw))
+            + chunk(b"IEND", b""))
 
 
 def main() -> int:
@@ -259,11 +298,20 @@ def main() -> int:
             page = browser.new_page(viewport={"width": 1180, "height": 820},
                                     device_scale_factor=4)
             errors: list[str] = []
+            sent_bodies: list[str] = []
+            # SSE 夹具要用的"这一轮到底带了哪几个附件"——上传完成之后才填得上，
+            # 所以用一个可变容器给路由闭包读（路由在页面加载前就注册了）
+            feed: dict[str, list[tuple[str, str]]] = {"attachments": []}
             page.on("pageerror", lambda e: errors.append(str(e)))
-            # 拦截 SSE：**只拦这一条**，其余请求照常打到真服务（静态资源、/api/agent/cache 都是真的）
-            page.route("**/api/chat/stream", lambda route: route.fulfill(
-                status=200, headers={"Content-Type": "text/event-stream"},
-                body=SSE_FIXTURE))
+
+            # 拦截 SSE：**只拦这一条**，其余请求照常打到真服务（静态资源、/api/agent/cache
+            # 都是真的）。顺带把**请求体**留下来——J5 要证的就是"附件 id 真在里面"。
+            def _fake_stream(route) -> None:
+                sent_bodies.append(route.request.post_data or "")
+                route.fulfill(status=200, headers={"Content-Type": "text/event-stream"},
+                              body=sse_fixture(conv_id, feed["attachments"]))
+
+            page.route("**/api/chat/stream", _fake_stream)
             page.goto(f"{BASE}/", wait_until="networkidle")
             page.wait_for_selector("#conversation-list .conversation-title", timeout=15000)
 
@@ -355,6 +403,165 @@ def main() -> int:
                   and "3.0k" in page.locator("#usage-cache").inner_text(),
                   f"rate={page.locator('#usage-rate').inner_text()} "
                   f"cache={page.locator('#usage-cache').inner_text()}")
+
+            print("=== J. 三条输入入口：不是「源码里有」，而是**真的能把文件送进请求体** ===")
+            # 目标①（用户 2026-09-22 下达的三条保障之一）此前只有**静态**判据
+            # （`verify_attachments.py` 的 A1–A5 在源码里找字样）。而"按钮在场"与
+            # "粘贴真的能收文件"是两件事——同 PITFALLS #87 的教训。这一组走**真手势**：
+            # 真点按钮（expect_file_chooser）、真派发 paste/drop（带真 File 对象的 DataTransfer），
+            # 再按发送，然后**读拦截下来的请求体**，断言 `attachmentIds` 真在里面。
+            sent_bodies.clear()
+
+            # ① 按钮：点它必须弹出文件选择器，选中的文件必须走完上传
+            with page.expect_file_chooser() as chooser_info:
+                page.click("#btn-attach")
+            chooser_info.value.set_files({"name": "规则.md", "mimeType": "text/markdown",
+                                          "buffer": "# 报销规则\n第一条：培训结束 3 日内提交。\n".encode()})
+            # 等**那一个** chip：附件条上先出现的是「◌ 正在上传解析 1 个…」，
+            # 按 `.attach-name` 的第一个去断言会抓到它（第一版就是这么假红的）
+            page.wait_for_function(
+                "() => [...document.querySelectorAll('.attach-chip')]"
+                ".some((c) => c.querySelector('.attach-name')?.textContent === '规则.md'"
+                " && c.querySelector('.attach-meta')?.textContent.includes('已解析'))",
+                timeout=15000)
+            check("J1 按钮入口：点「📎 附件」真的弹选择器，选中的文件进附件条且显示解析状态",
+                  page.locator(".attach-chip .attach-name").first.inner_text() == "规则.md",
+                  page.locator(".attach-chip").first.inner_text().replace("\n", " / "))
+
+            # ② 粘贴：**截图之后最自然的动作**——所以这里粘的就是一张真 PNG
+            # （不是 md：真实用法里 Ctrl+V 粘的多半是截图，而图片走的是另一条分支：
+            #   `image_url` part + 缩略图 chip）
+            pasted = page.evaluate(
+                """(b64) => {
+                  const bin = atob(b64);
+                  const bytes = new Uint8Array(bin.length);
+                  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+                  const dt = new DataTransfer();
+                  dt.items.add(new File([bytes], "截图.png", {type: "image/png"}));
+                  const input = document.getElementById('composer-input');
+                  return input.dispatchEvent(new ClipboardEvent('paste',
+                    {clipboardData: dt, bubbles: true, cancelable: true}));
+                }""",
+                base64.b64encode(tiny_png()).decode(),
+            )
+            page.wait_for_function(
+                "() => [...document.querySelectorAll('.attach-name')]"
+                ".some((el) => el.textContent === '截图.png')", timeout=15000)
+            # `dispatchEvent` 返回 false ⇔ handler 调了 `preventDefault`：
+            # 不调的话浏览器会把**文件名当成文字**插进输入框，用户会看到一串乱码夹在问题里
+            check("J2 粘贴入口：粘贴的**图片**真的被收下，且 preventDefault 生效"
+                  "（文件名没被塞进输入框）",
+                  pasted is False, f"dispatchEvent → {pasted}")
+
+            # ③ 拖拽：dragover 要有视觉反馈，drop 要真的收下
+            dragged = page.evaluate(
+                """() => {
+                  const dt = new DataTransfer();
+                  dt.items.add(new File(["姓名,部门\\n张三,研发部"], "拖进来的.csv",
+                                        {type: 'text/csv'}));
+                  const wrap = document.getElementById('composer-wrap');
+                  wrap.dispatchEvent(new DragEvent('dragover',
+                    {dataTransfer: dt, bubbles: true, cancelable: true}));
+                  const highlighted = wrap.classList.contains('is-dropping');
+                  wrap.dispatchEvent(new DragEvent('drop',
+                    {dataTransfer: dt, bubbles: true, cancelable: true}));
+                  return {highlighted, cleared: !wrap.classList.contains('is-dropping')};
+                }"""
+            )
+            page.wait_for_function(
+                "() => [...document.querySelectorAll('.attach-name')]"
+                ".some((el) => el.textContent === '拖进来的.csv')", timeout=15000)
+            check("J3 拖拽入口：拖进来有高亮、松手后收起，并且文件真的进附件条",
+                  dragged["highlighted"] and dragged["cleared"], str(dragged))
+            check("J4 三条入口的文件都在附件条里（3 个）",
+                  page.locator(".attach-chip").count() == 3,
+                  f'{page.locator(".attach-chip").count()} 个')
+
+            # 发送 → 读**拦截下来的请求体**：这才是"能正常输入"的终点。
+            # 先把附件清单取回来喂给 SSE 夹具：真实的 `_chat_events` 是**逐个附件**发
+            # `attachment` 事件的（`for att_id, name in iter_markers(user_text)`），
+            # 夹具漏了那几个事件，就等于把"界面能画出附件"这件事从测试里挖掉了。
+            listed = client.get("/api/attachments",
+                                params={"conversationId": conv_id}).json()
+            feed["attachments"] = [(a["id"], a["name"]) for a in listed["attachments"]]
+            page.fill("#composer-input", "看看这三个文件")
+            page.click("#btn-send")
+            page.wait_for_timeout(1500)
+            body = json.loads(sent_bodies[-1]) if sent_bodies else {}
+            ids = body.get("attachmentIds") or []
+            check("J5 发送时三条入口的文件都进了请求体（attachmentIds 3 个）",
+                  len(ids) == 3, json.dumps(body, ensure_ascii=False)[:200])
+            check("J6 服务端为这三个文件真的落了盘（按会话查得到）",
+                  listed.get("total") == 3
+                  and {a["name"] for a in listed["attachments"]}
+                  == {"规则.md", "截图.png", "拖进来的.csv"},
+                  json.dumps(listed, ensure_ascii=False)[:200])
+            check("J7 发送之后附件条清空（它们已经绑在那条消息上了）",
+                  not page.locator("#attach-strip").is_visible())
+
+            # 「我发过哪几个文件」必须留在消息里 —— 这是 `attachment` 事件存在的唯一理由，
+            # 而前端此前**没人接它**（2026-09-22 由这一组查出来）。
+            live_names = page.locator(".message-row.user .msg-attach .attach-name").all_inner_texts()
+            check("J8 消息气泡里画出这三个附件（服务端的 attachment 事件被接住了）",
+                  sorted(live_names) == ["截图.png", "拖进来的.csv", "规则.md"],
+                  str(live_names))
+            check("J9 图片给缩略图、文档给文件图标（两种 chip 都画对了）",
+                  page.evaluate(
+                      "() => {const c=[...document.querySelectorAll('.message-row.user .msg-attach')];"
+                      " return {thumbs: c.filter(x=>x.querySelector('img.attach-thumb')).length,"
+                      " glyphs: c.filter(x=>x.querySelector('.attach-glyph')).length};}"
+                  ) == {"thumbs": 1, "glyphs": 2},
+                  page.evaluate("() => [...document.querySelectorAll('.message-row.user .msg-attach')]"
+                                ".map(x=>x.textContent).join(' | ')"))
+
+            # 刷新后由库里那条带标记的消息画回来：标记**不能**漏成原文（`[附件 att-…]`）。
+            # 这里要**放开拦截**、走真服务端：标记是 `_chat_events` 写进库的（`_request_history`），
+            # 而被拦下来的那一轮**根本没到服务端**，库里干干净净——那样这条判据就成了空转。
+            # 临时库里那把 Key 是假的 ⇒ 模型调用会立刻 401，不花一分钱 token。
+            print("=== K. 刷新之后：库里只有标记，界面必须画回 chip ===")
+            page.unroute("**/api/chat/stream")
+            page.set_input_files("#attach-input", [
+                {"name": "拍照.png", "mimeType": "image/png", "buffer": tiny_png()},
+                {"name": "附件说明.md", "mimeType": "text/markdown",
+                 "buffer": "# 说明\n这条是给刷新后那条判据用的。\n".encode()},
+            ])
+            page.wait_for_function(
+                "() => ['拍照.png','附件说明.md'].every((n) =>"
+                " [...document.querySelectorAll('.attach-name')].some((el) => el.textContent === n))",
+                timeout=15000)
+            page.fill("#composer-input", "这一轮走真服务端（验证标记落库）")
+            page.click("#btn-send")
+            page.wait_for_function(
+                "() => document.getElementById('chat-running-badge').hidden === true", timeout=60000)
+            msgs = client.get(f"/api/conversations/{conv_id}/messages").json()["messages"]
+            stored = [m["content"] for m in msgs if m["role"] == "user"][-1]
+            check("K1 服务端把这两个附件写成了标记（库里存的是 `[附件 att-…：名]`）",
+                  stored.count("[附件 ") == 2 and "att-" in stored,
+                  stored.replace("\n", " ⏎ ")[:200])
+
+            page.reload(wait_until="networkidle")
+            page.wait_for_selector("#conversation-list .conversation-title", timeout=15000)
+            page.click("#conversation-list .conversation-title")
+            page.wait_for_selector(".message-row.user .msg-attach", timeout=15000)
+            bubble = page.locator(".message-row.user .bubble-user").last.inner_text()
+            names = page.locator(".message-row.user .msg-attach .attach-name").all_inner_texts()
+            hrefs = page.evaluate(
+                "() => [...document.querySelectorAll('.message-row.user .msg-attach')]"
+                ".map((a) => a.getAttribute('href'))")
+            shapes = page.evaluate(
+                "() => {const c=[...document.querySelectorAll('.message-row.user .msg-attach')];"
+                " return {thumbs: c.filter(x=>x.querySelector('img.attach-thumb')).length,"
+                " glyphs: c.filter(x=>x.querySelector('.attach-glyph')).length};}")
+            check("K2 刷新后画回 2 个 chip（图片 + 文档），气泡里没有 `[附件 …]` 原文",
+                  sorted(names) == ["拍照.png", "附件说明.md"]
+                  and "附件 att-" not in bubble and "[附件" not in bubble,
+                  f"names={names} bubble={bubble!r}")
+            check("K3 chip 指向**真附件**（href 是各自的 id），且图片给缩略图、文档给图标",
+                  len(set(hrefs)) == 2
+                  and all(h and h.startswith("/api/attachments/att-") for h in hrefs)
+                  and shapes == {"thumbs": 1, "glyphs": 1},
+                  f"hrefs={hrefs} shapes={shapes}")
+            page.screenshot(path=str(ROOT / "tmp" / "composer-attachments.png"), full_page=False)
 
             print("=== I. 用户抱怨过的那件事：字号 ===")
             size = page.evaluate(
