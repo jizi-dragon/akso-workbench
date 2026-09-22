@@ -194,6 +194,9 @@ gws doctor                                # ⚠️ 只能当信息：它的退�
 | ⑬ | **授权窗口只有 60 秒**（`⏳ 等待浏览器授权（60 秒超时）`），且**超时后没有重试提示** | `gws auth authorize -o` 的输出 |
 | ⑭ | **`config test` 对 HTTP 418 也报「✔ 连接成功」** ⇒ 它只判"有没有响应"，不判"是不是平台"。本机实测 tonbridge 回 **418** 仍显示成功 | `gws config test`（对 `https://tonbridge-config.aksoegmp.com`） |
 | ⑮ 🔴 | **Windows Defender 把 `gws.exe` 判为 `Trojan:Win32/Bearfoos.A!ml`**（ML 启发式，严重级别 5）。实测后果：`%LOCALAPPDATA%\gws\gws.exe` **被隔离删除**，`%APPDATA%\…\runtime\gws\gws.exe` 仍在但**无法执行**（Python `subprocess` 报 `OSError [WinError 225]`）。**无论真假阳性，这都使该二进制当前不能作为产品依赖** | `Get-MpThreat \| Where ThreatID -eq 2147731250`；以及用 `subprocess` 起它 |
+| ⑯ 🔴 | **请求日志会把整份响应体写盘，且不设上限**：一次只读探针（47 类 `list` + 若干 `show`）之后，`~/.gws/logs/requests-<日期>.jsonl` = **117 MB / 42 行**，继续查询后涨到 **198 MB**。默认 `log.max_days=3` ⇒ 不做任何事也会累积到 GB 级。只有**请求体**受 `log.request_max_body`（4096）约束，**响应体不受约束** | 看 `~/.gws/logs/` 的大小 vs 行数 |
+| ⑰ 🔴 | **`~/.gws/config.yaml` 把 `app_secret` 明文落盘**（`config set-app` 的正常行为，非 bug）。这与 [ADR-0007](adr/0007-credentials-never-plaintext.md)「凭据全程密文、明文只在内存」**直接冲突**；而 ⑪ 又让它连带进日志。⇒ 决策卡 **C2** 因此不是"偏好问题"，是**能不能用 CLI 自带配置**的问题 | 看 `~/.gws/config.yaml` 的键（值长度 32 = secret） |
+| ⑱ ⚠️ | **`select_columns` 是直接拼进 SQL 的**：传一个不存在的列名，回的是 **PostgreSQL 原生错误** `code=500, 42703: column "controls" does not exist` + `POSITION: 11`。两条含义：① 内部数据库错误直接透给 API 客户端；② **参数走 SQL 拼接** ⇒ 存在注入面（**我没有做任何注入测试**——那属于攻击行为，应报给研发自查） | `component instance query --data '{"component_type":"layout","select_columns":["id","controls"]}'` |
 
 > **⑮ 是本次评估最重要的一条**：未签名 + 被 Defender 判毒 = 终端用户装上去会被拦、会被隔离，
 > 而**失败形态是"程序起不来"**，与"我们的代码写错了"长得一模一样。
@@ -225,8 +228,8 @@ gws doctor                                # ⚠️ 只能当信息：它的退�
 | M0 | 分支建立 + 适配层 + 只读探针 + 单测 | `pytest tests/test_gws_client.py -o addopts=""` 全绿 | ✅ **2026-09-22 完成** |
 | M4 | **接入 `migration export/import/deploy`**（与 component schema 无关） | 三跳按 §3.1 实现；`import` 起进程前 Fail-Closed；`deploy` 不编返回值 ⇒ 见 §4.0 | ✅ **2026-09-22 完成**（适配层级；**尚未接成 Agent 工具、未真机验**） |
 | M1 | **拿到 AppId/SecretKey，跑通 S1（组件类型全表）** | `tools/probe_gws.py` 产出 `component-metadata.json`，类型数 > 0 | ✅ **2026-09-22 完成**：**47** 个组件类型，见 §10 |
-| M2 | **S5b 判出结论（§5 的 A / B / C）** | `SUMMARY.md` 里出现 `S5b · 判定` 段与三组数字（交集 / 仅参考侧 / 仅候选侧） | ✅ **2026-09-22 完成**：判定 **B（但理由与字面不同）**，见 §10.2 |
-| M3 | 按 M2 结论决定改造面，并更新本文档 | 本文档 §5 的结局被标注为已判定 | ⬜ **需要一次真机写入才能定案**（见 §10.3） |
+| M2 | **S5b 判出结论（§5 的 A / B / C）** | `SUMMARY.md` 里出现 `S5b · 判定` 段与三组数字（交集 / 仅参考侧 / 仅候选侧） | ✅ **2026-09-22 完成**：见 §10.2（整份体，B）与 **§11（元素层，部分 A / 控件 B）** |
+| M3 | 按 M2 结论决定改造面，并更新本文档 | 本文档 §5 的结局被标注为已判定 | 🟡 **读侧已定案**（§11.3：可迁移，代价 = 命名转换 + 映射表 + 结构改写）；**写体形状仍需一次真机写入**（C6） |
 | M5 | 把 `migration` 三跳接成 Agent 工具（`Risk` 分级 + 确认门） | 按铁律 6/9：`deploy` 必须 `DANGEROUS` 且过门 | ⬜ 待 M3 |
 
 > **M4 已完成的部分与未完成的部分要说清**：适配层的方法、Fail-Closed、单测都在了；
@@ -321,3 +324,66 @@ gws doctor                                # ⚠️ 只能当信息：它的退�
 `test_config_from_env_ignores_none_overrides`）。**A1 的教训值得单独记**：
 "同一个命令族里两种响应形状并存"（`component metadata list` 回信封、`component instance show` 回裸对象）
 ⇒ **不能靠"这个命令回什么"来记，只能按载荷形状判**，并且判定要选 fail-closed 的那一侧。
+
+---
+
+## 11. ★★ 元素层对照：**这才是对的比法，而且它推翻了 §10.2 的 B**
+
+> **2026-09-22 第二轮真机**（token 有效期内）。命令：
+> `tools/probe_gws.py --element "layout_control=controls,layout_section=sections"`
+
+### 11.1 关键发现：`section` / `control` 是**独立的组件类型**，只是名字不同
+
+`component metadata list` 的 47 类里**没有** `section` / `control`，
+但二进制字符串里出现过这两个 token。实测它们存在，只是叫别的名字：
+
+| 探测的词 | 结果 |
+|---|---|
+| `section` / `control` / `field` / `menu` / `report` | ❌ 都不存在 |
+| **`layout_section`** | ✅ **3569 个实例 / 69 列** |
+| **`layout_control`** | ✅ **14062 个实例 / 35 列** |
+| **`lifecycle_status`** | ✅ **3433 个实例 / 18 列** |
+
+⇒ **component 模型的结构与工厂完全不同**：
+
+| 工厂的写入体 | component 模型 |
+|---|---|
+| 一份 17 键的 `SaveLayoutDetail`，`sections[]` / `controls[]` **嵌在里面** | `layout`（壳）+ N 个 `layout_section` + N 个 `layout_control`，**三张独立的表** |
+| 靠 `GetStableComponentIds` 把客户端 UUID 换成服务端 id | 每个组件独立 save，id 由平台给 |
+| 控件用 `sectionId` 指父部分 | 控件用 **`section_code`** / **`layout_full_path`** 指父（**引用改成编码**） |
+
+### 11.2 逐元素对照结果
+
+| 层 | 裸 Jaccard | **归一后 Jaccard** | **参考侧覆盖** | 判定 |
+|---|---:|---:|---:|---|
+| **部分** 录制 `sections[]` ←→ `layout_section` | 0.10 | **0.66** | **0.84** | **A** ✅ |
+| **控件** 录制 `controls[]` ←→ `layout_control` | 0.16 | **0.49** | **0.83** | **B** |
+
+**差异分类**（`shape.explain_gap` 自动分好，这是它存在的理由）：
+
+| 类 | 部分 | 控件 |
+|---|---|---|
+| **已知映射**（查表即可） | `attrs → attrs_json`（序列化）、`relationFilter → relation_filter_json`（序列化） | `attrs → attrs_json`、`externalDataConfig → external_data_config_json`（序列化） |
+| 候选侧行元数据（写侧通常不用发） | `created_by` / `modified_by` / `full_path` … 8 个 | 同左 |
+| **真正需要查的** | **10 个**，全是**关系型字段**（`referenceFieldCode` / `relationFilter` / `isSimpleRelation` / `m2mRelationB2CId` / `linkageField` …） | **4 个**：`dataType`、`sectionId`（→ `section_code`，已知）、其余两个已在已知映射里 |
+| 候选侧多出来的实质列 | `page_code` / `is_ghost` / `life_cycle_node_id` / `should_copy_members` | **`width`** / `help_message` / `clear_value` / `field_value` |
+
+### 11.3 三条结论（**推翻 §10.2**）
+
+1. **不是"另一套模型"，是"同一套模型 + 一次机械映射"。**
+   部分层归一后 **A**；控件层 B，但"真正需要查的"只剩 **1 个**（`dataType`）。
+2. **`dataType` 的缺失其实是一个改进**：component 模型里控件通过 `field_id` 关联字段，
+   类型信息**在字段上**。而工厂当年为它做了一整轮 D-D —— 把 `dataType` 翻译成
+   `AKInput` / `AKSelectorObject` 那套 **`AK*` 词表**。⇒ **新通道下那张表可能整个不需要了**
+   （但真机录到过 `controls[].type` 就是 `AK*`，所以要确认 component 侧 `type` 列取什么值 —— 这是**读侧可查**的）。
+3. **`width` 是工厂一直在缺的东西**：真机段 3 录到过"两处宽度改动"，而工厂的控件体里**没有宽度**；
+   `layout_control` 有 `width` 列 ⇒ 新通道**能表达**。
+
+⇒ **§5 的结局是 A/B 之间偏 A**：可迁移，代价是**一层命名转换 + 一张已知映射表 + 一次结构改写
+（嵌套体 → 三张表）**。这比"重新取证 F20–F66"便宜得多，但比"只改一个 URL"贵。
+
+### 11.4 仍然需要一次真机写入才能定的（决策卡 C6 缩小了）
+
+上面全部是**读侧**证据。仍然只有一件事读不出来：**`component instance save` 到底收什么形状的写体**
+——`instances[]` 里的键是 camelCase 还是 snake_case、`attrs` 是对象还是字符串、子组件是不是要分开 save。
+**写侧的读取接口给不出答案**（`select_columns` 传 `controls` 会报列不存在，见缺陷 ⑱）。

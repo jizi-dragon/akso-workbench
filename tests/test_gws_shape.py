@@ -25,6 +25,7 @@ from workbench.services.gws.shape import (
     VERDICT_ACTIONS,
     compare_shapes,
     diff_key_sets,
+    explain_gap,
     key_profile,
     normalize_key,
 )
@@ -224,6 +225,50 @@ def test_verdict_needs_both_similarity_and_coverage():
     d2 = diff_key_sets(ref2, cand2, scope="顶层")
     assert d2.recall_reference == 1.0
     assert d2.verdict == "B"
+
+
+def test_explain_gap_normalizes_before_deciding_what_is_missing():
+    """★ 回归：**先归一判缺，再对确实缺的做归因**。
+
+    2026-09-22 实测踩到：第一版拿**裸键集**做差，于是 `combinationDisplayFieldId`
+    （候选侧其实有 `combination_display_field_id`）被算进"真正需要查的"——
+    13 条里 9 条是假的。判据自己撒谎，而且撒得"看起来很专业"（一长串待查项）。
+    """
+    reference = {
+        "code", "name",                          # 逐字相同
+        "combinationDisplayFieldId",             # 归一后对得上
+        "gridSpan",                              # 归一后对得上
+        "attrs",                                 # 序列化变体
+        "sectionId",                             # 序列化变体（→ section_code，见下表）
+        "dataType",                              # 真缺
+    }
+    candidate = {
+        "code", "name", "combination_display_field_id", "grid_span",
+        "attrs_json", "section_code", "created_by", "modified_time", "width",
+    }
+    gap = explain_gap(reference, candidate)
+    assert gap["serialized"] == ["attrs → attrs_json（序列化）"]
+    assert gap["unexplained"] == ["dataType"], (
+        f"归一把对得上的键误判成缺口了，或已知映射没被认出来：{gap['unexplained']}"
+    )
+    assert gap["row_meta"] == ["created_by", "modified_time"]
+    # `section_code` 是 `sectionId` 的已知对应，所以**不该**再出现在"候选侧多出来的"里
+    assert gap["candidate_only_extra"] == ["width"]
+
+
+def test_explain_gap_knows_the_id_to_code_reference_rename():
+    """`sectionId` → `section_code` 是**引用改编码**（结构差异），不是拼写差异，
+    但它**同样是已知的**（真机对照出来的），不该被列进"需要查的"。"""
+    gap = explain_gap({"sectionId"}, {"section_code"})
+    assert gap["known"] == ["sectionId → section_code（引用改编码）"]
+    assert gap["unexplained"] == []
+
+
+def test_explain_gap_does_not_list_a_serialized_twin_as_candidate_extra():
+    """序列化列是**同一概念的两种写法**，不该在"候选侧多出来的"里再出现一次。"""
+    gap = explain_gap({"attrs"}, {"attrs_json"})
+    assert gap["serialized"] == ["attrs → attrs_json（序列化）"]
+    assert "attrs_json" not in gap["candidate_only_extra"]
 
 
 def test_convention_gap_stays_quiet_when_there_is_no_convention_difference():

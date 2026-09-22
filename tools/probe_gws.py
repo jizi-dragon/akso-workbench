@@ -65,7 +65,13 @@ from workbench.services.gws import (  # noqa: E402
     GwsProcessError,
     GwsTimeout,
 )
-from workbench.services.gws.shape import VERDICT_ACTIONS, compare_shapes, key_profile  # noqa: E402
+from workbench.services.gws.shape import (  # noqa: E402
+    VERDICT_ACTIONS,
+    compare_key_sets,
+    compare_shapes,
+    explain_gap,
+    key_profile,
+)
 
 SESSIONS_DIR = ROOT / "factory-tuning" / "data" / "sessions"
 
@@ -107,6 +113,71 @@ def pick_reference(bodies: list[dict], needle: str) -> list[dict]:
         if needle.lower() in path.lower() and isinstance(rec.get("postData"), (dict, list)):
             out.append(rec)
     return out
+
+
+def recorded_element_keys(bodies: list[dict], endpoint: str, scope: str) -> tuple[set[str], int]:
+    """从录制的请求体里取某个数组的**元素键并集**（以及元素个数）。
+
+    这是"元素层对照"的参考侧：工厂的 `controls[]` / `sections[]` 是**嵌在布局体里的数组元素**，
+    而 component 模型把它们做成了**独立的组件类型**。
+    """
+    keys: set[str] = set()
+    count = 0
+    for rec in bodies:
+        if endpoint.lower() not in str(rec.get("path") or "").lower():
+            continue
+        body = rec.get("postData")
+        if not isinstance(body, dict):
+            continue
+        arr = body.get(scope)
+        if not isinstance(arr, list):
+            continue
+        count += len(arr)
+        for el in arr:
+            if isinstance(el, dict):
+                keys |= {str(k) for k in el}
+    return keys, count
+
+
+def report_element_comparison(
+    rep: "Report", client: GwsClient, bodies: list[dict],
+    *, component_type: str, endpoint: str, scope: str, label: str,
+) -> None:
+    """元素层对照：录制的 `<scope>[]` 元素键  ←→  component 表的一行键。"""
+    rep.h(f"元素层对照 · {label}：录制 `{scope}[]` ←→ component `{component_type}`")
+    ref_keys, ref_n = recorded_element_keys(bodies, endpoint, scope)
+    if not ref_keys:
+        rep.p(f"- ⏸ 录制里没有 `{endpoint}` 的 `{scope}[]` 样本 —— 没得比")
+        return
+    try:
+        rows = client.run_readonly("component", "instance", "list", component_type)
+    except GwsError as exc:
+        rep.p(f"- ❌ 取 component 行失败：`{exc}`")
+        return
+    if not isinstance(rows, list) or not rows:
+        rep.p(f"- ⏸ `{component_type}` 没有实例 —— 没得比")
+        return
+    cand_keys: set[str] = set()
+    for row in rows:
+        if isinstance(row, dict):
+            cand_keys |= {str(k) for k in row}
+
+    rep.p(f"- 参考（工厂真机录制）：**{len(ref_keys)}** 键，来自 {ref_n} 个元素")
+    rep.p(f"- 候选（component `{component_type}`）：**{len(cand_keys)}** 键，来自 {len(rows)} 行")
+    rep.p("")
+    report = compare_key_sets(ref_keys, cand_keys, scope=scope)
+    rep.p("```")
+    rep.p(report.render())
+    rep.p("```")
+    rep.p(f"- **判定：{report.verdict}** —— {VERDICT_ACTIONS.get(report.verdict, '')}")
+    gap = explain_gap(ref_keys, cand_keys)
+    rep.p("")
+    rep.p("**差异分类**（归一后仍对不上的，按「该做什么」分开）：")
+    rep.p(f"- **已知映射**（查表即可，**不是模型差异**）：`{gap['known']}`")
+    rep.p(f"- 候选侧行元数据（读侧多出来的，写侧通常不用发）：`{gap['row_meta']}`")
+    rep.p(f"- **真正需要查的**：`{gap['unexplained']}`")
+    rep.p(f"- 候选侧其它多出来的列：`{gap['candidate_only_extra']}`")
+    rep.p("")
 
 
 # ---------------------------------------------------------------- 报告
@@ -257,6 +328,22 @@ def probe(args: argparse.Namespace) -> int:
     if not args.skip_compare:
         rep.h("S5 · 与 `factory-tuning` 录到的真机形状**逐字对照**")
         bodies = load_recorded_bodies()
+
+        # ---- S5a 元素层对照（**这一路才是对的比法**）
+        if args.element:
+            for spec in args.element.split(","):
+                ctype, _, scope = spec.partition("=")
+                if not ctype or not scope:
+                    rep.p(f"- ⏸ `--element {spec}` 形式不对，应为 `<component_type>=<录制数组名>`")
+                    continue
+                endpoint = args.element_endpoint or "SaveLayoutDetail"
+                report_element_comparison(
+                    rep, client, bodies,
+                    component_type=ctype.strip(), endpoint=endpoint, scope=scope.strip(),
+                    label=f"{ctype.strip()} ←→ {endpoint}.{scope.strip()}[]",
+                )
+            rep.h("S5 续 · 整份请求体的形状（**注意：与上一段不是同一个投影**）")
+
         if not bodies:
             rep.p("- `factory-tuning/data/sessions/` 里没有可用的录制数据（该目录不属于产品，允许缺席）")
         else:
@@ -349,6 +436,17 @@ def main() -> int:
         "--scopes",
         default="顶层,controls[],sections[]",
         help="逐层比较哪些作用域，逗号分隔（默认 顶层,controls[],sections[]）",
+    )
+    parser.add_argument(
+        "--element",
+        default="",
+        help="★ 元素层对照，形如 `layout_control=controls,layout_section=sections`"
+             "（工厂的数组元素 ←→ component 独立表；**这一路才是对的比法**）",
+    )
+    parser.add_argument(
+        "--element-endpoint",
+        default="SaveLayoutDetail",
+        help="元素层对照的参考端点（默认 SaveLayoutDetail）",
     )
     parser.add_argument("--list-samples", action="store_true", help="只列出可对照的历史样本，不跑探针")
     args = parser.parse_args()

@@ -327,6 +327,118 @@ def compare_shapes(
     return report
 
 
+def compare_key_sets(
+    reference: Iterable[str],
+    candidate: Iterable[str],
+    *,
+    scope: str,
+) -> ShapeReport:
+    """直接按**键集**对照（不经 payload）。用于"元素层"比较。
+
+    ## 为什么需要这一路（2026-09-22 真机实测）
+
+    工厂的 `controls[]` / `sections[]` 是**嵌在布局体里的数组元素**，
+    而 component 模型里它们是**独立的组件类型**（`layout_control` / `layout_section`）。
+    拿"整份布局体"去比"一行控件"，比出来的是**投影差异**（Jaccard 0.14 ⇒ B），
+    而正确的比法是**元素对元素**：
+
+    | 比较对象 | 裸 Jaccard | 归一后 | 参考侧覆盖 | 判定 |
+    |---|---:|---:|---:|---|
+    | `sections[]` ↔ `layout_section` | 0.10 | **0.66** | **0.84** | **A** |
+    | `controls[]` ↔ `layout_control` | 0.16 | **0.49** | **0.83** | B |
+
+    ⇒ **比错对象会把结论从"可迁移"推到"重新取证"。**
+    """
+    report = ShapeReport()
+    ref, cand = set(reference), set(candidate)
+    if not ref:
+        report.notes.append(f"[{scope}] ⚠️ 参考侧为空 —— 没得比")
+        return report
+    if not cand:
+        report.notes.append(f"[{scope}] ⚠️ 候选侧为空 —— 先确认取到了样本")
+        return report
+    report.diffs.append(diff_key_sets(ref, cand, scope=scope))
+    report.diffs.append(diff_key_sets(ref, cand, scope=scope, normalized=True))
+    return report
+
+
+#: **已知的名称映射**：同一个概念在两侧的不同写法。`键 → (对应键, 种类)`。
+#:
+#: ⚠️ 这几条**不是猜的**，是 2026-09-22 真机逐键对照出来的，而且种类不同、处置也不同：
+#:
+#: - **序列化**（`attrs` → `attrs_json`）：一边是对象/数组，一边是 **JSON 字符串列**。
+#:   `normalize_key` **刻意不**把它们并成一个（`attrs` ≠ `attrsjson`）——
+#:   因为写请求体时"对象"与"字符串"是两个不同的东西，必须**显式声明**。
+#: - **引用改编码**（`sectionId` → `section_code`）：component 模型里子组件用
+#:   **编码**互相引用，而不是 Guid。这是**结构差异**，不是拼写差异。
+KNOWN_RENAMES: dict[str, tuple[str, str]] = {
+    "attrs": ("attrs_json", "序列化"),
+    "externalDataConfig": ("external_data_config_json", "序列化"),
+    "relationFilter": ("relation_filter_json", "序列化"),
+    "rules": ("rules_json", "序列化"),
+    "columns": ("columns_json", "序列化"),
+    "conditions": ("conditions_json", "序列化"),
+    "sortFields": ("sort_fields_json", "序列化"),
+    "sectionId": ("section_code", "引用改编码"),
+}
+
+#: 兼容旧名（真机对照文档里用的是这个词）。
+SERIALIZED_COLUMNS: dict[str, str] = {
+    key: twin for key, (twin, kind) in KNOWN_RENAMES.items() if kind == "序列化"
+}
+
+
+def explain_gap(reference: set[str], candidate: set[str]) -> dict[str, list[str]]:
+    """把"归一后仍对不上"的键**分类**，而不是丢一个大列表给人看。
+
+    真机实测里剩下的差异只有这几类，分开看才知道该做什么：
+
+    - `known`：**已知映射**（序列化变体 / 引用改编码）⇒ 查表即可，不是模型差异
+    - `row_meta`：候选侧的行元数据列（`created_by` / `modified_by` / `full_path`…）
+      ⇒ 读侧多出来的，**写侧通常不用发**
+    - `unexplained`：**真正需要人去查的**
+    - `candidate_only_extra`：候选侧多出来的、既不是行元数据也不是已知映射的列
+
+    ## ⚠️ 必须**先归一再判缺**（2026-09-22 实测踩到）
+
+    第一版拿**裸键集**做差，于是 `combinationDisplayFieldId`（候选侧其实有
+    `combination_display_field_id`）被算进"真正需要查的"——13 条里 **9 条是假的**。
+    形态与本仓 PITFALLS 那一族一样：**判据自己撒谎**，而且撒得"看起来很专业"
+    （一长串待查项）。正确的顺序是：先归一判"是否真的缺"，再对**确实缺的**做归因。
+    """
+    norm_cand = {normalize_key(k) for k in candidate}
+    norm_ref = {normalize_key(k) for k in reference}
+
+    known: list[str] = []
+    unexplained: list[str] = []
+    matched_twins: set[str] = set()
+    for key in sorted(reference):
+        if normalize_key(key) in norm_cand:
+            continue  # 归一后对得上 ⇒ 不是缺口
+        twin_kind = KNOWN_RENAMES.get(key)
+        if twin_kind and normalize_key(twin_kind[0]) in norm_cand:
+            known.append(f"{key} → {twin_kind[0]}（{twin_kind[1]}）")
+            matched_twins.add(normalize_key(twin_kind[0]))
+        else:
+            unexplained.append(key)
+
+    row_meta_tokens = (
+        "createdby", "createdtime", "modifiedby", "modifiedtime", "active",
+        "belongid", "fullpath", "description", "sort", "status", "id",
+    )
+    extra = [
+        k for k in sorted(candidate)
+        if normalize_key(k) not in norm_ref and normalize_key(k) not in matched_twins
+    ]
+    return {
+        "known": known,
+        "serialized": [k for k in known if "序列化" in k],  # 兼容旧名
+        "row_meta": sorted(k for k in extra if normalize_key(k) in row_meta_tokens),
+        "unexplained": unexplained,
+        "candidate_only_extra": sorted(k for k in extra if normalize_key(k) not in row_meta_tokens),
+    }
+
+
 #: A/B/C 三档的**处置口径**。写在这里而不是散在文档里，是为了让"判出 B"之后
 #: 下一步动作不依赖谁的记忆。
 VERDICT_ACTIONS: dict[str, str] = {
