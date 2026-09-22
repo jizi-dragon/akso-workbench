@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 from .client import (
+    COMPONENT_BARE_HINTS,
+    COMPONENT_SUBTYPE_HINTS,
     MIGRATION_WRITE_VERBS,
     OP_CREATE,
     OP_OVERWRITE,
@@ -32,6 +34,8 @@ from .client import (
 from .shape import ShapeDiff, ShapeReport, compare_shapes, diff_key_sets, key_profile
 
 __all__ = [
+    "COMPONENT_BARE_HINTS",
+    "COMPONENT_SUBTYPE_HINTS",
     "MIGRATION_WRITE_VERBS",
     "OPERATION_TYPES",
     "OP_CREATE",

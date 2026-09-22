@@ -345,6 +345,24 @@ gws doctor                                # ⚠️ 只能当信息：它的退�
 | **`layout_control`** | ✅ **14062 个实例 / 35 列** |
 | **`lifecycle_status`** | ✅ **3433 个实例 / 18 列** |
 
+> ### 11.1.1 ★ **`component metadata list` 那张表是不完整的**（别再只看它）
+>
+> 47 条里**没有**上面那三个，而它们恰恰是**承重的**（布局的内容本体、生命周期的状态）。
+> 命名约定看起来是 **`<父类型>_<子类型>`**（`layout` → `layout_section` / `layout_control`；
+> `lifecycle` → `lifecycle_status`）。
+>
+> ⚠️ **我第一轮就是这么栽的**：只读 `metadata list`，据此写下"component 模型里没有 section/control"——
+> **那句话是错的**，而且它会把结论推向"这个通道覆盖不了布局"。
+>
+> ⇒ 已把它变成可复跑的能力（不是"记住要小心"）：
+> `GwsClient.component_type_exists()` + `GwsClient.discover_component_types()`，
+> 探针加 `--discover-types`。**发现结果里"已声明"与"探测到但未声明"必须分开报**
+> —— 合成一列就等于把这条教训又抹掉了。
+>
+> 判据：`pytest tests/test_gws_client.py -k discover -o addopts=""`
+> （含一条"环境问题不许被读成类型不存在"的断言——超时/未配置若被吞成 `False`，
+> 会输出一份**看起来完整、其实少了东西**的清单）。
+
 ⇒ **component 模型的结构与工厂完全不同**：
 
 | 工厂的写入体 | component 模型 |
@@ -440,3 +458,47 @@ gws doctor                                # ⚠️ 只能当信息：它的退�
 > ⚠️ **仍未定**：`ComponentType_Menu` / `ComponentType_MenuGroup` /
 > `ComponentType_AKSelectorMultiObjectList` 这 3 个取值**不属于字段控件**（各 1 条），
 > 说明 `layout_control` 表里混进了非字段组件。写侧要处理这一族。
+
+---
+
+## 13. 工厂端点 × component 类型的对照（M3 的施工图，**读侧状态**）
+
+> 全部基于本次读侧实证。**"未对照"= 没有录制基线**（工厂那条链路的真机样本只覆盖了 11 个路径）。
+
+| 工厂端点（`kernel/endpoints.py`） | component 类型 | 读侧状态 |
+|---|---|---|
+| `SAVE_BASIC_OBJECT` | `object` | ✅ 归一后覆盖 **0.88**，仅 `summaryFields` 待查 |
+| `SAVE_FIELD` | **❓ 未知** | 🔴 **见下** |
+| `OBJECT_PICKLIST` / `PICKLIST_SAVE` | `picklist` | ✅ 元素层覆盖 **0.80**，仅 `operations` 待查 |
+| `SAVE_LAYOUT_DETAIL` | `layout` + **`layout_section`** + **`layout_control`** | ✅ 部分 **A**（覆盖 0.84）/ 控件 B（覆盖 0.83） |
+| `LISTLAYOUT_ADD_COLUMNS` | `listlayout`（`columns_json`） | ⚠️ 列元素存在**JSON 字符串里**，要解析后比；`{fieldId,fieldPath,sort}` 三个键的形状对得上 |
+| `LAYOUT_STABLE_IDS` | — | ✅ **不需要**：component 模型里每个组件独立 save，id 由平台给 |
+| `MENU_*` / `MENU_GROUP_QUERY` | `ui_menu` / `ui_menu_group` | ⚪ **有录制基线（8 条 `MenuGroup/QueryList`），尚未对照** |
+| `WORKFLOW_*`（16 个） | `workflow`（755 实例） | ⚪ **无录制基线**（那段链路的 PATCH 被监听丢弃） |
+| `STATUS_CREATE` / `STATUS_UPDATE` | `lifecycle_status`（3433 实例） | ⚪ **无录制基线**（同上） |
+| 权限族（工厂**零端点**） | `permission_set`（229 实例） | ⚪ 纯增量，决策卡 **E1** |
+| 自动化族（工厂**零端点**） | `linkage_rule` / `web_action` / `notice_message_template` | ⚪ 纯增量，决策卡 **E2** |
+
+### 13.1 🔴 M3 的第一个未决问题：**字段用什么写？**
+
+`SAVE_FIELD` 是工厂八步管道里的**第二步**，而 **`component metadata list` 的 47 类里没有任何字段类**：
+
+- 裸 `field` / `fields` 探测 → ❌ 都不存在；
+- `object` 组件实例的 56 个键里**没有** `fields` 数组（它是对象的开关与属性）；
+- 字段只能通过 `metadata object fields <code>` **读**（返回 `fields[]`，53 键，用 `field_id`/`field_type`）。
+
+⇒ **两种可能，必须分辨**：
+
+1. 存在一个**未声明**的字段类型（命名约定 `<父类型>_<子类型>` ⇒ 候选 `object_field` / `object_fields`）；
+2. 字段**根本不在 component 模型里**，仍然只能走私有的 `SaveField`。
+
+**这两种情况的结论完全不同**：① 则整条链路可迁移；② 则**必须保留工厂的字段写入器**，
+`component` 只能接管对象/布局——那是一次**混合改造**，不是替换。
+
+判据（已就绪，只读，一次跑完）：
+
+```powershell
+.\.venv\Scripts\python.exe tools\probe_gws.py --discover-types --skip-compare --max-types 0
+```
+
+它会报「**探测到但未声明**」有哪些 —— `object_field` 在不在里面，就是答案。

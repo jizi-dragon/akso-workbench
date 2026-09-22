@@ -60,6 +60,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -183,7 +184,23 @@ READ_ONLY_VERBS: frozenset[tuple[str, ...]] = frozenset({
     ("task", "show"),
 })
 
-#: **写平台的动词**（与上面那张只读白名单**互斥**）。
+#: 组件类型的**子类型后缀**候选（命名约定 `<父类型>_<子类型>`）。
+#:
+#: 来历：`layout_section` / `layout_control` / `lifecycle_status` 三个**有效但未声明**的类型
+#: 就是靠这个形状找到的。前三个是**已实证**的，其余是同类推断（`discover_component_types`
+#: 会逐个探测，探测失败的会进 `probed_missing`，**不会被当成存在**）。
+COMPONENT_SUBTYPE_HINTS: tuple[str, ...] = (
+    # —— 已实证（2026-09-22 真机：分别有 3569 / 14062 / 3433 个实例）
+    "section", "control", "status",
+    # —— 同类推断，待探测
+    "field", "page", "item", "detail", "option", "column", "attr",
+    "rule", "config", "node", "group",
+)
+
+#: 二进制字符串里出现过的**裸** component token（这些是类型名本身，不带前缀）。
+COMPONENT_BARE_HINTS: tuple[str, ...] = ("object", "layout", "section", "control", "status")
+
+#: 写平台的动词（与上面那张只读白名单**互斥**）。
 #:
 #: 单独立一张表不是为了好看，是为了让"这两个集合不许相交"变成一条**可断言的**结构保证
 #: （`tests/test_gws_client.py::test_migration_verbs_are_not_in_the_readonly_allowlist`）。
@@ -603,6 +620,89 @@ class GwsClient:
     def object_fields(self, code: str) -> list[dict]:
         data = self.run_readonly("metadata", "object", "fields", code)
         return data if isinstance(data, list) else []
+
+    # ------------------------------------------------------------ 组件类型发现
+
+    def component_type_exists(self, component_type: str) -> tuple[bool, str]:
+        """探测某个 `component_type` 是否可用（**只读**）。返回 `(是否存在, 失败原因)`。
+
+        存在的判据是 `component instance list <type>` 能跑通；
+        跑不通就把原因原样带回来（**不要**静默吞掉——"不存在"与"没权限"是不同的处置）。
+        """
+        try:
+            self.run_readonly("component", "instance", "list", component_type)
+            return True, ""
+        except (GwsPlatformError, GwsProcessError) as exc:
+            reason = getattr(exc, "stderr_tail", "") or str(exc)
+            return False, reason.strip()[:200]
+        except (GwsTimeout, GwsNotConfigured, GwsBinaryNotFound):
+            raise  # 这几类是**环境**问题，不是"类型不存在"，别混进来
+
+    def discover_component_types(
+        self,
+        candidates: Iterable[str] | None = None,
+        *,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> dict[str, object]:
+        """把 `component metadata list` 与**探测**合起来，给出真正的组件类型清单。
+
+        ## 为什么需要它（2026-09-22 真机实测）
+
+        `component metadata list` 回 **47** 类，而**那张表不完整**：
+
+        | 类型 | 在 47 条里？ | 实测有实例吗 |
+        |---|---|---|
+        | `layout` / `lifecycle` / `object` … | ✅ 在 | ✅ |
+        | **`layout_section`** | ❌ **不在** | ✅ **3569 个** |
+        | **`layout_control`** | ❌ **不在** | ✅ **14062 个** |
+        | **`lifecycle_status`** | ❌ **不在** | ✅ **3433 个** |
+
+        而这几个恰恰是**承重的**（布局的内容本体、生命周期的状态）。
+        只看那张表会得出"component 模型里没有 section/control"的**错误结论**——
+        我第一轮就是这么判的，直到去探测才发现。
+
+        命名约定看起来是 `<父类型>_<子类型>`（`layout` → `layout_section` / `layout_control`；
+        `lifecycle` → `lifecycle_status`），所以这里按这个形状**生成候选并逐个探测**。
+
+        ⚠️ 探测是**只读**的（`component instance list`），但每个候选一次调用——
+        默认的 `COMPONENT_SUBTYPE_HINTS` 有 14 个后缀，47 类 × 14 ≈ 650 次，别在紧凑循环里调它。
+        """
+        declared = self.component_types()
+        declared_names = [
+            str(t.get("component_type")) for t in declared
+            if isinstance(t, dict) and t.get("component_type")
+        ]
+
+        if candidates is None:
+            candidates = []
+            for name in declared_names:
+                for suffix in COMPONENT_SUBTYPE_HINTS:
+                    candidates.append(f"{name}_{suffix}")
+            # 二进制里出现过的裸 token（`object` / `layout` / `section` / `control` / `status`）
+            candidates.extend(COMPONENT_BARE_HINTS)
+
+        found: list[str] = []
+        missing: dict[str, str] = {}
+        seen: set[str] = set(declared_names)
+        for cand in candidates:
+            if cand in seen:
+                continue
+            seen.add(cand)
+            if on_progress is not None:
+                on_progress(cand)
+            ok, reason = self.component_type_exists(cand)
+            if ok:
+                found.append(cand)
+            else:
+                missing[cand] = reason
+
+        return {
+            "declared": declared,
+            "declared_names": declared_names,
+            "undeclared_but_real": sorted(found),
+            "probed_missing": missing,
+            "probed_total": len(seen) - len(declared_names),
+        }
 
     # ------------------------------------------------------------ 写入（**显式意图**）
 

@@ -278,6 +278,28 @@ def probe(args: argparse.Namespace) -> int:
                 )
             )
 
+    # -------- S1b 组件类型发现（表不完整，必须探测）
+    if args.discover_types:
+        rep.h("S1b · 组件类型**探测**（`metadata list` 的 47 条不完整，见 §11.1）")
+        rep.p("> 实测：`layout_section` / `layout_control` / `lifecycle_status` 都是**有效类型却不在表里**，")
+        rep.p("> 而它们恰恰是承重的（布局的内容本体、生命周期的状态）。")
+        rep.p("> ⚠️ 每个候选一次只读调用，默认候选约 650 次，**慢且会在平台上留请求日志**。")
+        try:
+            result = client.discover_component_types(
+                on_progress=(lambda name: print(f"  探测 {name} …", flush=True)) if args.verbose else None
+            )
+        except GwsError as exc:
+            rep.p(f"- ❌ 探测失败：`{exc}`")
+        else:
+            rep.raw("component-types-discovered", result)
+            rep.p(f"- 已声明：**{len(result['declared_names'])}** 类")
+            rep.p(f"- 探测了 **{result['probed_total']}** 个候选")
+            rep.p(f"- 🔎 **探测到但未声明：{len(result['undeclared_but_real'])}** 类 —— "
+                  f"`{result['undeclared_but_real']}`")
+            rep.p("")
+            rep.p("> ★ **这一栏就是「只看 metadata list 会漏掉什么」的答案。**")
+            rep.p("> 第一轮只读 `metadata list`，我据此判过「component 模型里没有 section/control」——**那是错的**。")
+
     # -------- S2 每类实例数
     rep.h("S2 · 各类型实例数（顺带验证通道是否真的通）")
     counts: dict[str, Any] = {}
@@ -426,6 +448,11 @@ def main() -> int:
     parser.add_argument("--out", default="", help="输出目录（默认 tmp/gws-probe-<时间戳>）")
     parser.add_argument("--timeout", type=float, default=90.0, help="单条命令超时秒数")
     parser.add_argument("--max-types", type=int, default=30, help="最多枚举多少个组件类型的实例")
+    parser.add_argument(
+        "--discover-types", action="store_true",
+        help="★ 探测未声明的组件类型（metadata list 只有 47 条，实际更多；每候选一次只读调用，慢）",
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="打印探测进度")
     parser.add_argument("--skip-compare", action="store_true", help="跳过与历史录制数据的对照")
     parser.add_argument(
         "--compare-against",

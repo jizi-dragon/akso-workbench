@@ -42,7 +42,9 @@ from workbench.services.gws.client import _ENV_ALLOWLIST
 FAKE_CLI = '''\
 """假 gws CLI：行为由同目录的 scenario.json 决定，每次调用追加一行 invocations.jsonl。
 
-它故意**什么都不校验** —— 校验是被测对象（GwsClient）的责任。
+`scenario["routes"]` 可以按**命令行**分别给行为（键 = `-s` 之后的参数用空格连起来），
+没命中就回落到顶层字段。这样"同一批调用里有的成功有的失败"才测得出来
+（`discover_component_types` 就是那种形状）。
 """
 import json
 import os
@@ -67,20 +69,23 @@ record = {
 with (HERE / "invocations.jsonl").open("a", encoding="utf-8") as fh:
     fh.write(json.dumps(record, ensure_ascii=False) + "\\n")
 
-mode = scenario.get("mode", "ok")
+routes = scenario.get("routes") or {}
+key = " ".join(sys.argv[2:]) if len(sys.argv) > 1 else ""
+eff = routes.get(key, scenario)
+
+mode = eff.get("mode", "ok")
 if mode == "timeout":
     import time
-    time.sleep(scenario.get("sleep_s", 30))
+    time.sleep(eff.get("sleep_s", 30))
 if mode == "sleep_then_ok":
     import time
-    time.sleep(scenario.get("sleep_s", 0.05))
+    time.sleep(eff.get("sleep_s", 0.05))
 
-payload = scenario.get("stdout", "")
-sys.stdout.write(payload)
+sys.stdout.write(eff.get("stdout", ""))
 sys.stdout.flush()
-sys.stderr.write(scenario.get("stderr", ""))
+sys.stderr.write(eff.get("stderr", ""))
 sys.stderr.flush()
-sys.exit(int(scenario.get("exit", 0)))
+sys.exit(int(eff.get("exit", 0)))
 '''
 
 
@@ -489,6 +494,98 @@ def test_every_run_forces_silent_json_mode(fake):
     make, records, _ = fake
     make().run_readonly("config", "show")
     assert records()[0]["argv"][0] == "-s"
+
+
+# ---------------------------------------------------------------- 组件类型发现
+#
+# 真机实测：`component metadata list` 的 47 条**不完整**——
+# `layout_section`(3569) / `layout_control`(14062) / `lifecycle_status`(3433)
+# 都是有效类型却不在表里，而它们恰恰是承重的。
+
+
+def test_component_type_exists_is_true_when_the_list_call_succeeds(fake):
+    make, records, scenario = fake
+    scenario(mode="ok", stdout='{"code":0,"data":[{"id":"x"}]}')
+    ok, reason = make().component_type_exists("layout_control")
+    assert ok and reason == ""
+    assert records()[0]["argv"] == ["-s", "component", "instance", "list", "layout_control"]
+
+
+def test_component_type_exists_is_false_and_keeps_the_reason(fake):
+    """**不存在的类型与没权限是不同的处置**，所以原因必须带回来，不能静默吞。"""
+    make, _, scenario = fake
+    scenario(mode="ok", exit=1, stderr="组件类型不存在: layout_foo")
+    ok, reason = make().component_type_exists("layout_foo")
+    assert ok is False
+    assert "layout_foo" in reason
+
+
+@pytest.mark.parametrize(
+    "scripted",
+    [
+        {"mode": "timeout", "sleep_s": 30},
+        {"mode": "ok", "exit": 1, "stderr": "━━━━ 需要配置服务地址 ━━━━\n✗ 服务地址不能为空\n"},
+    ],
+)
+def test_component_type_exists_does_not_swallow_environment_problems(fake, scripted):
+    """★ **环境问题不许被读成"这个类型不存在"。**
+
+    超时/未配置是"我们这边没弄好"，不是"平台没有这个类型"。
+    把它们吞成 False，会让发现逻辑报告一份**看起来完整、其实少了东西**的清单——
+    正是本仓最忌的"静默变差"。
+    """
+    make, _, scenario = fake
+    scenario(**scripted)
+    timeout = scripted.get("mode") == "timeout"
+    expected = GwsTimeout if timeout else GwsNotConfigured
+    client = make(GwsConfig(timeout_s=0.6) if timeout else None)
+    with pytest.raises(expected):
+        client.component_type_exists("layout_control")
+
+
+def test_discover_component_types_separates_declared_from_undeclared(fake):
+    """发现逻辑：**已声明**的 + **探测到但未声明**的，必须分开报。
+
+    这条直接钉住真机那次踩坑：只看 `metadata list` 会得出
+    "component 模型里没有 section/control" 的**错误结论**。
+    """
+    make, records, scenario = fake
+    scenario(
+        mode="ok",
+        stdout='{"code":0,"data":[{"id":"x"}]}',
+        routes={
+            "component metadata list": {
+                "stdout": json.dumps({"code": 0, "data": [
+                    {"component_type": "layout", "name_cn": "表单布局"},
+                    {"component_type": "object", "name_cn": "对象"},
+                ]}, ensure_ascii=False),
+            },
+            # 未声明但真实存在
+            "component instance list layout_section": {"stdout": '{"code":0,"data":[{"id":"s"}]}'},
+            "component instance list layout_control": {"stdout": '{"code":0,"data":[{"id":"c"}]}'},
+            # 不存在的
+            "component instance list layout_field": {"exit": 1, "stderr": "组件类型不存在"},
+        },
+    )
+    result = make().discover_component_types(
+        candidates=["layout_section", "layout_control", "layout_field", "object"]
+    )
+    assert result["declared_names"] == ["layout", "object"]
+    assert result["undeclared_but_real"] == ["layout_control", "layout_section"]
+    assert "layout_field" in result["probed_missing"]
+    # `object` 已声明 ⇒ 不该被重复探测
+    probed = [r["argv"][-1] for r in records()
+              if r["argv"][:4] == ["-s", "component", "instance", "list"]]
+    assert "object" not in probed
+    assert result["probed_total"] == 3
+
+
+def test_discover_component_types_default_candidates_cover_the_known_three():
+    """默认候选**必须包含**那三个已实证的未声明类型，否则发现逻辑等于没做。"""
+    from workbench.services.gws.client import COMPONENT_SUBTYPE_HINTS
+
+    for suffix in ("section", "control", "status"):
+        assert suffix in COMPONENT_SUBTYPE_HINTS
 
 
 # ---------------------------------------------------------------- 配置迁移（导出 → 入站导入 → 部署）
