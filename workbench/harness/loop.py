@@ -118,7 +118,7 @@ async def run_agent_loop(
                 # ① 事件里带 `reason` 让前端能分开渲染（不再是一律红色报错）；
                 # ② 文案必须**可行动**：说清发生了什么、怎么接着做、去哪儿调大。
                 # 改造前只有一句"已达到步数预算上限，已终止本轮"——用户看不懂
-                # "预算是多少""为什么不够""我怎么继续"（见 docs/FACTORY-AGENT-GAP.md 问题①）。
+                # "预算是多少""为什么不够""我怎么继续"。
                 yield make_event(
                     "error",
                     reason="budget_exhausted",

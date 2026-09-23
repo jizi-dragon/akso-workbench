@@ -33,7 +33,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 | 工具全部由**自己**编写 | 不做 entry_points 自动发现 / 独立进程 / 版本协商——那些是给"第三方不可信插件 + 大规模生态"付的成本（`plugin_api.py` 文档串） |
 | 操作会**真的改生产数据** | 风险分级 + 确认门 + 全量审计是**必需品**，不是加分项 |
 | 会执行**用户上传的代码**（脚本式 Skill） | 必须有沙箱执行底座，且必须**诚实标注它不是安全边界** |
-| 无人值守的长时间任务（织网、批量创建） | 断点续跑 checkpoint、任务记账表、SSE 长任务流 |
+| 无人值守的长时间任务（五步织网） | 任务记账表、SSE 长任务流（~~断点续跑 checkpoint~~ 随配置工厂于 2026-09-22 删除） |
 
 ### 1.2 显式非目标（**刻意不做**）
 
@@ -96,7 +96,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ L1 模型接入层  services/deepseek.py                                       │
 │   stream_chat() SSE 流式 + function calling 增量聚合 + include_usage      │
-│   chat() 非流式（摘要折叠 / 蓝图生成）· 模型名归一化                       │
+│   chat() 非流式（摘要折叠）· 模型名归一化                                 │
 │   ⚠ 官方**无**内置 web_search——这是 L6 里 websearch 插件存在的原因        │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -109,7 +109,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 
 ## 3. 分层契约详解
 
-### 3.1 L1 模型接入层（`services/deepseek.py`，239 行）
+### 3.1 L1 模型接入层（`services/deepseek.py`，255 行）
 
 **职责**：把 DeepSeek 的 OpenAI 兼容协议翻译成本仓的事件词汇。**不含任何 agent 逻辑**。
 
@@ -121,7 +121,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
   于是缓存命中量永远看不到——而那正是 L2 存在的前提。
 - **usage 双形态兼容**：Chat Completions 的 `prompt_cache_hit_tokens` 与 Responses API 的
   `input_tokens_details.cached_tokens` 两种口径都吃（`cache.UsageStats.add`）。
-- **`last_usage` 走属性而不是改签名**（`:111`）：`chat()` 的调用点（摘要折叠、蓝图生成）
+- **`last_usage` 走属性而不是改签名**（`:111`）：`chat()` 的调用点（摘要折叠）
   只关心文本，为它们全都改签名不值得。
 - **模型名归一化**（`normalize_model`）：`deepseek-v4-flash` 等旧名/别名统一为 `deepseek-flash`，
   避免"库里存着旧名的用户某天突然 404"。
@@ -129,7 +129,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 **边界**：这一层不知道工具、不知道对话、不知道缓存策略。换供应商只需替换本文件 + L2 的
 缓存假设（DeepSeek 是自动前缀缓存，Anthropic 是显式 `cache_control`，语义不同——见 §6.3）。
 
-### 3.2 L2 上下文与缓存层（`cache.py` 287 行 + `harness/context.py` 42 行）
+### 3.2 L2 上下文与缓存层（`cache.py` 308 行 + `harness/context.py` 83 行）
 
 **这是全仓最"反直觉但最值钱"的一层**，值得单独理解。
 
@@ -155,7 +155,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 （`truncated=[]`），**不装作已处理**（`:157-159`）。上下文估算用的是一个粗略的
 CJK 字符数 + 英文词数估算器（`context.estimate_tokens`），**不是真 tokenizer**——这是已知的精度妥协。
 
-### 3.3 L3 工具中枢层（`plugin_api.py`，849 行）
+### 3.3 L3 工具中枢层（`plugin_api.py`，1,366 行）
 
 **全仓最重要的一个文件**：Agent 核心的唯一公开扩展面，也是工具清单的**单一事实源**。
 
@@ -180,7 +180,12 @@ class Risk(str, Enum):
     DANGEROUS = "dangerous"  # 过门 + UI 二次确认 + 永不进入 Monitor 可执行回放
 ```
 
-当前分布（机检输出）：**17 read · 2 write · 1 dangerous**（共 20 个 core 工具）。
+当前分布（机检输出）：**16 read · 2 write · 0 dangerous**（共 18 个 core 工具）。
+
+> ⚠️ **产品当前一个 `DANGEROUS` 工具都没有**——唯一的那个（`factory_create`）随配置工厂在 2026-09-22 整体删除。
+> **删的是工具，不是分级能力**：枚举三档照旧、确认门的 dangerous 分支照旧（§3.5 与 §5 的 I6 都没变），
+> 只是今天没有产品工具走到那一档；该分支目前由 `tests/test_plugin_api.py` 用合成 spec 覆盖。
+> 重新出现 DANGEROUS 工具没有额外动作——显式声明 `risk=Risk.DANGEROUS` 即自动过门。
 
 #### 3.3.3 `_tools` 是派生视图——一条防静默泄漏的结构性设计
 
@@ -221,10 +226,10 @@ Agent 循环里工具异常必须是**可自我纠正的观测**，而不是终�
 （**DeepSeek/OpenAI 的 function name 限制，中文工具名会在请求侧被拒——不是本地校验能发现的错误**）、
 `risk` 必须是 `Risk` 枚举、`description` 不能空（模型靠它选工具）、`args_model` 必须是 pydantic 模型。
 
-`verify_required_tools()` 在启动时核对 `REQUIRED_TOOLS` 清单（8 个关键工具），
+`verify_required_tools()` 在启动时核对 `REQUIRED_TOOLS` 清单（**6 个**关键工具），
 把"打包漏收插件 / 插件 import 失败"从**"用户点下去才发现"**提前到**"启动日志里就有"**。
 
-### 3.4 L4 沙箱执行层（`sandbox/`，6 文件 ≈1150 行）
+### 3.4 L4 沙箱执行层（`sandbox/`，6 文件 1,171 行）
 
 **唯一被允许执行不受信代码的入口**。对照 [ADR-0014](adr/0014-sandbox-for-untrusted-code.md) 的四层：
 
@@ -249,7 +254,7 @@ Agent 循环里工具异常必须是**可自我纠正的观测**，而不是终�
 **诚实边界**：`allow_network` 是**声明不是强制**（真强制需要 WFP/防火墙）。
 `SandboxPolicy.enforced` 属性把**真正被代码强制**的 6 项逐条列出，就是为了让"声明"与"强制"不被读混。
 
-### 3.5 L5 确认门与审计层（`approvals.py`，350 行）
+### 3.5 L5 确认门与审计层（`approvals.py`，877 行）
 
 **把 `Risk` 从声明变成真的安全属性**。没有这一层，"危险操作需人确认"就只是一行注释——
 模型照样能一句话把 30 个对象建到真机上。
@@ -282,9 +287,12 @@ Agent 循环里工具异常必须是**可自我纠正的观测**，而不是终�
   `reset_store()`（测试隔离）之后中枢还捏着旧店，表现为"申请到 pendingId 却查不到/批不了"，
   而且**只在测试里出现、生产看不出**——最难查的那种。
 
-**与"环境强制确认"的关系**：配置工厂早有 `confirmed=true` 的页面级闸门（`routes_factory.py`）。
-**两条闸门独立生效，不是替代关系**——工具级挡 Agent 链路，引擎侧挡"绕过页面直接打 HTTP"的人。
-写平台的动作两条都要过。
+**与"环境强制确认"的关系（2026-09-22 起只剩一层）**：配置工厂曾有一条 `confirmed=true` 的
+**引擎侧页面级闸门**（`routes_factory.py`）——它随配置工厂整体删除，**今天不存在了**。
+当时的口径仍然成立、也仍然值得照抄：两条闸门**独立生效、不是替代关系**——工具级挡 Agent 链路，
+引擎侧挡"绕过页面直接打 HTTP"的人，写平台的动作两条都要过。
+**但本仓库现在没有任何"写平台数据"的工具**（0 个 `DANGEROUS`），所以工具级确认门是当前唯一站着的那道；
+将来重新引入写平台的能力时，**引擎侧那道闸门要一并重建**，不要以为工具级确认门能替代它。
 
 **审计唯一入口** `write_audit()`：HTTP 面与对话循环共用，因此"对话里的工具调用不入审计"
 这类缺口不会再出现。写入前 `redact_args()` 剔除凭据类键；
@@ -320,7 +328,7 @@ Fail-Closed 比"看起来装上了"好。
 免得后人以为一条正则就够了。初版做的是"静默 LStrip 改写路径"，这也是错的：
 它让"我写的是什么"与"实际跑的是什么"不一致，而排障时看的是前者。
 
-### 3.7 L7 循环引擎层（`harness/loop.py`，301 行）
+### 3.7 L7 循环引擎层（`harness/loop.py`，485 行）
 
 **循环**：`call → tool → observe → repeat`，逐事件 yield。
 
@@ -349,7 +357,7 @@ Fail-Closed 比"看起来装上了"好。
 `list_api_for(plugins)` 已实现。理由写在文档串里：**工具 schema 是真实的 token 成本，
 全量注入约 2k token/轮**。
 
-### 3.8 L8 传输层（`routes_chat.py` 152 行 + `routes_agent.py` 263 行）
+### 3.8 L8 传输层（`routes_chat.py` 330 行 + `routes_agent.py` 389 行）
 
 **两条链路，一个中枢**：
 
@@ -453,7 +461,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 | **大规模工具注入** | Anthropic Tool Search Tool（`defer_loading`）：>10K token 或 10+ 工具时按需发现，上下文省 85%；纯工具定义在 5 server 场景可达 55K token，Anthropic 内部见过 134K | **全量注入**，自估 ~2k token/轮；`list_api_for(plugins)` 已留白名单口子 | 🟡 当前工具规模（见 [TOOLS.md](TOOLS.md)）、~2k token **远低于 10K 阈值**，当前全量注入是**正确选择**；但缺"工具变多之后的退路" |
 | **风险分级** | 框架普遍有（OpenAI Agents SDK `needsApproval`、LangGraph `interrupt()`） | `Risk` 三档 + 显式声明（装配期强制，不声明不给过） | ✅ 符合 |
 | **工具结果体量** | 普遍靠截断；前沿做法是 Programmatic Tool Calling（工具在代码沙箱里编排，中间结果不进上下文，token 降 37%） | `MAX_RESULT_CHARS=16_000` **显式告知**截断 + 沙箱已具备执行能力，但**未做工具编排** | 🟡 截断处理比多数项目诚实（告知而非静默）；PTC 是明确的下一步 |
-| **参数准确率** | `input_examples` 实测把复杂参数准确率从 72% 提到 90% | 靠 `description` 里写清口径（如 `factory_create` 的描述写明"会真的改平台数据"） | 🟡 无示例机制；当前工具规模下描述够用 |
+| **参数准确率** | `input_examples` 实测把复杂参数准确率从 72% 提到 90% | 靠 `description` 里写清口径（**后果类措辞必须落到描述里**：会写平台数据的工具要写明"会真的改平台数据"——本仓的教训是一次误调用不报错、却会真的建出来） | 🟡 无示例机制；当前工具规模下描述够用 |
 | **并行工具调用** | OpenAI/Anthropic 均支持一次返回多个 tool_call，框架普遍并发执行 | **串行** `for call in assistant["tool_calls"]`（`loop.py:211`） | 🟡 功能正确（回填顺序无所谓），但多工具场景延迟是 N 倍 |
 
 **一个值得点出的优点**：`ToolSpec.valid()` 在**装配期**就断言工具名符合
@@ -466,7 +474,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 |---|---|---|---|
 | **审批机制** | OpenAI Agents SDK `needsApproval`、LangGraph `interrupt()` 提供暂停/恢复原语 | 单次令牌 + 5 min TTL + **参数指纹绑定** + 复用 pending 防刷屏 | ✅ **强于主流**：指纹绑定与"令牌只回给批准那次响应"是多数框架没有的 |
 | **审批 = 安全边界？** | 业界明确警告**不是**（如 Arcjet 的 "needsApproval and LangGraph interrupt() are not a security policy"）——审批是 UX 原语，可被绕过 | **结构性强制**：无令牌时 `ToolHub.execute` **根本不调用 handler**；回归断言的是"handler 调用记录为空"而非返回码 | ✅ **优于主流**：把审批做成了执行侧的硬闸门，而不是提示层 |
-| **双重闸门** | 少见 | 工具级确认门（挡 Agent）+ 引擎侧 `confirmed=true`（挡直连 HTTP） | ✅ 优秀实践 |
+| **双重闸门** | 少见 | 工具级确认门（挡 Agent）+ 引擎侧 `confirmed=true`（挡直连 HTTP）——**引擎侧那道随配置工厂于 2026-09-22 删除，当前只剩工具级这一层** | 🟡 曾是优秀实践；现在"双重"这半句已不成立 |
 | **审计** | 前沿用 OTel GenAI 语义约定做 span/trace | 自建 `agent_audit` 表（工具/插件/风险/状态/参数打码/耗时）+ `sandbox_run` + `skill_audit` + `pending_action` | 🟡 留痕充分、可查询；**不是 OTel 标准格式**，无法直接对接既有可观测后端 |
 | **代码执行沙箱** | 云侧：E2B / Daytona / microsandbox（microVM 级隔离）；本地：容器 / gVisor；**Windows 原生**：受限令牌 + ACL + 防火墙规则（OpenAI Codex `elevated`/`unelevated` 双模式）、Sandboxie（内核态重定向） | **无 microVM、无容器、无受限令牌**；Windows **Job Object**（进程树终止）+ 环境白名单 + 路径拒绝 + 解释器白名单，**自称"限损层不是安全边界"** | 🟡 **诚实且务实**，但**定位需要说准**（见下） |
 | ↳ **Job Object 在行业里的位置** | 它解决的是**进程树生命周期**（`KILL_ON_JOB_CLOSE` 一次终结全树），**不是权限边界**。OpenAI Codex 的 Windows 方案里**完全不用 Job Object**——它用受限令牌 / 独立低权限沙箱用户 + ACL + 防火墙 + 私有桌面 | 本项目把它当作沙箱的**主体** | ⚠️ **若要升级隔离，下一个原语是受限令牌（`CreateRestrictedToken`）/ AppContainer + ACL，而不是继续加固 Job Object**。代价是**需要管理员做一次性设置**（Codex 正因此必须提供 `unelevated` 回退）。本项目"用户自己电脑上零配置"的取向与提权天然冲突 —— **建议维持限损层定位，把这件事写进用户可见文档** |
@@ -489,7 +497,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 | **技能包目录** | **Agent Skills 规范**：`SKILL.md` + `scripts/` + `references/` + `assets/`（[agentskills.io/specification](https://agentskills.io/specification)） | `SKILL.md` + `scripts/` + `references/`，**没有 `assets/`** | 🟡 基本对齐 |
 | **技能是什么** | 规范里 Skill = **指令与知识**（+ 可选脚本）；核心机制是 **progressive disclosure 四阶段**：① Advertise（每技能约 100 token，只注入 name+description）→ ② Load（任务匹配时拉取正文，建议 <5000 token）→ ③ Read resources（按需读 `references/`）→ ④ Run scripts | 本项目 Skill = **工具提供者**：`tools:` 数组声明贡献哪些工具，`SKILL.md` **正文明确"本期不注入上下文"** | ❌ **语义分歧**：借用了规范的外壳，但**恰好放弃了规范的核心机制**（正文按需注入）。本项目是"能力包"，规范是"知识包" |
 | **frontmatter 字段** | 必填仅 `name`（≤64、**仅小写字母/数字/连字符**、不得首尾连字符、**必须与父目录名一致**）与 `description`（≤1024）；可选 `license` / `compatibility`（≤500，环境要求）/ `metadata` / `allowed-tools`（实验） | 必填 `id` / `name` / `version` / `description` / `tools`；另有 `capabilities` | ❌ **字段不兼容**：规范**没有** `id` / `version` / `tools`，也**不要求** `name` 与目录名一致 → 本项目的包**装不进**任何遵循规范的客户端（已验证微软 Agent Framework、CrewAI、Cline 均支持该规范） |
-| **"技能贡献工具"这件事规范怎么做** | 规范**不让技能声明工具**。客户端只在"至少一个技能带资源"时才注册 `read_skill_resource`、只在"至少一个技能带脚本"时才注册 `run_skill_script`——**工具面随实际能力动态收缩** | 技能**直接声明** `tools:`，装配期全量并入 `ToolHub` | 🟡 **两条路都能走通**，但规范的做法**天然抑制工具面膨胀**；本项目 20 个 core 工具 + 每个 Skill 最多 20 个，**没有"按需注册"这一层** |
+| **"技能贡献工具"这件事规范怎么做** | 规范**不让技能声明工具**。客户端只在"至少一个技能带资源"时才注册 `read_skill_resource`、只在"至少一个技能带脚本"时才注册 `run_skill_script`——**工具面随实际能力动态收缩** | 技能**直接声明** `tools:`，装配期全量并入 `ToolHub` | 🟡 **两条路都能走通**，但规范的做法**天然抑制工具面膨胀**；本项目 18 个 core 工具 + 每个 Skill 最多 20 个，**没有"按需注册"这一层** |
 | **技能工具的审批粒度** | 微软 Agent Framework：三个技能工具（`load_skill` / `read_skill_resource` / `run_skill_script`）**默认全部需要审批**，靠 `auto_approval_rules` 放行；`ReadOnlyToolsAutoApprovalRule` 自动批准前两个，**但不批准 `run_skill_script``** | 只有三档 `Risk`；技能工具整体按"声明式 ≥ 被包装工具 / 脚本式 ≥ write"定级 | 🟡 **本项目的分级更粗**：微软做到了"同一机制内按能力粒度分级"，本项目是"按工具整档分级"。本项目脚本式 ≥ `write` 的结论与微软一致（都不自动放行脚本执行） |
 | **`capabilities` 的语义** | 规范的 `compatibility` 是**信息性**的（"需要什么环境"）；`allowed-tools` 是预先批准的工具清单 | `capabilities` 是**权限申请 + Fail-Closed 校验**：声明 `network`/`subprocess` 直接**安装失败** | ✅ **强于规范**：把权限声明做成了强制准入，而非文档说明 |
 | **脚本执行** | 规范只说 `scripts/` 是"可执行代码"，**由客户端自行决定怎么跑**；微软官方 `SubprocessScriptRunner` 被自标为"**仅供演示**"，并要求生产环境补上沙箱 + 资源限制 + 输入校验 + 结构化审计。MCP 归档里的脚本**永不执行**，只作只读资源 | 沙箱子进程 + **stdin JSON → stdout JSON**，文档明确写"**与 MCP stdio 传输同构**"；已接沙箱、策略、审计 | ✅ **强于参照物**：本项目把微软"让你自己补"的那一层**已经补好了** |
@@ -523,7 +531,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 | 文档数字与代码一致 | 靠人记，必然漂移 | **`gen_tools_doc.py` 机检**：文档清单 == 运行期中枢，且校验各文档里的"N 个工具" |
 | 启动自检 | 少见 | `verify_required_tools()` + `GET /api/agent/selfcheck`，把"打包漏收插件"提前到启动日志 |
 | 失败可见性 | 静默降级常见 | 插件装配失败进 `hub.failures` 并在两个端点暴露；沙箱拒绝也带完整审计信息 |
-| 决策留痕 | 散在 PR 描述里 | **15 份 ADR**，含"为什么不做"（D-3 / D-7 这类"诚实边界"条目） |
+| 决策留痕 | 散在 PR 描述里 | **16 份 ADR**，含"为什么不做"（D-3 / D-7 这类"诚实边界"条目） |
 | 坑的机构记忆 | 少见 | `PITFALLS.md` 只增不改，记真机环境坑与实测证据 |
 | CI | 常规 | 12 步，含解释器版本契约、工具清单门禁、打包静态检查 13 项 |
 
@@ -563,7 +571,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 本项目有 `mcp-stdio` 沙箱策略（预留未启用）、`script_runner` 的 stdio/JSON 协议与 MCP 同构。
 
 **现状判断**：**当前不接是对的选择**。理由：
-1. 本项目的价值在**领域工具**（eGMP 洞察/工厂/账号），不在"接入尽可能多的工具"；
+1. 本项目的价值在**领域工具**（eGMP 对象分析 / 账号），不在"接入尽可能多的工具"；
 2. MCP 的收益随工具数与生态规模增长，而本项目工具数在"几十"这个量级、单一领域；
 3. MCP 会引入**不可信 server** 这个新信任边界，而现有的 `capabilities` Fail-Closed 设计
    是按"包是我们自己审过的"来设计的。
@@ -580,14 +588,15 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 
 **判断**：**不建议按主流框架的方式补**。理由：
 - 本项目是**单用户、单领域、有明确工作流**的场景。多 Agent 框架的收益主要来自
-  "任务空间开放、需要动态分工"；这里有 `orchestrate.run_full_workflow` 这种**显式编排**，
+  "任务空间开放、需要动态分工"；这里的流程（五步织网 / 账号登录）本身就是**显式编排**，
   比让模型自己规划更可靠（且更符合 GxP 的"失败可见"）。
+  （原有一个显式编排引擎 `orchestrate.run_full_workflow`，已随配置工厂于 2026-09-22 删除。）
 - **真正值得补的不是多 Agent，是子上下文隔离**：`insight_run` 五步织网的中间产物很大，
   目前全量进对话上下文。Anthropic 的 Programmatic Tool Calling 解决的正是这个
   （token 降 37%）。而本项目**已经有沙箱了**——让一个工具在沙箱里编排多个下游工具、
   只回最终结果，比重构出多 Agent 划算得多。
 
-**建议**：不引入 planner/worker；评估给 `insight_run` / `factory_create` 这类
+**建议**：不引入 planner/worker；评估给 `insight_run` 这类
 "多步骤、大中间产物"的工具加一个 `orchestration` 形态（在沙箱里跑编排脚本）。
 
 ### 7.4 【低成本】工具调用并行化与工具面裁剪
@@ -618,7 +627,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 工具描述一调，**没有任何机制能发现能力退化**。这是当前最容易被忽视的缺口。
 
 **做法**：建一个 `tests/evals/` 目录，放 20–50 条**有确定答案的**任务
-（"列出环境 X 下的对象 A 的字段"、"校验这份有 3 处错的蓝图并指出错在哪"），
+（"列出环境 X 下的对象 A 的字段"、"把这次 Monitor 录制解读成一段可读结论"），
 跑一遍算通过率与工具选择准确率。不需要复杂框架——`pytest` + 真实 API 调用即可，
 用 `-m eval` 标记、不进门禁。
 
@@ -697,24 +706,28 @@ Codex 之所以必须提供 `unelevated` 回退，正是因为企业策略常常
 
 > 行数一律是**物理行数**（含空行）。用 `Get-Content | Measure-Object -Line` 统计会漏掉空行，
 > 得到偏低的数字（本仓已踩过，见 CODEBASE_OVERVIEW 的口径说明）——下表由 Python `splitlines()` 实测。
+>
+> ⚠️ **2026-09-22 重测**：配置工厂链路整体删除（`plugins/factory.py`、`writers/`、`orchestrate.py`、
+> `checkpoint.py`、工厂页/工具/测试）后，下表的行数与文件数**按当日实测更新**；
+> **测试那两行没有重跑**（仍是 2026-09-18 的记录），引用前请自行复核。
 
 | 项 | 值 | 取法 |
 |---|---|---|
-| **Agent 核心**（L1–L7） | `plugin_api` 849 + `approvals` 350 + `cache` 287 + `harness/` 597 ≈ **2,083 行** | 物理行数 |
-| **沙箱执行层**（L4） | `sandbox/` 6 文件 **1,173 行** | 同上 |
+| **Agent 核心**（L1–L7） | `plugin_api` 1,366 + `approvals` 877 + `cache` 308 + `harness/` 884 ≈ **3,435 行** | 物理行数 |
+| **沙箱执行层**（L4） | `sandbox/` 6 文件 **1,171 行** | 同上 |
 | **技能供给层**（L3） | `skills/` 7 文件 **1,775 行** | 同上 |
-| 工具插件实现 | `plugins/` 6 文件 **1,374 行** | 同上 |
-| 模型接入（L1） | `deepseek.py` **239 行** | — |
-| 工具规模 | **5 插件 / 20 core 工具**（17 read · 2 write · 1 dangerous） | `python tools/gen_tools_doc.py` |
-| HTTP 端点 | **97** | `@router.` 计数 |
+| 工具插件实现 | `plugins/` **4 文件 1,420 行**（删掉 `factory.py` 之后） | 同上 |
+| 模型接入（L1） | `deepseek.py` **255 行** | — |
+| 工具规模 | **4 插件 / 18 core 工具**（**16 read · 2 write · 0 dangerous**） | `python tools/gen_tools_doc.py` |
+| HTTP 端点 | **99** | `@router.` 计数 |
 | 数据库迁移 | **1–20** | `workbench/db.py::MIGRATIONS` |
-| **仓库全量** | `workbench/**.py` **96 文件 18,417 行**；前端 `static` js+css **23 文件 7,473 行**；扩展 TS **25 文件 5,917 行**；测试 **28 文件 6,925 行**；`tools/` **30 文件 4,816 行**；Electron 壳 `desktop/*.js` **5 文件 1,555 行** | 同上 |
-| 测试 | **516 passed / 11 deselected**（默认跳过 slow 层） | `pytest -o addopts="" -q -m "not slow"` |
+| **仓库全量** | `workbench/**.py` **85 文件 20,201 行**；前端 `static` js+css **25 文件 10,039 行**；扩展 TS **25 文件 5,917 行**；测试 **35 文件 10,216 行**；`tools/` **36 文件 6,846 行**（`.py`/`.mjs`/`.ps1`/`.js`）；Electron 壳 `desktop/*.js` **5 文件 1,697 行** | 同上 |
+| 测试 | **516 passed / 11 deselected**（默认跳过 slow 层）——**2026-09-18 记录，未重跑** | `pytest -o addopts="" -q -m "not slow"` |
 | 打包静态检查 | **13/13** | `tools/verify_packaging.py` |
 
-> **Agent 核心只占全仓约 11%**（2,083 / 18,417）。这符合定位：本项目的难点不在 agent 循环本身，
-> 而在**它要操作的那个平台**（`services/egmp/` 5,509 行）与**让操作安全的那套约束**
-> （`sandbox/` + `skills/` + `approvals` 合计 3,298 行）。
+> **Agent 核心约占全仓 17%**（3,435 / 20,201）。这符合定位：本项目的难点不在 agent 循环本身，
+> 而在**它要操作的那个平台**（`services/egmp/` **3,851 行**，写路径删除后）与**让操作安全的那套约束**
+> （`sandbox/` + `skills/` + `approvals` 合计 **3,823 行**）。
 
 ---
 

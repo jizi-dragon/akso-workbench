@@ -37,7 +37,6 @@ hiddenimports = [
     "workbench.plugins.builtins",
     "workbench.plugins.websearch",
     "workbench.plugins.insight",
-    "workbench.plugins.factory",
     "workbench.plugins.accounts",
     "uvicorn.logging",
     "uvicorn.loops",

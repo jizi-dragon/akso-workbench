@@ -84,3 +84,26 @@ Workbench 侧传 `--url/--user/--pass` 内联凭据调两个原仓库的 CLI。�
   （`services/accounts.py` 的「原项目 env 导入」也只读扫描）。
 - `docs/模块契约.md`、`docs/迁移台账.md` 等融合期文档已删除；代码里仍有指向它们的引用，
   属于待清理的文档债（见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 的风险台账）。
+
+
+---
+
+## 补记（**这段是后补的**，2026-09-22）
+
+> 按本仓纪律，ADR 只增不改；下面记的是「决策当时的认知」之后发生的变化。
+
+**四项目内化的决定不变，但 akso-auto 内化出来的「写路径」已整体移除。**
+
+| 本 ADR 里的行 | 现状 |
+|---|---|
+| akso-auto 写路径 → workbench/services/egmp/writers/（9 模块） | **已删除**（2026-09-22，配置工厂整体移除） |
+| akso-auto 编排 → egmp/orchestrate.py | **已删除** |
+| akso-auto 蓝图生成 → complexity.py / generate.py | 已于 2026-09-20 删除（第二个「需求→蓝图」循环） |
+| akso-auto 监听 → services/egmp/monitor/ | **保留**（录制/查询/解读仍在产品里；复现执行随写路径移除） |
+| dapters/akso-auto.json | **已删除**（模块 id actory 随之消失） |
+
+**「运行时零依赖」「原仓库只读」两条红线不受影响，反而更强**：现在这个仓库连
+「写平台数据」的能力都没有了——它对本仓引用的平台**只读**。
+内化出来的平台知识没有丢，转成了两份不依赖代码的文档：
+[docs/PLATFORM-OPERATIONS-LEARNED.md](../PLATFORM-OPERATIONS-LEARNED.md) 与
+[docs/FACTORY-PLATFORM-COGNITION.md](../FACTORY-PLATFORM-COGNITION.md)。

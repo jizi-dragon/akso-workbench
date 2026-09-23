@@ -1,16 +1,19 @@
 """模块注册表：读取 adapters/*.json，提供模块清单与依赖体检。
 
-四个模块：
+三个模块：
 - workbench   自身（FastAPI/Python 依赖体检）
 - insight     平台洞察（只读引用；能力已原生化，体检只做信息项）
-- factory     配置工厂（只读引用；能力已原生化，体检只做信息项）
 - accounts    统一账号库 + 托管浏览器（能力已内化，检查 Playwright）
 
-⚠️ **模块 id 与存档文件名不一致是刻意的**：id 是本工作台自己的模块名（`insight` /
-`factory`），文件名是「这份存档对应哪个来源项目」的引用真源（`akso-cc.json` /
-`akso-auto.json`，其 `repoPathEnv` 也据此命名）。2026-09-14 把 `akso-cc` 改成 `insight`、
-2026-09-15 把 `akso-auto` 改成 `factory`，文件名都没动——改文件名会让 `repoPathEnv`
-（`AKSO_CC_REPO` / `AKSO_AUTO_REPO`）的语义失真（见 tests/test_modules.py 的守护断言）。
+⚠️ **模块 id 与存档文件名不一致是刻意的**：id 是本工作台自己的模块名（`insight`），
+文件名是「这份存档对应哪个来源项目」的引用真源（`akso-cc.json`，其 `repoPathEnv`
+也据此命名）。2026-09-14 把 `akso-cc` 改成 `insight`，文件名没动——改文件名会让 `repoPathEnv`
+的语义失真（见 tests/test_modules.py 的守护断言）。
+
+> **2026-09-22**：`factory` 模块（存档 `akso-auto.json`）随配置工厂整体移除，
+> 因此 `/api/modules/factory` 与 `/api/modules/akso-auto` 现在都是 **404**。
+> `list_modules()` 仍然只从 `adapters/*.json` 的**实际内容**推导，不认硬编码的模块名——
+> 这正是 2026-09-15 那条"改名变成静默故障"的修法：模块表跟着存档走。
 
 原仓库只读：本模块绝不写 adapters 指向的目录。
 """

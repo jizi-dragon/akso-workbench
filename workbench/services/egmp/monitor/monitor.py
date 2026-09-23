@@ -42,7 +42,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from ..writers import endpoints as W
+# 端点常量取自 **kernel**（唯一事实源）。2026-09-22 前这里指向 `..writers.endpoints`，
+# 那只是一个转发垫片；配置工厂整体移除后，垫片随之消失，`_KNOWN_PATHS` 的取值集**不变**
+# （`kernel/semantics.py` 里没有任何 `/api/` 开头的常量）。
+from ..kernel import endpoints as W
 
 QUERY_POST_PATTERNS = [
     r"Login", r"RefreshToken", r"QueryList", r"GetPageList", r"Get.*List$", r"FieldPage",

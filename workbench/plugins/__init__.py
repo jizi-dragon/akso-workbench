@@ -1,14 +1,21 @@
 """工具插件包：工作台的能力以「进程内工具插件」形式接入 Agent 核心。
 
-装配入口是 `load_all(hub)`（由 `plugin_api.get_hub()` 唯一调用）。五个插件：
+装配入口是 `load_all(hub)`（由 `plugin_api.get_hub()` 唯一调用）。四个插件：
 
 | 插件 | 业务 | 工具 |
 |---|---|---|
 | `builtin` | 通用能力（原 `harness/tools.py` 三件套） | `get_current_time` / `read_local_file` / `read_web_page` |
 | `websearch` | 自建联网检索（DeepSeek API **没有**内置 web_search） | `web_search` |
 | `insight` | 平台洞察（akso-cc 沉淀） | `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` / `insight_accounts` |
-| `factory` | 配置工厂（akso-auto 沉淀） | `factory_validate_blueprint` / `factory_list_blueprints` / `factory_jobs` / `factory_status` / `factory_create` |
 | `accounts` | 快捷登录 + 账号库（quick-login 沉淀） | `accounts_list` / `accounts_login` / `accounts_browser_open` / `accounts_browser_sessions` / `accounts_browser_close` |
+
+> **2026-09-22：`factory` 插件整体移除。** 配置工厂（蓝图校验 / 幂等创建 / 拓扑编排 /
+> 断点续跑）连同 `services/egmp/writers/**`、`services/egmp/orchestrate.py`、
+> `api/routes_factory.py` 与其前端页一并删除，只保留平台知识文档
+> （[docs/PLATFORM-OPERATIONS-LEARNED.md](../docs/PLATFORM-OPERATIONS-LEARNED.md)、
+> [docs/FACTORY-PLATFORM-COGNITION.md](../docs/FACTORY-PLATFORM-COGNITION.md)）。
+> 这条移除顺带**拆掉了一处依赖倒灌**：`plugins/factory.py` 曾经 import
+> `api/routes_factory.py`（违反下面第 2 条纪律），是当时唯一一处。
 
 ## 装配纪律（写新插件前先读）
 
@@ -35,7 +42,6 @@ _MODULES: tuple[str, ...] = (
     "builtins",
     "websearch",
     "insight",
-    "factory",
     "accounts",
 )
 

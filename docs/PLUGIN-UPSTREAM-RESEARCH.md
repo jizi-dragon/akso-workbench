@@ -65,12 +65,19 @@ v1 版本花了整节（原 §6）分析"职务作品/委托作品的著作权�
 
 ### 2.2 耦合边界（决定剥离难度的唯一硬指标）
 
+> ⚠️ **这一节是 2026-09 中旬的实测快照**，不是当前状态。其中 `routes_factory.py` /
+> `egmp/orchestrate.py` / `egmp/writers/**` 已于 2026-09-22 随配置工厂整体移除
+> （见 [CHANGELOG](../CHANGELOG.md) 的 `[Unreleased] → Removed`）。
+> **结论没有失效**——它论证的是"依赖方向清晰、可机械剥离"，而这次移除本身就是一次实践：
+> 删掉 `plugins/factory.py` + `routes_factory.py` + `writers/**` + `orchestrate.py`
+> **确实没有碰宿主**（唯一要改的是路由注册表、插件清单与一个端点 import 的指向）。
+
 **方向一：核心 → 公司专属（宿主被平台知识侵入的入口）—— 共 10 处，4 个文件**
 
 | 文件 | 依赖的 egmp 模块 |
 |---|---|
 | `workbench/api/routes_agent.py` | `egmp`, `egmp.client` |
-| `workbench/api/routes_factory.py` | `egmp`, `egmp.client`, `egmp.generate`, `egmp.writers.blueprint` |
+| ~~`workbench/api/routes_factory.py`~~（已删除） | ~~`egmp`, `egmp.client`, `egmp.generate`, `egmp.writers.blueprint`~~ |
 | `workbench/api/routes_insight.py` | `egmp`, `egmp.client`, `egmp.insight` |
 | `workbench/services/browser_pool.py` | `egmp.monitor`（仅 1 处：`monitor_start` 里挂录制引擎） |
 
@@ -81,7 +88,7 @@ v1 版本花了整节（原 §6）分析"职务作品/委托作品的著作权�
 | `egmp/client.py` | `workbench`（版本号 `__version__`） |
 | `egmp/insight/understand.py`、`egmp/insight/workspace.py` | `services.paths`（数据目录/产物路径） |
 | `egmp/insight/workspace.py` | `services.storage`（读写 `settings`） |
-| `egmp/orchestrate.py` | `egmp.queries`（平台查询缓存；**注意它在 egmp 内部，位置本来就对**） |
+| ~~`egmp/orchestrate.py`~~（已删除） | ~~`egmp.queries`（平台查询缓存）~~ |
 
 **边界质量评估：优秀。** 依赖方向清晰、全是静态 import、没有任何 `importlib`/字符串反射的隐藏耦合。
 这使得"把 egmp 移出仓库"在**技术上只是一次机械重构**。
@@ -213,7 +220,7 @@ v1 版本把"确认著作权归属"列为第 0 步（0.5 人日）。**发起人
 |---|---|---|
 | A1 | 抽 `workbench/plugin_api.py`：定义 `Registry`（`add_router`/`add_nav`/`provide`/`get`）+ `Plugin` 协议 + 必需扩展点自检 | 0.5 |
 | A2 | 把 4 个文件的 10 处 `import egmp` 改为**启动时解析**（`registry.get("insight.runner")` 等）；`browser_pool` 的 monitor 钩子同样改为扩展点 | 1.0 |
-| A3 | `egmp` 增加 `plugin.py` 实现 `register(reg)`：把 `routes_insight`/`routes_factory`/`routes_agent` 三个域搬进插件侧（或保留在核心但改为经 registry 调用） | 1.0 |
+| A3 | `egmp` 增加 `plugin.py` 实现 `register(reg)`：把 `routes_insight`/~~`routes_factory`~~/`routes_agent` 三个域搬进插件侧（或保留在核心但改为经 registry 调用）<br>（`routes_factory` 已于 2026-09-22 随配置工厂移除；本条现在是**两个域**） | 1.0 |
 | A4 | ~~`services/queries.py` 归位到 `egmp/`~~ → **核查后不需要**：查询缓存本来就在 `egmp/queries.py`，位置已正确 | 0 |
 | A5 | `services/paths.py` 里 `capa_plan` 等平台命名抽成配置（平台产物命名规范） | 0.3 |
 | A6 | 回归：`pytest`（330 项）+ 打包体检 + 真机冒烟；补一条"插件必需扩展点存在性"的测试 | 1.0 |

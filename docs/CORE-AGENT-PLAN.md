@@ -448,10 +448,14 @@ agent_span(id, run_id, step, span_kind, name, started_at, duration_ms,
 
 ### 8.3 危险操作的可回滚（反向配方）
 
-**设计**：写工具在 `audit_extra` 里带**反向操作配方**（如 `factory_create` 记录本次创建的对象
-code/id），落 `agent_audit.meta`（**不新建表**——审计已经是写操作的事实源）；
+**设计**：写工具在 `audit_extra` 里带**反向操作配方**（如"本次创建了平台上哪个 code/id"），
+落 `agent_audit.meta`（**不新建表**——审计已经是写操作的事实源）；
 UI 提供「撤销本次会话的写操作」，逐条展示 + 逐条确认（**不做"一键全撤"**：批量回滚比批量创建更危险）。
-**幂等不是回滚**（`writers/idempotency.py` 防重复，不防"做错了"）——这一点要在 UI 文案里说清。
+**幂等不是回滚**（幂等层防的是"重复执行"，不防"做错了"）——这一点要在 UI 文案里说清。
+
+> ⚠️ 2026-09-22：本节的**举例对象**曾经是 `factory_create`（当时唯一会真的写平台的工具），
+> 它随配置工厂整体移除；**方案本身不变**，只是现在没有工具在写平台了——
+> 接第一个"不可逆写"工具时，它必须声明 `Risk.DANGEROUS` 并同时带上反向配方。
 **判据**：一次真机 create 后 `undo` 配方可查；`tests/test_undo_recipe.py`。
 
 ---
@@ -463,7 +467,7 @@ UI 提供「撤销本次会话的写操作」，逐条展示 + 逐条确认（**
 | **Skills 渐进披露** | 想用社区 Skill / 正文里有真知识 | 新增内建 `read_skill`（read 级，按需取正文）；读取端兼容规范字段（`name` / `compatibility` 作别名）——**兼容读取不改写出**（ADR-0013 的既有手法） | 2–3 人日 |
 | **跨会话长期记忆** | 出现"每次都要重新交代同一件事" | `user_fact` 表 + `memory_remember` / `memory_recall` 两个工具；**可查看、可删除、进审计**——比向量库更合 GxP 的"可解释"要求 | 2–3 人日 |
 | **MCP 客户端** | 需要的外部能力 > 5 个 | `mcp` 插件：stdio server → `ToolSpec`；**risk 默认 WRITE**；capabilities 映射沙箱 `mcp-stdio` 策略。**前置：7.2 的工具面裁剪必须已上线**（MCP 会让工具数暴涨） | 3–5 人日 |
-| **沙箱内工具编排（PTC 形态）** | `insight_run` / `factory_create` 的中间产物把上下文打满 | 新策略 `tool-orchestrate`；编排脚本经 stdio 请求宿主执行下游工具（**宿主仍是唯一执行者**，确认门与审计一步不省）。对齐 Anthropic PTC 的 token −37%（[来源](https://www.anthropic.com/engineering/advanced-tool-use)） | 3–5 人日 |
+| **沙箱内工具编排（PTC 形态）** | `insight_run` / `attachment_read` 的中间产物把上下文打满 | 新策略 `tool-orchestrate`；编排脚本经 stdio 请求宿主执行下游工具（**宿主仍是唯一执行者**，确认门与审计一步不省）。对齐 Anthropic PTC 的 token −37%（[来源](https://www.anthropic.com/engineering/advanced-tool-use)） | 3–5 人日 |
 
 ---
 

@@ -238,14 +238,13 @@ def test_recorder_roundtrip_via_fake_platform(tmp_path: Path) -> None:
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent))
-    import test_native
     from fakes import FakeEgmpClient
 
-    from workbench.services.egmp import orchestrate
-
     fake = FakeEgmpClient()
-    orchestrate.run_full_workflow(fake, test_native._sample_blueprint(),
-                                  approved=True, confirmed_env=True)
+    # 数据种子：直接建对象（原先借 `orchestrate.run_full_workflow` 播种，那条链已随
+    # 配置工厂移除；本用例测的是**录制/回放一致性**，与播种方式无关）。
+    fake.post("/api/platform/BasicObject/SaveBasicObject",
+              {"name": "培训管理", "code": OBJECT, "enableLifeCycle": True})
     recorded = replay.make_fixture("roundtrip", base_url="https://fake.example.com", env_name="假平台")
     live = insight.run_spider(replay.Recorder(fake, recorded), [OBJECT], output_dir=tmp_path / "live")
     replayed = insight.run_spider(

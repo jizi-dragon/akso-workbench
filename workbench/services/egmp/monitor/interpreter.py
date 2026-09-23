@@ -1,8 +1,18 @@
-"""Monitor 解读 + 复现计划 + 复现执行（interpreter.js / reproduce.js 的 Python 化）。
+"""Monitor 解读 + 复现计划（interpreter.js / reproduce.js 的 Python 化）。
 
 骨架报告的「待 Agent 填充」段由调用方（Agent 层）经 append_error_record /
 append_pitfall_record 回填后才能展示（SKILL 纪律继承）。
-reproduce：逐步显式授权（confirmed_per_step），DANGEROUS 类永不回放。
+
+## 2026-09-22：复现计划的「执行」这一半随配置工厂一并移除
+
+`reproduce-plan.json` 曾经把每个端点映射到**写路径的具体函数**
+（`API_MAP`：`/api/platform/BasicObject/SaveBasicObject` → `writers.objects.create_object` …），
+再由调用方逐步确认后调用它们回放。写路径（`egmp/writers/**` + `orchestrate.py`）已整体删除，
+那张表如果留着，就会写出一份**指向不存在模块的计划**——一份看起来正常、点下去才知道是坏的产物。
+
+现在 `reproduce-plan.json` 只承载**平台侧事实**：方法 / 路径 / 原始参数，
+配合 DANGEROUS 类永不入计划的既有纪律。**本仓库不再提供任何回放执行器**；
+需要回放时由使用方（人或另一个工具）自己按计划操作平台。
 """
 
 from __future__ import annotations
@@ -14,22 +24,9 @@ from typing import Any
 
 from .query_layer import classify_api, read_log_entries
 
-# API_MAP：端点 → Python writers 模块/函数（gmp/interpret.js 的原生对位）
-API_MAP: dict[str, dict[str, str]] = {
-    "/api/platform/BasicObject/SaveBasicObject": {"module": "writers.objects", "fn": "create_object"},
-    "/api/platform/BasicObject/SaveField": {"module": "writers.fields", "fn": "create_field"},
-    "/api/platform/ObjectPicklist/save": {"module": "writers.picklists", "fn": "create_picklist"},
-    "/api/config/lifecycle/Status/Create": {"module": "writers.lifecycle", "fn": "create_status"},
-    "/api/platform/Workflow/AddWorkflowBasic": {"module": "writers.workflows", "fn": "create_workflow_basic"},
-    "/api/platform/Workflow/AddWorkflowTaskStep": {"module": "writers.workflows", "fn": "add_task_step"},
-    "/api/platform/Workflow/AddWorkflowDecisionStep": {"module": "writers.workflows", "fn": "add_decision_step"},
-    "/api/platform/Workflow/AddWorkflowActionStep": {"module": "writers.workflows", "fn": "add_action_step"},
-    "/api/platform/Workflow/UpdateWorkflowStartStep": {"module": "writers.workflows", "fn": "config_start_step"},
-    "/api/config/lifecycle/UserAction/Create": {"module": "writers.lifecycle", "fn": "bind_workflow_to_status"},
-    "/api/platform/Layout/SaveLayoutDetail": {"module": "writers.layouts", "fn": "save_form_layout"},
-    "/api/platform/Listlayout/AddColumns": {"module": "writers.layouts", "fn": "set_list_columns"},
-    "/api/platform/Menu/Submit": {"module": "writers.menus", "fn": "create_parent_menu"},
-}
+#: 可入复现计划的分类：**只收 WRITE**（READ 无需回放），DANGEROUS 永不入计划
+#: ——安全边界继承上游（见 docs/adr/0010-monitor-no-dangerous-replay.md）。
+PLANNABLE_CLASSES = ("WRITE",)
 
 
 def interpret_segment(log_path: Path, session_dir: Path, *,
@@ -44,10 +41,11 @@ def interpret_segment(log_path: Path, session_dir: Path, *,
     unknown = [e for e in segment_entries if not e.get("known")]
     reproducible_steps = []
     for entry in segment_entries:
-        mapping = API_MAP.get(str(entry.get("path")))
-        if mapping and classify_api(str(entry.get("method")), str(entry.get("path"))) != "DANGEROUS":
+        method = str(entry.get("method") or "")
+        path = str(entry.get("path") or "")
+        if classify_api(method, path) in PLANNABLE_CLASSES:
             reproducible_steps.append({
-                "path": entry.get("path"), "module": mapping["module"], "fn": mapping["fn"],
+                "method": method, "path": path,
                 "params": entry.get("postData"), "reproducible": True,
             })
 
@@ -69,10 +67,15 @@ def interpret_segment(log_path: Path, session_dir: Path, *,
         "",
         "## 是否一次正确解读: 否",
         "## 是否已迭代学习: 否",
+        "",
+        "> 复现计划只记**平台侧事实**（方法/路径/原始参数）。本仓库不提供回放执行器",
+        "> ——写路径随配置工厂一并移除（2026-09-22）；DANGEROUS 类永不入计划。",
     ]
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    plan = {"baseUrl": _guess_base_url(segment_entries), "steps": reproducible_steps}
+    plan = {"baseUrl": _guess_base_url(segment_entries), "steps": reproducible_steps,
+            "executor": None,
+            "note": "本仓库不提供回放执行器（写路径已随配置工厂移除，2026-09-22）"}
     plan_path = session_dir / "reproduce-plan.json"
     plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -140,6 +143,11 @@ def _append_md(path: Path, text: str) -> None:
 
 
 def reproduce_plan(session_dir: Path) -> list[dict[str, Any]]:
+    """读回该段的复现计划：`[{method, path, params, reproducible}]`。
+
+    ⚠️ 计划里**只有平台侧事实**，没有"调用哪个函数"这一项——回放执行器随配置工厂移除。
+    调用方不要假设存在可调用的目标（见模块文档串）。
+    """
     plan = session_dir / "reproduce-plan.json"
     if not plan.exists():
         return []

@@ -377,9 +377,6 @@ REQUIRED_TOOLS = (
     "web_search",
     "insight_run",
     "insight_artifacts",
-    "factory_blueprint_spec",
-    "factory_preview_blueprint",
-    "factory_create",
     "accounts_login",
     "accounts_browser_open",
 )

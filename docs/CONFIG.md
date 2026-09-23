@@ -63,9 +63,9 @@
 | `WORKBENCH_CONTROL_PORT` | `18767` | 壳控制服务端口（固定）。由壳下发；服务端侧的 `routes_update` / `routes_extension` 与 `browser_pool` 都读 `config.CONTROL_PORT`，**不得再写常量** |
 | `WORKBENCH_CDP_PORT` | `18766` | 同上，壳的 Chromium 调试口；与 `desktop/ports.js` 的 `PORTS.cdp` 对应 |
 | `PLAYWRIGHT_BROWSERS_PATH` | （仅打包态自动设置） | 打包态由 `browser_pool` 工作线程指向 `_MEIPASS/ms-playwright`，**必须在 `sync_playwright()` 之前**。手工覆盖会导致找不到 chromium |
-| `AKSO_CC_REPO` / `AKSO_AUTO_REPO` | 见 `adapters/*.json` 的 `repoPath` | **只影响两件事**：模块体检的 `source-reference` 提示、「原项目 env 导入」去哪里扫 `env.json`。**不影响任何业务功能**（能力已原生化，见 [ADR-0005](adr/0005-native-internalization-of-four-projects.md)） |
+| `AKSO_CC_REPO` / `AKSO_AUTO_REPO` | 见 `adapters/akso-cc.json` 的 `repoPath` / `D:\ai_assistant\akso-auto`（写死在 `services/accounts.py`） | **只影响两件事**：模块体检的 `source-reference` 提示（只有 `AKSO_CC_REPO` 走这条，它是 `adapters/akso-cc.json` 的 `repoPathEnv`）、「原项目 env 导入」去哪里扫 `env.json`（`accounts.scan_original_env_files` 仍同时扫 akso-cc 与 akso-auto 两处，**只读**）。**不影响任何业务功能**（能力已原生化，见 [ADR-0005](adr/0005-native-internalization-of-four-projects.md)） |
 | `NODE_COMMAND` | `node` | 遗留（`services/proc.py` 的 Node 子进程封装，仅被 `tests/test_proc.py` 使用）。**运行时链路不再依赖 Node** |
-| `WORKBENCH_SKILL_PYTHON` | （空） | **脚本式 Skill 用的 Python 解释器**（`workbench/skills/script_runner.py`）。留空 = 用 `sys.executable`（开发态正确）。⚠️ **打包态必须显式设置**：冻结态下 `sys.executable` 是 `WorkbenchServer.exe`、**不是解释器**，拿它跑脚本必然失败——所以 `find_python()` 在"冻结态 + 本变量为空"时**直接报错并说清怎么配**（不做"试一下再说"，因为这条报错会出现在用户现场，必须自解释）。给的路径**必须是真实存在的文件**，否则同样报错。用户视角见 [USER-MANUAL.md](USER-MANUAL.md) §11 |
+| `WORKBENCH_SKILL_PYTHON` | （空） | **脚本式 Skill 用的 Python 解释器**（`workbench/skills/script_runner.py`）。留空 = 用 `sys.executable`（开发态正确）。⚠️ **打包态必须显式设置**：冻结态下 `sys.executable` 是 `WorkbenchServer.exe`、**不是解释器**，拿它跑脚本必然失败——所以 `find_python()` 在"冻结态 + 本变量为空"时**直接报错并说清怎么配**（不做"试一下再说"，因为这条报错会出现在用户现场，必须自解释）。给的路径**必须是真实存在的文件**，否则同样报错。用户视角见 [USER-MANUAL.md](USER-MANUAL.md) §10 |
 
 ### 2.2 桌面壳（`desktop/*.js`）
 
@@ -86,21 +86,25 @@
 > （跨重启稳定——否则每次重启都会让 Chrome 里的扩展拿旧令牌狂刷 401）。
 > 扩展经 `POST /extension/hello` 自举领取，见 [API.md](API.md) §11。
 
-### 2.3 适配器声明的变量（`adapters/*.json`）
+### 2.3 适配器声明的变量（`adapters/*.json`，**现存只有 `akso-cc.json`**）
 
 | 键 | 值 | 说明 |
 |---|---|---|
-| `id` | `insight` / `factory` | **模块 id（本工作台自己的名字）**，不是来源项目名 |
-| `repoPath` | `D:\ai_assistant\akso-cc` / `akso-auto` | 只读参考存档路径（原仓库所在处） |
-| `repoPathEnv` | `AKSO_CC_REPO` / `AKSO_AUTO_REPO` | 环境变量可覆盖 `repoPath`（环境变量优先） |
+| `id` | `insight` | **模块 id（本工作台自己的名字）**，不是来源项目名 |
+| `repoPath` | `D:\ai_assistant\akso-cc` | 只读参考存档路径（原仓库所在处） |
+| `repoPathEnv` | `AKSO_CC_REPO` | 环境变量可覆盖 `repoPath`（环境变量优先） |
 | `mode` | `native-python-internalized` | 表示能力已内化；`frozen: true` |
 | `deprecation` | 文本 | 说明原生化事实与文件降级为只读参考 |
 
 > **文件名是来源项目名，`id` 是本工作台的模块名，两者刻意不一致**：
-> 2026-09-14 `akso-cc` → `insight`、2026-09-15 `akso-auto` → `factory`，但**文件名没动**——
-> `akso-auto.json` 是"这份存档对应哪个原仓库"的引用真源（`repoPathEnv=AKSO_AUTO_REPO`
-> 也据此命名）。改文件名会让 `repoPathEnv` 的语义失真。
-> 这条口径由 `tests/test_modules.py` 的断言守住（不许泄漏上游名 / 引用不许断）。
+> 2026-09-14 `akso-cc` → `insight`，但**文件名没动**——`akso-cc.json` 是"这份存档对应哪个
+> 原仓库"的引用真源（`repoPathEnv=AKSO_CC_REPO` 也据此命名）。改文件名会让 `repoPathEnv`
+> 的语义失真。这条口径由 `tests/test_modules.py` 的断言守住（不许泄漏上游名 / 引用不许断）。
+>
+> ⚠️ **2026-09-22：`adapters/akso-auto.json` 随配置工厂删除**（那份存档的 `id` 曾是
+> `factory`）。模块清单里因此不再有 `akso-auto` / `factory` 两个 id（都返回 404），
+> 模块维度也不再有工厂体检项。但「原项目 env 导入」那条**只读**通路没动：
+> `services/accounts.py` 仍按 `AKSO_AUTO_REPO` 去扫 akso-auto 那棵树（见 §2.1 服务端环境变量表）。
 >
 > ℹ️ `adapters/*.json` 的 `$schema` 字段原指向已删除的 `docs/模块契约.md#adapters`，
 > 已于本轮文档重构改为 `docs/SCHEMA.md`（只动这一个字段）。除此之外这些文件属于
@@ -135,7 +139,7 @@
 | 键 | 值形态 | 默认/缺失行为 | 改了会怎样 |
 |---|---|---|---|
 | `apiKey` | DeepSeek API Key 明文 | 空 → `ready=false`，对话直接回「请先在设置中配置」 | 换 Key 即换计费账号；**明文存库**是本机信任边界内的既有契约 |
-| `model` | 模型 id 字符串 | `deepseek-v4-flash`（`deepseek.DEFAULT_MODEL`） | 见 §5 模型清单；**写错模型名会让对话与蓝图生成整体 502/报错** |
+| `model` | 模型 id 字符串 | `deepseek-v4-flash`（`deepseek.DEFAULT_MODEL`） | 见 §5 模型清单；**写错模型名会让对话整体 502/报错** |
 | `temperature` | 十进制字符串 | `0.7` | 解析失败回落 0.7 |
 | `account_fernet_key` | urlsafe base64 32 字节 | **首次使用时生成** | ⚠️ **改它 = 全部已存口令不可解密**（接口能读、扩展静默丢弃全部账号）。见 [ADR-0007](adr/0007-credentials-never-plaintext.md) |
 | `disabled_boxes` | JSON 数组字符串 | `[]` | 禁用盒在**轮盘**中被跳过（账号中心与管理不受影响） |
@@ -208,10 +212,10 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | DeepSeek 流式/非流式超时 | `services/deepseek.py` | 流式 120s（连接 15s）；非流式 90s |
 | 最大步数预算 | `harness/types.DEFAULT_MAX_STEPS`（默认 40），**设置页可改**（`settings.maxSteps`，范围 4~200） | 一次用户消息里允许的**工具调用**次数。只读探索与危险写一样计费；耗尽只是"这一轮到头了"，回一句「继续」即接着做 |
 | 输出截断判据 | `services/deepseek.py` 收 `finish_reason` | `length` = 被长度上限截断 → 本轮终止且**不执行任何工具**。本仓**从不发送 `max_tokens`**，用服务端默认值（官方文档：非思考 8K / 思考 64K） |
-| 蓝图上传上限 | `routes_factory.BLUEPRINT_MAX_BYTES` | 10 MB |
+| 附件上传上限 | `config.ATTACHMENTS_MAX_BYTES` / `ATTACHMENTS_MAX_PER_TURN` | 20 MB（单文件）/ 5 个（每轮） |
 | 产物文本截断 | `routes_insight.read_artifact` | 2,000,000 字符 |
 | 审计字段截断 | `routes_agent._audit` | `args` 2,000 / `result_summary` 1,000 字符 |
-| 列表接口上限 | 各 `limit` 参数 | 200（insight/factory）、500（agent audit） |
+| 列表接口上限 | 各 `limit` 参数 | 200（insight）、500（agent audit / skills / sandbox） |
 | `version_tuple` 容错 | `routes_update` | 非数字段按 0 处理 |
 
 ## 5. 第五层：前端硬编码常量
@@ -250,7 +254,6 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | `server.log` | 服务端（**仅打包态**） | 人 | 只读。**启动面包屑，不是日志**：一行（版本/pid/URL），用裸 `open()` 写，因此**在日志系统自身失效时仍然有效**。`blank.html` 的「服务端没有应答」页面直接引用它 |
 | `.updaterId` | electron-updater | 同上 | 勿删（更新通道标识） |
 | `runtime/insight/<job_id>/` | 洞察 | `routes_insight` 产物接口 | 可删（历史产物） |
-| `runtime/factory/<blueprint_id>/` | 工厂 | `routes_factory` | 可删；但 `checkpoint.json` 是断点续跑依据 |
 | `runtime/browser-states/<account_id>.json` | `browser_pool` | 同上 | ✅ 删 = 该账号回到「需登录」（等价于 `POST /api/browser/forget/{id}`） |
 | `runtime/monitor/<acc8>-<stamp>/` | Monitor | 人 | 可删（录制产物） |
 | `runtime/egmp-tokens/token-<env_id>.json` | `egmp.client` | 同上 | ✅ 删 = 强制重新登录换取 token（55 分钟 TTL） |

@@ -24,7 +24,7 @@ _2026-09-20 实测。锚定 `15b847e`（main）。本文的每条结论都有**�
 
 | # | 结论 | 严重度 |
 |---|---|---|
-| **A** | **对话链路里，风险工具（write/dangerous）永远无法执行**。放行后重试仍被拦，且每次重试探都会**新建一条 pending**。受影响工具：`accounts_browser_open`、`accounts_browser_close`、`factory_create`（**全部 3 个写/危险工具**） | 🔴 **P0** → ✅ 已修 |
+| **A** | **对话链路里，风险工具（write/dangerous）永远无法执行**。放行后重试仍被拦，且每次重试探都会**新建一条 pending**。受影响工具是**当时全部 3 个写/危险工具**：`accounts_browser_open`、`accounts_browser_close`（两个 write）与 `factory_create`（唯一的 dangerous，**2026-09-22 已随配置工厂整体删除**）。⇒ **今天产品面是 2 个 write + 0 dangerous**，本条的症状面因此从"三个工具"缩到两个，**修法一个字没变** | 🔴 **P0** → ✅ 已修 |
 | **B** | **只读工具 `read_local_file` 能完整读出 cookies / 平台 JWT / 账号备份（含 Fernet 密钥）**，而它 `risk=read`（**不过确认门**）。根因是**仓内有两张敏感路径表**，只读工具用的是弱的那张 | 🔴 **P0** → ✅ 已修 |
 | **C** | **工具调用链路在真实环境里从未被跑过**：`agent_audit` / `deepseek_usage` / `conversation_context` 全为 0 行，最后一条对话是 **2026-09-09**，而工具插件层 **2026-09-15** 才落地 | 🟡 事实（非缺陷，但决定了测试策略） |
 | **D** | 只读工具（`read` 级）的链路**是通的**——静态检查与注入假客户端的端到端测试都通过；真实 API 也**可达**（`api.deepseek.com` 回 **401** = 网络通、只差鉴权头） | 🟢 好消息 |
@@ -104,8 +104,11 @@ _2026-09-20 实测。锚定 `15b847e`（main）。本文的每条结论都有**�
 | `plugin_api.py:613-616`（回给模型的话） | 「…等界面放行后**再重试同一次调用**」 |
 | `chat-tools.js:387-393`（前端） | 「**刻意不自动重发**……请在输入框里让模型继续或重试」 |
 
-**影响**：`factory_create`（dangerous）与两个 write 工具**在对话里不可用**。
+**影响**：当时的三个风险工具——两个 write 工具（`accounts_browser_open` / `accounts_browser_close`）
+与 `factory_create`（dangerous）——**在对话里不可用**。
 用户唯一能走通的路是 `POST /api/agent/invoke` 手动带令牌——那不是给终端用户准备的。
+（**2026-09-22 更新**：`accounts_browser_open` / `accounts_browser_close` 仍是产品里的那两个 write 工具，
+本条对它们**依然成立**；`factory_create` 已随配置工厂删除，产品面现在 **0 个 dangerous** 工具。）
 
 ### 2.3 断点二：只读工具能读走凭据（**仓内两张敏感表不一致**）
 
@@ -200,7 +203,7 @@ curl.exe -s http://127.0.0.1:18765/api/agent/cache
 
 ## 5. 修复建议（按优先级）
 
-### P0-A：给对话链路一条令牌通道（**必须修，否则三个工具不可用**）
+### P0-A：给对话链路一条令牌通道（**必须修，否则所有风险工具都不可用**）
 
 **三个可选方案**，推荐 **A2**：
 

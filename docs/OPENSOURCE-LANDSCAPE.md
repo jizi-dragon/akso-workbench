@@ -491,8 +491,9 @@ MCP 客户端（Claude Desktop / Cursor / VS Code）的普遍做法是"首次调
 ### 🟡 6.4 Agent 对话的断点续跑
 
 - **行业做法**：LangGraph checkpointer 持久化图状态，`interrupt()` 后重启可恢复。
-- **现状**：**能力割裂**。`egmp/checkpoint.py` 与 `orchestrate.CheckpointManager` 为**配置工厂**做了完整断点续跑；
-  但 `harness/loop.py` 的**对话循环没有 checkpoint**。
+- **现状**：**能力割裂**（且这一半已消失）。配置工厂曾用 `egmp/checkpoint.py` +
+  `orchestrate.CheckpointManager` 做了完整断点续跑，**该实现已于 2026-09-22 随配置工厂整体移除**；
+  而 `harness/loop.py` 的**对话循环**至今**没有 checkpoint**——所以这里要补的缺口比原文更大。
 - **可落地**：**部分借鉴**。审批令牌**不该**恢复（现有判断正确，`approvals.py` 明确写了"别顺手改成恢复"）；
   但**工具执行结果应当持久化**——把每步落库，重启后从最后一条完整消息续跑。
   **低风险、高收益，与 `conversation_context` 表天然兼容。**
@@ -567,7 +568,7 @@ MCP 客户端（Claude Desktop / Cursor / VS Code）的普遍做法是"首次调
 | **3** | 精确 token 计数 | 防"请求超长"这类硬故障，成本极低 | tiktoken | 0.5 人日 |
 | **4** | 并行工具调用 | 多工具场景延迟 N× → 1× | 主流框架 | 0.5 人日 |
 | **5** | 技能包 `digest`(sha256) + 解压上限 + 安装时风险披露 | 投入最小，把"没被换过"变成可验证事实 | 微软 `MCPSkillsSource` | 1 人日 |
-| **6** | **沙箱内做多步骤工具编排**（让 `insight_run` / `factory_create` 的中间产物不进上下文） | **既提能力又降成本**；沙箱基础设施已就绪 | Anthropic Programmatic Tool Calling、smolagents | 3–5 人日 |
+| **6** | **沙箱内做多步骤工具编排**（让 `insight_run` / `attachment_read` 的中间产物不进上下文） | **既提能力又降成本**；沙箱基础设施已就绪 | Anthropic Programmatic Tool Calling、smolagents | 3–5 人日 |
 | **7** | 对话级工具结果持久化 + 崩溃续跑 | 消灭"跑 8 步崩了从头来" | LangGraph checkpointer（**部分借鉴**） | 2–3 人日 |
 | **8** | 写操作"反向配方" + 会话级撤销 UI | 补上实施场景最关键的安全网 | Cline Checkpoints（**业务化改造**） | 3–5 人日 |
 | **9** | 审批"本会话内信任该工具"的快捷授权 | 减少确认疲劳（现在每次都重点） | Claude Desktop / Cursor / VS Code | 1–2 人日 |

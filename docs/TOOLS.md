@@ -33,14 +33,13 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 > 手改会在下一次 `--check` 时被判为不一致——这正是设计意图（清单只能来自代码）。
 
 <!-- TOOLS-TABLE:BEGIN —— 由 tools/gen_tools_doc.py 生成，勿手改；改插件后跑 --write -->
-> 实测（由运行期工具中枢生成）：**5 个插件 / 25 个工具**。风险分布：22 read · 2 write · 1 dangerous；装配失败：无。
+> 实测（由运行期工具中枢生成）：**4 个插件 / 18 个工具**。风险分布：16 read · 2 write · 0 dangerous；装配失败：无。
 
 | 插件 | 标题 | 版本 | 工具数 | 负责什么 |
 |---|---|---|---|---|
 | `builtin` | 内置工具 | 1.2.0 | 6 | 与业务无关的通用能力：时间、读本地文件、读网页正文、读用户交的附件、请求用户确认 |
 | `websearch` | 联网检索 | 1.1.0 | 1 | 自建联网检索（DeepSeek API 不支持内置 web_search，故由本工作台实现） |
 | `insight` | 对象分析 | 1.0.0 | 6 | 读平台对象元数据、跑五步织网洞察、取回产物（akso-cc 能力原生化） |
-| `factory` | 配置 | 2.0.0 | 7 | 蓝图规格与预览暂存、真机批量创建（akso-auto 能力原生化） |
 | `accounts` | 快捷登录 | 1.0.0 | 5 | 账号库清单、平台登录验证、托管浏览器会话（quick-login 能力内化） |
 
 | 工具 | 插件 | 风险 | 需确认门 | 超时 | 干什么 | 参数 |
@@ -56,13 +55,6 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `read_local_file` | builtin | read | — | 30s | 读取本地文本文件。**敏感路径一律拒绝**（数据库/登录态/token 缓存/账号备份/浏览器 profile/SSH 与云凭据） | `path` |
 | `read_web_page` | builtin | read | — | 40s | 读取公开网页正文（用于核实 NMPA/FDA/ICH 等官方监管页面原文），返回标题、来源与正文文本 | `url` |
 | `request_user_confirmation` | builtin | read | 🙋 模型可主动问 | 10s | 【高风险任务前置】在执行敏感、不可逆或会影响真实平台的操作**之前**，先向用户弹确认框并**等待他当场答复**（同意 / 拒绝），也可以用来**让用户在卡片上挑一个账号 / 环境** | `question`、`details`、`target_tool`、`target_args`、`timeout_s`、`options_source` |
-| `factory_blueprint_spec` | factory | read | — | 20s | 【先看这个】返回 eGMP 配置蓝图的**完整规格**：每个键叫什么、什么类型、哪些必填、dataType/stepType 等枚举的含义、编码约定、校验规则、以及一份能直接跑通的最小示例 | — |
-| `factory_jobs` | factory | read | — | 15s | 最近的配置工厂任务（状态/时间），用于确认此前是否已经创建过 | — |
-| `factory_list_blueprints` | factory | read | — | 20s | 列出已暂存的蓝图（id/名称/涉及对象）。含**用户在配置工厂页面上传的**那些，所以用户说自己传了一份时用它确认 | `limit` |
-| `factory_preview_blueprint` | factory | read | — | 90s | 提交一份蓝图：**校验 → 暂存 → 出一份给用户看的审阅清单**，一次完成 | `blueprint` |
-| `factory_resolve_object` | factory | read | — | 60s | **用户说的对象在平台上到底存不存在**——按 code 或名称查。存在：回 id/name（工厂会复用它） | `account_id`、`query` |
-| `factory_status` | factory | read | — | 30s | 某个工厂任务的详情：状态、日志末尾、断点续跑 checkpoint | `job_id`、`log_lines` |
-| `factory_create` | factory | **dangerous** | ✅ 宿主拦下 | 900s | 【危险】在真实平台上按蓝图批量创建对象/字段/选项集/生命周期/工作流/布局/菜单 | `blueprint_id`、`account_id` |
 | `insight_accounts` | insight | read | — | 15s | 列出工作台账号库里的账号（id/用户名/环境），用于确定 account_id | — |
 | `insight_artifacts` | insight | read | — | 30s | 列出某次洞察任务的产物文件（含 proc.log 与工作区落点） | `job_id` |
 | `insight_read_artifact` | insight | read | — | 30s | 读取某件洞察产物正文（spider-network.md / step2-status-table.md / *.drawio 等） | `job_id`、`name` |
@@ -78,7 +70,13 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 |---|---|---|
 | `read` | 只读：查询、读元数据、跑分析 | 直接执行 |
 | `write` | 会改变本机或平台状态的常规写（如开/关托管浏览器） | **必须过一次确认门** |
-| `dangerous` | 一次误调用不会报错、**会真的建出来**的批量写入（如 `factory_create`） | 同上，且**永不进入 Monitor 的可执行回放步骤** |
+| `dangerous` | 一次误调用不会报错、**会真的建出来**的批量写入 | 同上，且**永不进入 Monitor 的可执行回放步骤** |
+
+> ⚠️ **2026-09-22：当前产品里没有一个 `dangerous` 工具。** 唯一那个（`factory_create`，
+> 会在平台上真的建对象且平台侧没有撤销键）随配置工厂整体移除。**分级本身不变**——
+> 将来任何"不可逆地改生产数据"的工具进来，它必须是 `dangerous`；
+> `tests/test_app.py::test_agent_selfcheck` 现在断言 `riskCounts["dangerous"] == 0`，
+> 那一刻会变红，提醒作者回来读这段。
 
 确认门（`approvals.py`）的语义：**单次令牌**（用完即废）· **5 分钟过期** · **绑定工具名 + 参数指纹**
 （换个参数要重新申请）。对话链路发 `approval_required` 事件、**这一轮就地等答复**（放行后由服务端
@@ -88,9 +86,8 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 
 可选的前置检查 `ToolSpec.precheck`：只读、**在确认门之前**跑，判定"这次调用注定失败"时
 **不再问用户放行**（理由直接成为模型观测）。它只省一次白问，不承担拦截责任。
-
-> `factory_create` 与引擎侧 `confirmed=true` 是**两条独立的闸门**，不是替代关系：
-> 工具级确认门挡 Agent 链路，引擎侧挡"绕过页面直接打 HTTP"的人。
+> 它当前也没有产品内声明者（原使用者随配置工厂移除），机制由 `tests/test_plugin_api.py`
+> 的合成 spec 守着——**"用户点了也改变不了结果"的确认一律不该问**，这条仍然成立。
 
 ## 4. 加一个工具 / 插件的完整清单
 

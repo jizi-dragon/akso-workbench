@@ -298,8 +298,14 @@ def test_core_plugins_cannot_be_uninstalled(clean_hub) -> None:
 
 
 def test_install_rejects_tool_name_clash_with_core(clean_hub) -> None:
-    """安装的能力**不得覆盖产品自带工具**——那是安全事故，不是功能问题。"""
-    clash = SKILL_MD.replace("name: test_read_object", "name: factory_create")
+    """安装的能力**不得覆盖产品自带工具**——那是安全事故，不是功能问题。
+
+    这里挑一个**长期存在的核心工具名**（`insight_run`）。曾经用的是 `factory_create`，
+    它随配置工厂移除后就**不再与任何核心工具冲突**了，于是这条用例会静默失效
+    （`upload` 变成成功，而断言 `result.ok is False` 立刻变红——这是它被发现的唯一原因）。
+    教训：拿"当前恰好存在的工具名"当夹具，会在那个工具消失时把守门人一起带走。
+    """
+    clash = SKILL_MD.replace("name: test_read_object", "name: insight_run")
     result = L.upload(make_zip(clash))
     assert result.ok is False
     assert "冲突" in result.reason

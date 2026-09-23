@@ -6,7 +6,6 @@
 - routes_chat           SSE 流式对话 + 回答反馈（fork mogul）
 - routes_modules        模块注册表 + 依赖体检（阶段1B）
 - routes_insight        平台洞察（egmp 原生）
-- routes_factory        配置工厂（egmp 原生）
 - routes_accounts       统一账号库
 - routes_browser        托管浏览器/自动登录
 - routes_agent          Agent 工具层
@@ -40,7 +39,6 @@ def _optional_routers(app: FastAPI) -> None:
         routes_attachments,
         routes_browser,
         routes_extension,
-        routes_factory,
         routes_insight,
         routes_modules,
         routes_monitor,
@@ -53,7 +51,6 @@ def _optional_routers(app: FastAPI) -> None:
     registrations = (
         ("modules", routes_modules),
         ("insight", routes_insight),
-        ("factory", routes_factory),
         ("attachments", routes_attachments),
         ("accounts", routes_accounts),
         ("browser", routes_browser),

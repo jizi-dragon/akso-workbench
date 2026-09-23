@@ -13,7 +13,7 @@
 
 ## 为什么上传走 multipart 而不是 JSON
 
-Skill 是 ZIP。本仓已有 `python-multipart` 依赖（`routes_factory` 上传蓝图在用），
+Skill 是 ZIP。本仓已有 `python-multipart` 依赖（附件上传在用），
 沿用同一形态，前端不必自己 base64。
 """
 

@@ -280,7 +280,7 @@ def test_exhausted_budget_terminates(hub) -> None:
     **并且它必须是"可继续的终态"而不是"一个错误"**（2026-09-20 修订）：
     改造前只有一句"已达到步数预算上限，已终止本轮"——用户看不懂预算是多少、
     为什么不够、接下来怎么办；前端也把它渲染成红色报错。现在它带 `reason`，
-    文案里必须出现"继续"与"设置"这两条出路（见 docs/FACTORY-AGENT-GAP.md 问题①）。
+    文案里必须出现"继续"与"设置"这两条出路。
     """
     script = [{"tool_calls": [call("probe_echo", {"text": str(i)}, f"c{i}")]} for i in range(20)]
     _, events = drive(script, hub, AgentConfig(max_steps=3, system_prompt="s"))
@@ -297,7 +297,7 @@ def test_truncated_output_is_not_reported_as_bad_args(hub) -> None:
     改造前：`finish_reason` 在 `DeepSeekClient.stream_chat` 里被丢弃，被截断的
     tool_call 带着半截 JSON 进 `_validate` → 观测是「参数解析失败」——
     模型据此完全推不出真正的原因，最可能的反应是原样重试，而重试大概率再截断一次
-    （白烧步数，见 docs/FACTORY-AGENT-GAP.md 问题① 与 PITFALLS #58）。
+    （白烧步数，见 PITFALLS #58）。
     """
     _, events = drive(
         [{"content": "", "finish_reason": "length",
@@ -345,7 +345,7 @@ def test_default_prompt_is_minimal(hub) -> None:
     for section in ("# 工具", "# 信息"):
         assert section in prompt
     # 不再点名具体工具：那是 plugins/ 里 description 的职责
-    for leaked in ("insight_run", "factory_create", "accounts_login",
+    for leaked in ("insight_run", "accounts_browser_open", "accounts_login",
                    "request_user_confirmation"):
         assert leaked not in prompt, f"提示词里又硬编码工具名了：{leaked}"
     assert "ISPE" not in prompt and "阿克索" not in prompt, "身份设定已按用户要求移除"

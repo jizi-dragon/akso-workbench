@@ -188,7 +188,7 @@ L3  审计（**已有**，合规事实源，本文不碰）
 ```
 
 **为什么 JSONL 而不是纯文本**：需求是"便于后期查找漏洞"——那意味着**过滤与聚合**
-（"所有 `level=ERROR` 且 `tool=factory_create` 的"、"这次 traceId 下的全部行"）。
+（"所有 `level=ERROR` 且 `tool=accounts_browser_open` 的"、"这次 traceId 下的全部行"）。
 文本日志要靠正则猜，JSONL 直接 `jq` / `sqlite` / 代码解析。
 
 **可选**：`WORKBENCH_LOG_FORMAT=text` 输出人读单行（开发态默认 text、打包态默认 jsonl）。

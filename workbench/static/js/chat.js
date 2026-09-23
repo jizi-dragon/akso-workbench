@@ -570,7 +570,7 @@ async function sendMessage(text, attachmentIds = [], onSent = null) {
       } else if (event.type === "error") {
         // 「这一轮到头了」与「真出错了」要分开渲染：前者只需要用户回一句「继续」，
         // 后者需要他去排查。两者都印成红色"错误："会让人对着一个其实能接着走的
-        // 状态去查日志（`reason` 由 loop.py 给出，见 FACTORY-AGENT-GAP 问题①）。
+        // 状态去查日志（`reason` 由 loop.py 给出）。
         content = event.reason === "budget_exhausted"
           ? `⏸ ${event.message}`
           : event.reason === "output_truncated"

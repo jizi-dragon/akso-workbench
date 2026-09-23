@@ -336,7 +336,7 @@ node tools\verify_host_logic.mjs                                 # host/端口�
 
 | 模式 | 命令 | 要编译吗 | 覆盖什么 | **不覆盖**什么 |
 |---|---|---|---|---|
-| **① Web 模式** | `.\.venv\Scripts\python.exe -m workbench.main` | **不要** | 全部页面与业务功能（对话/洞察/工厂/账号/沙箱/Skill）；自动开浏览器 | Electron 壳的一切（托盘/热键/单实例/更新器）；`WORKBENCH_SESSION_MODE=cdp`（壳才下发，Web 模式跑 `local` 的 Playwright chromium）；扩展的桌面地址发现（回退固定 18765，能用） |
+| **① Web 模式** | `.\.venv\Scripts\python.exe -m workbench.main` | **不要** | 全部页面与业务功能（对话/洞察/账号/沙箱/Skill）；自动开浏览器 | Electron 壳的一切（托盘/热键/单实例/更新器）；`WORKBENCH_SESSION_MODE=cdp`（壳才下发，Web 模式跑 `local` 的 Playwright chromium）；扩展的桌面地址发现（回退固定 18765，能用） |
 | **② 桌面壳开发态** | `cd desktop; npm start` | **不要** | **完整桌面应用**：真窗口 + 托盘 + 热键 + sidecar 生命周期 + CDP 会话模式 + 扩展协作面 | 打包特有行为（见 8.3） |
 | **③ 打包安装版** | `powershell -File tools\build.ps1` → 跑 NSIS 安装包 | **要**（数分钟） | 全部，含 PyInstaller 冻结态、chromium 打包、electron-builder `files` 白名单、NSIS 安装/卸载 | 调试便利性（改一行要重打） |
 
@@ -406,11 +406,10 @@ curl.exe -s "http://127.0.0.1:18765/api/logs/tail?level=WARNING&n=50"
 #    界面响应头里的 X-Trace-Id → 还原整条链路
 curl.exe -s "http://127.0.0.1:18765/api/logs/trace/<traceId>"
 
-# ⑤ 改完代码：重跑 ②；动了日志/确认门/配置工厂/敏感表再跑这四条
+# ⑤ 改完代码：重跑 ②；动了日志/确认门/敏感表再跑这三条
 .\.venv\Scripts\python.exe tools\verify_logging.py           # 36/36（自起服务，不必退出工作台）
-.\.venv\Scripts\python.exe tools\verify_confirmation.py      # 19/19（同上，端口 18795）
-.\.venv\Scripts\python.exe tools\verify_factory_agent.py     # 24/24（同上，端口 18796）
-.\.venv\Scripts\python.exe tools\verify_regression_tests.py  # 15/15 反证
+.\.venv\Scripts\python.exe tools\verify_confirmation.py      # 40/40（同上，端口 18795；2026-09-22 实测 40/40）
+.\.venv\Scripts\python.exe tools\verify_regression_tests.py  # 14/14 反证
 
 # ⑥ 发版前：打一次包，走 §8.3 清单
 powershell -ExecutionPolicy Bypass -File tools\build.ps1

@@ -26,7 +26,8 @@ _由 learn-codebase 技能生成；**2026-09-16 复核**，锚定 `c8753ce`（v0
 
 ## Summary（定位）
 
-**Workbench（`workbench` v0.3.12，仓库 `akso-mogul`）** 是阿克索实施工程师的**单机 Windows 工作台**，把四个来源项目（akso-cc / mogul_simulator / akso-auto / quick-login）的能力**内化**为一个桌面应用：对象分析（蜘蛛织网 + networkx 图分析，原「平台洞察」）、配置（蓝图校验 + 幂等创建 + 拓扑编排，原「配置工厂」）、统一账号库（Fernet 加密）、多账号快捷登录（一个 Chrome 内并行身份）、Monitor 监听录制解读。
+**Workbench（`workbench` v0.3.12，仓库 `akso-mogul`）** 是阿克索实施工程师的**单机 Windows 工作台**，把四个来源项目（akso-cc / mogul_simulator / akso-auto / quick-login）的能力**内化**为一个桌面应用：对象分析（蜘蛛织网 + networkx 图分析，原「平台洞察」）、统一账号库（Fernet 加密）、多账号快捷登录（一个 Chrome 内并行身份）、Monitor 监听录制解读。
+（~~配置：蓝图校验 + 幂等创建 + 拓扑编排，原「配置工厂」~~ → **2026-09-22 整条链已删除**，见 §Architecture 的说明。）
 
 架构分工（用户定稿）：
 
@@ -64,10 +65,10 @@ Electron 壳 desktop/（只做壳：sidecar 生命周期 / 窗口 / 托盘 / 热
 服务端分层（`workbench/`）：
 
 ```
-api/（13 个路由域 = 3 个 fork 直挂 + 10 个容错注册 + lifespan + 静态托管，见 api/__init__.py:34-65）
+api/（15 个路由域 = 3 个 fork 直挂 + 12 个容错注册 + lifespan + 静态托管，见 api/__init__.py:34-65）
   ├─ fork 存量：routes_conversations / routes_settings / routes_chat(SSE)
   ├─ 聚合层：routes_modules（模块注册表 + 依赖体检）
-  ├─ egmp 原生：routes_insight（洞察两命令 login/spider）/ routes_factory（蓝图/创建/编排）
+  ├─ egmp 原生：routes_insight（洞察两命令 login/spider）　~~routes_factory（蓝图/创建/编排）~~ → 2026-09-22 删除
   ├─ 账号中心：routes_accounts + routes_browser（托管浏览器）
   ├─ 执行面蓝图：routes_extension（快照 + 指令长轮询 + 状态）**整段需访问令牌**
   ├─ 壳协作面：routes_shell（/api/shell/*：拉起 Chrome / 安装引导 / 读更新状态；**不碰凭据、不需令牌**）
@@ -80,24 +81,33 @@ plugin_api.py（**插件 SDK 契约**：ToolHub / ToolSpec / Risk / ToolContext 
   ├─ 唯一的能力扩展面；不 import 任何插件、不给插件暴露 app
   └─ 审计写入器与确认门由 approvals.install(hub) 注入（故本文件连 db 都不 import）
 approvals.py（**危险操作确认门 + 审计写入器 + 人话摘要**）
-plugins/（**五个工具插件** = 25 个工具；`plugins/__init__.py::_MODULES` 是显式清单）
-  ├─ builtins.py（时间 / 读文件 / 读网页 / 请求用户确认）　├─ websearch.py（自建联网检索，官方 API 无此工具）
-  ├─ insight.py（读元数据 / 跑织网 / 取产物）　├─ factory.py（蓝图校验与清单 / 创建任务）
+plugins/（**四个工具插件** = 18 个工具：**16 read + 2 write + 0 dangerous**；`plugins/__init__.py::_MODULES` 是显式清单）
+  ├─ builtins.py（时间 / 读文件 / 读网页 / 读附件 / 请求用户确认）　├─ websearch.py（自建联网检索，官方 API 无此工具）
+  ├─ insight.py（读元数据 / 跑织网 / 取产物）
   └─ accounts.py（登录验证 / 托管会话）
 services/
   ├─ browser_pool.py 625 行（专职工作线程 / 双模式 / CDP 托管 / 免密 / 自愈）
   ├─ accounts.py 607 · autologin.py 372 · proc.py 236 · deepseek.py 181 · modules.py 172 · storage.py 122
-  └─ egmp/（平台内核，35 文件 6,025 行 —— 2026-09-21 实测）
-       ├─ 顶层 8 文件 1,094 行（orchestrate 316 · replay 259（离线回放台架）· client 258 · queries 94 · cache 87 · checkpoint 45 · auth 12 · __init__ 23）
-       ├─ kernel/ 4 文件 376 行（endpoints / semantics 等）
-       ├─ insight/  6 文件 1,890 行（spider 437 · drawio 309 · workspace 184 · report 86 · lifecycle 70 · __init__ 59）
-       ├─ writers/  13 文件 2,087 行（blueprint 512 · **spec 470（给 agent 的蓝图规格）** · workflows 321 · layouts 166 · lifecycle 158 · fields 130 · idempotency 79 · **responses 69（统一的"接口只回成功标志"取 id 口，见 PITFALLS #62）** · objects 59 · menus 48 · picklists 40 · endpoints 14 · __init__ 21）
-       └─ monitor/   4 文件 578 行（monitor 207 · query_layer 168 · interpreter 148）
+  └─ egmp/（平台内核，20 文件 3,851 行 —— 2026-09-22 实测，配置工厂链路删除后）
+       ├─ 顶层 6 文件 746 行（replay 259（离线回放台架）· client 258 · queries 94 · cache 87 · __init__ 36 · auth 12）
+       ├─ kernel/ 4 文件 394 行（endpoints / semantics / urls 等）
+       ├─ insight/  6 文件 1,890 行（spider 1,107 · drawio 309 · workspace 219 · lifecycle 151 · __init__ 83 · report 21）
+       └─ monitor/   4 文件 821 行（monitor 467 · query_layer 167 · interpreter 155 · __init__ 32）
 
 > **2026-09-20 删除**：`egmp/generate.py`（104 行）与 `egmp/complexity.py`——
 > 它们服务的是 `command="orchestrate"` 那条"一句话 → 另一个 LLM 循环 → 蓝图"的路，
-> 而那条路的输入只有一个字符串，是**对话链路的降级复制品**
-> （[ADR-0017](adr/0017-factory-agent-interface.md) §D-1）。**执行引擎（orchestrate.py）一行没删。**
+> 而那条路的输入只有一个字符串，是**对话链路的降级复制品**（ADR-0017 §D-1）。
+>
+> **2026-09-22 追加（推翻上一段的结论）**：**配置工厂整条链已删除**——`writers/`（13 文件 2,087 行）、
+> `orchestrate.py`（执行引擎，316 行）、`checkpoint.py`（45 行）、`plugins/factory.py`、
+> `api/routes_factory.py`、`static/pages/factory.html` + `static/js/factory.js`（含侧栏 `nav-factory`）、
+> `tools/verify_factory_agent.py` + `tools/verify_factory_page.py`、`tests/test_factory_agent.py` +
+> `tests/test_factory_tuning_isolation.py`、`adapters/akso-auto.json` 全部下线，
+> 故上一段"**执行引擎（orchestrate.py）一行没删**"**已失效**。
+> **刻意留下的**是平台元数据读层（`queries.py` + `cache.py`，见 [ADR-0010](adr/0010-monitor-no-dangerous-replay.md)）、
+> Monitor，以及知识文档 [PLATFORM-OPERATIONS-LEARNED.md](PLATFORM-OPERATIONS-LEARNED.md) /
+> [FACTORY-PLATFORM-COGNITION.md](FACTORY-PLATFORM-COGNITION.md) 与 `factory-tuning/reports/**`。
+> 两份决策记录 ADR-0017 / ADR-0018 随本链路下架（原文可取回：`git show 1fa2301:docs/adr/0017-factory-agent-interface.md`）。
 harness/（对话 Agent 循环：loop 事件流 · tools **已降级为兼容垫片** · types/prompts/safety/context）
 db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 ```
@@ -107,7 +117,10 @@ db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 > 两套互不可见 → 对话里的模型看不到任何平台能力。现已收口为 `ToolHub` 单一事实源；
 > `harness/tools.py` 只剩再导出，`@tool` 装饰器下线。契约与三个真踩过的坑见
 > **[PLUGIN-SDK.md](PLUGIN-SDK.md)**；环境坑见 PITFALLS #32–#34。
-> （`websearch` 插件为 2026-09-15 之后加入的第 5 个插件——**文档里凡写"4 插件 19 工具"处均为过期**，以 `GET /api/agent/selfcheck` 为准。）
+> （`websearch` 是 2026-09-15 之后加入的插件；此处的清单口径已多次变动，**不要引用本文的旧快照**。
+> **2026-09-22 现状**：core **4 个插件**（`builtins` / `websearch` / `insight` / `accounts`）、
+> **18 个工具**（**16 read + 2 write + 0 dangerous**）——配置工厂删除后由五插件 / 25 工具回落到这个数。
+> 确切数字一律以 `GET /api/agent/selfcheck` 为准。）
 
 > **2026-09-14 变更**：`insight/` 从 12 文件 1,766 行降到 **6 文件 1,145 行**——`inventory` / `understand`
 > 下线，`assemble.py` / `annotate.py` / `flowgraph.py` / `relations.py` / `render.py` / `understand.py`
@@ -121,24 +134,24 @@ db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 | --- | --- |
 | `workbench/server_entry.py` | 冻结态入口（PyInstaller 顶层脚本，只用绝对导入——`verify_packaging.py` P2 强制） |
 | `workbench/main.py` | Web 模式入口（13 行，起 uvicorn + 开浏览器） |
-| `workbench/api/__init__.py` | `create_app`：fork 路由显式注册 + `_optional_routers` 容错注册 11 个新域（含 `sandbox` / `skills`）+ lifespan(`db.connect` + 沙箱/技能装配) + 静态托管 |
+| `workbench/api/__init__.py` | `create_app`：fork 路由显式注册 + `_optional_routers` 容错注册 12 个新域（含 `sandbox` / `skills`）+ lifespan(`db.connect` + 沙箱/技能装配) + 静态托管 |
 | `workbench/api/routes_extension.py` | **执行面蓝图**：`/snapshot` `/commands`(长轮询) `/ack` `/state` `/health`。**整段前缀需访问令牌**（见下条）。⚠ 本模块**只放"扩展 ↔ 桌面"的数据与指令通道**——给桌面 UI 用、且不碰凭据的端点放 `routes_shell.py`，否则它们拿不到令牌、只能靠开豁免 |
 | `workbench/api/extension_auth.py` | **`/extension/*` 访问令牌**（[ADR-0015](adr/0015-extension-access-token.md)）：按**前缀**守备的 ASGI 中间件 + `/extension/hello` 自举端点 + 24h 宽限期 + 无令牌访问的可见性（`authBlocked`）。**它挡不住"能读 `%APPDATA%` 的本机进程"**——令牌就在同一张 `settings` 表里；详见该模块文档串的分层表 |
 | `workbench/api/routes_shell.py` | **壳协作面** `/api/shell/*`：`launch-chrome` / `update-state` / `setup-helper`。**不碰凭据**，故无需令牌（边界判据见该模块文档串） |
 | `workbench/services/browser_pool.py` | **专职工作线程**（Playwright sync 单线程单实例约束；操作走队列作业）；headful/headless 双模式；storage_state 持久化；`heal_count≤2` 自愈；CDP 挂接内置 Chromium |
 | `workbench/services/accounts.py` | Fernet 密钥管理、环境/账号/盒子 CRUD、分配池（config/monitor）、备份导出导入（`fernetKey` 随文件下发） |
 | `workbench/services/autologin.py` | 节奏门控五重门（MAIN world JS 注入 + TokenCapture JWT） |
-| `workbench/services/egmp/` | 平台内核：`client`（code==0 信封 / paged_post / 55min token 缓存）、`insight`、`writers`（含 `spec.py`：**给 agent 的蓝图规格 + 给用户的审阅材料**，从运行期模型生成）、`orchestrate`（**只做确定性执行**：拓扑排序 / 8 步管道 / checkpoint）、`monitor` |
+| `workbench/services/egmp/` | 平台内核：`client`（code==0 信封 / paged_post / 55min token 缓存）、`kernel`（端点表 + 语义词典）、`queries`（**平台元数据读层**，与 `cache.py` 一并刻意保留）、`insight`、`monitor`。~~`writers`（含 `spec.py`：给 agent 的蓝图规格 + 给用户的审阅材料）/ `orchestrate`（**只做确定性执行**：拓扑排序 / 8 步管道 / checkpoint）~~ → **2026-09-22 随配置工厂整体删除** |
 | `workbench/db.py` | SQLite + `MIGRATIONS`（**1–20**；13 = `add_created_at_indexes`，14 = 洞察工作区与覆盖度，15 = 模块 id 数据改写，16 = `tool_plugin_layer`（`agent_audit` 加列 + `pending_action`），17 = `agent_cache_layer`，18 = `rename_factory_module_id`，19 = `sandbox_run`（沙箱执行审计），20 = `skill_audit`（能力供给链留痕））；迁移**只增不改** |
 | `workbench/plugin_api.py` | **插件 SDK 契约**：`ToolHub`（工具注册表/执行器，**分 core / installed 两层**）+ `ToolSpec`（含 `Risk` 分级）+ `ToolContext` + `Plugin`（含 `PluginOrigin`）。零领域知识（不 import 插件、不 import `services/egmp`、连 `db` 都不 import） |
 | `workbench/approvals.py` | **危险操作确认门**（单次令牌 / 5 分钟 / 参数指纹）+ **审计写入器**（唯一入口）+ 人话摘要 |
-| `workbench/plugins/` | 五个工具插件（`builtins` / `websearch` / `insight` / `factory` / `accounts`，共 25 个工具；风险分布：22 read + 2 write + 1 dangerous）。`plugins/__init__.py::_MODULES` 是显式清单，坏插件隔离成 failure |
+| `workbench/plugins/` | 四个工具插件（`builtins` / `websearch` / `insight` / `accounts`，共 18 个工具；风险分布：**16 read + 2 write + 0 dangerous**）。`plugins/__init__.py::_MODULES` 是显式清单，坏插件隔离成 failure |
 | `workbench/sandbox/` | **不受信代码的执行底座**（[ADR-0014](adr/0014-sandbox-for-untrusted-code.md)，6 文件 ≈1150 行）：`layout`（沙箱根/运行目录）、`policy`（**策略 + 环境白名单 + 敏感路径**）、`job`（Windows Job Object 进程树终止）、`runner`（`ExecRequest`/`run`/`run_async`）、`audit`。**不是安全边界**，是限损层（D-3） |
 | `workbench/skills/` | **Skill 共享库与安装**（7 文件 ≈1775 行）：`layout`（库/已安装目录，**不入 git**）、`manifest`（`SKILL.md` 契约，两种工具形态）、`security`（ZIP 准入 + 可疑模式扫描）、`library`（上传/安装/卸载/删除）、`script_runner`（脚本式工具的入口约定）、`audit`。共享库与已安装目录都在 `<DATA_DIR>/skills/` |
 | `workbench/harness/` | 对话 Agent 循环（`loop.py` 事件流）。⚠️ `harness/tools.py` **已降级为兼容垫片**（只剩再导出 + `default_registry()` 转发 `get_hub()`），工具定义全部搬进 `plugins/` |
 | `extensions/quick-login/` | MV3 + TS 扩展源（npm workspace，单包 `packages/extension`）：`src/background/core/parallel-session.ts` 1,606 行（≈28% TS）、`src/content/shield-main.ts` 806 行（MAIN world，平面 1/4/5/6）、`src/content/auto-login.ts` 377 行 |
 | `tools/build.ps1` | 六步打包：bump → 扩展重建 → `uv sync` → release commit/push → PyInstaller → electron-builder NSIS |
-| `tools/*.py` `tools/*.mjs` | 25 个**脚本**（20 个 `.py` + 5 个 `.mjs`）：构建/发布 + **18 个 `verify_*`/生成脚本** + `db_maintenance.py`；新增 `gen_tools_doc.py`（工具清单从运行期中枢生成 + 各文档数字机检，见 [TOOLS.md](TOOLS.md)）与 `verify_factory_page.py`（真实后端返回 → 真实前端渲染函数的对照验证，见 PITFALLS #35） |
+| `tools/*.py` `tools/*.mjs` | 33 个**脚本**（28 个 `.py` + 5 个 `.mjs`）：构建/发布 + **20 个 `verify_*.py`/生成脚本**（另有 4 个 `verify_*.mjs`）+ `db_maintenance.py`；`gen_tools_doc.py`（工具清单从运行期中枢生成 + 各文档数字机检，见 [TOOLS.md](TOOLS.md)）。~~`verify_factory_page.py`（真实后端返回 → 真实前端渲染函数的对照验证，见 PITFALLS #35）~~ → **2026-09-22 随配置工厂删除**（`verify_factory_agent.py` 同批） |
 
 ## Data & control flow（数据流）
 
@@ -146,7 +159,7 @@ db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
 
 **② 自动化 / 监听（执行面 = 内置 Chromium）**：`routes_browser.open {account_id}`（默认 headful）→ browser_pool 专职线程：解密凭据 → 一账号一 BrowserContext（`storage_state` 持久化 `runtime/browser-states/`）→ TokenCapture → 注入节奏门控 → 免密直达 / 自愈重登 → `routes_monitor` 在该会话上启停录制。
 
-**③ 洞察 / 工厂**：`insight.html` / `factory.html` → SSE 路由 → `egmp.insight` / `orchestrate.run_full_workflow` 直连 eGMP → **洞察产物落用户可配工作区** `<工作区根>/<对象code>/<时间戳>/`（工作区不可写才退回 `runtime/insight/`），工厂产物落 `runtime/factory/`，`insight_runs` / `blueprint_jobs` 记账。
+**③ 洞察（对象分析）**：`insight.html` → SSE 路由 → `egmp.insight` 直连 eGMP → **产物落用户可配工作区** `<工作区根>/<对象code>/<时间戳>/`（工作区不可写才退回 `runtime/insight/`），`insight_runs` 记账。~~`factory.html` → `orchestrate.run_full_workflow`，工厂产物落 `runtime/factory/`，`blueprint_jobs` 记账~~ → **2026-09-22 随配置工厂删除**。
 
 **④ 更新链（默认关闭）**：`AUTO_UPDATE_ENABLED` 只在 `WORKBENCH_AUTO_UPDATE=1` 时为真（`updater.js:36`，用户定稿 2026-09-15）。**关闭时**：不启动定时检查、不静默下载、退出不安装，托盘不挂更新提示，手动检查只回一句说明。**开启时**：Electron 启动 +20s 首查、之后每 6h → 静默下载 → 下载完成后才弹一次对话框（默认「退出时安装」）→ `before-quit` **先 `killServer()` 再 `installOnExit()`**（顺序是承重的，安装器要覆写 `WorkbenchServer.exe`）。更新状态经原子写的 `shell-state.json` 暴露给 Python 的 `GET /api/update`。
 
@@ -175,7 +188,7 @@ cd desktop; npm ci; npm start                     # Electron 开发态
 .\.venv\Scripts\python.exe -m pytest -o addopts=""     # 501 passed（含 slow 层；见下方"两层测试"）
 .\.venv\Scripts\python.exe -m pytest -m slow      # 8 passed（只跑慢层：真起子进程/浏览器那批）
 .\.venv\Scripts\python.exe tools\verify_packaging.py   # 11/11（P4b 需先重建扩展，见下）
-.\.venv\Scripts\python.exe tools\gen_tools_doc.py      # PASS（5 插件 / 20 工具 = core）
+.\.venv\Scripts\python.exe tools\gen_tools_doc.py      # 工具清单/数字 == 运行期中枢（配置工厂删除后：4 插件 / 18 工具 = core）
 .\.venv\Scripts\uv.exe tool run ruff check .      # All checks passed（venv 内没有 ruff.exe）
 .\.venv\Scripts\python.exe tools\bump.py check    # 五写版本同步自查（stdout 只有版本号）
 
@@ -206,7 +219,7 @@ powershell -File tools\build.ps1
 | `.\.venv\Scripts\python.exe -m pytest -o addopts=""` | **501 passed, 0 skipped**（3.14.6，52.7s） | ✅ 含 slow 层 |
 | `.\.venv312\Scripts\python.exe -m pytest -o addopts=""` | **493 passed, 8 skipped**（3.12.14，19.3s） | ✅ **CI 的解释器口径**；8 项跳过是浏览器验收（CI runner 同样跳过） |
 | `tools\verify_packaging.py` | **13/13 PASS**。**2026-09-18 修正**：原 **P8「chromium 内核可打包」查的是"本机装没装浏览器"**——那是**环境事实**，在没装浏览器的 CI runner 上**必然 FAIL 且永远修不好**，首次把 CI 判红的就是它（run #17）。现拆成两项且**项数在两环境下都稳定 13/13**：**P8**（静态契约：`server.spec` 里**有**"缺 chromium 就失败"的守卫——任何环境都能判定）+ **P8b**（本机真有 chromium，**仅当这台机器被角色要求时**才断言；`build.ps1` 设 `WORKBENCH_REQUIRE_CHROMIUM=1` 声明自己是构建机）。⚠ P8b 的判据是"按角色要求"，**不是** `present == expect`——后者会要求"不要求时必须没有"，把有浏览器的开发机判红（实测踩到） | ✅ |
-| `tools\gen_tools_doc.py` | `TOOLS_DOC_CHECKS: PASS（5 插件 / 20 工具 = core）` | ✅ |
+| `tools\gen_tools_doc.py` | `TOOLS_DOC_CHECKS: PASS（5 插件 / 20 工具 = core）`<br>⚠️ **2026-09-22 变更**：配置工厂删除后应为 **4 插件 / 18 工具**，本行其余数字仍是 2026-09-17 的实测，未重跑 | ✅ |
 | `tools\bump.py check` | `0.3.12`（stdout 只有版本号；明细在 stderr） | ✅ |
 | `uv tool run ruff check .` | `All checks passed!` | ✅（**注意**：PyPI 直连 TLS 失败时用 `--index https://pypi.tuna.tsinghua.edu.cn/simple`） |
 | `extensions/quick-login`: `npm run typecheck` + `npm run build` | 无错误 / `BUILD_OK` | ✅ P0-2 的扩展侧改动 |
@@ -305,7 +318,10 @@ HTTP 端点 **97 个**（`@router.` 计数）。
 - **Playwright 纪律**：sync API 单线程单实例 —— 所有浏览器操作**必须**走 `browser_pool` 专职线程队列；**事件回调内禁止连接调用**（只入队，worker 空隙 `drain()`）；同线程禁第二个 `sync_playwright()`；**测试不得另起 chromium 夹具**。
 - **DB 迁移只增不改**：历史迁移（尤其 1–6）不可变。`job_logs` 表建了索引但零写入是**故意**的（日志落磁盘），不要“顺手”改成入库。
 - **凭据不落明文**：新通道必须沿用「密文 + 密钥」回环语义；接口响应必须剔除 `password_enc`；文档与日志中出现的一律是占位值。
-- **Monitor 危险操作永不回放**：`API_MAP` 中对应 writers 的常量必须**实证来源**，不许凭观察猜端点。
+- **Monitor 危险操作永不回放**：原先那张"端点 → writer 函数"的 `API_MAP` 已随 `writers/**` 删除
+  （2026-09-22）。现在 `reproduce-plan.json` **只承载平台侧事实**（方法 / 路径 / 原始参数）+ `"executor": null`，
+  **本仓库不再提供任何回放执行器**（[ADR-0010](adr/0010-monitor-no-dangerous-replay.md)）。
+  不要再把 writer 常量当成可用映射，也不要凭观察猜端点——需要回放时由人按计划自己操作平台。
 - **原四仓库只读**：任何情况下不修改 `adapters/*.json` 指向的目录。
 - **版本只走 `tools/bump.py`**：五写同步（`pyproject.toml` / `workbench/__init__.py` / `desktop/package.json` / 扩展 `package.json` + `manifest.json` / `.version.json`）+ CHANGELOG 同步；手改单一文件会导致安装包命名与产物校验错位。
 - **扩展协议护栏**：改 `/extension/*` 蓝图必跑 `node tools/verify_extension_sync.mjs`（该蓝图**无 pytest 覆盖**）；改扩展必跑 `verify_extension_boot.py` + `verify_extension_isolation.py` + `verify_host_logic.mjs` + `npm run typecheck`。
@@ -336,8 +352,8 @@ HTTP 端点 **97 个**（`@router.` 计数）。
 | **C2** | `routes_insight.py:318-321` | ~~产物路径守卫用**纯字符串前缀**（未补分隔符）：`.../insight/abc` 会“包含” `.../insight/abc_evil` → 应改 `Path.is_relative_to()`~~ → **2026-09-16 复核：已修**（现为 `candidate = (root / name).resolve()` + `candidate.is_relative_to(root) and candidate.is_file()`） |
 | **C3** | `routes_agent.py:173` | ~~`GET /api/agent/audit` 用 `SELECT *` 全列回吐，含 `args` 原始 JSON（可能含凭据）~~ → **2026-09-15 已修**：列表只回摘要列，细节走新增的 `GET /api/agent/audit/{audit_id}`；`args` 里的凭据键在写入时即被打码（`approvals.write_audit` + `plugin_api.redact_args`），有回归断言 |
 | **C4** | `routes_extension.py:240-242` | ~~ack 回收是「全部 ack 才清」：一条指令永不被 ack 则队列既不回收也不前进，`_acked` 只增不减（且客户端只 ack 最大 cursor，`sync.ts:229-235` → **实际上永不排空**）。~~ → **2026-09-17 已修**：`_acked: set[int]` 换成**水位线** `_ack_watermark = max(acked)`，按 `seq <= watermark` 回收、队列空则归零（水位线只增不减）；返回体加 `watermark`/`pending` 便于断言。回归 `tests/test_extension_blueprint.py::test_ack_watermark_drains_queue_even_when_client_acks_a_prefix`（**已实测对旧实现 FAIL**）+ `test_ack_watermark_never_goes_backwards` |
-| **C14** | `static/js/factory.js` 的 `run()` | **工厂执行日志从来什么都不显示**：前端读 `result.stdout_tail` / `stderr_tail` / `code` / `duration_s`，而 `POST /api/factory/run` 返回的是 `{job_id,status,result,log_tail}`——那四个字段是 `services/proc.py` 的进程结果形状，原生化后**没有进程了**。表现为"点执行、转一圈、日志区还是空的、收尾行写着 `exit=undefined`"，且**页面不报错、测试也不报错**。→ **2026-09-15 已修**：渲染 `log_tail` + 逐对象 `steps` + `manualItems` + `checkpoint.completedCount`，并加 `tmp/verify_factory_frontend.py`（真实后端返回 → 真实前端渲染函数，两侧字段任何一边改名立刻红） |
-| C5–C7, C10–C13 | `services/modules.py:145`、`routes_factory.py:47,63`、`routes_agent.py:78`、`static/js/app.js:78`、`static/css/wheel.css`、`browser_pool.py` 的 `_close_entry` / `_submit` | ~~`status` 映射语义反了（全挂 = `degraded`、部分挂 = `missing`）~~ → **2026-09-15 已修**（改为显式三态：空=missing / 全通过=ok / 部分=degraded / 全挂=missing）/ `native_orchestrate_imported_validate` 定义在调用点之后 / `routes_agent` 跨模块调用 `routes_insight` 私有函数（**已随工具插件化消除**：`insight_run` 改为经 `ToolHub` 调 `routes_insight.run`）/ `app.js:78` 死分支 / `wheel.css` 是无引用死文件 / 关窗不停监听、多数浏览器作业无超时 |
+| **C14** | ~~`static/js/factory.js` 的 `run()`~~ | **工厂执行日志从来什么都不显示**：前端读 `result.stdout_tail` / `stderr_tail` / `code` / `duration_s`，而 `POST /api/factory/run` 返回的是 `{job_id,status,result,log_tail}`——那四个字段是 `services/proc.py` 的进程结果形状，原生化后**没有进程了**。表现为"点执行、转一圈、日志区还是空的、收尾行写着 `exit=undefined`"，且**页面不报错、测试也不报错**。→ **2026-09-15 已修**：渲染 `log_tail` + 逐对象 `steps` + `manualItems` + `checkpoint.completedCount`，并加 `tmp/verify_factory_frontend.py`（真实后端返回 → 真实前端渲染函数，两侧字段任何一边改名立刻红）。<br>**2026-09-22：整条链（页面 / 路由 / 验证脚本）已随配置工厂删除，本条所描述的缺陷面不再存在**；保留原文以留痕 |
+| C5–C7, C10–C13 | `services/modules.py:145`、~~`routes_factory.py:47,63`~~（2026-09-22 随配置工厂删除）、`routes_agent.py:78`、`static/js/app.js:78`、`static/css/wheel.css`、`browser_pool.py` 的 `_close_entry` / `_submit` | ~~`status` 映射语义反了（全挂 = `degraded`、部分挂 = `missing`）~~ → **2026-09-15 已修**（改为显式三态：空=missing / 全通过=ok / 部分=degraded / 全挂=missing）/ `native_orchestrate_imported_validate` 定义在调用点之后 / `routes_agent` 跨模块调用 `routes_insight` 私有函数（**已随工具插件化消除**：`insight_run` 改为经 `ToolHub` 调 `routes_insight.run`）/ `app.js:78` 死分支 / `wheel.css` 是无引用死文件 / 关窗不停监听、多数浏览器作业无超时 |
 | **C15** | `services/modules.py::module_status` | **按 id 硬解析适配器**：`mod = adapter or {}` 只认调用方显式传进来的存档，于是 `GET /api/modules/<id>` 这条路径对任何**适配器模块**都返回空清单 + `status=missing`。2026-09-15 把 `akso-auto` 改名 `factory` 时暴露：体检项整片消失、状态变 missing，而代码一处都没错——**这层耦合会把"改名"变成静默故障**。→ **已修**：缺省时自己 `get_adapter(mod_id)`，并加回归 `test_module_status_resolves_adapter_without_being_handed_one` |
 
 ### 构建与打包
@@ -377,7 +393,7 @@ HTTP 端点 **97 个**（`@router.` 计数）。
 | T3 | `browser_pool` 的**事件回调纪律无法被测试拦住** | 违规表现为运行期死锁，不是断言失败 |
 | T4 | 扩展端**无单测框架**（in-tree 无测试） | 依赖 3 个 verify 工具 + 人工装载 |
 | T5 | `egmp` HTTP 内核无单测；前端无 JS 测试框架（`accounts.js` 1,136 行是最大且回归面最薄的模块） | 改动风险靠人工 |
-| T6 | **工具插件的真实平台路径无自动化回归**（`insight_run`/`factory_create`/`accounts_browser_open` 只能真机手验） | 契约层（分级/确认门/审计/schema）已有 `tests/test_plugin_api.py` 钉住；"调下去真的对"仍靠真机冒烟 |
+| T6 | **工具插件的真实平台路径无自动化回归**（`insight_run`/`accounts_browser_open` 只能真机手验；原先的 `factory_create` 已随配置工厂删除） | 契约层（分级/确认门/审计/schema）已有 `tests/test_plugin_api.py` 钉住；"调下去真的对"仍靠真机冒烟 |
 | T7 | 前端工具卡片（`chat.js` 的 action/observation/approval 渲染）无自动化回归 | 与 `accounts.js` 同一处境：靠人工看。事件契约本身在 `tests/test_agent_loop.py` 里钉住了，前端只消费它 |
 
 ### 仓库卫生（**2026-09-17 重写**）
@@ -390,10 +406,12 @@ HTTP 端点 **97 个**（`@router.` 计数）。
   - 清理未跟踪的 ADP 调研残留（根目录 `_body_*` / `_cn_*` / `_raw_*` 抓取产物、`adp_research/`、`adp-{api,kb,multiagent-routing}-research.md`、
     `docs/research/adp-migration-research/`），约 5.8 MB；并删除过期构建产物 `dist/` + `build/`（948 MB，`tools/build.ps1` 可重建）。
   - **修正过期数字**：本文件与 `README.md` / `PLUGIN-SDK.md` / `API.md` 里"4 插件 19 工具 / 迁移 1–13 / 10 篇 ADR / 22 条环境坑"全部按实测重写（详见 CHANGELOG「未发布」）。
-- **仍存在的两处卫生缺口**（未修，需你决定）：
-  - **C14 引用的验证脚本不存在**：正文写"并加 `tmp/verify_factory_frontend.py`"，但**全库无此文件**（`tmp/` 现只剩两个 websearch 探针）。
-    C14 是一条"页面不报错、测试也不报错"的静默缺陷，**它恰恰是最需要那条断言的一类**。→ 要么补一个 `tools/verify_factory_frontend.py`（真实后端返回 → 真实前端渲染函数，字段改名即红），要么把 C14 里的引用删掉、改为"已修但无自动化回归"。
-  - **删除模块的残留 `.pyc`**：`workbench/api/__pycache__/` 下仍有 `routes_knowledge` / `routes_sync` 的字节码，对应源码已按产品方向删除（迁移 1–6 保留历史不可变）。**影响仅限目录整洁**，不影响运行；`.gitignore` 已忽略 `__pycache__/`。
+- **仍存在的卫生缺口**（未修，需你决定）：
+  - ~~**C14 引用的验证脚本不存在**：正文写"并加 `tmp/verify_factory_frontend.py`"，但**全库无此文件**（`tmp/` 现只剩两个 websearch 探针）。
+    C14 是一条"页面不报错、测试也不报错"的静默缺陷，**它恰恰是最需要那条断言的一类**。→ 要么补一个 `tools/verify_factory_frontend.py`（真实后端返回 → 真实前端渲染函数，字段改名即红），要么把 C14 里的引用删掉、改为"已修但无自动化回归"。~~
+    → **2026-09-22 作废**：C14 与那条断言所属的整条链（`factory.html` / `factory.js` / `/api/factory/*`）已随配置工厂删除，
+    补 `verify_factory_frontend.py` 这件事不再有意义。
+  - **删除模块的残留 `.pyc`**：`workbench/api/__pycache__/` 下仍有 `routes_knowledge` / `routes_sync` 的字节码，对应源码已按产品方向删除（迁移 1–6 保留历史不可变）；2026-09-22 删除 `egmp/writers/**` 等模块后，同类残留 `.pyc` 也会继续留在 `__pycache__/` 里。**影响仅限目录整洁**，不影响运行；`.gitignore` 已忽略 `__pycache__/`。
 
 ## Glossary / where to look next（术语与入口阅读）
 

@@ -22,6 +22,66 @@
 
 > 新条目写在这里（`tools/publish_release.py` 逐字认这一行标题，说明与约束见文件顶部注释）。
 
+### Removed
+
+- **「配置工厂」整体移除——平台知识留下，实现与工具链全删**（2026-09-22，用户下达
+  「完全清理配置工厂的内容，清理相关逻辑和功能链路，仅保留配置工厂相关的核心知识文档」）。
+
+  **删掉的是实现**：`plugins/factory.py`（7 个 `factory_*` 工具）、`api/routes_factory.py`
+  （8 个 `/api/factory/*` 端点）、`services/egmp/writers/**`（13 模块）、
+  `services/egmp/orchestrate.py`、`services/egmp/checkpoint.py`（零调用方的死代码）、
+  `adapters/akso-auto.json`（模块 `factory` 随之消失，`/api/modules/factory` 与
+  `/api/modules/akso-auto` 均为 404）、前端 `pages/factory.html` + `js/factory.js` +
+  侧边栏入口、`tools/verify_factory_{agent,page}.py`、
+  `factory-tuning/` 的采集与分析工具链（`tools/`、`analyze/`、`tests/`、`data/`）、
+  以及两份 ADR（0017 工厂×Agent 接口、0018 不许静默新建对象）与三份过程文档
+  （FACTORY-AGENT-GAP / FACTORY-DECISION-BRIEF / FACTORY-VERIFICATION-PLAN）。
+
+  **知识先迁出、再删源**，这是本轮的第一条纪律。迁进两份**不依赖任何产品代码**的文档：
+
+  - [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md) 重写为
+    **平台事实台账**：§4 逐条 `| # | 事实 | 证据形式 | 后果 |` 共 **80 行**（F1–F72 平台侧的全部
+    + 新增 F73–F86），另含五层速查、通用规律、覆盖边界与复算方式。
+    **`F*` 编号逐字保留**，因为存活报告里到处在引它——跳号的 6 个（F13/F14/F43/F45/F63/F68）
+    在编号说明里逐条交代了去向。
+  - [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) 修剪为
+    **纯手册认知**（454 → 320 行）：留手册语义、术语对照、**无撤销键资源总表**、创建顺序与
+    平台自动派生、覆盖边界；删掉"工厂现状/缺口"两列、缺动词清单、代码层发现、决策卡与取证计划。
+  - 原始真机取证报告原地保留：[factory-tuning/reports/](factory-tuning/reports/)，
+    其 README 改写成**方法论与口径留档**（脱敏口径、"录不到≠平台没发请求"、
+    "`total:0` 是截至此刻没有"、"`timestamp` 是事件分发时刻"、"分不清窗口的实验无效"）。
+
+  **顺带拆掉一处依赖倒灌**：`plugins/factory.py` 曾 import `api/routes_factory.py`，
+  是规则 7（`plugins → plugin_api` 单向）唯一的一处违反，随删除自动消失。
+
+  **顺带修掉 Monitor 身上一条会指向空处的功能链**：`monitor/interpreter.py` 的 `API_MAP`
+  （端点 → 已删的 `writers.*` 函数）移除，`reproduce-plan.json` 改为只承载平台侧事实
+  （`method`/`path`/`params` + 显式 `"executor": null`）——否则它会产出一份**指向不存在模块**的
+  复现计划，一份"看起来正常、点下去才知道是坏的"产物。DANGEROUS 永不入计划的边界不变；
+  见 [ADR-0010](docs/adr/0010-monitor-no-dangerous-replay.md) 的后补说明。
+
+  **一个必须被看见的架构后果**：`factory_create` 曾是产品里**唯一的 `Risk.DANGEROUS` 工具**。
+  删掉后产品**一个 dangerous 工具都没有了**——确认门的 dangerous 分支、审批弹窗的高危样式
+  从此只剩测试构造的样本在走。`tests/test_app.py::test_agent_selfcheck` 现在断言
+  `riskCounts["dangerous"] == 0`：将来任何"不可逆地改生产数据"的工具进来，它必须声明 DANGEROUS，
+  而那条断言会在那一刻变红，提醒作者回来读注释而不是把 0 改大。
+  同理，`ToolSpec.summary_fn` 与 `ToolSpec.precheck` 两个扩展点也失去了它们唯一的产品内使用者
+  （机制都保留，由 `tests/test_plugin_api.py` 的**合成 spec** 钉住——零调用方的扩展点是
+  下一次重构里最容易被无声改坏的东西）。
+
+  **PITFALLS 一行没删**：它自己的 §维护规则 第 1 条写着"不要删行"，并带一条机检判据
+  （编号不许有缺号），而文件里正好记着一次删行事故（#44 被误删后恢复）。因此按它**自己规定的
+  机制**处理：行全部保留，在文件头加一份对照表——A 组 11 条（#35/#60/#61/#65/#66/#72/#75/#77/#79/#83）
+  的**主体已不在仓库中，判据命令失效，按结论读**；B 组其余条目内容**仍然成立**
+  （平台行为、Monitor 与 browser_pool 的坑、以及 #59/#84/#85 那三条已经升格为活的核心机制）。
+
+  **顺带**：`docs/TOOLS.md` 的清单块重生成（**4 个插件 / 18 个工具** = 16 read + 2 write + 0 dangerous，
+  工具 schema 预算从 26 下调到 18——留一个虚高的上限等于让"工具面又长回来了"变得看不见）；
+  `docs/CODEBASE_OVERVIEW.md` / `API.md` / `SCHEMA.md`（`blueprint_jobs` 标注为已退役、
+  表与迁移照留）/ `CONFIG.md` / `USER-MANUAL.md` / `PLUGIN-SDK.md` / `AGENTS.md` / `README.md` /
+  `CONTRIBUTING.md` 同步收口；`docs/adr/0005` 与 `0010` 按"ADR 只增不改"追加**后补**说明。
+  改动前后都跑了 AGENTS.md §3 的同一套门禁。
+
 ### Fixed
 
 - **写给模型的那两句附件提示，会让它否掉自己刚答对的东西**（2026-09-22 真机联调，n=5 次运行；

@@ -136,10 +136,12 @@ def main() -> int:
         client.post("/api/agent/invoke", json={"tool": "get_current_time", "args": {}})
         # 未知工具：错误路径（路由层短路 → 由 routes_agent 单独记）
         client.post("/api/agent/invoke", json={"tool": "no_such_tool", "args": {}})
-        # 危险工具：确认门（**必须给合法参数**，否则先撞 bad_args 而不是 needs_approval）
+        # 风险工具：确认门（**必须给合法参数**，否则先撞 bad_args 而不是 needs_approval）
+        # 2026-09-22：原先用的是 `factory_create`（当时产品里唯一的 dangerous 工具），
+        # 它随配置工厂整体移除；改用 `accounts_browser_close`（write 级，同样过确认门）。
         client.post("/api/agent/invoke",
-                    json={"tool": "factory_create",
-                          "args": {"blueprint_id": "probe-bp", "account_id": "probe-acc"}})
+                    json={"tool": "accounts_browser_close",
+                          "args": {"account_id": "probe-acc"}})
 
         # 日志面（**自身不该产生 http 行**）
         client.get("/api/logs/days")
@@ -207,14 +209,14 @@ def main() -> int:
                   f"HTTP {detail.status_code}")
         check("D4 未知工具被单独记下（HTTP 路径在路由层短路，故由 routes_agent 记）",
               any("未知工具调用" in str(r.get("msg")) for r in direct))
-        check("D5 危险工具被确认门拦下并留痕",
+        check("D5 风险工具被确认门拦下并留痕",
               any("确认门拦下" in str(r.get("msg")) for r in direct)
-              or any(r.get("tool") == "factory_create" and r.get("status") == "needs_approval"
+              or any(r.get("tool") == "accounts_browser_close" and r.get("status") == "needs_approval"
                      for r in tool_rows),
-              f"factory_create 的日志："
-              f"{[r.get('status') for r in tool_rows if r.get('tool') == 'factory_create']}")
+              f"accounts_browser_close 的日志："
+              f"{[r.get('status') for r in tool_rows if r.get('tool') == 'accounts_browser_close']}")
         check("D6 被拦后的工具日志状态是 needs_approval",
-              any(r.get("tool") == "factory_create" and r.get("status") == "needs_approval"
+              any(r.get("tool") == "accounts_browser_close" and r.get("status") == "needs_approval"
                   for r in tool_rows))
 
         print("\n=== E. 检索面与自指噪声 ===")

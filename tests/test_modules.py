@@ -8,9 +8,11 @@ from workbench.services import modules
 def test_adapters_loaded() -> None:
     adapters = modules.load_adapters()
     ids = {a["id"] for a in adapters}
-    # 模块 id 是本工作台自己的名字（`insight` / `factory`）；
-    # **文件名**才是"对应哪个来源项目"的引用真源，故不随改名而改
-    assert {"insight", "factory"} <= ids
+    # 模块 id 是本工作台自己的名字（`insight`）；
+    # **文件名**才是"对应哪个来源项目"的引用真源，故不随改名而改。
+    # 2026-09-22：`factory` 模块（存档 `akso-auto.json`）随配置工厂整体移除。
+    assert "insight" in ids
+    assert "factory" not in ids, "adapters/akso-auto.json 应已随配置工厂删除"
 
 
 def test_adapter_ids_never_leak_upstream_project_names() -> None:
@@ -28,10 +30,11 @@ def test_adapter_ids_never_leak_upstream_project_names() -> None:
 def test_adapter_id_matches_its_filename_reference() -> None:
     """存档的 `id` 与文件名**刻意不同**，但 `repoPathEnv` 必须仍指向同一来源项目。
 
-    这条守的是"改名不改引用"：`insight` 模块的存档是 `akso-cc.json`、
-    `factory` 模块的存档是 `akso-auto.json`。若有人顺手把文件名或 `repoPathEnv`
-    也改掉，只读引用的口径就断了——`AKSO_AUTO_REPO` 这个名字的语义就是
-    "指向 akso-auto 那个仓库"，与模块叫什么无关。
+    这条守的是"改名不改引用"：`insight` 模块的存档是 `akso-cc.json`。若有人顺手把文件名
+    或 `repoPathEnv` 也改掉，只读引用的口径就断了——`AKSO_CC_REPO` 这个名字的语义就是
+    "指向 akso-cc 那个仓库"，与模块叫什么无关。
+
+    > `akso-auto.json`（模块 id `factory`）2026-09-22 随配置工厂整体删除，不在本断言内。
     """
     by_file = {a["_file"]: a for a in modules.load_adapters()}
 
@@ -40,12 +43,6 @@ def test_adapter_id_matches_its_filename_reference() -> None:
     assert insight["id"] == "insight"
     assert insight["repoPathEnv"] == "AKSO_CC_REPO"
     assert "akso-cc" in str(insight["repoPath"]).lower()
-
-    factory = by_file.get("akso-auto.json")
-    assert factory is not None, "adapters/akso-auto.json 必须存在（只读存档）"
-    assert factory["id"] == "factory"
-    assert factory["repoPathEnv"] == "AKSO_AUTO_REPO"
-    assert "akso-auto" in str(factory["repoPath"]).lower()
 
 
 def test_frozen_adapters_do_not_require_the_upstream_repo() -> None:
@@ -78,14 +75,17 @@ def test_missing_upstream_repo_is_reported_as_info_not_failure() -> None:
     "功能已原生化、不影响使用"。
 
     ⚠️ 这条测试**刻意不去断言"原仓库存在/不存在"**：那是环境事实，不是契约。
-    本机 `D:\ai_assistant\akso-auto` 恰好存在，CI/同事机器上可能没有——早先
+    本机 `D:\ai_assistant\akso-cc` 可能恰好存在，CI/同事机器上可能没有——早先
     那条 `assert repo.exists()` 就是因此常驻红的（2026-09-13 起挂着，见
     CODEBASE_OVERVIEW 的"pytest 唯一失败"一节）。
+
+    > 2026-09-22：断言对象由 `factory` 改为 `insight`——前者随配置工厂整体移除，
+    > 而这条守的是**适配器模块的通用口径**，与是哪个模块无关。
     """
-    status = modules.module_status("factory")
+    status = modules.module_status("insight")
     ref = next(c for c in status["checks"] if c["name"] == "source-reference")
     assert ref["ok"] is True, "只读存档的可达性不该是门禁"
-    repo = modules.resolve_repo_path(modules.get_adapter("factory"))
+    repo = modules.resolve_repo_path(modules.get_adapter("insight"))
     if repo is not None and repo.exists():
         assert str(repo) in ref["detail"], "可达时应报出路径"
     else:
@@ -100,10 +100,10 @@ def test_module_status_resolves_adapter_without_being_handed_one() -> None:
     都会得到空清单 + `status=missing`。2026-09-15 把 `akso-auto` 改名 `factory` 时
     正是这样暴露的——`GET /api/modules/factory` 返回了 missing，而代码一处都没错。
     """
-    status = modules.module_status("factory")
+    status = modules.module_status("insight")
     assert status["checks"], "适配器模块不带 adapter 调用也必须有体检项"
     assert status["status"] != "missing"
-    assert status["title"] != "factory", "title 应来自存档而不是回落成 id"
+    assert status["title"] != "insight", "title 应来自存档而不是回落成 id"
     assert status["commands"], "命令清单应来自存档"
 
 
@@ -113,16 +113,19 @@ def test_builtin_modules_status() -> None:
         assert mod["checks"], f"{mod['id']} 应有体检项"
 
 
-def test_factory_module_is_renamed_and_reachable() -> None:
-    """工厂模块的 id 是 `factory`，旧 id 必须 404（不留"还能用"的第二名字）。"""
+def test_removed_factory_module_is_gone() -> None:
+    """配置工厂模块整体移除后，它的所有旧 id 都必须 404——不留"还能用"的第二名字。
+
+    `akso-auto` 是改名前的上游名，`factory` 是改名后的本工作台名；两者现在**都不该可达**。
+    """
     from fastapi.testclient import TestClient
 
     from workbench.api import app
 
     client = TestClient(app)
-    assert client.get("/api/modules/factory").status_code == 200
-    assert client.post("/api/modules/factory/check").status_code == 200
-    assert client.get("/api/modules/akso-auto").status_code == 404
+    for gone in ("factory", "akso-auto"):
+        assert client.get(f"/api/modules/{gone}").status_code == 404, gone
+        assert client.post(f"/api/modules/{gone}/check").status_code == 404, gone
 
 
 def test_workbench_self_check_ok() -> None:

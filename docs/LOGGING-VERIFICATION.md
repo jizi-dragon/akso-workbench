@@ -142,7 +142,7 @@ _2026-09-20。对象：[LOGGING-DESIGN.md](LOGGING-DESIGN.md) 所述系统的**�
 | 现象 | 归因 |
 |---|---|
 | `D4` 未知工具没有留痕 | **真缺陷**：`routes_agent.invoke` 在**路由层就 404 短路了**，所以 `ToolHub.execute()` 里那条告警根本不执行 → 两条链路对同一事件的口径不一致（对话链路有，HTTP 链路只有一条 404 访问日志）。**已修**：路由层也记一条，并补了单测 |
-| `D5`/`D6` 危险工具没有 `needs_approval` | **我的检查场景错了**：`factory_create` 参数不全 → 先撞 `bad_args`（校验在确认门**之前**）。改传合法参数即通过 |
+| `D5`/`D6` 危险工具没有 `needs_approval` | **我的检查场景错了**：参数不全 → 先撞 `bad_args`（校验在确认门**之前**）。改传合法参数即通过。<br>（当时探针用的是 `factory_create`——产品里唯一的 dangerous 工具；它随配置工厂移除后，探针换成 write 级的 `accounts_browser_close`，`tools/verify_logging.py` 已同步。**教训本身与用哪个工具无关**） |
 
 而"修 D4"时又暴露了第二个真缺陷：我引用了一个 `routes_agent.py` **根本不存在的 `logger`**
 → `NameError` → **HTTP 500**，而 596 个单测全绿（没有任何用例走到那条分支）。

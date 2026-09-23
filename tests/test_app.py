@@ -15,7 +15,7 @@ def client() -> TestClient:
 
 EXPECTED_PREFIXES = (
     "/api/conversations", "/api/settings", "/api/chat",
-    "/api/modules", "/api/insight", "/api/factory", "/api/accounts", "/api/browser", "/api/agent",
+    "/api/modules", "/api/insight", "/api/accounts", "/api/browser", "/api/agent",
     "/api/update",
 )
 
@@ -33,41 +33,46 @@ def test_index_served(client: TestClient) -> None:
     assert "Workbench" in resp.text
 
 
-def test_module_display_names_are_object_analysis_and_config(client: TestClient) -> None:
-    """两个模块的**显示名**：`对象分析` / `配置`（2026-09-22 用户下达的更名）。
+def test_module_display_name_is_object_analysis(client: TestClient) -> None:
+    """模块的**显示名**：`对象分析`（2026-09-22 用户下达的更名）。
 
-    为什么值得一条判据：这两个名字散落在 **10 个文件**里——侧边栏、两个页面的 `<title>` 与
-    `<h1>`、工具清单弹窗里的**插件标题**、几条给人看的提示（设置的推理参数说明、撞预算时
-    聊天里那句话、页面的运行日志与错误）。改漏一处**不会报错**，只会让用户在两个地方看到
-    两个名字——而这正是"改名"这类需求唯一会出的错。同族：`test_old_module_id_is_gone`。
+    为什么值得一条判据：这个名字散落在 **6 个文件**里——侧边栏、页面的 `<title>` 与
+    `<h1>`、工具清单弹窗里的**插件标题**、几条给人看的提示。改漏一处**不会报错**，
+    只会让用户在两个地方看到两个名字——而这正是"改名"这类需求唯一会出的错。
+    同族：`test_old_module_id_is_gone`。
 
-    ⚠️ **只改显示名**：模块 id（`insight` / `factory`）、工具名（`factory_*` / `insight_*`）、
-    落盘目录（`…/洞察`）都**不动**——它们是模型面与审计面的事实源，改了就断掉历史留痕。
+    ⚠️ **只改显示名**：模块 id（`insight`）、工具名（`insight_*`）、落盘目录（`…/洞察`）
+    都**不动**——它们是模型面与审计面的事实源，改了就断掉历史留痕。
+
+    > 2026-09-22：`配置工厂 → 配置` 那一半随**配置工厂整体移除**一并消失（模块、路由、
+    > 工具、页面全删）。本用例因此只剩 `对象分析` 一项，`nav-factory` 也不该再存在——
+    > 下面那条"旧链接不得复活"的断言就是这次删除的守门人。
     """
     index = client.get("/static/index.html").text
-    # 侧边栏那两项：按**链接块**断言（缩进与换行都在，整块比字符串包含更准）
+    # 侧边栏那一项：按**链接块**断言（缩进与换行都在，整块比字符串包含更准）
     insight_block = index.split('id="nav-insight"')[1].split("</a>")[0]
-    factory_block = index.split('id="nav-factory"')[1].split("</a>")[0]
     assert insight_block.strip().endswith("对象分析"), insight_block[-40:]
-    assert factory_block.strip().endswith("配置"), factory_block[-40:]
-    for page, name in (("/static/pages/insight.html", "对象分析"),
-                       ("/static/pages/factory.html", "配置")):
-        html = client.get(page).text
-        assert f"<h1>{name}</h1>" in html, (page, name)
-        assert f"<title>{name} · Workbench</title>" in html, (page, name)
+
+    html = client.get("/static/pages/insight.html").text
+    assert "<h1>对象分析</h1>" in html
+    assert "<title>对象分析 · Workbench</title>" in html
 
     # 工具清单弹窗里显示的是**插件标题**（`chat-tools.js` 的 palette-plugin-title）
     plugins = {p["id"]: p["title"] for p in client.get("/api/agent/plugins").json()["plugins"]}
     assert plugins["insight"] == "对象分析", plugins
-    assert plugins["factory"] == "配置", plugins
 
     # 旧名不许再出现在**界面文件**里（注释不算——那是给读代码的人看的）
     for path in ("/static/index.html", "/static/pages/insight.html",
-                 "/static/pages/factory.html", "/static/pages/accounts.html",
-                 "/static/js/factory.js", "/static/js/insight.js"):
+                 "/static/pages/accounts.html", "/static/js/insight.js"):
         text = client.get(path).text
         assert "配置工厂" not in text, path
         assert "平台洞察" not in text, path
+
+    # 工厂面整体下线：导航不留死链、页面不再可达
+    assert "nav-factory" not in index, "配置工厂的导航入口没删干净"
+    assert "pages/factory.html" not in index, "配置工厂的导航链接没删干净"
+    assert client.get("/static/pages/factory.html").status_code == 404
+    assert client.get("/static/js/factory.js").status_code == 404
 
 
 def test_modules_endpoint(client: TestClient) -> None:
@@ -75,10 +80,11 @@ def test_modules_endpoint(client: TestClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     ids = {m["id"] for m in data["modules"]}
-    # 两个业务模块的 id 是本工作台自己的名字（2026-09-14 `akso-cc`→`insight`、
-    # 2026-09-15 `akso-auto`→`factory`）；它们的**存档文件名**仍是 adapters/akso-*.json，
-    # 那是"对应哪个来源项目"的引用真源，两者不一致是刻意的。
-    assert {"workbench", "accounts", "insight", "factory"} <= ids
+    # 模块 id 是本工作台自己的名字（2026-09-14 `akso-cc`→`insight`）；
+    # **文件名**才是"对应哪个来源项目"的引用真源。
+    # 2026-09-22：`factory` 模块随配置工厂整体移除，`adapters/akso-auto.json` 一并删除。
+    assert {"workbench", "accounts", "insight"} <= ids
+    assert "factory" not in ids, "配置工厂模块应随实现一并消失"
     assert not {i for i in ids if i.startswith("akso-")}, "上游项目名不得再作为模块 id 暴露"
 
 
@@ -113,9 +119,10 @@ def test_agent_tools_listed(client: TestClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     names = {t["name"] for t in data["tools"]}
-    assert {"insight_run", "insight_read_config", "factory_create", "accounts_login",
+    assert {"insight_run", "insight_read_config", "accounts_login",
             "get_current_time"} <= names
     assert "search_knowledge" not in names  # 知识库功能已下线
+    assert not {n for n in names if n.startswith("factory_")}, "配置工厂的工具应随插件一并消失"
 
     # 每个工具都必须带上插件归属与风险分级——没有分级的工具进不了确认门
     for tool in data["tools"]:
@@ -129,7 +136,8 @@ def test_agent_plugins_listed(client: TestClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     ids = {p["id"] for p in data["plugins"]}
-    assert {"builtin", "insight", "factory", "accounts"} <= ids
+    assert {"builtin", "insight", "accounts"} <= ids
+    assert "factory" not in ids, "配置工厂插件应已移除"
     assert data["failures"] == []
 
 
@@ -140,7 +148,18 @@ def test_agent_selfcheck(client: TestClient) -> None:
     data = resp.json()
     assert data["missingRequired"] == []
     assert data["ok"] is True
-    assert data["riskCounts"]["dangerous"] >= 1   # factory_create 必须在
+    # ⚠️ **产品里现在一个 DANGEROUS 工具都没有**（2026-09-22）。
+    #
+    # 唯一的那个是 `factory_create`（"会在平台上真的建对象、而平台侧没有撤销键"），
+    # 它随配置工厂整体移除。这不是缺陷，但是一个**必须被看见的事实**：
+    # 确认门的 `Risk.DANGEROUS` 分支、审批弹窗的高危样式从此只剩测试构造的样本在走。
+    # 一旦将来接入任何"不可逆地改生产数据"的工具，它必须是 DANGEROUS，
+    # 而这条断言（0）会在那一刻变红——提醒作者回来读这段注释，而不是顺手把 0 改大。
+    assert data["riskCounts"]["dangerous"] == 0, (
+        "出现了 DANGEROUS 级工具：请确认它真的不可逆，并更新本断言的注释"
+    )
+    assert data["riskCounts"]["read"] > 0
+    assert data["riskCounts"]["write"] > 0
 
 
 def test_agent_unknown_tool_404(client: TestClient) -> None:
@@ -279,13 +298,3 @@ def test_audit_list_omits_args(client: TestClient) -> None:
     """列表不带 args（可能含凭据片段），只给摘要与元数据。"""
     rows = client.get("/api/agent/audit").json()["audit"]
     assert rows and all("args" not in row for row in rows)
-
-
-def test_factory_confirm_guard(client: TestClient) -> None:
-    """环境强制确认原则：未勾选 confirmed 必须被 409 拒绝。"""
-    resp = client.post("/api/factory/run", json={
-        "blueprint_id": "whatever", "command": "create",
-        "account_id": "whatever", "confirmed": False,
-    })
-    assert resp.status_code == 409
-    assert "强制确认" in resp.json()["detail"]

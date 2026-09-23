@@ -50,8 +50,8 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 | 404 | 资源不存在（账号/环境/任务/产物/会话） |
 | 405 | 路由存在但方法不符 |
 | 409 | 状态冲突（受管会话不可用、环境未确认、监听未启动、**风险工具待确认**——见 §10） |
-| 413 | 上传超限（蓝图 > 10 MB） |
-| 502 | 上游失败（egmp 平台/工具执行/工厂执行） |
+| 413 | 上传超限（附件 > 20 MB、Skill 包 > 10 MB、日志导出 > 32 MB——见 §3.1 / §18.2 / §19） |
+| 502 | 上游失败（egmp 平台/工具执行） |
 | 503 | 依赖不可用（`BrowserError` 且非「账号不存在」） |
 
 ## 1. 会话与消息 `/api/conversations`（`routes_conversations.py`）
@@ -167,11 +167,15 @@ POST /api/chat/stream   Content-Type: application/json
 
 - **内置模块**（`services/modules.py`）：`workbench`（Python 依赖体检）、
   `accounts`（Python 依赖 + `playwright:chromium` 可执行文件存在性）。
-- **适配器模块**：读 `adapters/*.json`（模块 id 为 `insight` / `factory`；
-  文件名仍是来源项目名 `akso-cc.json` / `akso-auto.json`，那是"对应哪个原仓库"的引用真源，
-  见 [CONFIG.md](CONFIG.md) §4）。
-  阶段 3 原生化后它们降级为**只读参考存档**：体检项为 Python 依赖 + `source-reference`（信息项，
+- **适配器模块**：读 `adapters/*.json`（**现存只有 `insight` 一个**；
+  文件名仍是来源项目名 `akso-cc.json`，那是"对应哪个原仓库"的引用真源，
+  见 [CONFIG.md](CONFIG.md) §2.3）。
+  阶段 3 原生化后它降级为**只读参考存档**：体检项为 Python 依赖 + `source-reference`（信息项，
   原仓库缺失不影响功能，`ok` 恒为 `true`）。
+- ⚠️ **2026-09-22：配置工厂随 `adapters/akso-auto.json` 一并删除**。模块清单因此只剩
+  `workbench` / `accounts` / `insight` 三个 id；`GET /api/modules/factory` 与
+  `GET /api/modules/akso-auto` 现在都返回 **404**（不是 `missing`）——
+  `tests/test_app.py::test_old_module_id_is_gone` 把这两条 404 钉住了。
 - ⚠️ **模块 id 与存档文件名可以不一致**（这是刻意的）：`insight` 模块的存档文件是
   `adapters/akso-cc.json`（文件名是「这份存档对应哪个来源项目」的引用真源，
   `repoPathEnv=AKSO_CC_REPO` 指向它）。2026-09-14 由上游项目名 `akso-cc` 改名为 `insight`——
@@ -230,30 +234,19 @@ POST /api/chat/stream   Content-Type: application/json
 > spider 抛 `SpiderReadErrors`，任务记 `failed`；**不会**产出一张「1 个对象节点 + 0 状态」的
 > 空网再配上 `coverage.status = complete`。
 
-## 7. 配置 `/api/factory`（`routes_factory.py`）
+## 7. 配置（**已下线，本节不再描述任何契约**）
 
-| 方法 | 路径 | 请求 | 说明 |
-|---|---|---|---|
-| POST | `/api/factory/blueprint` | `multipart/form-data` 文件 | 上传蓝图 → 暂存 `runtime/factory/<id>/blueprint.json`，返回 `{blueprint_id, path, name, top_keys, validation[]}`。上限 **10 MB**；解析用 `utf-8-sig` |
-| POST | `/api/factory/blueprint/validate` | 蓝图 JSON（裸 dict） | 只校验不暂存 → `{issues:[], valid: bool}` |
-| GET | `/api/factory/blueprints` | — | 已暂存蓝图列表 `{blueprints:[{blueprint_id,name,mtime}]}` |
-| POST | `/api/factory/run` | `FactoryRunIn` | 执行 `create`（同步）。**`command` 现在只接受 `create`**，见下方说明 |
-| GET | `/api/factory/jobs?limit=30` | — | 任务列表（上限 200） |
-| GET | `/api/factory/jobs/{job_id}` | — | 任务详情 + `log_tail`（末 400 行）+ `checkpoint` |
-| GET | `/api/factory/jobs/{job_id}/artifacts` | — | 产物列表（排除 `blueprint.json` / `proc.log`） |
-| GET | `/api/factory/jobs/{job_id}/log` | — | 日志文件下载（`FileResponse`） |
-
-`FactoryRunIn`：`{blueprint_id?, command:"create", account_id (必填), confirmed: bool}`
-
-- **`confirmed=false` → 409**：这是「环境强制确认」原则（`native_orchestrate.run_full_workflow` 内还有
-  `approved=True, confirmed_env=True` 双闸）。**不要为了自动化而绕过它**——写配置会落到真实环境。
-- **`command` 只有 `create`**（2026-09-20）：旧的 `orchestrate`（需求描述 → LLM 生成蓝图）
-  已删除——它的输入只有一个 `requirement` 字符串，是**对话链路的降级复制品**
-  （见 [ADR-0017](adr/0017-factory-agent-interface.md) §D-1）。传别的值 → **400**，
-  错误信息里会指明改用对话。字段本身保留：它是 `blueprint_jobs.command` 这一列的写入源。
-- **「一句话 → 蓝图」现在走对话**：模型先调 `factory_blueprint_spec` 取规格，
-  再调 `factory_preview_blueprint`（**校验 + 暂存 + 出审阅清单**一次完成），
-  你点头之后它才调 `factory_create`。**手工上传那条路（`POST /blueprint`）保留**。
+> **2026-09-22：配置工厂整条链路已从本仓删除**——`routes_factory.py` 的 8 个
+> `/api/factory/*` 端点、`plugins/factory.py` 的 7 个 `factory_*` 工具、
+> `services/egmp/writers/**` 与 `services/egmp/orchestrate.py` 一并移除；
+> 配置页与侧栏入口、两个验证脚本也删了。**`/api/factory/*` 现在一律 404**，
+> 本仓不再有任何"蓝图 → 创建"的接口，也不再有暂存目录 `runtime/factory/`。
+>
+> 本节**刻意保留 §7 这个编号**（不重排 §8 起的编号）：仓库里多处交叉引用按号指向
+> §10–§19（含[只增不改的 ADR](adr/)），重排编号会让它们静默指错节。
+> 平台侧的知识没有随代码消失：[PLATFORM-OPERATIONS-LEARNED.md](PLATFORM-OPERATIONS-LEARNED.md)（平台事实台账）、
+> [FACTORY-PLATFORM-COGNITION.md](FACTORY-PLATFORM-COGNITION.md)（平台配置面认知）、
+> [factory-tuning/reports/](../factory-tuning/reports/)（真机取证报告存档）。
 
 ## 8. 账号库 `/api/accounts`（`routes_accounts.py`）
 
@@ -325,7 +318,7 @@ autologin, has_token, monitoring, monitor_log}`；
 ## 10. Agent 工具层 `/api/agent`（`routes_agent.py`）
 
 > **单一事实源**：工具清单来自**工具插件中枢** `plugin_api.ToolHub`（`workbench/plugins/`
-> 五个插件装配，共 25 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
+> 四个插件装配，共 18 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
 > schema、审计三处读的是同一份定义。插件 SDK 契约见 [PLUGIN-SDK.md](PLUGIN-SDK.md)。
 
 | 方法 | 路径 | 请求 | 说明 |
@@ -374,18 +367,24 @@ autologin, has_token, monitoring, monitor_log}`；
 - HTTP 链路（`POST /invoke`）：本端点**不等待**，直接 409 + `confirm` 内容；
   调用方自己看 `GET /pending` 决定何时 `approve`（同意同样会预先批准那次目标调用）。
 
-**工具清单（25 个工具，按插件）**：
+**工具清单（18 个工具，按插件）**：
 
 | 插件 | 工具 | 风险 |
 |---|---|---|
-| `builtin` | `get_current_time` / `read_local_file` / `read_web_page` | read |
+| `builtin` | `get_current_time` / `read_local_file` / `read_web_page` / `attachment_list` / `attachment_read` | read |
 | `builtin` | `request_user_confirmation`（模型主动请求确认；会暂停对话等答复） | read |
 | `websearch` | `web_search` | read |
 | `insight` | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
-| `factory` | `factory_blueprint_spec` / `factory_preview_blueprint` / `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
-| `factory` | `factory_create` | **dangerous** |
 | `accounts` | `accounts_list` / `accounts_login` / `accounts_browser_sessions` | read |
 | `accounts` | `accounts_browser_open` / `accounts_browser_close` | **write** |
+
+> **风险分布：16 read / 2 write / 0 dangerous**（2026-09-22 装配 `ToolHub` 实测）。
+> `Risk.DANGEROUS` 枚举与确认门里那一条分支**都还在**——风险模型仍是 `read` / `write` / `dangerous`
+> 三级，不是两级；只是产品里现在没有工具用它（`factory_create` 曾是**唯一**一个 dangerous 工具，
+> 随配置工厂一并删除）。**"归零"这件事本身是断言**：`tests/test_app.py::test_agent_selfcheck`
+> 断言 `riskCounts.dangerous == 0`（将来接入不可逆写工具时它会红）。那一条分支与
+> `ToolSpec.summary_fn`（确认摘要扩展点，产品侧同样暂时没有使用者）的回归，
+> 由 `tests/test_plugin_api.py` 的合成用例守着。
 
 > ⚠️ **2026-09-15 收口**：本模块此前有**第二套工具表**（`login_platform` / `read_config` /
 > `run_insight` / `browser_status`），与前端对话用的 `harness/tools.py`（三个基础工具）
@@ -585,7 +584,7 @@ autologin, has_token, monitoring, monitor_log}`；
 | GET | `/` | 工作台主界面 `static/index.html` |
 | GET | `/static/*` | `StaticFiles` 挂载 `workbench/static/` |
 
-页面：`index.html`（对话 + 设置）、`pages/insight.html`、`pages/factory.html`、
+页面：`index.html`（对话 + 设置）、`pages/insight.html`、
 `pages/accounts.html`、`pages/sandbox.html`（沙箱：策略 / 状态 / 执行审计 / 自检）、
 `pages/skills.html`（Skill 共享库：上传 / 安装 / 卸载 / 停用）、
 `pages/wheel-picker.html`（轮盘，`?transparent=1` 供壳的透明窗加载）、

@@ -37,10 +37,10 @@
 
 1. **换平台要改吗？** （端点、字段名、状态机、对象编码、租户名 → 是）
 2. **含客户/平台标识吗？** （域名、appId、租户名、产品名硬编码 → 是，但可参数化）
-3. **只在某个业务流里才有意义吗？** （蓝图校验、洞察报告渲染 → 是）
+3. **只在某个业务流里才有意义吗？** （洞察报告渲染、监控解读 → 是）
 
 补充判据（本项目特有）：
-- **协议中立性**：框架与下游之间的通信必须是"通用动词"（打开账号/切换身份/上传蓝图/取状态），
+- **协议中立性**：框架与下游之间的通信必须是"通用动词"（打开账号/切换身份/取状态），
   不能出现"生成 eGMP 理解报告"这类动词。
 - **可无业务运行**：删掉 `egmp/` 后框架仍能启动、能跑测试、能打包（功能自然缺失）。
 
@@ -121,7 +121,7 @@
 | `pages/accounts.html` + `js/accounts.js` | ~1,300 | ✅ 框架：账号中心（盒子/卡片墙/四态徽标/批量/分配池/备份） |
 | `pages/wheel-picker.html` | ~300 | ✅ 框架：轮盘（独立窗） |
 | `css/*`（tokens/base/app/settings/splash/modules/ql-theme/ql-parallel） | ~1,100 | ✅ 框架：设计令牌与组件样式 |
-| `pages/insight.html`/`js/insight.js`/`pages/factory.html`/`js/factory.js`/`css/wheel.css` | ~700 | ❌ 下游（业务页）；`wheel.css` 是**无引用死文件**可删 |
+| `pages/insight.html`/`js/insight.js`/`css/wheel.css` | ~400 | ❌ 下游（业务页）；`wheel.css` 是**无引用死文件**可删。<br>~~`pages/factory.html`/`js/factory.js`~~ → **2026-09-22 随配置工厂整体删除**（本行的 ~400 是删除后实测：83 + 219 + 96） |
 
 ---
 
@@ -164,11 +164,12 @@
 |---|---|---|
 | 系统提示词 | `harness/prompts.py` 写死药企合规提示词 | 框架提供 `build_system_prompt(pack)`，提示词包由下游提供 |
 | 自动填表的登录页选择器 | `autologin.py` 与扩展 `auto-login.ts` 硬编码 `请输入用户名`/`input[type=password]` 等 | 抽成"站点登录页配置"（选择器列表 + iframe 策略），随站点配置下发 |
-| 模块注册表 | `services/modules.py` 里 `insight`/`akso-auto` 是写死的适配器概念 | 泛化为"下游模块声明"（下游插件自己声明体检项） |
+| 模块注册表 | `services/modules.py` 里 `insight` 是写死的适配器概念（模块 id 现为 `{workbench, accounts, insight}`；~~`akso-auto` / `factory`~~ 已于 2026-09-22 随配置工厂移除） | 泛化为"下游模块声明"（下游插件自己声明体检项） |
 
 ### 类型 4：前端导航与页面注册（**选修**）
 
-`static/index.html` 的左侧导航当前写死了「平台洞察 / 配置工厂 / 账号中心」。
+`static/index.html` 的左侧导航当前写死了「对象分析 / 账号中心 / Skill 管理 / 沙箱」
+（~~配置工厂~~ 那一项于 2026-09-22 随功能删除）。
 框架化后应收敛为：**框架只提供账号中心 + 对话 + 设置；业务页由插件贡献导航项与静态页**
 （POC 已验证 `add_nav` 可行、`GET /api/plugins` 能返回导航清单）。
 

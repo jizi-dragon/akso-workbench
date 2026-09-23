@@ -11,7 +11,7 @@
   为什么不干脆用确认门（`Risk.WRITE`）：那样**每一次合法读文件都要用户点一下**，
   而"读一份用户指定的报表/日志"是真实且高频的用法，过度打扰会让人习惯性点"放行"，
   反而把确认门用废。这里选择"按内容形态设边界"，把人的注意力留给真正改平台的操作
-  （`factory_create` / `accounts_browser_open`）。
+  （`accounts_browser_open`）。
 
 2026-09-22 新增两个附件工具（用户下达「核心 agent 能力增强：用户会直接传图片或文件」）：
 `attachment_list` / `attachment_read`。它们与 `read_local_file` 的分工是：

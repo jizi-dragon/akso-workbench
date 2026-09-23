@@ -54,7 +54,7 @@ async def write_handler(args: EchoArgs, ctx: pa.ToolContext) -> str:
 
 
 def probe_plugin(risk: pa.Risk = pa.Risk.READ, timeout_s: float = 5.0,
-                 precheck=None) -> pa.Plugin:
+                 precheck=None, summary_fn=None) -> pa.Plugin:
     return pa.Plugin(
         id="probe", title="探针插件",
         tools=[
@@ -62,7 +62,7 @@ def probe_plugin(risk: pa.Risk = pa.Risk.READ, timeout_s: float = 5.0,
                         handler=echo_handler, risk=pa.Risk.READ, timeout_s=timeout_s),
             pa.ToolSpec(name="probe_write", description="写工具（过确认门）", args_model=EchoArgs,
                         handler=write_handler, risk=risk, timeout_s=timeout_s,
-                        precheck=precheck),
+                        precheck=precheck, summary_fn=summary_fn),
         ],
     )
 
@@ -277,6 +277,49 @@ def test_pending_request_is_reused_for_same_call(hub) -> None:
     assert c.pending_id != a.pending_id
 
 
+# ---------------------------------------------------------------- 确认摘要（summary_fn）
+
+
+def test_summary_fn_takes_over_the_confirmation_text(hub) -> None:
+    """`ToolSpec.summary_fn` 优先于通用口径——"参数本身说明不了后果"的工具靠它。
+
+    形状约定（2026-09-22 定的，审批弹窗按它排版）：**第一行是标题，`·` 开头的是要点**。
+
+    > ⚠️ **2026-09-22：这个扩展点当前没有任何产品内调用方。**
+    > 它的唯一生产者是已删除的 `plugins/factory.py::_create_summary`。
+    > 之所以留着而不是一起删：它是 SDK 的公开扩展点（`docs/PLUGIN-SDK.md`），
+    > 而"确认框该怎么讲后果"这件事与某个具体业务无关。
+    > 之所以**必须有一条测试**：零调用方的扩展点是下一次重构里最容易被无声改坏的东西——
+    > 所以这里用**合成 spec** 钉住它，而不是指望某个业务工具顺带覆盖。
+    """
+    def loud(args: EchoArgs) -> str:
+        return f"要写「{args.text}」\n· 第一行是标题\n· 这一行是要点"
+
+    hub.add_plugin(probe_plugin(risk=pa.Risk.WRITE, summary_fn=loud))
+    result = run(hub.execute("probe_write", {"text": "目标"}))
+    assert result.status is pa.ToolStatus.NEEDS_APPROVAL
+
+    summary = approvals.pending_store().get(result.pending_id).summary
+    assert summary.splitlines()[0] == "要写「目标」", summary
+    assert summary.splitlines()[1].startswith("· "), summary
+    assert "写工具（过确认门）" not in summary, "自定义摘要生效时不该再拼通用口径"
+
+
+def test_summary_fn_failure_falls_back_instead_of_breaking_the_dialog(hub) -> None:
+    """摘要实现坏掉**不能让确认框弹不出来**：退回通用口径，而不是把异常抛出去。
+
+    这是"确认框是唯一闸门"的直接推论——闸门自己弹不出来，比摘要难看严重得多。
+    """
+    def boom(_args: EchoArgs) -> str:
+        raise RuntimeError("摘要实现坏了")
+
+    hub.add_plugin(probe_plugin(risk=pa.Risk.WRITE, summary_fn=boom))
+    result = run(hub.execute("probe_write", {"text": "x"}))
+    assert result.status is pa.ToolStatus.NEEDS_APPROVAL, "摘要抛异常不该让工具调用失败"
+    summary = approvals.pending_store().get(result.pending_id).summary
+    assert "写工具（过确认门）" in summary and "write 级" in summary, summary
+
+
 def test_read_tool_never_asks(hub) -> None:
     hub.add_plugin(probe_plugin(risk=pa.Risk.READ))
     inv = run(hub.execute("probe_echo", {"text": "ok"}))
@@ -382,7 +425,7 @@ def test_real_hub_has_all_plugins_and_no_failures() -> None:
 
     hub = pa.get_hub()
     assert {p.id for p in hub.plugins} >= {
-        "builtin", "websearch", "insight", "factory", "accounts",
+        "builtin", "websearch", "insight", "accounts",
     }
     assert hub.failures == []
     assert pa.verify_required_tools(hub, REQUIRED_TOOLS) == []
@@ -414,17 +457,16 @@ def test_web_search_tool_is_registered() -> None:
 
 
 def test_real_hub_risk_grading() -> None:
-    """分级是安全属性：写平台/开窗口的必须是 write 以上，只读的必须是 read。"""
+    """分级是安全属性：写平台/开窗口的必须是 write 以上，只读的必须是 read。
+
+    > 2026-09-22：`factory_*` 三条随配置工厂移除。连带后果是**产品里再没有 DANGEROUS 工具**
+    > （`factory_create` 曾是唯一一个），因此这里不再有 dangerous 期望项——
+    > "dangerous 归零"这件事本身由 `tests/test_app.py::test_agent_selfcheck` 守着。
+    """
     hub = pa.get_hub()
     expected = {
         "insight_read_config": pa.Risk.READ,
         "insight_run": pa.Risk.READ,
-        "factory_blueprint_spec": pa.Risk.READ,
-        # 预览会**写**运行时目录，但仍然是 read：只写自有工作区、可整体删除、
-        # 不碰平台与凭据（与 insight_run 同级）。真正的闸门是 create 的 dangerous 门。
-        # 给它加确认门会把"确认"用在暂存上，训练用户习惯性点同意。
-        "factory_preview_blueprint": pa.Risk.READ,
-        "factory_create": pa.Risk.DANGEROUS,
         "accounts_login": pa.Risk.READ,
         "accounts_browser_open": pa.Risk.WRITE,
         "accounts_browser_close": pa.Risk.WRITE,
@@ -442,17 +484,20 @@ def test_real_hub_schema_budget() -> None:
     - 24 → **26**（2026-09-22）：新增 `attachment_list` / `attachment_read`
       ——用户下达的「用户会直接传图片或文件，agent 要真的读到」；没有这两个动词，
       长文件只能靠内联截断，等于是"能传不能读"。
+    - **26 → 18**（2026-09-22）：`factory_*` 七条随配置工厂整体移除，实测工具面 18 个。
+      ⚠️ 上限**刻意从 26 下调到 18**，不留在 26：留一个虚高的上限等于把"工具面又长回来了"
+      这件事变得看不见——而这条用例的全部价值就是让工具面增长**必须有人签字**。
     ⚠️ 下次再涨之前先问：**能不能靠插件白名单把工具面按场景裁剪**
     （`hub.list_api_for(plugins)` 已经支持），而不是继续抬这个数字。
     """
     hub = pa.get_hub()
     payload = json.dumps(hub.list_api_for(None), ensure_ascii=False)
-    assert len(hub.specs()) <= 26, f"工具数 {len(hub.specs())} 已超预算，考虑拆分插件白名单"
+    assert len(hub.specs()) <= 18, f"工具数 {len(hub.specs())} 已超预算，考虑拆分插件白名单"
     assert len(payload) < 24_000, f"工具 schema 体积 {len(payload)} 字符，偏大"
 
 
 def test_plugin_whitelist_filters_tools() -> None:
     hub = pa.get_hub()
-    only_factory = {t["function"]["name"] for t in hub.list_api_for(["factory"])}
-    assert only_factory and all(n.startswith("factory_") for n in only_factory)
-    assert "insight_run" not in only_factory
+    only_insight = {t["function"]["name"] for t in hub.list_api_for(["insight"])}
+    assert only_insight and all(n.startswith("insight_") for n in only_insight)
+    assert "web_search" not in only_insight

@@ -165,14 +165,6 @@ def test_versioned_flag_separates_public_from_private() -> None:
 # ---------------------------------------------------------------- 兼容垫片
 
 
-def test_writers_endpoints_shim_reexports() -> None:
-    from workbench.services.egmp.writers import endpoints as shim
-
-    assert shim.SAVE_BASIC_OBJECT == endpoints.SAVE_BASIC_OBJECT
-    assert shim.FIELD_PAGE == endpoints.FIELD_PAGE
-    assert shim.STEP_TYPE_NAMES == semantics.STEP_TYPE_NAMES
-
-
 def test_auth_shim_reexports_semantics_and_client() -> None:
     from workbench.services.egmp import auth
 

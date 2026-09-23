@@ -93,3 +93,28 @@ Monitor（`services/egmp/monitor/`）**录制**用户在平台上的操作，产
 - **另有一套同名但无关的东西**：上游扩展曾有 `page-monitor.ts`（Page Monitor，最近页面）。
   它已于 0.2.22 整块撤销，**与本文档的 Monitor 无关**——即使名字里都有 Monitor。
   `services/browser_pool.monitor_start/stop` + `runtime/monitor/` 才是本文档指的那套。
+
+
+---
+
+## 补记（**这段是后补的**，2026-09-22）
+
+> 按本仓纪律，ADR 只增不改；下面记的是「决策当时的认知」之后发生的变化。
+
+**「复现计划」这一半已随配置工厂整体移除。** 本 ADR §2 第 3 条与上面「权衡」表里
+API_MAP 对位 egmp.writers 创建器的说法，**描述的是一个已经不在仓库里的东西**：
+写路径（egmp/writers/** + orchestrate.py）连同配置工厂一并删除，API_MAP 随之移除。
+
+现状（**决策的方向没变，只是执行侧不再存在**）：
+
+- 
+eproduce-plan.json **只承载平台侧事实**（method / path / params / 
+eproducible，
+  外加显式的 "executor": null）；
+- **本仓库不再提供任何回放执行器**——「逐步确认后调用对应函数」这一步没有可调用的目标了；
+- **安全边界原样保留**：DANGEROUS 类**永不入计划**（这条是本 ADR 的核心，未受影响）；
+- 录制侧（Playwright 三级降噪 / 查询层 / 段解读）**全部保留**，坑与口径见
+  [factory-tuning/README.md](../../factory-tuning/README.md) 与
+  [PITFALLS.md](../PITFALLS.md) 的 #64 / #74 / #76 / #80。
+
+**§后果里那条测试缺口仍然成立**：DANGEROUS 分类的正确性依旧没有自动化断言守住它。

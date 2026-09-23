@@ -2,10 +2,12 @@
 
 _2026-09-15 定稿。锚定 `workbench/plugin_api.py`（`ToolHub`）+ `workbench/plugins/` + `workbench/approvals.py`。_
 
-> **这份文档回答**：工作台三大业务（对象分析 / 配置 / 快捷登录）是怎么"作为工具插件
+> **这份文档回答**：工作台的业务能力（对象分析 / 快捷登录）是怎么"作为工具插件
 > 挂到 Agent 上"的，以及你新增一个插件时该动哪几个文件、哪些坑必须绕开。
-> （这两个模块 2026-09-22 更名，见 [README §四个来源项目](../README.md) 的改名记录；
-> 插件 id 仍是 `insight` / `factory`。）
+> （2026-09-22 有两次变更，见 [README §四个来源项目的沉淀](../README.md)：
+> 「平台洞察」**只改显示名**为「对象分析」，插件 id 仍是 `insight`；
+> 原来的第三个业务插件「配置工厂」（`factory`）**整条链已删除**，
+> 现在 core 只有 **4 个插件 / 18 个工具**。）
 
 ## 0. 一页话结论
 
@@ -163,36 +165,39 @@ def register(hub: pa.ToolHub) -> None:
 | 字段 | 约束 | 为什么 |
 |---|---|---|
 | `name` | ASCII，`[A-Za-z0-9_-]{1,64}`，全局唯一 | DeepSeek/OpenAI 的 function name 限制；**中文名会在请求侧被拒，本地看不出来**。装机期就断言 |
-| `description` | 必填，写清**后果** | 模型只靠它选工具。`factory_create` 的描述必须写"会真的改平台数据" |
+| `description` | 必填，写清**后果** | 模型只靠它选工具。会写平台数据的工具必须写明"**会真的改平台数据**"——本仓的教训是一次误调用不会报错、却**会真的建出来**（当时的那个工具是 `factory_create`，2026-09-22 随配置工厂删除） |
 | `args_model` | pydantic `BaseModel` 子类 | JSON Schema 由它生成（单一事实源，杜绝手写 schema 漂移）；模型传参先经它校验，字段级错误直接回给模型 |
 | `handler` | `async (args, ctx) -> str | dict | BaseModel` | 同步阻塞调用（httpx/Playwright/子进程）**必须** `asyncio.to_thread` 挪走，否则阻塞事件循环 |
-| `risk` | `READ` / `WRITE` / `DANGEROUS` | 决定是否过确认门。**默认 READ，写操作必须显式声明** |
+| `risk` | `READ` / `WRITE` / `DANGEROUS` | 决定是否过确认门。**默认 READ，写操作必须显式声明**。⚠️ **当前产品面一个 `DANGEROUS` 工具都没有**（唯一的那个已随配置工厂删除），但枚举与确认门的 dangerous 分支都**照旧保留**——删的是工具，不是分级能力 |
 | `timeout_s` | 秒 | 工具不许无限期挂着。跑平台任务的给 300–900，纯本地查询 15–60 |
 | `audit_extra` | `Callable[[args], dict]` | 抽审计维度（环境/对象/账号）。**不得含凭据**——`redact_args` 会再过一遍，但别指望它兜底 |
+| `summary_fn` | `Callable[[args], str]`，可选 | **确认框里给用户看的那一句**（默认口径是"工具描述 + 参数 + 风险级"）。⚠️ **它目前没有任何产品内调用方**——唯一的使用者 `plugins/factory.py::_create_summary` 已随配置工厂删除（2026-09-22）。**机制刻意保留**（属于 SDK 公开面），由 `tests/test_plugin_api.py` 用**合成 spec** 钉住；文案形状约定（首行标题 + `·` 要点）见 `plugin_api.ToolSpec.summary_fn` 的文档串 |
 
 工具名命名约定：`<plugin_id>_<动作>`。内置工具（`get_current_time` 等）是历史例外。
 
 ---
 
-## 3. 现有五个插件与 25 个工具
+## 3. 现有四个插件与 18 个工具
 
 > 实时清单以运行期 `get_hub()` 实例为准（`len(hub.plugins)` / `len(hub.specs())`），
 > 或直接看 **[docs/TOOLS.md](TOOLS.md)**（由 `tools/gen_tools_doc.py` 从运行期生成，`tests/test_tools_doc.py` 钉住）。
 > 2026-09-15 引入 `web_search` 时曾漏把它写进本表（`builtin` 之外），故此后**以运行期为准**；
-> 本表为 2026-09-17 快照 + 2026-09-20 补 `request_user_confirmation`。
+> 本表为 2026-09-17 快照 + 2026-09-20 补 `request_user_confirmation` + **2026-09-22 删 `factory` 插件、补两个 `attachment_*`**。
 
 | 插件 | 工具 | 风险 |
 |---|---|---|
-| `builtin`（通用） | `get_current_time` / `read_local_file` / `read_web_page` | read |
+| `builtin`（通用） | `get_current_time` / `read_local_file` / `read_web_page` / `attachment_list` / `attachment_read` | read |
 | | `request_user_confirmation`（**模型主动请求实时确认**，见下方专节） | read（但会**暂停对话**等用户答复） |
 | `websearch`（自建联网检索） | `web_search`（DeepSeek API **没有**内置联网搜索，见 [research](research/deepseek-api-capabilities.md) §2） | read |
 | `insight`（对象分析） | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
-| `factory`（配置） | `factory_blueprint_spec`（**给模型的蓝图规格**，从运行期模型生成）/ `factory_preview_blueprint`（**校验+暂存+审阅材料**，一次闭合）/ `factory_resolve_object`（**对象在不在？不在就列相近的并问用户**，见 [ADR-0018](adr/0018-no-silent-object-creation.md)）/ `factory_list_blueprints` / `factory_jobs` / `factory_status` | read |
-| | `factory_create` | **dangerous** |
 | `accounts`（快捷登录） | `accounts_list` / `accounts_login` / `accounts_browser_sessions` | read |
 | | `accounts_browser_open` / `accounts_browser_close` | **write** |
 
-统计：6 + 1 + 6 + **7** + 5 = **25 个工具 / 5 个插件**。
+统计：6 + 1 + 6 + 5 = **18 个工具 / 4 个插件**（**16 read + 2 write + 0 dangerous**）。
+
+> **`factory` 插件（7 个 `factory_*` 工具，含唯一一个 `DANGEROUS`）已于 2026-09-22 随配置工厂整体删除**——
+> 见 [README](../README.md) 的「配置工厂整体移除」一节。平台侧知识仍在
+> [docs/PLATFORM-OPERATIONS-LEARNED.md](PLATFORM-OPERATIONS-LEARNED.md)。
 
 实时清单：`GET /api/agent/tools`（含参数说明与风险）；插件维度：`GET /api/agent/plugins`。
 
@@ -203,7 +208,7 @@ DeepSeek API **没有**内置联网检索（见 [research/deepseek-api-capabilit
 把它与"读时间/读文件"这类零依赖工具放在同一个插件里，会让"检索坏了"和"通用工具坏了"难以区分。
 **插件边界按"依赖与失败域"划，不按"看起来像不像一类"划。**
 
-### 三个业务插件的设计取舍（都踩过或刻意避开了坑）
+### 各插件的设计取舍（都踩过或刻意避开了坑）
 
 **`insight`：不提供"列出平台全部对象"。** 平台没有实证过的对象清单端点
 （`kernel/endpoints.py:74-77` 那三条探针是上游 README 给的，可用性需按环境实测、可能全 404）。
@@ -214,11 +219,16 @@ CODEBASE_OVERVIEW 的红线是「端点常量必须实证来源，不许凭观�
 绕过去会漏掉 `workspace_dir` / `coverage_status` 回填（2026-09-14 修的真实缺陷），
 后果是"页面上明明有 8 件产物、界面只显示一个 proc.log"。**插件层图省事的代价由用户承担。**
 
-**`factory_create` 是 DANGEROUS 而不是 WRITE**：它做的是一次误调用不会报错、
-**会真的建出来**的批量写入，回滚只能平台侧手工删。
-它与引擎侧"环境强制确认"（`routes_factory.run` 的 `confirmed=true`，否则 409）
-是**两条独立的闸门**，不是替代关系：工具级确认门挡住 Agent 链路，
-引擎侧闸门挡住"绕过页面直接打 HTTP"的人。
+**`accounts_browser_open` / `accounts_browser_close` 是本插件里仅有的两个 WRITE 工具**，
+其余三个（`accounts_list` / `accounts_login` / `accounts_browser_sessions`）都是 read。
+
+> **~~`factory_create` 是 DANGEROUS 而不是 WRITE~~（2026-09-22 已删除）**：它做的是一次误调用不会报错、
+> **会真的建出来**的批量写入，回滚只能平台侧手工删。它与引擎侧"环境强制确认"
+> （`routes_factory.run` 的 `confirmed=true`，否则 409）是**两条独立的闸门**，不是替代关系：
+> 工具级确认门挡住 Agent 链路，引擎侧闸门挡住"绕过页面直接打 HTTP"的人。
+> **删除后的后果**：那条引擎侧闸门随功能一起没了，产品面现在 **0 个 DANGEROUS 工具**——
+> 工具级确认门是唯一还站着的那道；`Risk` 枚举与确认门的 dangerous 分支**照旧保留**
+> （保留原文是为了让"为什么会有 DANGEROUS 这一档"可追溯）。
 
 **`read_local_file` 不加确认门，而是加边界**：它原来是**无限制的绝对路径读**——
 任何凭据文件都能被模型一句话读出来（结果还会原样进对话进审计）。现在两档收紧：
@@ -254,9 +264,13 @@ CODEBASE_OVERVIEW 的红线是「端点常量必须实证来源，不许凭观�
 
 只读、**在确认门之前**跑的确定性检查：返回非空串 = **这次调用注定失败** ⇒
 **不问用户放行、也不执行**，理由原样成为模型观测（`status=rejected`）。
-它买的是"别让用户为一次必然失败的写操作白点一次放行"（真机现场：工厂的
+它买的是"别让用户为一次必然失败的写操作白点一次放行"（**真机现场来自已删除的配置工厂**：
 "对象不存在但有相近对象"）。**失败即放行**（异常/超时按没意见处理）——
 它只省一次白问，拦截责任仍在确认门与工具自己。
+
+> ⚠️ **2026-09-22：与 `summary_fn` 同样，这个扩展点当前也没有产品内调用方**——
+> 它当时唯一的用户是已删除的 `plugins/factory.py`。机制保留（属于 SDK 公开面），
+> 由 `tests/test_plugin_api.py` 用**合成 spec**（`risk=pa.Risk.DANGEROUS`）钉住。
 
 ### 四条硬性质（`tests/test_plugin_api.py` 逐条钉住）
 
@@ -351,7 +365,7 @@ pa.ToolSpec(
 
 ```python
 # workbench/plugins/__init__.py
-_MODULES = ("builtins", "insight", "factory", "accounts")   # ← 加插件改这里
+_MODULES = ("builtins", "websearch", "insight", "accounts")   # ← 加插件改这里（当前 4 个）
 
 def load_all(hub):
     for name in _MODULES:
@@ -368,7 +382,7 @@ def load_all(hub):
 所以启动期把必需工具清单对一遍并写日志，同时暴露成 `GET /api/agent/selfcheck`：
 
 ```
-{"ok":true,"plugins":4,"tools":19,"riskCounts":{...},
+{"ok":true,"plugins":4,"tools":18,"riskCounts":{...},
  "requiredTools":[...],"missingRequired":[],"failures":[]}
 ```
 
@@ -432,7 +446,7 @@ def load_all(hub):
 |---|---|
 | `workbench/plugin_api.py` | 契约：`ToolHub` / `ToolSpec` / `Risk` / `ToolContext` / `Plugin` |
 | `workbench/approvals.py` | 确认门 + 审计写入器 + 人话摘要 |
-| `workbench/plugins/*.py` | 五个插件的实现（`builtins` / `websearch` / `insight` / `factory` / `accounts`） |
+| `workbench/plugins/*.py` | 四个插件的实现（`builtins` / `websearch` / `insight` / `accounts`） |
 | `workbench/skills/library.py` | installed 层：上传 / 安装 / 卸载 / 从库删除；两种工具形态各自建 `ToolSpec` |
 | `workbench/skills/manifest.py` | `SKILL.md` 契约：两种形态、路径校验、JSON Schema → pydantic |
 | `workbench/skills/script_runner.py` | 脚本式工具的入口约定 + 沙箱调用 + 结果翻译（Fail-Closed） |

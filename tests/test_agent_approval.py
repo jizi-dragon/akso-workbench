@@ -8,8 +8,9 @@
 
     轮1 被拦（pendingId=A）→ 人放行 → 轮2 重试 → **仍被拦，且新建了 pendingId=B** → 工具从未执行
 
-⇒ `accounts_browser_open` / `accounts_browser_close` / `factory_create`
-（**全部 3 个写 / 危险工具**）在对话链路里永远无法执行。
+⇒ `accounts_browser_open` / `accounts_browser_close`
+（当时全部 3 个写 / 危险工具；第 3 个 `factory_create` 已随配置工厂整体移除）在对话链路里
+永远无法执行。
 
 修法 A：`PendingStore.claim_approved()`——无令牌时按「工具 + **参数指纹**」认领一条**已批准**的
 条目，**一次性**（认领后置 `consumed`）。门槛与令牌完全一致，只是凭据从令牌换成了服务端内存里的事实。

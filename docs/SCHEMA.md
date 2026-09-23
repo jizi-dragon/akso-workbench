@@ -146,34 +146,40 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 而 `export_backup()` 输出 **camelCase**（`envBaseUrl`，备份文件契约）。
 `routes_extension` 曾读错键 → 快照 `host` 恒空 → 扩展静默丢弃全部账号（0.2.4 实锤断点）。
 
-### 3.6 `blueprint_jobs` — 配置任务（迁移 8；界面上的「配置」，原「配置工厂」）
+### 3.6 `blueprint_jobs` — 配置任务（迁移 8；**已退役：无写入方、无读取方**）
 
-| 列 | 类型 | 约束 | 说明 |
+> ⚠️ **2026-09-22：配置工厂整条链路已删除**（`plugins/factory.py` 的 7 个 `factory_*` 工具、
+> `api/routes_factory.py` 的 8 个端点、`services/egmp/writers/**` 与 `orchestrate.py`）。
+> 这张表的**原写入方正是那个已删除的 `routes_factory`**，因此它现在**没有任何写入方，
+> 也没有任何读取方**（代码里只剩 `db.py` 的建表 DDL 与迁移语句）。
+> 处置口径与 §3.16 那几张已下线的知识库表**完全一致**：**表与迁移都留着，只是不再读写**；
+> **勿因「表还在」就恢复业务代码**。迁移账见 §二（迁移 8 建表、迁移 18 改写 `module` 值）。
+
+| 列 | 类型 | 约束 | 说明（**均为停写前的历史语义**） |
 |---|---|---|---|
 | `id` | TEXT | PK | |
-| `module` | TEXT | NOT NULL DEFAULT `'akso-auto'` | **现行写入 `'factory'`**（迁移 18 起） |
+| `module` | TEXT | NOT NULL DEFAULT `'akso-auto'` | 原写入方固定写 `'factory'`（迁移 18 起） |
 | `command` | TEXT | NOT NULL | `create` / `orchestrate` |
 | `blueprint_path` | TEXT | DEFAULT `''` | |
-| `env_id` | TEXT | 可空 | 工厂侧固定写 `'workbench'` 占位 |
+| `env_id` | TEXT | 可空 | 原写入方固定写 `'workbench'` 占位 |
 | `status` | TEXT | NOT NULL DEFAULT `'pending'` | `running` / `succeeded` / `failed` |
 | `exit_code` | INTEGER | 可空 | 原生化后恒为 NULL |
 | `log_path` | TEXT | DEFAULT `''` | 日志**落磁盘文件**，不入库（见 §四） |
-| `artifact_dir` | TEXT | DEFAULT `''` | |
+| `artifact_dir` | TEXT | DEFAULT `''` | 指向 `runtime/factory/<id>/`——**该目录也不再产生新实例** |
 | `created_at` / `updated_at` | INTEGER | NOT NULL | |
 
 索引：`idx_blueprint_jobs_status(status)`、`idx_blueprint_jobs_created_at(created_at)`。
 
-`module` 一列**历史上先后用过三个值**，迁移 18 已统一为 `'factory'`：
+`module` 一列**历史上先后用过三个值**，迁移 18 已统一为 `'factory'`（现在只在历史行里）：
 
 | 值 | 来历 | 现状 |
 |---|---|---|
 | `akso-auto` | 迁移 8 建表时的列默认值（上游项目名） | 已由迁移 18 改写 |
 | `egmp-native` | 原生化后 `routes_factory` 实际写入的值 | 已由迁移 18 改写 |
-| `factory` | 现行值（模块 id，与 `adapters/akso-auto.json` 的 `id` 一致） | 代码写入 + 历史行均已统一 |
+| `factory` | 停写前的值（当时的模块 id，与已删除的 `adapters/akso-auto.json` 的 `id` 一致） | 历史行均已统一为该值 |
 
 > ⚠️ **列默认值仍是 `'akso-auto'`**：迁移 1–17 按不可变纪律保留，改默认值只能靠"新迁移 +
-> 重建表"，而代码**始终显式写入**该列（`'factory'`），所以默认值不会被用到。
-> 记在这里是为了让读表的人不困惑。
+> 重建表"；表已停写，这个默认值更不会被用到。记在这里是为了让读表的人不困惑。
 
 ### 3.7 `insight_runs` — 对象分析任务（迁移 8；界面上的「对象分析」，原「平台洞察」）
 
@@ -214,13 +220,13 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | TEXT | PK | `uuid4().hex[:12]`；**= SSE 事件的 `auditId`**，前端卡片与审计行靠它对齐 |
-| `tool` | TEXT | NOT NULL | 工具名，如 `insight_run` / `factory_create`（清单见 [API.md](API.md) §10） |
+| `tool` | TEXT | NOT NULL | 工具名，如 `insight_run` / `accounts_browser_open`（清单见 [API.md](API.md) §10）；**历史行里可能有已删除的 `factory_*`** |
 | `args` | TEXT | NOT NULL DEFAULT `'{}'` | 审计维度 JSON（`audit_extra` 抽取），截断 2,000 字符；**凭据键被打码** |
 | `status` | TEXT | NOT NULL DEFAULT `'ok'` | `ok` / `error` / `needs_approval` / `rejected` / `timeout` / `unknown_tool` / `bad_args` |
 | `result_summary` | TEXT | NOT NULL DEFAULT `''` | 截断 1,000 字符 |
 | `duration_ms` | INTEGER | 可空 | |
 | `created_at` | INTEGER | NOT NULL | |
-| `plugin` | TEXT | NOT NULL DEFAULT `''`（迁移 16） | 来源插件：`builtin` / `insight` / `factory` / `accounts` |
+| `plugin` | TEXT | NOT NULL DEFAULT `''`（迁移 16） | 来源插件：`builtin` / `websearch` / `insight` / `accounts`（现行四个，见 [API.md](API.md) §10）；**历史行里可能有已删除的 `factory`** |
 | `risk` | TEXT | NOT NULL DEFAULT `'read'`（迁移 16） | `read` / `write` / `dangerous` |
 | `meta` | TEXT | NOT NULL DEFAULT `'{}'`（迁移 16） | 目前只放 `{source: "agent"\|"http"}` |
 
@@ -409,9 +415,8 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 | 路径 | 归属表/功能 | 说明 |
 |---|---|---|
 | `runtime/insight/<job_id>/` | `insight_runs.artifact_dir` | 洞察产物：`inventory.json/md`、`{code}.json/md`、`*.drawio`、`proc.log` |
-| `runtime/factory/<blueprint_id>/` | `blueprint_jobs.artifact_dir` | 蓝图暂存 `blueprint.json`、审阅件 `spec.md` / `checklist.md`、`checkpoint.json`、`proc.log` |
 | `runtime/browser-states/<account_id>.json` | 无表 | Playwright `storage_state`（免密直达）；`has_saved_session` = 文件存在 |
-| `runtime/monitor/<account_id8>-<stamp>/` | 无表 | Monitor 录制产物（`monitor-log.json` / `checkpoints` / `filter-stats`） |
+| `runtime/monitor/<account_id8>-<stamp>/` | 无表 | Monitor 录制产物（`monitor-log.json` / `checkpoints.jsonl` / `filter-stats.json`）与解读产物（`interpretation.md` / `reproduce-plan.json`）。⚠️ 复现计划**只记平台侧事实**（`method` / `path` / `params` / `reproducible`）且 `"executor": null`——**本仓不提供回放执行器**，DANGEROUS 类永不入计划 |
 | `runtime/egmp-tokens/token-<env_id>.json` | 无表 | eGMP 登录 token 缓存（TTL 55 分钟） |
 
 **为什么这些不入库**：产物是「一次性大文件 + 需要直接给用户下载」的形态，

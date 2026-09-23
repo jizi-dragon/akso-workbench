@@ -1,4 +1,24 @@
-"""egmp 原生化验收：蓝图校验/编排管道/洞察命令/Monitor（离线，全量 mock）。"""
+"""egmp 原生化验收：洞察织网 / Monitor 录制解读 / 平台端点常量（离线，全量 mock）。
+
+> ## 2026-09-22：写路径用例随配置工厂整体移除
+>
+> 本文件原先还覆盖**写路径**：蓝图两层校验与规范化、审阅三件套、拓扑排序、
+> `run_full_workflow` 的幂等与闸门、`writers.objects` / `writers.fields` /
+> `writers.layouts` 的响应解析与线格式、"对象不存在不许静默新建"、
+> "命名列表布局必须有 code"。这些代码（`egmp/writers/**` + `egmp/orchestrate.py`）
+> 已整体删除，**用例一并删除**——留着一批 import 不到模块的用例只会让整个文件 collect 失败。
+>
+> **它们钉住的平台事实没有跟着丢**：PITFALLS #62（平台只回成功标志、不回 id）、
+> #67（选项集读路径与 `data` 是选项数组）、#69（`minValue`/`maxValue`/`scale`）、
+> #82（建对象自动派生 `<code>_table__ak`；`Listlayout/Save` 要求 `code` 非空）
+> 等条目的**平台侧结论**已迁进
+> [docs/PLATFORM-OPERATIONS-LEARNED.md](../../docs/PLATFORM-OPERATIONS-LEARNED.md)
+> 的「平台事实台账」，原始真机取证在 `factory-tuning/reports/**`。
+>
+> 这里只保留**不依赖写路径**的部分：洞察织网、Monitor 录制/解读/裁剪，
+> 以及**端点常量**这一类纯平台事实（`OBJECT_PICKLIST` 的读路径形状曾被"猜"错过一次，
+> 值得单独钉死）。
+"""
 
 from __future__ import annotations
 
@@ -8,7 +28,6 @@ from typing import Any
 
 from fakes import FakeEgmpClient
 
-from workbench.services.egmp import orchestrate
 from workbench.services.egmp.insight import run_spider
 from workbench.services.egmp.kernel import endpoints as egmp_endpoints
 from workbench.services.egmp.monitor import (
@@ -20,163 +39,16 @@ from workbench.services.egmp.monitor import (
 )
 from workbench.services.egmp.monitor.monitor import TRIM_SIZE, trim_body
 from workbench.services.egmp.queries import GaiaQueries
-from workbench.services.egmp.writers import fields as writers_fields
-from workbench.services.egmp.writers import objects as writers_objects
-from workbench.services.egmp.writers.blueprint import (
-    generate_checklist,
-    generate_review_spec,
-    has_blocking,
-    normalize_blueprint,
-    to_object_blueprints,
-    validate_blueprint,
-)
-
-
-def _sample_blueprint() -> dict:
-    return {
-        "description": "测试对象",
-        "objects": [{
-            "name": "培训管理", "code": "training_mgr__c", "enableLifeCycle": True,
-            "picklists": [{"name": "培训类型", "code": "training_type__c",
-                           "options": [{"name": "内训"}, {"name": "外训"}]}],
-            "fields": [
-                {"name": "名称", "code": "title", "dataType": 1, "isRequired": True},
-                {"name": "类型", "code": "type", "dataType": 4, "picklistCode": "training_type__c"},
-                {"name": "开始日期", "code": "start_date", "dataType": 5},
-                {"name": "负责对象", "code": "owner_obj", "dataType": 15,
-                 "referenceObjectCode": "training_mgr__c"},
-            ],
-            "formLayout": {"sections": [{"name": "基本信息", "code": "basic_info__ak", "type": 1,
-                                         "columnsNum": 2,
-                                         "fields": ["title", "type", "start_date", "owner_obj"]}]},
-            "listLayout": {"columns": [{"fieldCode": "title", "sort": 0},
-                                       {"fieldCode": "type", "sort": 1}]},
-            "lifecycle": {"renameStatuses": [{"fromCode": "init_status__c", "toName": "草稿"}],
-                          "statuses": [{"name": "进行中", "code": "status_doing__c"}]},
-            "workflows": [{"name": "培训审批流", "code": "training_flow__c", "autoEnable": True,
-                           "bindToStatusCode": "status_doing__c",
-                           "participants": [{"name": "培训管理员", "code": "trainer_admin"}],
-                           "steps": [{"name": "审批", "code": "step_approve", "type": "task"},
-                                     {"name": "改状态", "code": "step_done", "type": "action",
-                                      "behaviorType": 9, "behaviorValue": "status_doing__c"}]}],
-        }],
-    }
-
-
-# ---------------------------------------------------------------- 蓝图校验
-
-
-def test_validate_passes_sample() -> None:
-    issues = validate_blueprint(_sample_blueprint())
-    assert not has_blocking(issues), [i.model_dump() for i in issues if i.level == "error"]
-
-
-def test_validate_layer1_rejects_bad_structure() -> None:
-    issues = validate_blueprint({"objects": [{"name": "缺编码"}]})
-    assert has_blocking(issues)
-
-
-def test_validate_layer2_rules() -> None:
-    raw = {"objects": [{
-        "name": "坏对象", "code": "BadCode",
-        "fields": [
-            {"name": "a", "code": "dup", "dataType": 1},
-            {"name": "b", "code": "dup", "dataType": 1},
-            {"name": "c", "code": "opt", "dataType": 4},
-            {"name": "d", "code": "num", "dataType": 2, "max": 1, "min": 5},
-        ],
-        "formLayout": {"sections": [{"name": "s", "code": "s__ak", "type": 1, "columnsNum": 2,
-                                     "fields": ["ghost_field"]}]},
-        "workflows": [{"name": "流", "code": "flow__c",
-                       "steps": [{"name": "审批", "code": "step1", "type": "task"}]}],
-    }]}
-    issues = validate_blueprint(raw)
-    errors = [i.message for i in issues if i.level == "error"]
-    assert any("__c" in m for m in errors)          # 编码规范
-    assert any("重复" in m for m in errors)          # 字段去重
-    assert any("picklistCode" in m for m in errors)  # 选项字段条件必填
-    assert any("max" in m for m in errors)           # 数字 max>min
-    assert any("ghost_field" in m for m in errors)   # 布局引用白名单
-    assert any("未启用生命周期" in i.message for i in issues if i.level == "warning")
-
-
-def test_normalize_and_single_object_form() -> None:
-    raw = {"name": "培训管理", "code": "TrainingMgr",
-           "fields": [{"name": "名称", "code": "Title", "dataType": 1}]}
-    normalized, notes = normalize_blueprint(raw)
-    assert normalized["code"] == "training_mgr__c"
-    assert normalized["fields"][0]["code"] == "title"
-    assert normalized["fields"][0]["statisticsArrange"] == {"id": 1}
-    assert any("__c" in note for note in notes)
-    objects = to_object_blueprints(normalized)
-    assert len(objects) == 1
-
-
-def test_review_artifacts_render() -> None:
-    spec = generate_review_spec(_sample_blueprint())
-    checklist = generate_checklist(_sample_blueprint())
-    assert "培训管理" in spec and "培训审批流" in spec
-    assert "- [ ] 对象创建" in checklist and "- [ ] 验证（OpenAPI 回读）" in checklist
-
-
-# ---------------------------------------------------------------- 编排管道
-
-
-def test_topological_sort_objects() -> None:
-    """引用者后建（被引用者先建）——**排序由引擎做，不交给模型**。
-
-    这条留着并**加了断言强度**：`complexity.assess_complexity` 的断言随
-    `complexity.py` 一起删了（那是 `command="orchestrate"` 那条已下线路径的组件，
-    见 docs/FACTORY-AGENT-GAP.md 问题④），但拓扑排序是**确定性执行逻辑**，不动。
-    """
-    objects = [
-        {"code": "b__c", "fields": [{"code": "f", "dataType": 13, "referenceObjectCode": "a__c"}]},
-        {"code": "a__c", "fields": []},
-    ]
-    ordered = orchestrate.topological_sort_objects(objects)
-    assert [o["code"] for o in ordered] == ["a__c", "b__c"]  # 被引用者先建
-
-    # 成环时保持声明序（不抛异常、不丢对象）——上游口径，别"顺手"改成报错
-    cyclic = [{"code": "x__c", "fields": [{"code": "f", "dataType": 13,
-                                           "referenceObjectCode": "y__c"}]},
-              {"code": "y__c", "fields": [{"code": "g", "dataType": 13,
-                                           "referenceObjectCode": "x__c"}]}]
-    assert [o["code"] for o in orchestrate.topological_sort_objects(cyclic)] == ["x__c", "y__c"]
-
-
-def test_run_full_workflow_idempotent(tmp_path: Path) -> None:
-    blueprint = _sample_blueprint()
-    client = FakeEgmpClient()
-    first = orchestrate.run_full_workflow(client, blueprint, artifact_dir=tmp_path)
-    assert first["success"], json.dumps(first, ensure_ascii=False, default=str)[:800]
-    assert first["objects"][0]["steps"]["verify"]["success"]
-    verify_field_count = first["objects"][0]["steps"]["verify"]["fieldCount"]
-    assert verify_field_count == 4
-
-    second = orchestrate.run_full_workflow(client, blueprint, artifact_dir=tmp_path)
-    assert second["success"]
-    assert second["objects"][0].get("skipped") or \
-        second["objects"][0]["steps"]["object"].get("status") == "skipped"
-
-
-def test_run_full_workflow_rejects_invalid_and_unconfirmed(tmp_path: Path) -> None:
-    client = FakeEgmpClient()
-    bad = orchestrate.run_full_workflow(client, {"objects": [{"name": "x"}]}, artifact_dir=tmp_path)
-    assert not bad["success"] and bad["message"] == "蓝图校验未通过"
-    unconfirmed = orchestrate.run_full_workflow(client, _sample_blueprint(),
-                                                confirmed_env=False, artifact_dir=tmp_path)
-    assert "强制确认" in unconfirmed["message"]
-    unapproved = orchestrate.run_full_workflow(client, _sample_blueprint(),
-                                               approved=False, artifact_dir=tmp_path)
-    assert "审批" in unapproved["message"]
-
 
 # ---------------------------------------------------------------- 洞察命令
 
 
 def test_insight_spider_networkx(tmp_path: Path) -> None:
     client = FakeEgmpClient()
-    orchestrate.run_full_workflow(client, _sample_blueprint())
+    # 数据种子：直接建一个对象（原先借 `orchestrate.run_full_workflow` 播种，
+    # 那条链已随配置工厂移除；这里改成直接打平台的建对象端点，语义更直白）。
+    client.post("/api/platform/BasicObject/SaveBasicObject",
+                {"name": "培训管理", "code": "training_mgr__c", "enableLifeCycle": True})
     spider = run_spider(client, ["training_mgr__c"], output_dir=tmp_path)
     assert spider["ok"]
     stats = spider["stats"]
@@ -227,10 +99,23 @@ def test_monitor_classify_and_query(tmp_path: Path) -> None:
 
 
 def test_monitor_interpret_segment(tmp_path: Path) -> None:
+    """复现计划只记**平台侧事实**（方法/路径/参数），不记"调用哪个函数"。
+
+    这一段是 2026-09-22 改造后的判据：写路径随配置工厂移除时，`API_MAP`
+    （端点 → `writers.*` 函数）被删掉了——留着它会产出一份**指向不存在模块**的计划。
+    所以这里断言的正是"计划里没有 module/fn，且写入的分类符合 PLANNABLE_CLASSES"。
+    """
     (tmp_path / "monitor-log.json").write_text(json.dumps([
         {"method": "POST", "path": "/api/platform/BasicObject/SaveBasicObject",
          "url": "https://fake.example.com/api/platform/BasicObject/SaveBasicObject",
          "timestamp": 100, "postData": json.dumps({"name": "A", "code": "a__c"}),
+         "known": True, "status": 200},
+        {"method": "GET", "path": "/api/openapi/v1.0/BasicObject/a__c",
+         "url": "https://fake.example.com/api/openapi/v1.0/BasicObject/a__c",
+         "timestamp": 110, "known": True, "status": 200},
+        {"method": "POST", "path": "/api/platform/Workflow/DeleteWorkflowStep",
+         "url": "https://fake.example.com/api/platform/Workflow/DeleteWorkflowStep",
+         "timestamp": 120, "postData": json.dumps({"id": "step-1"}),
          "known": True, "status": 200},
     ]), encoding="utf-8")
     (tmp_path / "checkpoints.jsonl").write_text(
@@ -238,66 +123,27 @@ def test_monitor_interpret_segment(tmp_path: Path) -> None:
         + json.dumps({"checkpoint": "user-query", "timestamp": 200}) + "\n",
         encoding="utf-8")
     outcome = interpret_segment(tmp_path / "monitor-log.json", tmp_path, question="创建对象A")
-    assert outcome["segmentEntries"] == 1
+    assert outcome["segmentEntries"] == 3
     plan = json.loads((tmp_path / "reproduce-plan.json").read_text(encoding="utf-8"))
     assert plan["baseUrl"] == "https://fake.example.com"
-    assert plan["steps"][0]["module"] == "writers.objects"
+    assert plan["executor"] is None, "本仓库不提供回放执行器（写路径已移除）"
+
+    steps = plan["steps"]
+    assert [s["path"] for s in steps] == ["/api/platform/BasicObject/SaveBasicObject"], (
+        f"只应收集 WRITE 类：READ 无需回放、DANGEROUS 永不入计划；实际 {steps}"
+    )
+    assert all("module" not in s and "fn" not in s for s in steps), (
+        "计划里不该再出现'调用哪个函数'——那些模块已随配置工厂删除"
+    )
+    assert steps[0]["params"] == json.dumps({"name": "A", "code": "a__c"}), (
+        "原始参数必须原样保留（它是平台侧事实）"
+    )
+
     report = (tmp_path / "interpretation.md").read_text(encoding="utf-8")
     assert "待 Agent 填充" in report and "是否已迭代学习: 否" in report
 
 
-# ---------------------------------------------------------------- 写路径响应解析（PITFALLS #62）
-
-
-def test_create_object_reads_back_id_when_platform_returns_success_flag() -> None:
-    """平台只回成功标志时，objectId 必须是**回读到的真实 id**，不能是布尔或 `"True"`。
-
-    `FakeEgmpClient` 的 `SaveBasicObject` / `SaveField` 现已改回**真机形状**：
-    只回 `{code:0, data:true}`（经 `_envelope` 就是布尔 `True`），**不回 id**。
-    台架原先回 `{"id": ...}` —— 那正是真实平台**不**做的事，于是旧实现里
-    `isinstance(resp, dict)` 那条正确分支被反复执行、`else resp` 那条
-    **从未被测过**，缺陷因此长期藏着（见 [docs/PITFALLS.md](../../docs/PITFALLS.md) #62）。
-    """
-    client = FakeEgmpClient()
-    out = writers_objects.create_object(client, name="培训管理", code="training_mgr__c")
-    assert out["success"] is True
-    assert out["objectId"] not in (True, "True", None), f"拿到了假 id：{out['objectId']!r}"
-    assert out["objectId"] == client.objects["training_mgr__c"]["id"]
-
-
-def test_create_field_reads_back_id_when_platform_returns_success_flag() -> None:
-    """同上，字段这一层。旧实现会让 `fieldMap` 里存进字符串 `"True"`。"""
-    client = FakeEgmpClient()
-    obj = writers_objects.create_object(client, name="培训管理", code="training_mgr__c")
-    result = writers_fields.create_field(client, object_id=obj["objectId"],
-                                         name="培训主题", code="topic__c", data_type=1)
-    assert result["success"] is True
-    assert result["fieldId"] not in (True, "True", None), f"拿到了假 id：{result['fieldId']!r}"
-    assert result["fieldId"] == client.fields_by_object["training_mgr__c"][0]["id"]
-
-
-def test_create_object_reports_failure_when_id_is_unavailable() -> None:
-    """回读也拿不到 id 时**必须如实报失败** —— 旧实现无条件 `success: True`，
-    会让空 id 一路流到建字段那一步，症状变成"平台报了个看不懂的错"。"""
-
-    class _Blind(FakeEgmpClient):
-        def post(self, path: str, body: dict | None = None) -> Any:
-            return True
-
-        def get(self, path: str, params: dict | None = None) -> Any:
-            return {}
-
-        def paged_post(self, path: str, body: dict | None = None,
-                       page_size: int = 1000) -> list:
-            return []
-
-    out = writers_objects.create_object(_Blind(), name="无回读", code="blind__c")
-    assert out["success"] is False
-    assert out["objectId"] is None
-    assert "回读不到 id" in out["message"]
-
-
-# ------------------------------------------------- 选项集 → 字段 的 id 解析（PITFALLS #67）
+# ---------------------------------------------------------------- 端点常量（纯平台事实）
 
 
 def test_picklist_readback_path_is_a_basicobject_subresource() -> None:
@@ -306,6 +152,8 @@ def test_picklist_readback_path_is_a_basicobject_subresource() -> None:
     旧常量写成平级的 `/api/openapi/v1.0/ObjectPicklist/{code}` —— **实测恒 404**
     （真机同时刻对照：`BasicObject/{code}` / `field/` / `lifecycleStatus/` 全 200）。
     OpenAPI 的结构是「子资源挂在对象下」，这里把它钉死，防止再被"猜"回去。
+
+    这条不依赖写路径（消费它的 `GaiaQueries.get_picklist` 仍在），因此留在这里当**平台事实的守门人**。
     """
     assert egmp_endpoints.OBJECT_PICKLIST == "/api/openapi/v1.0/BasicObject/picklist/{code}"
 
@@ -332,86 +180,8 @@ def test_get_picklist_normalizes_option_array_to_picklist_id() -> None:
     assert len(meta["options"]) == 2
 
 
-def test_resolve_picklist_id_finds_id_by_code_lookup() -> None:
-    """本地映射里没有时必须能**查出来** —— 这是字段拿到选项集的唯一途径。"""
-    client = FakeEgmpClient()
-    picklist_id = _make_picklist(client)
-    got = writers_fields.resolve_picklist_id(client, "training_type__c", {})
-    assert got == picklist_id, f"应解析出真实选项集 id，拿到 {got!r}"
-
-
-def test_picklist_field_body_carries_picklist_id() -> None:
-    """端到端：选项字段的请求体里**必须真的有 `picklistId`**。
-
-    旧实现拿不到 id 就**不往请求体里放**这个键 ⇒「选项字段」被静默建成了一个
-    没有选项集的选项字段，而接口照样回 `data:true`。
-    """
-    client = FakeEgmpClient()
-    picklist_id = _make_picklist(client)
-    obj = writers_objects.create_object(client, name="培训管理", code="training_mgr__c")
-
-    sent: list[dict] = []
-    original = client.post
-
-    def recording_post(path: str, body: dict | None = None) -> Any:
-        if path.endswith("/SaveField"):
-            sent.append(body or {})
-        return original(path, body)
-
-    client.post = recording_post  # type: ignore[method-assign]
-    writers_fields.batch_create_fields(
-        client, object_id=obj["objectId"],
-        fields=[{"name": "类型", "code": "type__c", "dataType": 4,
-                 "picklistCode": "training_type__c"}],
-        picklist_map={})
-    assert sent, "没抓到 SaveField 请求"
-    assert sent[0].get("picklistId") == picklist_id, \
-        f"选项字段的请求体里没有正确的 picklistId：{sent[0]}"
-
-
-# ------------------------------------------------- 数字字段的范围键名（PITFALLS #69）
-
-
-def test_number_field_extras_use_platform_key_names() -> None:
-    """数字字段的 min/max/小数位，**必须用平台的键名**：`minValue`/`maxValue`/`scale`。
-
-    蓝图侧叫 `min`/`max`/`decimalPlaces`，直接发这个名字平台**静默丢弃** ——
-    接口回 `data:true`、字段也建出来了，只有回读才会发现是空的。
-    真机对照：工厂发 `min`/`max` → `minValue=""`；界面发 `minValue`/`maxValue` → 落上。
-    """
-    extras = writers_fields.collect_extras(
-        {"dataType": 2, "min": 0, "max": 100, "decimalPlaces": 2})
-    assert extras.get("minValue") == 0
-    assert extras.get("maxValue") == 100
-    assert extras.get("scale") == 2
-    assert "min" not in extras and "max" not in extras and "decimalPlaces" not in extras
-
-
-def test_number_field_body_carries_platform_range_keys() -> None:
-    """端到端：`SaveField` 请求体里出现的必须是 `minValue`/`maxValue`。"""
-    client = FakeEgmpClient()
-    obj = writers_objects.create_object(client, name="培训管理", code="training_mgr__c")
-
-    sent: list[dict] = []
-    original = client.post
-
-    def recording_post(path: str, body: dict | None = None) -> Any:
-        if path.endswith("/SaveField"):
-            sent.append(body or {})
-        return original(path, body)
-
-    client.post = recording_post  # type: ignore[method-assign]
-    writers_fields.batch_create_fields(
-        client, object_id=obj["objectId"],
-        fields=[{"name": "数量", "code": "qty__c", "dataType": 2,
-                 "min": 1, "max": 999}],
-        picklist_map={})
-    assert sent, "没抓到 SaveField 请求"
-    assert sent[0].get("minValue") == 1, f"没有用平台的键名：{sent[0]}"
-    assert sent[0].get("maxValue") == 999, f"没有用平台的键名：{sent[0]}"
-
-
 # ---------------------------------------------------------------- 大响应裁剪（PITFALLS #63）
+
 
 def test_trim_body_keeps_data_under_real_platform_envelope() -> None:
     """真机信封是 `{code, errorCode, message, data, requestID, traceId}` —— **内容全在 `data` 里**。
@@ -437,140 +207,3 @@ def test_trim_body_leaves_small_bodies_untouched() -> None:
     small = json.dumps({"code": 0, "data": True})
     assert trim_body(small) == small
     assert trim_body(None) is None
-
-
-# ------------------------------------------- 对象不存在时不许静默新建（用户规则 2026-09-22）
-
-
-def test_missing_object_with_similar_candidate_blocks_the_run() -> None:
-    """★ **对象不存在时不许静默新建** —— 用户 2026-09-22 定的规则。
-
-    规则原文：「当用户描述的对象不存在时，要给用户提出找不到该对象，并列举出相似对象给用户选择，
-    并询问用户若都不存在时，是否需要新建。」
-
-    **为什么必须钉住**：对象步骤是幂等的（code 存在→复用，不存在→**新建**），
-    于是"code 打错一个字"的后果**不是报错**，而是**静默多出一个空对象**，
-    而用户以为改的是他那个（2026-09-22 实测踩过：跑之前先只读核对才没出事）。
-
-    判据两条：① 相近对象能被**机械**找到（末位数字 ±1/±2 的变体逐个探测）；
-    ② 有候选时 `run_full_workflow` **拒绝执行**、回候选清单，且**一个对象都没建**。
-    """
-    from workbench.services.egmp import orchestrate
-
-    client = FakeEgmpClient()
-    client.objects["test_0903__c"] = {"id": "obj-0903", "name": "测试09-03", "code": "test_0903__c"}
-
-    # ① 机械相似：`test_0905__c` 的 ±2 变体命中 `test_0903__c`
-    candidates = orchestrate.similar_object_codes(client, "test_0905__c")
-    assert [c["code"] for c in candidates] == ["test_0903__c"], candidates
-
-    # ② 有候选 ⇒ 拒绝写入，并把候选交回给人选
-    blueprint = {
-        "objects": [{
-            "name": "测试09-03", "code": "test_0905__c",
-            "fields": [{"name": "验证文本", "code": "probe_text__c", "dataType": 1}],
-            "formLayout": {"sections": [{"name": "验证部分A", "code": "probe_a__cs",
-                                        "type": 1, "columnsNum": 2, "fields": ["probe_text__c"]}]},
-        }],
-    }
-    result = orchestrate.run_full_workflow(client, blueprint, approved=True, confirmed_env=True)
-    assert result["success"] is False
-    blocked = result.get("needsObjectChoice") or []
-    assert blocked and blocked[0]["code"] == "test_0905__c", blocked
-    assert "test_0903__c" in result["message"]
-    assert "test_0905__c" not in client.objects, "**拒绝写入被违反了**：错 code 的对象还是被建了出来"
-
-
-def test_explicit_create_if_missing_lets_the_run_through() -> None:
-    """★ **用户确认「确实要新建」之后必须有路可走**（决策卡 G1 选项①，2026-09-22 真机实测逼出来的）。
-
-    实测现场：用户让我建「测试09-04」，模型按规则问了"确认要新建吗"、用户答"确认"、
-    蓝图也校验通过 —— 但预检**看不见对话**，仍以"存在相近对象"拒回，且**重试多少次都一样**。
-    更糟的是本平台的测试对象是**流水号命名**（09-01/02/03），下一个编号必然"相近"
-    ⇒ 规则按原样实现时，**越按用户习惯建越建不出来**。
-
-    所以加了显式意图位 `createIfMissing`。判据三条：
-    ① 不写它 ⇒ 仍拦（上一条用例，n=1）；
-    ② 写了它 ⇒ `needsObjectChoice` 为空、那一次**真的建出来了**；
-    ③ **放行不等于装作没看见**：相近对象仍进 `overridden`，且运行日志里留一行。
-    """
-    from workbench.services.egmp import orchestrate
-
-    client = FakeEgmpClient()
-    client.objects["test_0903__c"] = {"id": "obj-0903", "name": "测试09-03", "code": "test_0903__c"}
-    blueprint = {
-        "objects": [{
-            "name": "测试09-05", "code": "test_0905__c", "createIfMissing": True,
-            "fields": [{"name": "验证文本", "code": "probe_text__c", "dataType": 1}],
-        }],
-    }
-
-    # ② 预检放行，但把"被它放过的相近对象"如实列出来（事后可追）
-    pre = orchestrate.precheck_blueprint(client, blueprint)
-    assert pre["needsObjectChoice"] == [], pre["needsObjectChoice"]
-    assert pre["overridden"] == ["test_0905__c"], pre["overridden"]
-    entry = next(m for m in pre["missing"] if m["code"] == "test_0905__c")
-    assert entry["createIfMissing"] is True and [c["code"] for c in entry["candidates"]] == ["test_0903__c"]
-
-    logs: list[str] = []
-    result = orchestrate.run_full_workflow(
-        client, blueprint, approved=True, confirmed_env=True, on_log=logs.append)
-    assert "needsObjectChoice" not in result, result
-    assert any("createIfMissing" in line for line in logs), logs
-    assert "test_0905__c" in client.objects, "显式声明新建之后，对象**必须**真的被建出来"
-
-
-def test_named_list_layout_needs_a_code_to_create() -> None:
-    """★ `Listlayout/Save` **要求 `code` 非空** —— 2026-09-22 真机实测（n=1，`test_0904__c`）。
-
-    现场：蓝图里给列表布局起了个名字（`测试09-04列表`），旧实现于是走"新建"分支，发
-    `{name, objectId, source:3, status:1}` ⇒ 平台回
-    **`code=500 组件[listlayout]的Code字段不能为空`**。而这一步前面**已经**写了对象、字段、表单布局
-    ⇒ 又落进"接口失败、前面已生效"的半成品形态（`keygate` 早就把 `LISTLAYOUT_SAVE` 标成
-    **未核**：这条分支此前从没有真机样本，今天第一次跑就撞上）。
-
-    真机事实（n=2）：建对象时平台**自动生成**默认列表布局 `<对象code>_table__ak`（`source=2`）
-    ⇒ "设几列"本来就该改它。所以现在：
-
-    | 蓝图给的 | 工厂做什么 |
-    |---|---|
-    | 都不给 | 改默认列表布局（`source=2`） |
-    | 只给 `name`，平台没有同名的 | **退回默认**，并在 message 里写明退到了谁（**不许静默换目标**） |
-    | 给了 `code` | 才调 `Listlayout/Save`，且 body 里的 `code` 非空 |
-
-    判据：① 只给 name ⇒ **一条 Save 都不发**、`created=False`、message 里出现"改用默认列表布局"；
-    ② 给了 code ⇒ 发 Save 且 `body["code"]` 非空（这正是 500 的成因）。
-    """
-    from workbench.services.egmp.writers import layouts as layouts_writer
-
-    client = FakeEgmpClient()
-    client.objects["x__c"] = {"id": "obj-x", "name": "X", "code": "x__c"}
-    client.fields_by_object["x__c"] = [{"id": "f-a", "code": "a__c", "name": "A", "dataType": 1}]
-
-    sent: list[tuple[str, dict]] = []
-    original_post = client.post
-
-    def spy(path: str, body: dict | None = None) -> Any:
-        sent.append((path, dict(body or {})))
-        return original_post(path, body)
-
-    client.post = spy  # type: ignore[method-assign]
-
-    common = dict(object_id="obj-x", object_code="x__c", field_map={},
-                  blueprint_layout={"name": "X列表",
-                                    "columns": [{"fieldCode": "a__c", "sort": 1}]})
-
-    # ① 只给 name：不许新建（缺 code 的 Save 在真机上必被拒），退回默认布局且**明说**
-    out = layouts_writer.build_list_layout(client, **common)  # type: ignore[arg-type]
-    assert [path for path, _ in sent if path.endswith("/Listlayout/Save")] == [], sent
-    assert out["created"] is False and out["layoutId"] == "listlayout-obj-x", out
-    assert "改用默认列表布局" in out["message"], out["message"]
-    assert out["success"] is True, out
-
-    # ② 给了 code：才发 Save，而且 code 必须非空（真机 500 的成因就是它为空）
-    sent.clear()
-    out2 = layouts_writer.build_list_layout(
-        client, **{**common, "blueprint_layout": {**common["blueprint_layout"], "code": "x_list__ak"}})  # type: ignore[arg-type]
-    saves = [body for path, body in sent if path.endswith("/Listlayout/Save")]
-    assert saves and saves[0]["code"] == "x_list__ak", saves
-    assert out2["created"] is True, out2
