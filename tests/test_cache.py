@@ -90,7 +90,12 @@ def test_stable_prefix_survives_many_turns(ready) -> None:
 
 
 def test_summary_is_not_recomputed_every_turn(ready) -> None:
-    """摘要冻结后不再重算——改造前**每轮**都调一次 LLM 摘要，前缀每轮都变。"""
+    """摘要冻结后不再重算——改造前**每轮**都调一次 LLM 摘要，前缀每轮都变。
+
+    ⚠️ 本用例原先断言 `plan.messages[0]` **就是那条摘要**，并据此检查摘要正文。
+    那是把缺陷当契约写了：当时 `summarized_upto` 含首条 system，"冻结摘要"就意味着
+    system 被折进摘要、摘要顶到第 0 位。I15 修正后第 0 位恒为**原始 system**。
+    """
     conv = conversation(2)
     conv_id = "conv-freeze"
     cache.freeze_summary(conv_id, "早期对话的摘要", upto=2)
@@ -98,8 +103,10 @@ def test_summary_is_not_recomputed_every_turn(ready) -> None:
     plan = cache.plan_prefix(conv, cache.load_state(conv_id), window_tokens=50_000,
                              threshold=0.8, keep_recent_turns=5)
     assert not plan.needs_summary(), "已有摘要且未超预算时，不该再触发重算"
-    assert plan.messages[0]["role"] == "system"
-    assert "早期对话的摘要" in plan.messages[0]["content"]
+    # I15：第 0 位恒为原始 system，摘要只能排在它之后
+    assert plan.messages[0] == conv[0], "首条必须仍是原始 system 提示词（I15）"
+    assert plan.messages[1]["role"] == "system"
+    assert "早期对话的摘要" in plan.messages[1]["content"]
 
 
 def test_frozen_summary_prefix_stays_identical(ready) -> None:
@@ -146,6 +153,63 @@ def test_fold_reduces_context(ready) -> None:
     after_plan = cache.plan_prefix(conv, cache.load_state(conv_id), window_tokens=400,
                                    threshold=0.8, keep_recent_turns=2)
     assert estimate_messages_tokens(after_plan.messages) < before
+
+
+# ---------------------------------------------------------------- I15：折叠永不吞 system
+
+
+def test_folding_never_swallows_the_system_prompt(ready) -> None:
+    """★ I15：**任何**折叠状态下，请求的第 0 条都必须是原始 system 提示词。
+
+    这条是"看起来完全正常但其实是坏的"的典型：折叠前后的请求都**合法**、接口都回 200，
+    只是模型从此看不到自己的行为约束 —— 长会话表现为「越用越不听话」，且不报错。
+
+    缺陷机理：`harness.context.split_turns` 只按 `role == "user"` 切轮，而 system 后
+    紧跟 user ⇒ system **自成第一个 turn** ⇒ 被 `_split_keep` 算进 `older` ⇒ 并进摘要
+    ⇒ 原始提示词永久消失（`loop.py` 的契约第 17 行要求它永远在最前）。
+    """
+    conv_id = "conv-i15"
+    conv = conversation(6, body="很长的一段内容" * 20)
+
+    plan = cache.plan_prefix(conv, cache.load_state(conv_id), window_tokens=200,
+                             threshold=0.8, keep_recent_turns=2)
+    assert plan.needs_summary(), "前置：这份对话必须触发折叠，否则本用例什么都没验到"
+    assert all(m.get("role") != "system" for m in plan.truncated), (
+        "被折叠的那一段里不许出现 system（I15）"
+    )
+
+    # 走真实链路的两步：先冻结摘要，再按新边界重新组装
+    cache.freeze_summary(conv_id, "摘要正文",
+                         cache.load_state(conv_id).summarized_upto + len(plan.truncated))
+    after = cache.plan_prefix(conv, cache.load_state(conv_id), window_tokens=200,
+                              threshold=0.8, keep_recent_turns=2)
+    assert after.messages[0] == conv[0], "折叠之后首条仍是原始 system（I15）"
+    assert after.messages[0]["content"] == "系统提示", "而且必须是**原文**，不是摘要"
+
+
+def test_summary_sits_between_system_and_history(ready) -> None:
+    """契约顺序：`[system] + [冻结摘要?] + [正文历史] + [新消息]`（I3）。"""
+    conv_id = "conv-order"
+    conv = conversation(3)
+    cache.freeze_summary(conv_id, "摘要", upto=2)
+
+    plan = cache.plan_prefix(conv, cache.load_state(conv_id), window_tokens=50_000,
+                             threshold=0.8, keep_recent_turns=5)
+    assert plan.messages[0]["content"] == "系统提示"
+    assert "摘要" in plan.messages[1]["content"] and plan.messages[1]["role"] == "system"
+    # 边界（2 条正文）之后的正文应当原样接在摘要后面
+    assert plan.messages[2:] == conv[3:], "摘要之后应当正好是边界之后的正文，不多不少"
+
+
+def test_conversation_without_system_still_folds(ready) -> None:
+    """没有 system 首条时（例如摘要器自己那次调用）必须照常折叠，不许因 I15 而退化。"""
+    conv_id = "conv-nosys"
+    body = [m for m in conversation(6, body="很长的一段内容" * 20) if m["role"] != "system"]
+
+    plan = cache.plan_prefix(body, cache.load_state(conv_id), window_tokens=200,
+                             threshold=0.8, keep_recent_turns=2)
+    assert plan.needs_summary() and plan.truncated, "无 system 的对话仍必须能折叠"
+    assert plan.messages == body[len(plan.truncated):]
 
 
 def test_empty_conversation_id_is_safe(ready) -> None:
@@ -197,6 +261,33 @@ def test_usage_overview_aggregates(ready) -> None:
     assert overview["cacheHitTokens"] >= 900
     assert 0 < overview["hitRate"] <= 1
     assert overview["savedRatio"] > 0
+
+
+def test_two_persists_in_one_conversation_both_land(ready, monkeypatch) -> None:
+    """同一会话连续两次入账必须**都**落库 —— 这是"静默丢账"的回归。
+
+    旧主键是 `f"{now_ms()}-{conversation_id[:8]}"`：同一毫秒内的两次入账
+    （"重算摘要"与"回答收尾"经常挨在一起）PK 撞车 → `INSERT` 抛 IntegrityError
+    → 被 `except Exception` 吞成一条 warning ⇒ **那条用量永远消失**。
+    而 `deepseek_usage` 是**唯一**的用量事实源，命中率与"省钱口径"都从它算 ——
+    丢一条就永久偏小，界面上却看不出来。
+
+    ⚠️ **必须把时钟钉死**才验得到：不钉的话两次入账常常落在不同毫秒，旧实现也能过
+    —— 那种"偶尔会绿"的回归测试等于没有。钉死 `now_ms` 之后，旧实现**必然**撞 PK。
+    """
+    monkeypatch.setattr(cache, "now_ms", lambda: 1_700_000_000_000)
+
+    for _ in range(2):
+        stats = cache.UsageStats(conversation_id="conv-usage-pk", model="deepseek-flash")
+        stats.add({"prompt_tokens": 100, "prompt_cache_hit_tokens": 60,
+                   "prompt_cache_miss_tokens": 40, "completion_tokens": 5})
+        stats.persist()
+
+    row = db.query_one(
+        "SELECT COUNT(*) AS n FROM deepseek_usage WHERE conversation_id = ?",
+        ("conv-usage-pk",),
+    )
+    assert int(row["n"]) == 2, "同一毫秒的两次入账只落了一条 —— 主键又撞车了（静默丢账）"
 
 
 # ---------------------------------------------------------------- 模型名

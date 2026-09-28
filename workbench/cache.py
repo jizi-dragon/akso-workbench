@@ -23,6 +23,8 @@ DeepSeek 的 [上下文硬盘缓存](https://api-docs.deepseek.com/zh-cn/guides/
 1. **稳定前缀（stable prefix）**：本模块保证每次请求的 messages 满足
    `本轮 = [system] + [冻结的摘要（如有）] + [原文历史] + [新消息]`，
    且**已发出的前缀永不改写**（append-only）。
+   ★ 首条 system **永不进折叠域**（I15）——它由 `_pin_system` 摘出，折叠只能动它之后的正文。
+   旧实现把 system 当成一个可折叠的轮次，导致折叠一次之后原始提示词就消失（见 `_pin_system`）。
 2. **摘要暂存**：改造前 `_manage_context` 每轮都重新调 LLM 生成摘要——既慢、又烧 token、
    还让前缀每轮都变（缓存必 miss）。现在摘要**按冻结边界持久化**，只在需要时重算一次。
 3. **命中量入账**：官方在 `usage` 里回 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`
@@ -39,6 +41,7 @@ DeepSeek 的 [上下文硬盘缓存](https://api-docs.deepseek.com/zh-cn/guides/
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -58,10 +61,14 @@ class SummaryState:
     conversation_id: str
     summary: str = ""
     summarized_upto: int = 0
-    """摘要覆盖到的消息**条数**（按 created_at 正序的前 N 条）。
+    """摘要覆盖到的**正文**消息条数（= 摘掉首条 system 之后、按 created_at 正序的前 N 条）。
 
     用条数而不是消息 id：历史消息不会删除也不会重排，条数是单调递增的，
     天然满足"冻结边界只前进、不回退"这一缓存前提。
+
+    ⚠️ **口径说明（2026-09 修正，I15）**：它**不含**首条 system。旧实现按"整份对话
+    （含 system）"计数，于是折叠时边界会迈过 system 把它一起并进摘要 —— 原始提示词
+    就此消失。迁移 22 把历史数据整体减 1，使**被折叠的消息集合逐条不变**。
     """
     updated_at: int = 0
 
@@ -127,6 +134,30 @@ class PrefixPlan:
         return bool(self.truncated)
 
 
+def _pin_system(conversation: list[dict]) -> tuple[dict | None, list[dict]]:
+    """把首条 system 摘出折叠域（不变量 I15）。
+
+    返回 `(pinned, body)`。`pinned is None` 表示这份对话没有 system 首条
+    （例如摘要器自己的那次调用），此时 `body` 就是原样输入。
+
+    **为什么必须单独摘**：`harness.context.split_turns` 只按 `role == "user"` 切轮，
+    而 system 后面紧跟 user ⇒ system **自成第一个 turn** ⇒ `_split_keep` 把它算进
+    `older` ⇒ 它被并进摘要 ⇒ 请求里只剩 `{"role":"system","content":"历史对话摘要：…"}`，
+    **原始提示词消失**。失败形态是"长会话越用越不听话"，且不报错。
+    """
+    if conversation and conversation[0].get("role") == "system":
+        return conversation[0], conversation[1:]
+    return None, list(conversation)
+
+
+def _compose(pinned: dict | None, body: list[dict], summarized: dict) -> list[dict]:
+    """按契约拼装：`[system] + [冻结摘要?] + [正文历史]`（不变量 I3 / I5）。"""
+    head = [pinned] if pinned is not None else []
+    if summarized:
+        head.append(summarized)
+    return [*head, *body]
+
+
 def plan_prefix(
     conversation: list[dict],
     state: SummaryState,
@@ -137,22 +168,26 @@ def plan_prefix(
 ) -> PrefixPlan:
     """把完整对话切成「稳定前缀 + 待追加」。
 
-    返回值保证：未触发折叠时，`plan.messages` 是 `[摘要] + conversation[边界:]`，
-    而边界（`summarized_upto`）**只在折叠时前进** —— 因此已发出的前缀逐字节不变，
-    DeepSeek 侧能命中上一轮请求末尾产生的缓存前缀单元。
+    返回值保证：`plan.messages[0]` **恒为原始 system 提示词**（I15），
+    其后是 `[冻结摘要?] + 正文历史`；边界（`summarized_upto`）**只在折叠时前进**
+    —— 因此已发出的前缀逐字节不变，DeepSeek 侧能命中上一轮请求末尾产生的缓存前缀单元。
 
-    **不要**改成"每轮按最近 N 轮裁剪"：那样前缀每轮都在滑动，缓存命中率恒为 0。
+    两条**不要改**（各自对应一条已经发生过的静默故障）：
+
+    1. **不要**改成"每轮按最近 N 轮裁剪"：那样前缀每轮都在滑动，缓存命中率恒为 0。
+    2. **不要**把 system 放回折叠域：见 `_pin_system`。`summarized_upto` 索引的是
+       **摘掉 system 之后的正文**（body），所以它与"会话消息总条数"不再相差 0。
     """
-    summarized = state.frozen
-    tail = conversation[state.summarized_upto:]
-    messages = _with_summary(tail, summarized)
+    pinned, body = _pin_system(conversation)
+    tail = body[state.summarized_upto:]
+    messages = _compose(pinned, tail, state.frozen)
 
     if not _over_budget(messages, window_tokens, threshold):
         return PrefixPlan(messages=messages, truncated=[])
 
     # 超预算才折叠：「摘要边界之后、最近 keep_recent_turns 轮之前」那一段并进摘要。
     # 这一步让前缀变一次（摘要变长），之后连续多轮重新稳定。
-    kept_recent, _older = _split_keep(conversation, keep_recent_turns)
+    kept_recent, _older = _split_keep(body, keep_recent_turns)
     recent_ids = {id(m) for m in kept_recent}
     fold = [m for m in tail if id(m) not in recent_ids]
     if not fold:
@@ -160,22 +195,23 @@ def plan_prefix(
         return PrefixPlan(messages=messages, truncated=[])
 
     fold_upto = state.summarized_upto + len(fold)
-    return PrefixPlan(
-        messages=_with_summary(conversation[fold_upto:], summarized),
+    plan = PrefixPlan(
+        messages=_compose(pinned, body[fold_upto:], state.frozen),
         truncated=fold,
     )
+    # 装配期断言（I15）：折叠**永远**不许动到原始 system。
+    # 放在这里而不是测试里 —— 它是每次请求的必经之路，坏掉时会立刻炸而不是静默降级。
+    assert pinned is None or plan.messages[0] is pinned, "折叠吞掉了 system 提示词（I15）"
+    return plan
 
 
-def _with_summary(messages: list[dict], summarized: dict) -> list[dict]:
-    return [summarized, *messages] if summarized else list(messages)
-
-
-def _split_keep(conversation: list[dict], keep_recent_turns: int) -> tuple[list[dict], list[dict]]:
+def _split_keep(body: list[dict], keep_recent_turns: int) -> tuple[list[dict], list[dict]]:
+    """按轮切分正文（**入参必须是摘掉 system 之后的 body**，见 `_pin_system`）。"""
     from .harness.context import split_turns
 
-    turns = split_turns(conversation)
+    turns = split_turns(body)
     if len(turns) <= keep_recent_turns:
-        return conversation, []
+        return body, []
     kept = [m for turn in turns[-keep_recent_turns:] for m in turn]
     older = [m for turn in turns[:-keep_recent_turns] for m in turn]
     return kept, older
@@ -255,13 +291,21 @@ class UsageStats:
         }
 
     def persist(self) -> None:
+        """把这一轮的用量落库。
+
+        ⚠️ 主键必须是**不可预测地唯一**的。旧实现用 `f"{now_ms()}-{conversation_id[:8]}"`，
+        同一毫秒内的两次入账（"摘要调用"与"回答收尾"经常挨在一起）会 PK 撞车 →
+        `INSERT` 抛 IntegrityError → 被下面的 `except` 吞成一条 warning ⇒ **静默丢账**。
+        而 `deepseek_usage` 是**唯一**的用量事实源，命中率与"省钱口径"都从它算 ——
+        丢一条就永久偏小，且没有任何迹象。
+        """
         try:
             db.execute(
                 "INSERT INTO deepseek_usage (id, conversation_id, model, calls, prompt_tokens, "
                 "cache_hit_tokens, cache_miss_tokens, completion_tokens, reasoning_tokens, "
                 "summary_calls, latency_ms, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (f"{now_ms()}-{self.conversation_id[:8]}", self.conversation_id, self.model,
+                (uuid.uuid4().hex, self.conversation_id, self.model,
                  self.calls, self.prompt_tokens, self.cache_hit_tokens, self.cache_miss_tokens,
                  self.completion_tokens, self.reasoning_tokens, self.summary_calls,
                  self.latency_ms, now_ms()),

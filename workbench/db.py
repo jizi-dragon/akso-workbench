@@ -411,6 +411,27 @@ CREATE TABLE IF NOT EXISTS attachments (
 CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_created_at ON attachments(created_at);
 """),
+    (22, "summary_boundary_excludes_system", """
+-- I15：摘要边界改为「不含首条 system」计数（2026-09-24）。
+--
+-- ## 修的是什么
+--
+-- 旧口径把首条 system 算作正文的第 0 条。而 `harness.context.split_turns` 只按
+-- `role == "user"` 切轮，system 后面紧跟 user ⇒ **system 自成第一个 turn** ⇒
+-- `cache._split_keep` 把它算进 `older` ⇒ 它被并进摘要 ⇒ 之后每次请求里只剩
+-- `{"role":"system","content":"历史对话摘要：…"}`，**原始提示词永久消失**。
+-- 失败形态是"长会话越用越不听话"，且**不报错**。
+--
+-- ## 为什么"整体减 1"是精确的，不是近似
+--
+-- 旧值 k 表示"`conversation[0:k]` 已折叠"，那个集合 = `{system} ∪ conversation[1:k]`。
+-- 新值 k-1 表示"`body[0:k-1]` 已折叠" = `conversation[1:k]`，而 system 改由
+-- `cache._pin_system` **恒常置顶**（永不折叠）。
+-- ⇒ **被折叠的正文消息逐条不变**，只是 system 不再参与计数。
+--
+-- 只前进的语义不变（I2）：减 1 是同一个单调序列的平移，不产生回退。
+UPDATE conversation_context SET summarized_upto = summarized_upto - 1 WHERE summarized_upto > 0;
+"""),
 ]
 
 
