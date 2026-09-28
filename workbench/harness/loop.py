@@ -311,6 +311,22 @@ async def run_agent_loop(
     recorder = trace.RunRecorder(conversation_id, getattr(client, "model", ""))
     # 本回合的 taint 状态（不变量 I18）：跨轮次存活，见 _Taint。
     taint = _Taint()
+    # ★ **补上一次中断留下的悬空 `tool_calls`**（计划 §7.3 的续跑前置件，I16）。
+    #
+    # `_fill_unexecuted` 覆盖的是**进程内**的三个出口（预算 / 取消 / 超时）；
+    # **进程死亡**时那三条路一条都跑不到，于是已写进库的 `assistant(tool_calls)`
+    # 永远没有配对结果 —— 而"重放一段非法历史没有意义"（见 `_fill_unexecuted`）。
+    #
+    # 放在**每次运行开始时**而不是启动时：启动时要扫全部会话（绝大多数无关），
+    # 而这里天然只碰**这次真的要用的那个会话**，且每回合只跑一次。
+    #
+    # ⚠️ 它**只补历史，绝不重新执行**那些调用（见 `transcript.repair_dangling`）——
+    # 一个写操作重放一次的后果与"少一条观测"不是一个量级。
+    try:
+        transcript.repair_dangling(conversation_id)
+    except Exception:  # noqa: BLE001 —— 留痕修复失败不该让这一轮跑不起来
+        logger.warning("补写悬空工具调用失败（会话 %s）", conversation_id[:8] or "-",
+                       exc_info=True)
     # 包一层客户端，为**每一次**模型调用记一条 `model` span（含摘要那次 `chat` ——
     # 它也是真实开销，而且几乎必然全 miss，见 `cache.UsageStats.summary_calls`）。
     client = _SpanClient(client, recorder)
