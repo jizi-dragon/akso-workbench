@@ -1,0 +1,49 @@
+{
+  "formatVersion": 1,
+  "name": "bad_args_recoverable",
+  "model": "deepseek-flash",
+  "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
+  "interactions": [
+    {
+      "key": "7d7bfbff3a2ca52b084fa9a806fb3362ebfcca058e4244faaefffe54b21ee1b7",
+      "kind": "stream",
+      "label": "stream |  2 msgs | 18 tools | 读一个文件",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "name": "read_local_file",
+            "arguments": "{}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "2b035d7069e2f4e1e44aac6f320c5ee9dd53e5197f2e4861427c103e84d459ca",
+      "kind": "stream",
+      "label": "stream |  4 msgs | 18 tools | 读一个文件",
+      "event": {
+        "ok": true,
+        "content": "参数少了，我重来。",
+        "tool_calls": [],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ],
+  "case": "bad_args_recoverable"
+}

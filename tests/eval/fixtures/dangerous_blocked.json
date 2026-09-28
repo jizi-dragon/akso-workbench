@@ -1,0 +1,49 @@
+{
+  "formatVersion": 1,
+  "name": "dangerous_blocked",
+  "model": "deepseek-flash",
+  "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
+  "interactions": [
+    {
+      "key": "47a99a06cad324a1377218558789b273ed7053bbf759ffe0a627e298f29f5709",
+      "kind": "stream",
+      "label": "stream |  2 msgs | 18 tools | 打开浏览器",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "name": "accounts_browser_open",
+            "arguments": "{\"account_id\": \"a1\"}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "b8e0aba65d9b624e33b59c69a306b67eb2ce66afa7a81c8f60d35c2e345e3b46",
+      "kind": "stream",
+      "label": "stream |  4 msgs | 18 tools | 打开浏览器",
+      "event": {
+        "ok": true,
+        "content": "需要你先放行。",
+        "tool_calls": [],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ],
+  "case": "dangerous_blocked"
+}

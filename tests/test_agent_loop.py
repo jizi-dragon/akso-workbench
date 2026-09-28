@@ -474,3 +474,73 @@ def test_usage_is_persisted(hub) -> None:
     assert row is not None
     assert row["cache_hit_tokens"] == 400
     assert row["cache_miss_tokens"] == 100
+
+
+# ———— 流不完整（2026-09-24 修：会「无限重试」的缺陷） ————
+
+
+class NoEndClient(FakeClient):
+    """只吐增量、**永远不发 `end`** —— 模拟"连接中途断掉、只收到 EOF"。
+
+    ⚠️ 真实可达：`deepseek.stream_chat` 在没读到 `[DONE]` 就 EOF 时，
+    循环自然结束而**不会** yield `end`。所以这不是人造场景。
+
+    ★ **自带熔断**：修复失效时的正确行为是"无限重试"，而那样这条用例会**挂住**
+    （实测：把 `loop.py` 里那道检查拿掉后，60 秒都跑不完）。
+    **测试挂住比测试变红坏得多** —— 它会把整条流水线卡死，而 CI 只会报"超时"，
+    没人知道是哪条用例、为什么。所以第 6 次调用直接抛：
+    失败形态从"挂住"变成"一次可读的报错"（PITFALLS #101 的同一条纪律）。
+    """
+
+    MAX_CALLS = 5
+
+    async def stream_chat(self, messages, tools=None, temperature=0.7, max_tokens=None):
+        self.calls.append(list(messages))
+        if len(self.calls) > self.MAX_CALLS:
+            raise AssertionError(
+                f"模型已被调用 {len(self.calls)} 次 —— 没有 end 事件时外层在**无限重试**"
+                f"（正确行为是只调 1 次就终止）"
+            )
+        yield {"type": "delta", "text": "半截"}
+
+
+def test_a_stream_without_end_terminates_instead_of_retrying_forever(hub) -> None:
+    """★★ 流结束但没有 `end` 事件 ⇒ **必须终止**，不能无限重试。
+
+    修之前的行为：`_one_model_turn` 什么都不发就返回 ⇒ 外层 `while True` **立刻再开一轮**
+    ⇒ 又是一次真实的、**付费的**模型调用 ⇒ 无限循环。而它**不报错、不会自己停**：
+    步数预算拦不住它（`safety` 只计**工具调用**，这条路上一个都没有），
+    界面上也只会看到"一直转圈"。
+
+    ⇒ 所以这条用例的判据是**调用次数恰好为 1**，而不只是"有 error 事件"：
+    后者在一个"重试两次再放弃"的实现下也会绿。
+    """
+    client = NoEndClient([])
+    events = asyncio.run(collect(run_agent_loop(
+        [{"role": "user", "content": "问"}], client, hub,
+        AgentConfig(system_prompt="s"), conversation_id="conv-no-end",
+    )))
+
+    assert len(client.calls) == 1, (
+        f"模型被调用了 {len(client.calls)} 次 —— 没有 end 事件时外层在**无限重试**"
+    )
+    kinds = types_of(events)
+    assert "error" in kinds, f"没给出终止性错误：{kinds}"
+    assert error_of(events)["reason"] == "stream_incomplete"
+    assert "没有执行任何工具" in error_of(events)["message"], (
+        "文案必须说清「没有执行任何工具」—— 用户最怕的是「它是不是偷偷做了什么」"
+    )
+
+
+def test_an_incomplete_stream_still_records_usage(hub) -> None:
+    """★ 没跑完的那一轮**也要入账**（§5.4a 的同一条：任何出口都收尾）。
+
+    否则"网络断掉的那些轮次"在成本数据里完全不存在 —— 而它们恰恰是最贵的
+    （用户会反复重发）。
+    """
+    client = NoEndClient([])
+    events = asyncio.run(collect(run_agent_loop(
+        [{"role": "user", "content": "问"}], client, hub,
+        AgentConfig(system_prompt="s"), conversation_id="conv-no-end-usage",
+    )))
+    assert types_of(events)[-1] == "usage", f"没以 usage 收尾：{types_of(events)}"

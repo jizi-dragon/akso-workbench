@@ -615,6 +615,7 @@ async def _one_model_turn(
     should_stop: Callable[[], bool] | None = None,
 ) -> AsyncIterator[dict]:
     """一轮「模型流式输出 →（可能）工具循环」，工具回填后返回交由外层再开一轮。"""
+    ended = False
     async for event in client.stream_chat(
         context,
         tools=registry.list_api_for(plugins),
@@ -628,6 +629,7 @@ async def _one_model_turn(
             # **刻意不在这里 feed**：两处都收会把每次调用记成两次，命中率看着翻倍。
             continue
         elif event["type"] == "end":
+            ended = True
             if meter is not None:
                 meter.feed(event.get("usage"))
             if event.get("finish_reason") == "length":
@@ -896,6 +898,31 @@ async def _one_model_turn(
                     "content": invocation.content,
                 })
             return  # 工具结果已回填，外层 while 发起下一轮
+
+    if not ended:
+        # ★★ **流结束了，但没有 `end` 事件**（2026-09-24 加，修一个会「无限重试」的缺陷）。
+        #
+        # 不拦的话：本函数什么都不发就返回 ⇒ 外层 `while True` **立刻再开一轮** ⇒
+        # 又是一次真实的、付费的模型调用 ⇒ 无限循环。而它**不报错、不会自己停**，
+        # 步数预算也拦不住它（`safety` 只计**工具调用**，这条路上一个都没有）。
+        #
+        # 什么时候真的会发生：连接中途断掉、只收到 EOF 而没有 `[DONE]` ——
+        # `deepseek.stream_chat` 在那种情况下循环自然结束，不会 yield `end`。
+        # 也就是说，**网络抖一下就可能让用户的钱包持续失血**，而界面上什么都看不出来。
+        #
+        # ⚠️ 这个检查只能写在**这里**：本函数是外层循环的消费方、不会被提前放弃，
+        # 所以 `async for` 之后的代码一定会跑到（与 PITFALLS #98/#99 那个
+        # "跨生成器时循环之后的代码永远不执行"的情况不同 —— 差别在**谁是消费方**）。
+        logger.error("模型流结束了但没有 end 事件——终止本轮，避免外层无限重试")
+        yield make_event(
+            "error",
+            reason="stream_incomplete",
+            message=(
+                "这次连接中途断掉了，没收到模型的完整回答。**没有执行任何工具。**"
+                "再发一次就行；如果反复出现，检查一下网络或代理。"
+            ),
+        )
+        return
 
 
 def _tool_meta(spec, call: dict) -> dict:

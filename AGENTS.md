@@ -22,7 +22,7 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（**102 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 真机环境坑（**104 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 不再变的决策（**18 篇** ADR ＋ `0000-template.md` 模板 = 19 个文件） | [docs/adr/](docs/adr/) |
 > | **★ 平台事实台账（端点 / 真机线格式 / 样本量 n / 平台约束，逐条带证据）** | [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md) |
 > | **★ 平台配置面整体认知（Gaia V3.8 手册语义与配置分层）** | [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) |
@@ -180,6 +180,7 @@
 | `tools/build.ps1` | **立刻补 UTF-8 BOM**，再跑 `verify_packaging.py`（P5 就是为这件事存在的，PITFALLS #37） |
 | 端口号 / `desktop/ports.js` / `workbench/config.py` | `node tools\verify_port_broker.mjs`（**先退出工作台**）+ `pytest tests/test_ports_contract.py` |
 | 任何 `docs/` 里的数字（N 个工具/插件） | `tools\gen_tools_doc.py`（它扫 README + TOOLS + PLUGIN-SDK + API + CODEBASE_OVERVIEW） |
+| ★ 改了 `harness/**`、`prompts.py`、`cache.py`、`plugin_api.py` **或任何工具描述** | `python tools\run_evals.py --offline` + `pytest tests\eval -o addopts=""`（**12 条**离线评测，不联网不花 token）。<br>★ **这是计划 §6.3 的门禁（G3 的落地形式）：提交里必须附 before/after 数**（成功率 / 工具选择准确率 / 平均步数 / token / 缓存命中率）。<br>★ **看到「回放 miss」不要先怀疑行为**：那是**请求形状变了**（提示词 / 工具描述 / 消息装配），不是功能坏了。处置：`python tools\run_evals.py --record` 重录，然后 `git diff tests/eval/fixtures/` —— **那个 diff 就是"工具面变了多少"的量化答案**。<br>★ 夹具按**请求指纹**匹配（含 `messages + tools + temperature + max_tokens + json_mode`），这条门禁的全部价值就在于此：**改了提示词或工具描述会变成一次可见的失败**。<br>★ 夹具当前是**合成**的（`note` 字段逐份标注）：它锁的是"请求形状 + 链路行为"，**不是**"模型选得对不对"。换真机 `--record` 即可，**期望一行都不用改** |
 | **任何代码** | 改了就必须重跑 §3 基线四条（PITFALLS #41） |
 
 **加一个工具必须同步 5 处**（漏任何一处 = 装完静默没功能，PITFALLS #32）：

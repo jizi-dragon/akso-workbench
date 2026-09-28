@@ -1,0 +1,26 @@
+{
+  "formatVersion": 1,
+  "name": "no_tool_needed",
+  "model": "deepseek-flash",
+  "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
+  "interactions": [
+    {
+      "key": "ea2d4a6959fc515bf815cc70f6a415f20fea63c26fd08a91251703f2182747f5",
+      "kind": "stream",
+      "label": "stream |  2 msgs | 18 tools | 你好",
+      "event": {
+        "ok": true,
+        "content": "你好，有什么可以帮你的？",
+        "tool_calls": [],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ],
+  "case": "no_tool_needed"
+}

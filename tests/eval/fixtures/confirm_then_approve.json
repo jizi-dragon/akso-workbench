@@ -1,0 +1,72 @@
+{
+  "formatVersion": 1,
+  "name": "confirm_then_approve",
+  "model": "deepseek-flash",
+  "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
+  "interactions": [
+    {
+      "key": "352750c8ca785620bf126da385207fce0b36eb8afc1e8f897545cc264c933bcc",
+      "kind": "stream",
+      "label": "stream |  2 msgs | 18 tools | 帮我确认一下再开浏览器",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "name": "request_user_confirmation",
+            "arguments": "{\"question\": \"将要打开浏览器会话，是否继续？\", \"details\": \"会影响该账号的登录态\", \"target_tool\": \"accounts_browser_open\", \"target_args\": {\"account_id\": \"a1\"}, \"timeout_s\": 2.0}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "03e9ed0a311ef0c3e9d3a6c95808466c18ef0c8446a69e53173ef3230950807f",
+      "kind": "stream",
+      "label": "stream |  4 msgs | 18 tools | 帮我确认一下再开浏览器",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c2",
+            "name": "accounts_browser_open",
+            "arguments": "{\"account_id\": \"a1\"}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "4ec6e9875c2530ecd8f4dc3fd7c8a9b91db92e7dd4f3bba47820dd0d79f710a1",
+      "kind": "stream",
+      "label": "stream |  6 msgs | 18 tools | 帮我确认一下再开浏览器",
+      "event": {
+        "ok": true,
+        "content": "浏览器已打开。",
+        "tool_calls": [],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ],
+  "case": "confirm_then_approve"
+}

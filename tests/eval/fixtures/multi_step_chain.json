@@ -1,0 +1,72 @@
+{
+  "formatVersion": 1,
+  "name": "multi_step_chain",
+  "model": "deepseek-flash",
+  "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
+  "interactions": [
+    {
+      "key": "4fe1de013475e96df72a7f224b0e0d84eb28225b8006a0eaf885bda1bdb2df26",
+      "kind": "stream",
+      "label": "stream |  2 msgs | 18 tools | 先看时间，再看有哪些账号",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "name": "get_current_time",
+            "arguments": "{}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "ec52012b2617286fd5aaa123380048b339efdcc6afef30e9671e3d8994ae6633",
+      "kind": "stream",
+      "label": "stream |  4 msgs | 18 tools | 先看时间，再看有哪些账号",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c2",
+            "name": "accounts_list",
+            "arguments": "{}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "6ba1d07582c1008f7c1bf8eb572fc405172814f4f4d070e9987d5f8f48f02f8f",
+      "kind": "stream",
+      "label": "stream |  6 msgs | 18 tools | 先看时间，再看有哪些账号",
+      "event": {
+        "ok": true,
+        "content": "两件都做完了。",
+        "tool_calls": [],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ],
+  "case": "multi_step_chain"
+}

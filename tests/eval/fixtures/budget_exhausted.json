@@ -1,0 +1,32 @@
+{
+  "formatVersion": 1,
+  "name": "budget_exhausted",
+  "model": "deepseek-flash",
+  "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
+  "interactions": [
+    {
+      "key": "4e7f73e8ff76c76924e76e4566b22ad324f27b45384dae884b18d47e4d830134",
+      "kind": "stream",
+      "label": "stream |  2 msgs | 18 tools | 一直调工具",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "name": "get_current_time",
+            "arguments": "{}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ],
+  "case": "budget_exhausted"
+}

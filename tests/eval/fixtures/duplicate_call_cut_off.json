@@ -1,0 +1,78 @@
+{
+  "formatVersion": 1,
+  "name": "duplicate_call_cut_off",
+  "model": "deepseek-flash",
+  "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
+  "interactions": [
+    {
+      "key": "019e69d597102bfbe24d1770fb97bf59cc6787ff7621e063cf3afc3022f61503",
+      "kind": "stream",
+      "label": "stream |  2 msgs | 18 tools | 重复调用试试",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "name": "get_current_time",
+            "arguments": "{}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "ab7faf2b33ef9a348575ede1036efba175554c252541bf3f3ee603bf0abbda00",
+      "kind": "stream",
+      "label": "stream |  4 msgs | 18 tools | 重复调用试试",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c2",
+            "name": "get_current_time",
+            "arguments": "{}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "6f5a5c37517b10c417d667ed33232e2e9f1671b60530bc903f02d4246f723ffb",
+      "kind": "stream",
+      "label": "stream |  6 msgs | 18 tools | 重复调用试试",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c3",
+            "name": "get_current_time",
+            "arguments": "{}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ],
+  "case": "duplicate_call_cut_off"
+}

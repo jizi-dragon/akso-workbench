@@ -1,0 +1,49 @@
+{
+  "formatVersion": 1,
+  "name": "tool_error_is_observation",
+  "model": "deepseek-flash",
+  "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
+  "interactions": [
+    {
+      "key": "604f996ff38e1a040788a05e56384e33a065e1a3b1df203193c8999b2e0ad449",
+      "kind": "stream",
+      "label": "stream |  2 msgs | 18 tools | 读一个不存在的文件",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "name": "read_local_file",
+            "arguments": "{\"path\": \"C:/nope\"}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "8f99b09b09d3a4cc62672e13d30e665897553e1822eab8c310b8026c45476aeb",
+      "kind": "stream",
+      "label": "stream |  4 msgs | 18 tools | 读一个不存在的文件",
+      "event": {
+        "ok": true,
+        "content": "那个文件读不到。",
+        "tool_calls": [],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ],
+  "case": "tool_error_is_observation"
+}
