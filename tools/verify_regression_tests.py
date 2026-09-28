@@ -256,8 +256,14 @@ CASES: list[tuple[str, str, str, str, str]] = [
         "估算：折叠判定必须含工具 schema",
         "tests/test_context_tokens.py::test_the_folding_decision_includes_the_schema",
         "workbench/cache.py",
-        "    return estimate_messages_tokens(messages) + max(0, int(tools_tokens)) > int(",
-        "    return estimate_messages_tokens(messages) > int(",
+        # 2026-09-24 换锚点：ADR-0024 给这一行加了校准系数，原来的整行写法不再存在。
+        # 而上一轮写的 tests/test_regression_harness.py 当场抓到了它（PITFALLS #115）。
+        # ⚠️ 这段刻意不用反引号：用 PowerShell here-string 写会把反引号及其后字母吃掉。
+        # 缺陷形态不变：折叠判定丢掉工具 schema。
+        "    scale = float(factor) if float(factor) > 0 else 1.0\n"
+        "    estimate = (estimate_messages_tokens(messages) + max(0, int(tools_tokens))) * scale",
+        "    scale = float(factor) if float(factor) > 0 else 1.0\n"
+        "    estimate = estimate_messages_tokens(messages) * scale"
     ),
     # ── 在线层闸门（tests/test_eval_live_mode.py，计划 §6.3）
     (

@@ -178,6 +178,7 @@ def plan_prefix(
     threshold: float,
     keep_recent_turns: int,
     tools_tokens: int = 0,
+    factor: float = 1.0,
 ) -> PrefixPlan:
     """把完整对话切成「稳定前缀 + 待追加」。
 
@@ -195,7 +196,7 @@ def plan_prefix(
     tail = body[state.summarized_upto:]
     messages = _compose(pinned, tail, state.frozen)
 
-    if not _over_budget(messages, window_tokens, threshold, tools_tokens):
+    if not _over_budget(messages, window_tokens, threshold, tools_tokens, factor):
         return PrefixPlan(messages=messages, truncated=[])
 
     # 超预算才折叠：「摘要边界之后、最近 keep_recent_turns 轮之前」那一段并进摘要。
@@ -231,7 +232,7 @@ def _split_keep(body: list[dict], keep_recent_turns: int) -> tuple[list[dict], l
 
 
 def _over_budget(messages: list[dict], window_tokens: int, threshold: float,
-                 tools_tokens: int = 0) -> bool:
+                 tools_tokens: int = 0, factor: float = 1.0) -> bool:
     """折叠判定：**这个请求**是不是超了软门槛（计划 §7.1）。
 
     ★ 用 `estimate_messages_tokens + tools_tokens` 而不是只用前者：
@@ -242,12 +243,17 @@ def _over_budget(messages: list[dict], window_tokens: int, threshold: float,
 
     ⚠️ `tools_tokens` **缺省 0**：没有工具面的调用方行为与从前**逐字相同**，
     不需要知道这个参数存在。
+
+    ★ `factor` 是**校准系数**（计划 §7.1(b)，见 [ADR-0024](../docs/adr/0024-token-calibration-from-usage.md)）：
+    字数估算与真实分词**永远有偏差**，而 API 每次都回报真值。
+    用它把估算放大/缩小到接近真值，折叠判定才不会"该折的时候不折"。
+    ⚠️ **缺省 1.0** —— 没有样本时行为与从前逐字相同；调用方不该被迫知道这个参数存在。
     """
     from .harness.context import estimate_messages_tokens
 
-    return estimate_messages_tokens(messages) + max(0, int(tools_tokens)) > int(
-        window_tokens * threshold
-    )
+    scale = float(factor) if float(factor) > 0 else 1.0
+    estimate = (estimate_messages_tokens(messages) + max(0, int(tools_tokens))) * scale
+    return estimate > int(window_tokens * threshold)
 
 
 # ---------------------------------------------------------------- 用量入账

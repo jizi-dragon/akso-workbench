@@ -22,8 +22,8 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（**117 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
-> | 不再变的决策（**20 篇** ADR ＋ `0000-template.md` 模板 = 21 个文件） | [docs/adr/](docs/adr/) |
+> | 真机环境坑（**118 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 不再变的决策（**21 篇** ADR ＋ `0000-template.md` 模板 = 22 个文件） | [docs/adr/](docs/adr/) |
 > | **★ 平台事实台账（端点 / 真机线格式 / 样本量 n / 平台约束，逐条带证据）** | [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md) |
 > | **★ 平台配置面整体认知（Gaia V3.8 手册语义与配置分层）** | [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) |
 > | **★ 用户传图片/文件给 agent（方案 + 判据 + 已知限制）** | [docs/AGENT-FILE-INPUT-PLAN.md](docs/AGENT-FILE-INPUT-PLAN.md) |
@@ -192,6 +192,7 @@
 | ★ **transcript 的完整性 / 跨重启收尾**（`harness/transcript.py` 的 `dangling_calls` / `repair_dangling`、`harness/loop.py` 运行开头那一次调用） | `pytest tests\test_agent_resume.py -o addopts=""`（**8 条**）。<br>★ **为什么需要它**：`loop._fill_unexecuted` 覆盖的是**进程内**的三个出口（步数预算 / 用户取消 / 超时），而**进程死亡**时那三条**一条都跑不到** ——已写进库的 `assistant(tool_calls)` 永远没有配对结果，而「**重放一段非法历史没有意义**」（I16）。那条缺口**没有代码位置**，所以它永远不会出现在「我数了 N 个调用方」里（PITFALLS #114）。<br>★ **两条不许越过的界线**：① **只补历史，绝不重新执行**那些调用（进程可能死在「已发出、未写回」那个窗口里，我们**无法知道**它执行到哪了 ——一个写操作重放一次的后果与「少一条观测」不是一个量级）；② **一个审批令牌都不碰**（跨重启失效是 `approvals` 的**刻意**行为，有一条判据专门钉住那条界线）。<br>★ 补写的正文必须**明说「未执行」**且**不含「已完成」**字样 ——模型看得见它，写成「已完成」会让它据此下结论，**比失败更坏** |
 | ★ **`tools/verify_*.py`（那一排手动跑的端到端校验）** | `pytest tests\test_verify_scripts_are_self_contained.py -o addopts=""`（**5 条**，**0.06 秒**，**可进 CI**）：起服务的脚本必须①**数据隔离**②**端口被占就拒跑**③**端口唯一**。<br>★ **为什么单列一条**：它们是**会跑的程序**（起服务、连数据库、点按钮），不是文档 —— 而 2026-09-24 核出**3 个脚本读写用户真实数据库、4 个绑生产端口且无守卫**，其中 `verify_box_ops.py` 会**删除盒子**且 `dialog` 一律 accept。三条叠起来：应用在跑时 `uvicorn` 起不来（报错进 DEVNULL）、就绪探测却连上**正在运行的应用** ⇒ 整套验收打在真实实例上，**一个错都不报**（PITFALLS #116）。<br>★ **例外要写下来**：`# verify-guard: <规则> —— 理由：…`（**理由非空**）——`verify_extension_version.py` 的 18765 **不是错**：MV3 扩展把桌面地址编译成了常量。<br>★ 加/改这些脚本时，跑一次它们自己确认还绿（它们不进 CI，需要 chromium） |
 | ★ **产物预览的 markdown 渲染**（`static/js/artifact-preview.js` 的 `renderMarkdown`） | `python tools\verify_insight_preview.py`（**18 项**：真起服务 + 真开 chromium，产物由**产品真跑一遍**回放夹具生成）。<br>★ **判据要断言「渲染出来的 == 源文件里的」，不要断言产品的文案** —— 三条判据曾同时坏在这一点上：`P8` 写死了列名（产品换过说法后静默过期）、`P11` 把子串写成了**列表精确匹配**、`P9` 在**错的产物**上找东西（PITFALLS #117）。<br>★ **空洞断言比没有更坏**：`0 == 0`、`all(... for [])` 在缺陷版上照样绿 —— 真产物今天**一条列表都没有**，所以列表那几条必须落在**探针产物** `markdown-probe.md` 上（`P9a`–`P9d`），且 `P9d` 带 `bool(li_texts) and` 前提。<br>★ 反证：把渲染器的列表分支改成 `if (false)` ⇒ P9a/P9b/P9c 红 |
+| ★ **token 估算的校准**（`harness/context.py` 的 `calibration_factor`、`harness/trace.py` 的 `recent_token_pairs`、`cache._over_budget` 的 `factor`、`loop.py` 运行开头那一次） | `pytest tests\test_token_calibration.py -o addopts=""`（**12 条**）。★ 它**取代**了计划 §7.1(b) 的 `tiktoken cl100k_base` 方案 —— 那是 **OpenAI 的分词器**，数 DeepSeek 的 token **是另一种近似**；而 **API 自报的 `prompt_tokens` 是真值**，且与估算值记在**同一条 span** 上（[ADR-0024](docs/adr/0024-token-calibration-from-usage.md)）。<br>★ **三道闸门都朝向「宁可不校准」**：样本 < 5 ⇒ 1.0（两三个样本算出来的系数**比不校准更坏**，而「我按数据校准过」让人更不敢质疑它）；夹 `[0.5, 2.0]`；丢掉非正配对（`prompt_tokens=0` 是**没有这个数据**，不是「0 个 token」）。<br>★ **用中位数不用平均值**，且**一次运行只算一次**（一轮之内换系数 = 「这一轮按哪个阈值折」说不清）。**系数 ≠ 1 必须留痕**，读样本失败**回落 1.0**（校准是优化，不是前提）。<br>★ 反证：用平均值 / 去掉闸门 / 不夹范围 / 系数没被用上 / 循环不读样本 —— **5/5 有效** |
 | **任何代码** | 改了就必须重跑 §3 基线四条（PITFALLS #41） |
 
 **加一个工具必须同步 5 处**（漏任何一处 = 装完静默没功能，PITFALLS #32）：

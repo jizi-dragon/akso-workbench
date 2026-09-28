@@ -120,6 +120,42 @@ def estimate_tools_tokens(tools: list[dict] | None) -> int:
     return estimate_tokens(json.dumps(tools, ensure_ascii=False))
 
 
+def calibration_factor(pairs, *, min_samples: int = 5,
+                       low: float = 0.5, high: float = 2.0) -> tuple[float, str]:
+    """用「估算 vs 真实」的配对值算一个**校准系数**（真实 / 估算）。
+
+    ## 为什么是**中位数**而不是平均值
+
+    ★ 一次异常样本（比如某次请求被服务端截断、或某条 span 写坏了）会把平均值拽走，
+    而中位数对少量离群点稳定。校准系数是**要拿去乘一个阈值**的，
+    被一个离群点拽走就等于**那一轮悄悄换了折叠策略**。
+
+    ## 三道闸门（都是"宁可不校准"）
+
+    | 闸门 | 为什么 |
+    |---|---|
+    | 样本数 < `min_samples` ⇒ **1.0** | 两三个样本算出来的系数比不校准更坏，而它**看起来更科学** |
+    | 夹到 `[low, high]` | 防止一串坏样本把窗口阈值放大 10 倍（那会让请求**真的**超窗） |
+    | 任一配对非正 ⇒ 丢掉那一条 | `prompt_tokens` 为 0 时比值无意义（回放夹具里就是 0） |
+
+    ## 返回
+
+    `(factor, reason)` —— **reason 是承重的**：调用方要把它写进日志/span，
+    否则"这一轮的折叠阈值被悄悄改过"没有任何痕迹（铁律 28 的同一条推理）。
+    """
+    usable = [(float(e), float(a)) for e, a in pairs if float(e) > 0 and float(a) > 0]
+    if len(usable) < int(min_samples):
+        return 1.0, f"样本不足（{len(usable)} < {min_samples}），不校准"
+    ratios = sorted(a / e for e, a in usable)
+    mid = len(ratios) // 2
+    median = ratios[mid] if len(ratios) % 2 else (ratios[mid - 1] + ratios[mid]) / 2
+    if median < low:
+        return low, f"中位数 {median:.3f} 低于下限 {low}，夹住"
+    if median > high:
+        return high, f"中位数 {median:.3f} 高于上限 {high}，夹住"
+    return median, f"中位数 {median:.3f}（{len(usable)} 个样本）"
+
+
 def estimate_request_tokens(messages: list[dict], tools: list[dict] | None = None) -> int:
     """**一次真实请求**的估算 = 消息 ＋ 工具 schema（计划 §7.1 的口径）。
 

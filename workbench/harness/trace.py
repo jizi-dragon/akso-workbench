@@ -199,6 +199,32 @@ class RunRecorder:
 # ---------------------------------------------------------------- 查询（前端时间线用）
 
 
+def recent_token_pairs(limit: int = 60) -> list[tuple[int, int]]:
+    """取最近的「(估算, 真实)」配对 —— 校准系数的输入。
+
+    ★ 两个数在**同一条 span** 上（`attrs.estimatedTokens` 与 `attrs.usage.prompt_tokens`），
+    所以这里**不需要 join**，也就不存在"配错了一次请求"的余地。
+    ★ 真实值缺失或为 0 的（回放夹具、失败的那一步）**直接跳过** ——
+    它们不是"0 个 token"，是"没有这个数据"。
+    """
+    import json as _json
+
+    rows = db.query(
+        "SELECT attrs_json FROM agent_span WHERE span_kind = ? AND attrs_json IS NOT NULL "
+        "ORDER BY started_at DESC LIMIT ?", (SPAN_MODEL, int(limit)))
+    out: list[tuple[int, int]] = []
+    for row in rows:
+        try:
+            attrs = _json.loads(row["attrs_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        estimated = int(attrs.get("estimatedTokens") or 0)
+        actual = int((attrs.get("usage") or {}).get("prompt_tokens") or 0)
+        if estimated > 0 and actual > 0:
+            out.append((estimated, actual))
+    return out
+
+
 def recent_runs(limit: int = 20, conversation_id: str = "") -> list[dict]:
     """最近若干次运行（含状态、步数、耗时、用量）。
 

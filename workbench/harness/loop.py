@@ -51,7 +51,13 @@ from .. import cache, logging_setup
 from ..plugin_api import Risk, ToolContext, ToolHub, ToolStatus, Trust
 from ..services.deepseek import DeepSeekClient
 from . import trace, transcript
-from .context import content_to_text, estimate_messages_tokens, estimate_request_tokens, estimate_tools_tokens
+from .context import (
+    calibration_factor,
+    content_to_text,
+    estimate_messages_tokens,
+    estimate_request_tokens,
+    estimate_tools_tokens,
+)
 from .safety import SafetyGate
 from .types import AgentConfig, make_event
 
@@ -334,8 +340,25 @@ async def run_agent_loop(
     # 而它不在 messages 里 —— 所以折叠判定要单独把它算进去（计划 §7.1）。
     # 在这里算一次就够：`plugins` 在整个回合里不变，schema 也就不变。
     _tools_tokens = estimate_tools_tokens(registry.list_api_for(plugins))
+    # ★ 校准系数（计划 §7.1(b)，[ADR-0024](../docs/adr/0024-token-calibration-from-usage.md)）：
+    # 拿**API 自报的 `prompt_tokens`** 反过来校准字数估算。
+    #
+    # ★ 为什么不是计划原文的 `tiktoken cl100k_base`：那是 **OpenAI 的分词器**，
+    # 用它数 DeepSeek 的 token **本身就是另一种近似**；而 API 每次回报的是**真值**。
+    #
+    # ⚠️ **一次运行只算一次**（不是每次模型调用都算）：它读库，且**同一轮里不该变** ——
+    # 一轮之内换折算系数会让"这一轮到底按哪个阈值折"变得说不清。
+    # ⚠️ 失败一律回落 1.0：**校准是优化，不是前提**（它坏掉不该让对话跑不起来）。
+    _factor, _factor_reason = 1.0, "未取样本"
+    try:
+        _factor, _factor_reason = calibration_factor(trace.recent_token_pairs())
+    except Exception:  # noqa: BLE001 —— 见上：校准失败不该让这一轮跑不起来
+        logger.warning("读 token 校准样本失败，按未校准处理", exc_info=True)
+    if abs(_factor - 1.0) > 1e-9:
+        logger.info("token 估算按 %.3f 校准（%s）", _factor, _factor_reason)
     conversation = await _build_context(messages, client, config, conversation_id, meter,
-                                        tools_tokens=_tools_tokens)
+                                        tools_tokens=_tools_tokens,
+                                        factor=_factor)
 
     # 整个循环（含它内部发起的工具调用）都带 `conversationId`。
     # 注意：`contextvars` 在 `async for` 的每次迭代里**不会被自动传播**到
@@ -628,6 +651,7 @@ async def _build_context(
     conversation_id: str,
     meter: UsageMeter,
     tools_tokens: int = 0,
+    factor: float = 1.0,
 ) -> list[dict]:
     """组装带**稳定前缀**的上下文；只在超预算时才折叠一次历史。
 
@@ -642,6 +666,7 @@ async def _build_context(
         threshold=config.context_threshold,
         keep_recent_turns=config.keep_recent_turns,
         tools_tokens=tools_tokens,
+        factor=factor,
     )
     if not plan.needs_summary():
         return plan.messages
@@ -659,6 +684,7 @@ async def _build_context(
         threshold=config.context_threshold,
         keep_recent_turns=config.keep_recent_turns,
         tools_tokens=tools_tokens,
+        factor=factor,
     )
     return replanned.messages
 
