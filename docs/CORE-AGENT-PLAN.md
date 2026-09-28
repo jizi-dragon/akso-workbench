@@ -19,7 +19,11 @@ _2026-09-21 撰写。锚定 `c50ed87`（main）。_
 > | 阶段 1 | **§5.1 折叠永不吞 system（缺陷①）** | ✅ **已完成**：`cache._pin_system()` 把首条 system 摘出折叠域，`summarized_upto` 改索引正文，装配期断言进 `plan_prefix`，**迁移 22**（`db.py`）平移历史数据；不变量登记为 **I15**；PITFALLS **#90** |
 > | 阶段 1 | **缺陷④d 用量入账 PK 撞车（本节原未收录）** | ✅ **已完成**：主键改 `uuid4().hex`，`now_ms()` 只取一次；PITFALLS **#91** |
 > | 阶段 4 | **§8.1 SSRF 防护** | ✅ **已完成**：新增 `workbench/net_guard.py`（唯一事实源）＋ `guarded_get` **逐跳**校验（原来 `follow_redirects=True` 只校验第一跳）；`read_web_page` / `websearch._resolve_redirect` / `websearch._fetch` 三处 HTTP 调用全改走它；`tests/test_net_guard.py`（**30 条**，含 `ast` 级机检"不许再出现 `follow_redirects=True` 的调用"）；PITFALLS **#92** |
-> | 其余 | §5.2 / §5.3 / §5.4 / §5.5 / §5.6 / §8.2 / §8.3，以及阶段 0 / 2 / 3 / 5 | ⬜ **未开始** |
+> | 阶段 0 | **§0.1 行为契约测试层** | ✅ **已建**：`tests/test_agent_contract.py`（**8 条**：C1 system 恒在首位 / C2 边界单调 / C3 成对（正常轮 + 截断轮）/ C4 步数上限 / C5 硬上限终止）。⚠️ **C7（可信度标签）未做**——它属 §8.2 |
+> | 阶段 1 | **§5.3 步数预算逐调用 + 未执行回填（缺陷③ / I16）** | ✅ **已完成**：`loop._fill_unexecuted`（一处实现）＋ `_skipped_observation`；预算检查移进 `for call in …` 内；**重复调用检测那条早退路径也一并回填**（它此前同样直接 `return`） |
+> | 阶段 1 | **§5.2 的一半：硬上限复检（缺陷② / I17）** | ✅ **已完成（P0-4a）**：`AgentConfig.context_hard_limit_tokens`＋`loop._over_hard_limit`，每次模型调用前复检，超限则**不发请求**、以可行动文案终止。⚠️ **P0-4b（轮内折叠）未做**——它需要把 `loop` 的 `source`（原始会话）与 `context`（`plan_prefix` 的输出）拆开，`_one_model_turn` 目前只持有后者并就地 append |
+> | —— | 窗口默认值改为 `deepseek-flash` 满窗口 | ✅ **已完成**（用户 2026-09-24 下达）：`AgentConfig.context_window_tokens` `131072` → **`1048576`**（1M，按 2²⁰ 读，判据见 `harness/types.py` 的字段文档串） |
+> | 其余 | §5.4 / §5.5 / §5.6 / §8.2 / §8.3，以及阶段 2 / 3 / 5 | ⬜ **未开始** |
 >
 > **基线数字更正**：本计划正文写的是 `c50ed87` 的 **5 插件 / 22 工具（19 read·2 write·1 dangerous）**。
 > HEAD（`d9cc39b` 起）实测为 **4 插件 / 18 工具（16 read · 2 write · 0 dangerous）** —— 配置工厂已于

@@ -41,10 +41,45 @@ class AgentConfig(BaseModel):
     temperature: float = 0.7
     max_tokens: int | None = None
     max_steps: int = DEFAULT_MAX_STEPS
-    context_window_tokens: int = 131072
+    context_window_tokens: int = 1_048_576
+    """模型上下文窗口（token）。**默认取满 `deepseek-flash` 的上限**（用户 2026-09-24 下达）。
+
+    ## 这个数从哪来
+
+    `deepseek-flash` = **DeepSeek-V4.1-Flash**，官方[模型 & 价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)
+    页写的是"**上下文长度 1M**／输出长度 最大 **384K**"。
+
+    **为什么按 2²⁰ 而不是 10⁶ 读**：同一张表里输出写"384K"，而 384K = 393,216 =
+    **3 × 131,072**（上一代 `deepseek-flash` 的 128K）⇒ 这家用**二进制**口径。
+    所以 1M = **1,048,576**。（若哪天官方给出确切数字，改这一行即可。）
+
+    ## 调大它意味着什么（不是免费的）
+
+    折叠门槛是 `context_threshold × context_window_tokens`，所以调大窗口 =
+    **折叠几乎不再发生**（0.8 × 1M ≈ 839K token 才折）。长会话因此会一路把原文
+    发上去，而**缓存未命中的单价是命中价的 50 倍**（见 `cache.py` 的价目表）：
+    一次全 miss 的 800K token 请求与一次命中的同样请求，账单差两个数量级。
+    前缀 append-only（不变量 I1）在这里从"省钱技巧"变成"**主要成本控制手段**"。
+
+    取满窗口是**产品选择**：优先"模型能记住更多"，代价由缓存命中率承担。
+    """
     context_threshold: float = 0.8
     keep_recent_turns: int = 5
     system_prompt: str = ""
+    context_hard_limit_tokens: int | None = None
+    """上下文**硬上限**（2026-09-24 加，不变量 I17 的一半）。`None` = 用 `context_window_tokens`。
+
+    ## 为什么要有它（与 `context_threshold` 不是一个东西）
+
+    `context_threshold`（0.8 × 窗口）是**该折叠了**的门槛；硬上限是**不许再发**的门槛。
+    两者分开是因为它们的处置完全不同：过门槛 → 折叠历史（还能继续做）；过硬上限 →
+    **根本不发这次请求**，以可行动的文案收尾。
+
+    为什么必须有后者：`_build_context` 在整轮开始前**只算一次**，而工具结果会不断往
+    上下文里追加（一条 `read_web_page` 正文可到 12k 字符）。实测探针：预算 1000 token，
+    第 5 次请求已 **12,059**，而折叠发生 **0** 次。超窗后是**平台**拒回来的，
+    而它给的那句话用户与模型都无法据以行动。
+    """
     approval_wait_s: float = 300.0
     """风险门（`risk >= write` 的工具被拦下）**就地等用户放行**的秒数（2026-09-22 加，决策卡 G2）。
 

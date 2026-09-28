@@ -47,7 +47,7 @@ from typing import Any
 from .. import cache, logging_setup
 from ..plugin_api import Risk, ToolContext, ToolHub, ToolStatus
 from ..services.deepseek import DeepSeekClient
-from .context import content_to_text
+from .context import content_to_text, estimate_messages_tokens
 from .safety import SafetyGate
 from .types import AgentConfig, make_event
 
@@ -113,25 +113,33 @@ async def run_agent_loop(
                 # "为什么这次没答完"最需要这条：前端的错误提示很短，日志要留下预算与轮次
                 logger.warning("步数预算耗尽，终止本轮（max_steps=%d，已用 %d 次工具调用）",
                                config.max_steps, safety.steps_used)
-                # ⚠️ 这不是"错误"，是"这一轮到头了"——两者对用户要做的动作完全不同：
-                # 错误要他去查，预算耗尽只需他回一句「继续」。所以：
-                # ① 事件里带 `reason` 让前端能分开渲染（不再是一律红色报错）；
-                # ② 文案必须**可行动**：说清发生了什么、怎么接着做、去哪儿调大。
-                # 改造前只有一句"已达到步数预算上限，已终止本轮"——用户看不懂
-                # "预算是多少""为什么不够""我怎么继续"。
+                # 事件里带 `reason` 让前端能分开渲染（不再是一律红色报错）；
+                # 文案由 `_budget_exhausted_message` 统一给（另一处出口在工具批次内）。
+                yield make_event("error", reason="budget_exhausted",
+                                 message=_budget_exhausted_message(config.max_steps))
+                yield make_event("usage", usage=_finish_usage(meter, config))
+                return
+
+            # ★ 每次模型调用前**复检上下文预算**（不变量 I17，2026-09-24 加，修复缺陷②）。
+            # 旧实现只在整轮开始前算一次（`_build_context`），而工具结果会不断往
+            # `conversation` 里追加（一条 read_web_page 正文可到 12k 字符）——实测探针：
+            # 预算 1000 token 时第 5 次请求已 12,059，而折叠发生 **0** 次。超窗后是
+            # **平台**拒回来的，那句话用户与模型都无法据以行动。
+            if _over_hard_limit(conversation, config):
+                window = int(config.context_hard_limit_tokens
+                             or config.context_window_tokens or 0)
+                logger.warning("上下文超过硬上限，终止本轮（估算 %d > 上限 %d）",
+                               estimate_messages_tokens(conversation), window)
                 yield make_event(
                     "error",
-                    reason="budget_exhausted",
+                    reason="context_exceeded",
                     message=(
-                        f"这一轮的工具调用次数用完了（{config.max_steps} 次）。"
-                        "**已完成的部分都保留着**——直接回一句「继续」我就接着做。"
-                        "如果是配置这类多步任务反复撞上限，可以在「设置 → 推理参数」里调大这个数字。"
+                        f"这次要发上去的内容超过了模型的上下文窗口（约 {window} token），"
+                        "再发就会被平台拒绝。**已完成的部分都保留着**——"
+                        "请把这件事分成两次做，比如「先读其中两份，我确认后你再读剩下的」。"
                     ),
                 )
-                usage = meter.finish()
-                usage.update(_context_usage(meter, config))
-                meter.stats.persist()
-                yield make_event("usage", usage=usage)
+                yield make_event("usage", usage=_finish_usage(meter, config))
                 return
 
             async for event in _one_model_turn(
@@ -142,10 +150,7 @@ async def run_agent_loop(
                 if event["type"] in ("final", "error"):
                     # 用量在**收尾时**发一条：命中量要等所有 LLM 调用（含摘要重算）都结束
                     # 才有完整答案；提前发会让前端显示一个偏低的数字
-                    usage = meter.finish()
-                    usage.update(_context_usage(meter, config))
-                    meter.stats.persist()
-                    yield make_event("usage", usage=usage)
+                    yield make_event("usage", usage=_finish_usage(meter, config))
                     return
 
 
@@ -164,6 +169,86 @@ def _context_usage(meter: UsageMeter, config: AgentConfig) -> dict:
         "contextThreshold": float(config.context_threshold or 0),
         "contextRatio": round(tokens / window, 4) if window else 0.0,
     }
+
+
+def _budget_exhausted_message(max_steps: int) -> str:
+    """步数用尽时的**可行动**文案（两处出口共用，避免两句话漂开）。
+
+    ⚠️ 这不是"错误"，是"这一轮到头了"——两者对用户要做的动作完全不同：
+    错误要他去查，预算耗尽只需他回一句「继续」。所以文案说清三件事：
+    发生了什么、怎么接着做、去哪儿调大。
+    """
+    return (
+        f"这一轮的工具调用次数用完了（{max_steps} 次）。"
+        "**已完成的部分都保留着**——直接回一句「继续」我就接着做。"
+        "如果是配置这类多步任务反复撞上限，可以在「设置 → 推理参数」里调大这个数字。"
+    )
+
+
+def _finish_usage(meter: UsageMeter, config: AgentConfig) -> dict:
+    """收尾统一出口：算 latency → 补上下文口径 → 落库（三个终止分支共用）。"""
+    usage = meter.finish()
+    usage.update(_context_usage(meter, config))
+    meter.stats.persist()
+    return usage
+
+
+def _over_hard_limit(conversation: list[dict], config: AgentConfig) -> bool:
+    """这次请求是不是已经超过**硬上限**（不变量 I17 的一半，见 `AgentConfig`）。
+
+    只用**估算值**，而它**偏低**（`estimate_messages_tokens` 只算 `content`，
+    不算 `tool_calls` / 工具 schema）—— 这个方向是**刻意**的：宁可漏判
+    （少一次保护）也不要误判（把正常请求掐掉）。
+    """
+    window = int(config.context_hard_limit_tokens or config.context_window_tokens or 0)
+    if window <= 0:
+        return False
+    return estimate_messages_tokens(conversation) > window
+
+
+def _fill_unexecuted(context: list[dict], calls: list[dict], reason: str) -> None:
+    """为**未执行**的 `tool_call` 补一条 `tool` 观测（不变量 I16）。
+
+    ## 为什么必须补，而不是"跳过就算了"
+
+    `assistant.tool_calls` 里的**每一个 id** 都必须有配对的 `tool` 消息。少一条，
+    这段历史就是**非法**的：下一次请求平台会回 `tool_call_id not found`，
+    而"对话级断点续跑"（重放历史）永远做不成——重放一段非法历史没有意义。
+
+    ## 为什么原因要写进正文
+
+    模型**看得见**它才可能自我纠正（"预算用完了"→ 下次把任务拆小）。静默丢掉这些调用，
+    模型会以为它们**执行过**了——那是比失败更坏的结局：它会据此下结论。
+
+    ## 一处实现，三个调用方
+
+    步数预算（本文件）／用户取消／超时（后续 `_fill_unexecuted` 的另两个调用方）。
+    三个都要"未执行的调用必须留下痕迹"，所以只写一份。
+    """
+    for call in calls:
+        context.append({
+            "role": "tool",
+            "tool_call_id": call.get("id") or "",
+            "content": f"[未执行] {reason}",
+        })
+
+
+def _skipped_observation(call: dict, reason: str) -> dict:
+    """未执行调用的 `observation` 事件（前端据此把那张卡画成"已跳过"而不是转圈）。"""
+    return make_event(
+        "observation",
+        result={"ok": False, "summary": f"未执行：{reason}", "status": "skipped"},
+        invocation={
+            "toolCallId": call.get("id") or "",
+            "tool": str(call.get("name") or ""),
+            "auditId": "",
+            "durationMs": 0,
+            "risk": Risk.READ.value,
+            "plugin": "",
+            "status": "skipped",
+            "isError": True,
+        },
+    )
 
 
 def _with_system_prompt(messages: list[dict], system_prompt: str) -> list[dict]:
@@ -278,12 +363,38 @@ async def _one_model_turn(
                 yield make_event("thought", text=assistant["content"])
             context.append(assistant)
 
-            for call in assistant["tool_calls"]:
+            for index, call in enumerate(assistant["tool_calls"]):
+                # ★ 步数预算**逐调用**检查（不变量 I16，2026-09-24 加，修复缺陷③）。
+                # 旧实现只在**两次模型轮次之间**检查（外层 while 的 `safety.exhausted`），
+                # 于是模型一轮里发 N 个 tool_call 就 N 个全执行——实测 max_steps=2 +
+                # 首轮 5 个调用 ⇒ **5 个全跑**。`safety.SafetyGate` 的文档串当时自己
+                # 就写着"只在两次模型轮次之间检查"，而没有任何断言去读那句话。
+                if safety.exhausted:
+                    remaining = assistant["tool_calls"][index:]
+                    reason = "步数预算已用完"
+                    # 未执行的每一条都要留下痕迹（I16）：少了它们，这段历史对平台是非法的
+                    _fill_unexecuted(context, remaining, reason)
+                    for pending in remaining:
+                        yield _skipped_observation(pending, reason)
+                    logger.warning("步数预算在工具批次内用尽（max_steps=%d，已用 %d），"
+                                   "本批 %d 个调用只有前 %d 个执行了",
+                                   config.max_steps, safety.steps_used,
+                                   len(assistant["tool_calls"]), index)
+                    yield make_event("error", reason="budget_exhausted",
+                                     message=_budget_exhausted_message(config.max_steps))
+                    return
+
                 if safety.is_loop(call):
                     # 这条不写日志的话，用户只看到"模型说了一句话就停了"，
                     # 而真实原因是同一个调用连打了 3 次
                     logger.warning("检测到重复的工具调用，终止本轮：%s %s",
                                    call.get("name"), str(call.get("arguments"))[:200])
+                    # 同样要回填（I16）：旧实现在这里直接 `return`，于是 assistant 那条
+                    # 消息带着 N 个 tool_calls 却只有前面几个有配对响应 —— 非法历史。
+                    remainder = assistant["tool_calls"][index:]
+                    _fill_unexecuted(context, remainder, "检测到重复调用，本轮已终止")
+                    for pending in remainder:
+                        yield _skipped_observation(pending, "检测到重复调用，本轮已终止")
                     yield make_event("error", message="检测到重复的工具调用，已终止本轮")
                     return
 

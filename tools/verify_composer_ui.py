@@ -207,6 +207,12 @@ SSE_EVENTS = [
         "cacheHitTokens": 65000, "cacheMissTokens": 536,
         "completionTokens": 12, "reasoningTokens": 0,
         "hitRate": 0.9918, "summaryCalls": 0,
+        # ⚠️ 这里的 `contextWindow: 131072` 是**合成事件的取值，不是产品默认值** ——
+        # 它选 131072 只为让 `contextRatio` 正好 0.5，好让 H4–H6 那条像素断言
+        # （"按 12 点顺时针填到 6 点，右半圈填、左半圈空"）有个确定的几何目标。
+        # 产品默认窗口 2026-09-24 起是 `deepseek-flash` 的满窗口 1048576（见
+        # `harness/types.py`）—— **不要把这里的数字改成它**，那会让比例变成 0.0625、
+        # 像素断言失去判别力。两者本就不该同步：一个测渲染，一个定产品行为。
         "contextTokens": 65536, "contextWindow": 131072,
         "contextThreshold": 0.8, "contextRatio": 0.5,
     }},

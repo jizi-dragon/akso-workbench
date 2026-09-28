@@ -555,7 +555,8 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 ### 7.1 【低成本，建议优先】精确 token 计数
 
 **缺口**：`context.estimate_tokens()` 是 CJK 字符数 + 英文词数的粗略估算。
-`context_threshold=0.8` × `context_window_tokens=131072` 的判定建立在这个估算上。
+`context_threshold=0.8` × `context_window_tokens=1048576` 的判定建立在这个估算上。
+（窗口默认 2026-09-24 起取满 `deepseek-flash` 的 1M 上限，见 `harness/types.py`。）
 
 **风险**：估偏低 → 该折叠没折叠 → 请求超长被 API 拒；估偏高 → 过早折叠 → 无谓的摘要开销与信息损失。
 两种都是"看起来正常但行为不对"。
