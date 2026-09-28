@@ -53,16 +53,17 @@ TIMEOUT_S = 120
 CASES: list[tuple[str, str, str, str, str]] = [
     # ── 上下文前缀（tests/test_cache.py）
     (
+        # ★ 2026-09-24 换锚点：原锚点是 `context.append(assistant)` + 一个空行，
+        # 而 §7.3 在它们之间插了 `transcript.record(...)` —— 于是这条**静默失效**，
+        # 而本脚本遇到第一个坏锚点就停 ⇒ 其余 13 条根本没跑。
+        # 现在锚在**唯一**的 `_parallel_eligible(...)` 行上，缺陷码插在它之前
+        # （位置等价：仍然在第一次模型调用**之后**改写 `context[0]`，破坏前缀）。
         "前缀：工具轮次追加",
         "tests/test_cache.py::test_tool_turn_keeps_prefix_within_one_run",
         "workbench/harness/loop.py",
-        "            context.append(assistant)\n"
-        "\n"
-        '            for call in assistant["tool_calls"]:',
-        "            context.append(assistant)\n"
+        '            if _parallel_eligible(assistant["tool_calls"], registry, safety, config):',
         '            context[0] = {"role": "system", "content": config.system_prompt + " "}\n'
-        "\n"
-        '            for call in assistant["tool_calls"]:',
+        '            if _parallel_eligible(assistant["tool_calls"], registry, safety, config):',
     ),
     (
         "前缀：注入有界",
@@ -206,6 +207,65 @@ CASES: list[tuple[str, str, str, str, str]] = [
         "    deferCurrent();\n"
         "  });\n",
         "  // 缺陷版：不拦 Esc，让它直接关掉\n",
+    ),
+
+    # ── 以下 7 条是 2026-09-24 那一轮架构重构里新增的（此前只有前 14 条）
+    # ── 不变量 I18：外部内容的信任标签（tests/test_trust_labels.py）
+    (
+        "I18：外部网页必须标 UNTRUSTED",
+        "tests/test_trust_labels.py::test_the_real_web_tools_are_declared_untrusted",
+        "workbench/plugins/websearch.py",
+        "            trust=pa.Trust.UNTRUSTED,",
+        "            trust=pa.Trust.LOCAL,",
+    ),
+    # ── 可撤销性声明（tests/test_undo_recipe.py，计划 §8.3）
+    (
+        "可撤销性：会改状态的工具必须声明",
+        "tests/test_undo_recipe.py::test_a_mutating_tool_without_a_reversibility_declaration_is_refused",
+        "workbench/plugin_api.py",
+        "        if self.risk is not Risk.READ:\n"
+        "            if self.reversibility is None:",
+        "        if False:\n"
+        "            if self.reversibility is None:",
+    ),
+    # ── transcript 保真（tests/test_transcript_roundtrip.py，计划 §7.3）
+    (
+        "transcript：落库的必须是当时发出去的那一条",
+        "tests/test_transcript_roundtrip.py::test_the_stored_transcript_is_field_for_field_equal_to_what_was_sent",
+        "workbench/harness/loop.py",
+        "            transcript.record(conversation_id, assistant)\n",
+        "            pass\n",
+    ),
+    # ── 跨重启收尾（tests/test_agent_resume.py，计划 §7.3）
+    (
+        "跨重启：运行开头必须补悬空调用",
+        "tests/test_agent_resume.py::test_a_real_run_repairs_the_previous_crash",
+        "workbench/harness/loop.py",
+        "        transcript.repair_dangling(conversation_id)\n",
+        "        pass\n",
+    ),
+    # ── token 估算的统计范围（tests/test_context_tokens.py，计划 §7.1a）
+    (
+        "估算：tool_calls 必须计入",
+        "tests/test_context_tokens.py::test_tool_calls_are_counted",
+        "workbench/harness/context.py",
+        "        + estimate_tokens(tool_calls_text(m))\n",
+        "",
+    ),
+    (
+        "估算：折叠判定必须含工具 schema",
+        "tests/test_context_tokens.py::test_the_folding_decision_includes_the_schema",
+        "workbench/cache.py",
+        "    return estimate_messages_tokens(messages) + max(0, int(tools_tokens)) > int(",
+        "    return estimate_messages_tokens(messages) > int(",
+    ),
+    # ── 在线层闸门（tests/test_eval_live_mode.py，计划 §6.3）
+    (
+        "在线层：不带 --yes 时必须一次请求都不发",
+        "tests/test_eval_live_mode.py::test_live_without_yes_sends_nothing",
+        "tools/run_evals.py",
+        "    if not args.yes:",
+        "    if False:",
     ),
 ]
 

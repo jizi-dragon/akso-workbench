@@ -22,7 +22,7 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（**114 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 真机环境坑（**115 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 不再变的决策（**20 篇** ADR ＋ `0000-template.md` 模板 = 21 个文件） | [docs/adr/](docs/adr/) |
 > | **★ 平台事实台账（端点 / 真机线格式 / 样本量 n / 平台约束，逐条带证据）** | [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md) |
 > | **★ 平台配置面整体认知（Gaia V3.8 手册语义与配置分层）** | [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) |
@@ -177,7 +177,7 @@
 | `config.SENSITIVE_PATH_PARTS`、`plugins/builtins.py`、`sandbox/policy.py` | `pytest tests/test_sensitive_paths.py`（**唯一事实源 + 只读工具的边界**） |
 | `workbench/lifecycle.py`、`api/__init__.py` 的 lifespan、`desktop/main.js`（stderr/stdio/菜单/链接） | `pytest tests/test_lifecycle.py -o addopts=""`（**含 slow 层**：真起父子进程验"父死子退"）+ `node --check desktop\main.js`。<br>★ 页面里的链接（`target="_blank"` / `window.open`）在壳里**不许再开一个裸 Electron 窗口**，一律交给系统浏览器：`Select-String -Path desktop\main.js -Pattern 'setWindowOpenHandler'` —— 零命中就说明"点链接/点开附件原文件"没有实现（本应用里这类链接不止一处：回答里的 Markdown 链接、产物预览、消息气泡里的附件 chip） |
 | `factory-tuning/**`（**不属于产品，且已只剩 `reports/`**） | **没有门禁**——它的工具链（`tools/`、`analyze/`、`tests/selfcheck.py`、`data/`）随配置工厂一并移除，产品也从不 import 它。**唯一纪律**：往 `reports/` 里放新报告前，先读 [factory-tuning/README.md](factory-tuning/README.md) §四 的**脱敏口径**——那份报告是要提交的，而平台流量里带令牌 |
-| ★ 动了上面任一处 | 还要跑 `python tools\verify_regression_tests.py`——它**反证**那 **14 条**断言真的会红（手动诊断用，不进 CI，会临时改写源码并在结束时字节级还原；含一条 29 秒的 slow 项）。**它按单条 120 秒超时收口**：缺陷版的失败形态可能是"挂住"而不是"断言红"，没有这个超时，一次失误会让上层把脚本杀掉，`finally` 的还原**跑不到**——2026-09-20 实测留下过一份缺陷代码<br>★ 2026-09-22 配置工厂移除时**删了 3 条、补了 1 条**：删的是靶子已随功能消失的三条（预览暂存 / 规格注解 / 危险摘要讲蓝图），补的是把「确认摘要」那条**改挂到合成 spec 的用例**上——**机制还在的断言不该跟着实现一起丢** |
+| ★ 动了上面任一处 | 还要跑 `python tools\verify_regression_tests.py`——它**反证**那 **21 条**断言真的会红（手动诊断用，**不进 CI**，会临时改写源码并在结束时字节级还原；含一条 29 秒的 slow 项）。**它按单条 120 秒超时收口**：缺陷版的失败形态可能是"挂住"而不是"断言红"，没有这个超时，一次失误会让上层把脚本杀掉，`finally` 的还原**跑不到**。2026-09-24 实测：**21/21 有效**、逐字节还原 11 个文件、**63 秒**。<br>★★ **但它自己会悄悄烂掉** —— 它不进 CI ＋ 手动跑 ＋ **遇到第一个坏锚点就停**，三条叠起来意味着"14 条里第 1 条坏了"与"14 条全过"的输出几乎一样长（PITFALLS #115：一次**正确的**重构在锚点中间插了两行，它烂了整整一轮没人发现）。⇒ 所以另有一条**可进 CI 的那一半**：`pytest tests\test_regression_harness.py -o addopts=""`（**26 条**，**0.09 秒**，**不改写任何源码**）—— 它验清单非空／目标文件存在／目标用例还在／**锚点仍在源码里找得到**／**锚点在文件里唯一**／**缺陷版替换与锚点真的不同**（一个"替换 == 原文"的用例**永远绿**，而它占着"这里验过了"的位置）。**改了任何被反证锚定的源码，就跑这一条。** |
 | `workbench/api/extension_auth.py` 或 `/extension/**` 蓝图 | `node tools\verify_extension_sync.mjs`（该蓝图**无 pytest 覆盖**） |
 | `extensions/quick-login/**`（TS） | `npm run typecheck` + `npm run build`，再跑 `verify_extension_boot.py` + `verify_extension_isolation.py` + `node tools\verify_host_logic.mjs` |
 | `tools/build.ps1` | **立刻补 UTF-8 BOM**，再跑 `verify_packaging.py`（P5 就是为这件事存在的，PITFALLS #37） |
