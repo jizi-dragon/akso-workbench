@@ -194,6 +194,27 @@ factory-tuning/
 
 ---
 
+## 四之二、`reports/**` 里的链接**允许是断的**（2026-09-24 立）
+
+★★ **本目录下的报告不参与 `tools/check_doc_links.py` 的断链判定**，这是刻意的，
+不是"没人修"：
+
+这些是**带日期的历史证据**（记录 2026-09-21/22 真机上发生了什么）。报告里指向
+`docs/FACTORY-VERIFICATION-PLAN.md` / `docs/FACTORY-DECISION-BRIEF.md` /
+`workbench/plugins/factory.py` / `docs/adr/0018-*.md` 的那些链接，**在当时都是有效的**
+—— 那些文件随配置工厂一起被删了。
+
+**今天把它们改成"该文件已删除"，是改写历史。** 这与"ADR 只增不改""CHANGELOG 是历史"
+是同一条纪律：证据的形态本身就是证据的一部分（它证明了写报告时的仓库长什么样）。
+
+⇒ 读这些报告时请记住：**里面的链接不代表当前仓库的结构**。
+想看当前结构去 [docs/CODEBASE_OVERVIEW.md](../docs/CODEBASE_OVERVIEW.md)。
+
+判据（这一条有机器守卫）：`tools/check_doc_links.py` 的 `ARCHIVES` 列表把本目录排除在外，
+并**逐条写明理由**；`pytest tests/test_doc_links.py` 跑它。
+
+---
+
 ## 五、刻意不做的事
 
 - **不新增任何采集代码**：用户定稿"只用内置 Chromium（现成能力，不改任何代码）"，

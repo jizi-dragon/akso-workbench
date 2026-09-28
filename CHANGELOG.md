@@ -706,7 +706,8 @@
   `services/egmp/generate.py`、`services/egmp/complexity.py` 一并删除。它的输入只有一个
   `requirement` 字符串，是对话链路的**降级复制品**。**执行引擎一个字都没删**：
   8 步管道、拓扑排序、幂等、断点续跑、回读验证全部保留——判据是"确定性 vs 非确定性"
-  与"不可回滚 vs 可重做"（ADR-0017 §D-2）。手工上传 `blueprint.json` 那条路保留。
+  与"不可回滚 vs 可重做"（ADR-0017 §D-2 —— **该 ADR 已随配置工厂一并移除**，
+原文可取回：`git show 1fa2301:docs/adr/0017-factory-agent-interface.md`）。手工上传 `blueprint.json` 那条路保留。
 
   **① 可对话轮次非常少**：`AgentConfig.max_steps` 默认 **12 → 40**，并接通设置页
   （`settings` 表的 `maxSteps` 键，范围 4~200，越界夹住、坏值回默认）。

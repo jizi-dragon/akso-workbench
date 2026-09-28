@@ -96,10 +96,19 @@ services/
        ├─ kernel/ 4 文件 394 行（endpoints / semantics / urls 等）
        ├─ insight/  6 文件 1,890 行（spider 1,107 · drawio 309 · workspace 219 · lifecycle 151 · __init__ 83 · report 21）
        └─ monitor/   4 文件 821 行（monitor 467 · query_layer 167 · interpreter 155 · __init__ 32）
+```
+
+> **★ 2026-09-24 修：这一段的围栏原本从上面那张树的第 70 行一直开到第 116 行**，
+> 于是紧接着的三段备注（下面这两段 + 指向认知地图的那句）**被吞进了代码块** ——
+> 它们渲染成等宽代码而不是备注，其中的 Markdown 链接**根本不显示为链接**。
+> 形态很难自己发现：**文档照常渲染、没有报错**，只有盯着看才发现那一段"字号不对"。
+> 判据已加进 `tools/check_doc_links.py`（代码块里出现 Markdown 链接 ⇒ 报出来）。
 
 > **2026-09-20 删除**：`egmp/generate.py`（104 行）与 `egmp/complexity.py`——
 > 它们服务的是 `command="orchestrate"` 那条"一句话 → 另一个 LLM 循环 → 蓝图"的路，
-> 而那条路的输入只有一个字符串，是**对话链路的降级复制品**（ADR-0017 §D-1）。
+> 而那条路的输入只有一个字符串，是**对话链路的降级复制品**（ADR-0017 §D-1 ——
+> **该 ADR 已随配置工厂一并移除**，原文可取回：
+> `git show 1fa2301:docs/adr/0017-factory-agent-interface.md`）。
 >
 > **2026-09-22 追加（推翻上一段的结论）**：**配置工厂整条链已删除**——`writers/`（13 文件 2,087 行）、
 > `orchestrate.py`（执行引擎，316 行）、`checkpoint.py`（45 行）、`plugins/factory.py`、
@@ -111,8 +120,10 @@ services/
 > Monitor，以及知识文档 [PLATFORM-OPERATIONS-LEARNED.md](PLATFORM-OPERATIONS-LEARNED.md) /
 > [FACTORY-PLATFORM-COGNITION.md](FACTORY-PLATFORM-COGNITION.md) 与 `factory-tuning/reports/**`。
 > 两份决策记录 ADR-0017 / ADR-0018 随本链路下架（原文可取回：`git show 1fa2301:docs/adr/0017-factory-agent-interface.md`）。
+
+```text
 harness/（对话 Agent 循环：loop 事件流 · tools **已降级为兼容垫片** · types/prompts/safety/context）
-db.py（SQLite 单连接 + **22 条**迁移常量表 + 方言边界）
+db.py（SQLite 单连接 + **24 条**迁移常量表 + 方言边界）
 ```
 
 > **2026-09-15 变更（工具插件层）**：新增 `plugin_api.py` / `approvals.py` / `plugins/`（**5 插件 20 工具**）。
