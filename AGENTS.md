@@ -22,7 +22,7 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（**110 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 真机环境坑（**111 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 不再变的决策（**20 篇** ADR ＋ `0000-template.md` 模板 = 21 个文件） | [docs/adr/](docs/adr/) |
 > | **★ 平台事实台账（端点 / 真机线格式 / 样本量 n / 平台约束，逐条带证据）** | [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md) |
 > | **★ 平台配置面整体认知（Gaia V3.8 手册语义与配置分层）** | [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) |
@@ -186,6 +186,7 @@
 | ★ **运行时间线 / 可观测性面**（`api/routes_agent.py` 的 `/runs`、`harness/trace.py`、`static/js/run-timeline.js`、`static/css/app.css` 的 `.rt-*`） | `pytest tests\test_agent_timeline.py -o addopts=""`（**5 条**：空结果是 200 不是 404 / run 与 span 一次返回 / 按 `step` 升序 / 会话过滤真的生效 / **摘要 span 自己声明 `attrs.summary`**）**+** `python tools\verify_agent_ui.py`（**19 项**端到端）。<br>★ **为什么另要一条端到端**：`verify_agent_ui.py` 读的是**计算样式**（`getComputedStyle`）而不是类名 —— 我写那个面板时凭印象编了 `badge-ok` / `badge-danger` 这些**不存在的类名**（真实的是 `badge-lime` / `badge-red`），后果是徽章退化成**灰底灰字**，而**界面上看不出哪里错了**：它只是"颜色不太对"，不是"少了一个元素"。同 PITFALLS #87 的教训：**类名对不对推不出渲染出来是什么样**。<br>★ **摘要那次调用必须标红且解释**：它几乎必然全 miss（摘要读完整段历史，前缀命中概率最低），而 miss 的价是命中的 **50 倍**。不标出来的话，用户看到"这一轮贵"只会去怪工具调用 |
 | ★ **任何 `docs/**` 或根目录的 markdown**（改链接 / 挪文件 / 提 ADR 编号 / 加存档目录） | `pytest tests\test_doc_links.py -o addopts=""`（**6 条**：断链 / 幻影 ADR 引用 / 幻影坑号 / **代码块里的链接（疑似正文被吞）** / 排除项必须真实存在且有理由 / **N 个反引号的代码段要剥干净**）。<br>★ **三类缺陷的处置口径不同，别一律改链接**：① 文件还在、只是改了名 ⇒ **改链接**；② 引用的 ADR **已退役** ⇒ 在那一行（或紧随两行）**说明它已移除**并给 `git show` 取回命令（★ 别把编号删了了事 —— 读的人需要知道"当时有一条 ADR 支撑这个判断"）；③ 那是**带日期的取证报告 / vendor 逐字存档** ⇒ 加到 `tools/check_doc_links.py` 的 `ARCHIVES` 并**写明理由** —— ★ **改存档里的链接是改写历史**（与"ADR 只增不改""CHANGELOG 是历史"同一条纪律）。<br>★ **一个整天误报的检查会把真缺陷埋掉**（实测：第一版报 789 处，其中 700+ 是假的，真正的 3 处幻影引用就埋在噪音里）—— 所以这个脚本的**作用域**（`ARCHIVES` 排除清单、剥代码块、URL 解码）是它的核心设计，不是可选项；见 PITFALLS #108 / #109 |
 | ★ 改了 `harness/**`、`prompts.py`、`cache.py`、`plugin_api.py` **或任何工具描述** | `python tools\run_evals.py --offline` + `pytest tests\eval -o addopts=""`（**12 条**离线评测，不联网不花 token）。<br>★ **这是计划 §6.3 的门禁（G3 的落地形式）：提交里必须附 before/after 数**（成功率 / 工具选择准确率 / 平均步数 / token / 缓存命中率）。<br>★ **看到「回放 miss」不要先怀疑行为**：那是**请求形状变了**（提示词 / 工具描述 / 消息装配），不是功能坏了。处置：`python tools\run_evals.py --record` 重录，然后 `git diff tests/eval/fixtures/` —— **那个 diff 就是"工具面变了多少"的量化答案**。<br>★ 夹具按**请求指纹**匹配（含 `messages + tools + temperature + max_tokens + json_mode`），这条门禁的全部价值就在于此：**改了提示词或工具描述会变成一次可见的失败**。<br>★ 夹具当前是**合成**的（`note` 字段逐份标注）：它锁的是"请求形状 + 链路行为"，**不是**"模型选得对不对"。换真机 `--record` 即可，**期望一行都不用改** |
+| ★ **想量"模型选得对不对"**（计划 §6.3 的在线层） | `python tools\run_evals.py --live`（**只预览**：算出要发几次请求，**一次都不发**）→ `--live --yes`（真跑，**花真钱**）。<br>★ **两道闸门都是承重的**：① `--live` 会**覆盖受版本控制的 `tests/eval/fixtures/*.json`** 且每次请求都花钱 —— 不带 `--yes` 时一次都不发，并在最后明说"这只是预览"（本仓在固定端口上留过教训：**"预览"与"真跑"都不报错时，人分不清自己在哪一个里**，[ADR-0012](docs/adr/0012-fixed-ports.md)）；② **没有 Key 时抛错，绝不回落脚本** —— 回落是最坏的"友好"（以为在量真模型，量到的还是脚本），与 `ReplayLLM(strict=False)` 那个 180 秒挂起同族。<br>★ 估算按**现有夹具里的调用数**算（不拍数字）；`note` 如实区分"合成"与"真机"，**反过来会让人把"链路走对了"读成"模型选对了"**。<br>★ **它不进 CI、不进本矩阵**（要联网、花钱、依赖模型当天状态）。判据：`pytest tests\test_eval_live_mode.py -o addopts=""`（**8 条**） |
 | **任何代码** | 改了就必须重跑 §3 基线四条（PITFALLS #41） |
 
 **加一个工具必须同步 5 处**（漏任何一处 = 装完静默没功能，PITFALLS #32）：

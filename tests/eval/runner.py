@@ -50,6 +50,7 @@ FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 #: 合成夹具的统一标注。★ 它**必须**出现在每个夹具里 —— 一份看起来像真机录制的
 #: 合成夹具，比没有夹具更坏：它会让人以为"工具选择准确率"量的是模型。
 SYNTHETIC_NOTE = "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record"
+LIVE_NOTE = "真机：由真实模型回答录制。★ 期望值一行都不用改（夹具锁的是请求形状）"
 
 
 # ---------------------------------------------------------------- 桩工具面
@@ -208,25 +209,93 @@ def _eval_environment(case: Case):
 # ---------------------------------------------------------------- 录制 / 回放
 
 
-def record_case(case: Case) -> dict:
-    """录一条用例的模型侧夹具（**合成**，除非把 `ScriptedClient` 换成真客户端）。"""
+class NoApiKey(RuntimeError):
+    """没有配置 API Key —— **在线层唯一的入口条件**。"""
+
+
+def live_client():
+    """造一个**真实**的 `DeepSeekClient`（计划 §6.3 的在线层）。
+
+    ## ★ 它为什么是个函数，而不是文档里的一句话
+
+    在此之前，「换成真 `DeepSeekClient`」只写在 `run_evals.py` 的文档串与这里的一行注释里
+    —— 而**文档里的一句话不是一个能跑的东西**：要真按它做，得手工改源码、记住改回来、
+    还得自己处理"没有 Key 时怎么办"。★ 本仓对这类东西的态度见 PITFALLS #110：
+    **声明了但没有入口的能力，等于没有**。
+
+    ## 没有 Key 时**抛错**，不回落
+
+    回落成脚本化客户端是最坏的一种"友好"：用户以为自己在量真模型，
+    而量到的还是脚本 —— 与 `ReplayLLM(strict=False)` 当年那个 180 秒挂起是同一族
+    （**看起来在工作，实际不是你以​为的那件事**）。所以这里直接抛 `NoApiKey`，
+    由调用方把它变成一句看得懂的提示。
+    """
+    from workbench import db as _db
+    from workbench.services.deepseek import DeepSeekClient
+    from workbench.services.settings import load_deepseek
+
+    if not getattr(_db, "_conn", None):  # 还没连库 —— 读设置要走 DB
+        _db.connect()
+    cfg = load_deepseek()
+    if not cfg.ready:
+        raise NoApiKey(
+            "在线评测需要一个真实可用的 DeepSeek API Key（设置页里那份），"
+            "当前读不到。它**不会**回落到脚本化客户端 —— 那样量到的不是真模型。"
+        )
+    return DeepSeekClient(cfg.api_key, model=cfg.model)
+
+
+def record_case(case: Case, client=None) -> dict:
+    """录一条用例的模型侧夹具。
+
+    `client is None` ⇒ **合成**（`ScriptedClient`，编好的回答）；
+    给了 `client` ⇒ **真机**（`live_client()`，真花钱）。
+
+    ★ `note` 字段**如实**写清是哪一种 —— 一份自称"合成"而其实是真机录的夹具
+    没有害处，反过来（自称真机、实为脚本）会让人把"链路走对了"读成"模型选对了"，
+    而那正是这个字段存在的唯一理由。
+    """
+    live = client is not None
     with _eval_environment(case) as (hub, _calls):
-        recorder = record.RecordingClient(ScriptedClient(case.script), name=case.id)
+        inner = client if live else ScriptedClient(case.script)
+        recorder = record.RecordingClient(inner, name=case.id)
         asyncio.run(_drive_case(case, recorder, hub))
     fixture = recorder.fixture
-    fixture["note"] = SYNTHETIC_NOTE
+    fixture["note"] = LIVE_NOTE if live else SYNTHETIC_NOTE
     fixture["case"] = case.id
     return fixture
 
 
-def record_all() -> int:
-    """录全部用例并落盘。返回写了几个文件。"""
+def record_all(client=None) -> int:
+    """录全部用例并落盘。返回写了几个文件。
+
+    ⚠️ **它会覆盖 `tests/eval/fixtures/*.json`**（受版本控制）。
+    真机重录之后，`--offline` 回放的就是真实模型的回答了 —— 那是本节的本意
+    （见 `run_evals` 的文档串），但**期望值一行都不该改**：夹具锁的是请求形状。
+    """
     db.connect()
     written = 0
     for case in cases_mod.CASES:
-        record.save_fixture(record_case(case), FIXTURE_DIR / f"{case.id}.json")
+        record.save_fixture(record_case(case, client=client), FIXTURE_DIR / f"{case.id}.json")
         written += 1
     return written
+
+
+def estimate_live_calls() -> int:
+    """真机重录大约要发多少次模型请求 —— **按现有夹具里的调用数估**。
+
+    ★ 不编一个数字：用户要凭它决定"这一下要花多少钱"，
+    而一个拍出来的估计值与一个拍出来的价格一样没用。
+    """
+    total = 0
+    for case in cases_mod.CASES:
+        path = FIXTURE_DIR / f"{case.id}.json"
+        try:
+            total += len(json.loads(path.read_text(encoding="utf-8")).get("interactions") or [])
+        except (OSError, ValueError):
+            # 没有夹具 ⇒ 保守按"每条用例至少 1 次"算（模型至少要回一句）
+            total += 1
+    return total
 
 
 @dataclass
