@@ -1,19 +1,54 @@
 """Electron 轮盘页渲染验证：SVG 扇区、Hub、动画、指纹防重绘、零 JS 错误。"""
 import json
+import os
+import pathlib
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = Path(__file__).resolve().parent.parent
-BASE = "http://127.0.0.1:18765"
+BASE = "http://127.0.0.1:18800"
+
+# ── 自足运行（2026-09-24 加）──────────────────────────────────────────────
+#
+# ★ 此前这几行是**没有**的，后果有两条，都很实在：
+#
+# ① **它会读写真实数据目录**（`WORKBENCH_DATA` 没设 ⇒ 用的是用户那份库）。
+#    本脚本会做新建/重命名/停用/删除盒子（且 `dialog` 一律 accept）——
+#    也就是**在真实数据上做破坏性操作**。
+#
+# ② ★★ **它绑的是生产端口 18765**。如果应用**正在运行**：`uvicorn` 起不来
+#    （它的报错被丢进 DEVNULL），而下面的就绪探测会**连上那个正在跑的应用** ——
+#    于是这一整套"验收"打在**真实实例**上。
+#    这正是 [ADR-0012](../docs/adr/0012-fixed-ports.md) 记的那个危险：
+#    **"旧进程还活着"与"测试戳到了真端口"两件事都不报错。**
+#
+# ⇒ 现在：临时数据目录 + 独立端口 + **端口被占就拒跑**（而不是连上去）。
+WORKBENCH_DATA = pathlib.Path(tempfile.mkdtemp(prefix="wb-verify-"))
+_ENV = {**os.environ, "WORKBENCH_DATA": str(WORKBENCH_DATA),
+        "WORKBENCH_LOG_DIR": str(WORKBENCH_DATA / "logs"),
+        "PYTHONIOENCODING": "utf-8"}
+
+
+def _port_free(port: int) -> bool:
+    with socket.socket() as sock:
+        return sock.connect_ex(("127.0.0.1", port)) != 0
+
+
+# ★ 端口被占**就拒跑**，而不是连上去（见上面那段说明）
+if not _port_free(18800):
+    raise SystemExit("✗ 端口 18800 被占用——先退出占用它的进程"
+                     "（不连上去：那样这套验收会打在真实实例上）")
 
 server = subprocess.Popen(
     [str(ROOT / ".venv" / "Scripts" / "python.exe"), "-m", "uvicorn",
-     "workbench.api:app", "--host", "127.0.0.1", "--port", "18765"],
-    cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+     "workbench.api:app", "--host", "127.0.0.1", "--port", "18800"],
+    cwd=str(ROOT), env=_ENV, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 for _ in range(40):
     try:
         urllib.request.urlopen(BASE + "/", timeout=2)

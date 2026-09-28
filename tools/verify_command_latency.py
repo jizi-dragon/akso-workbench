@@ -26,6 +26,14 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _port_free(port: int) -> bool:
+    import socket
+
+    with socket.socket() as sock:
+        return sock.connect_ex(("127.0.0.1", port)) != 0
+
 PORT = int(os.environ.get("QL_BENCH_PORT", "18801"))
 BASE = f"http://127.0.0.1:{PORT}"
 BENCH = Path(os.environ.get("TEMP", "/tmp")) / "ql_lat_bench"
@@ -121,6 +129,18 @@ def main() -> int:
     if DB.exists():
         DB.unlink()
     env = dict(os.environ, WORKBENCH_DB=str(DB))
+    # ★ 端口被占**就拒跑**，而不是连上去（2026-09-24 加）。
+    #
+    # 此前没有这一道：`uvicorn` 绑不上端口时只是**退出**（报错被丢进 DEVNULL），
+    # 而下面的就绪探测会**连上那个正在运行的应用** —— 于是这套验收打在
+    # **真实实例**上，且**没有任何一步会报错**。
+    # 这正是 [ADR-0012](../docs/adr/0012-fixed-ports.md) 记的那个危险。
+    if _port_free(PORT):
+        pass
+    else:
+        raise SystemExit(f"✗ 端口 {PORT} 被占用——先退出占用它的进程"
+                         "（不连上去：那样这套验收会打在真实实例上）")
+
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "workbench.api:app", "--host", "127.0.0.1", "--port", str(PORT)],
         cwd=str(ROOT), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

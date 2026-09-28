@@ -33,8 +33,34 @@ import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+# ── 自足运行（2026-09-24 加）──────────────────────────────────────────────
+#
+# ★ 此前这几行是**没有**的，后果有两条，都很实在：
+#
+# ① **它会读写真实数据目录**（`WORKBENCH_DATA` 没设 ⇒ 用的是用户那份库）。
+#    本脚本会做新建/重命名/停用/删除盒子（且 `dialog` 一律 accept）——
+#    也就是**在真实数据上做破坏性操作**。
+#
+# ② ★★ **它绑的是生产端口 18765**。如果应用**正在运行**：`uvicorn` 起不来
+#    （它的报错被丢进 DEVNULL），而下面的就绪探测会**连上那个正在跑的应用** ——
+#    于是这一整套"验收"打在**真实实例**上。
+#    这正是 [ADR-0012](../docs/adr/0012-fixed-ports.md) 记的那个危险：
+#    **"旧进程还活着"与"测试戳到了真端口"两件事都不报错。**
+#
+# ⇒ 现在：临时数据目录 + 独立端口 + **端口被占就拒跑**（而不是连上去）。
+WORKBENCH_DATA = pathlib.Path(tempfile.mkdtemp(prefix="wb-verify-"))
+_ENV = {**os.environ, "WORKBENCH_DATA": str(WORKBENCH_DATA),
+        "WORKBENCH_LOG_DIR": str(WORKBENCH_DATA / "logs"),
+        "PYTHONIOENCODING": "utf-8"}
+
+
+def _port_free(port: int) -> bool:
+    with socket.socket() as sock:
+        return sock.connect_ex(("127.0.0.1", port)) != 0
+
 PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
-PORT = 18797
+PORT = 18802
 BASE = f"http://127.0.0.1:{PORT}"
 
 CHECKS: list[tuple[str, bool, str]] = []

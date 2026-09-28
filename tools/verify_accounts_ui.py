@@ -1,18 +1,53 @@
 """账号中心 v2 DOM 验证：CSS 生效、统计、chips、卡片结构、四态徽标、零 JS 错误。"""
+import os
+import pathlib
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = Path(__file__).resolve().parent.parent
-BASE = "http://127.0.0.1:18765"
+BASE = "http://127.0.0.1:18798"
+
+# ── 自足运行（2026-09-24 加）──────────────────────────────────────────────
+#
+# ★ 此前这几行是**没有**的，后果有两条，都很实在：
+#
+# ① **它会读写真实数据目录**（`WORKBENCH_DATA` 没设 ⇒ 用的是用户那份库）。
+#    本脚本会做新建/重命名/停用/删除盒子（且 `dialog` 一律 accept）——
+#    也就是**在真实数据上做破坏性操作**。
+#
+# ② ★★ **它绑的是生产端口 18765**。如果应用**正在运行**：`uvicorn` 起不来
+#    （它的报错被丢进 DEVNULL），而下面的就绪探测会**连上那个正在跑的应用** ——
+#    于是这一整套"验收"打在**真实实例**上。
+#    这正是 [ADR-0012](../docs/adr/0012-fixed-ports.md) 记的那个危险：
+#    **"旧进程还活着"与"测试戳到了真端口"两件事都不报错。**
+#
+# ⇒ 现在：临时数据目录 + 独立端口 + **端口被占就拒跑**（而不是连上去）。
+WORKBENCH_DATA = pathlib.Path(tempfile.mkdtemp(prefix="wb-verify-"))
+_ENV = {**os.environ, "WORKBENCH_DATA": str(WORKBENCH_DATA),
+        "WORKBENCH_LOG_DIR": str(WORKBENCH_DATA / "logs"),
+        "PYTHONIOENCODING": "utf-8"}
+
+
+def _port_free(port: int) -> bool:
+    with socket.socket() as sock:
+        return sock.connect_ex(("127.0.0.1", port)) != 0
+
+
+# ★ 端口被占**就拒跑**，而不是连上去（见上面那段说明）
+if not _port_free(18798):
+    raise SystemExit("✗ 端口 18798 被占用——先退出占用它的进程"
+                     "（不连上去：那样这套验收会打在真实实例上）")
 
 server = subprocess.Popen(
     [str(ROOT / ".venv" / "Scripts" / "python.exe"), "-m", "uvicorn",
-     "workbench.api:app", "--host", "127.0.0.1", "--port", "18765"],
-    cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+     "workbench.api:app", "--host", "127.0.0.1", "--port", "18798"],
+    cwd=str(ROOT), env=_ENV, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 for _ in range(40):
     try:
         urllib.request.urlopen(BASE + "/", timeout=2)
@@ -118,7 +153,26 @@ with sync_playwright() as pw:
     checks.append((f"C18 站点选项无账号数（‘{opt_text}’）", opt_text and "账号" not in opt_text))
 
     # C19 盒子 ✎ 点击 → ask 模态出现（Electron 无 prompt 的替代路径）
+    #
+    # ★ 2026-09-24 修：这条判据**依赖一个从来没被造出来的前提**。
+    # 全新数据目录里只有 **1 个默认盒**（`bx: 1`），而 ✎（`data-op="rename"`）
+    # **只出现在有名盒子上** ⇒ 下面那个选择器永远找不到目标，
+    # 判据报"功能坏了"，而真相是"**没数据**"。
+    # ⇒ 现在**自己先建一个有名字的盒子**（用户就是这么做的），再验重命名。
     pg.click("#batch-toggle")  # 确保退出批量态再操作
+    pg.evaluate("""() => {
+      const add = [...document.querySelectorAll('#box-chips .chip')].find(x => x.dataset.add);
+      add?.click();
+    }""")
+    pg.wait_for_timeout(300)
+    pg.fill("#ask-input", "验收盒")
+    pg.click("#ask-ok")
+    pg.wait_for_timeout(700)
+    has_named = pg.evaluate(
+        """() => [...document.querySelectorAll('#box-chips .chip')]
+                 .some(x => x.querySelector('[data-op="rename"]'))""")
+    checks.append(("C19a 建有名字的盒子（✎ 才会出现）", has_named))
+
     pg.evaluate("() => { const c = [...document.querySelectorAll('#box-chips .chip')].find(x => x.querySelector('[data-op=\"rename\"]')); c?.querySelector('[data-op=\"rename\"]')?.click(); }")
     pg.wait_for_timeout(300)
     ask_visible = pg.evaluate("() => !!document.getElementById('ask-modal').open")
