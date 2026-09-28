@@ -68,6 +68,12 @@ def build_artifacts(workspace: Path) -> list[str]:
     # 不关心返回值：要的就是它落盘的产物（预览渲染器面对的是这些文件）
     run_spider(replay.ReplayClient(fixture), ["training_mgr__c"], output_dir=workspace)
 
+    # ★ 手写探针产物：**专测**列表 / 有序列表 / 加粗 ——
+    # 真产物里今天一条列表都没有（`step2-status-table.md` 是 0 条），
+    # 所以"列表渲染"这件事只能靠一份带列表的产物才验得到。
+    # 名字直说它是探针，免得下次有人以为它是产品产物。
+    (workspace / "markdown-probe.md").write_text(MD, encoding="utf-8")
+
     graph = {
         "name": "两页探针",
         "nodes": [
@@ -163,7 +169,8 @@ def main() -> int:
             wait("#ins-artifacts table.mtable tbody tr", "产物列表")
             names = page.eval_on_selector_all(
                 "#ins-artifacts tbody tr td:first-child", "els => els.map(e => e.textContent)")
-            expect = {"step1-relations.md", "step2-status-table.md", "step3-attribution.md",
+            expect = {"markdown-probe.md",
+                      "step1-relations.md", "step2-status-table.md", "step3-attribution.md",
                       "step4-workflows.drawio", "spider-network.md", "spider-network.json",
                       "spider-network.drawio", "multi-page-probe.drawio"}
             checks.append((f"P1 产物列表（{len(names)} 件）", expect <= set(names)))
@@ -198,10 +205,52 @@ def main() -> int:
             step1_heads = page.eval_on_selector_all(
                 ".apv-md table.apv-table th", "els => els.map(e => e.textContent)")
             bullets = page.eval_on_selector_all(".apv-md li", "els => els.map(e => e.textContent)")
-            checks.append((f"P8 step1 关联表列（{step1_heads[:3]}）",
-                           step1_heads[:3] == ["来源对象", "关联对象", "经由字段"]))
-            checks.append((f"P9 列表项渲染（{bullets[:1]}）",
-                           any("未展开" in b or "自环" in b for b in bullets)))
+
+            # ★ 2026-09-24 修：这两条**写死了产品的文案**，于是产品换过说法之后它们
+            # 静默过期（判据写的是 `关联对象/经由字段`，而产物今天是 `相关对象/经由关系`）。
+            # ⇒ 改成断言「**渲染出来的 == 源文件里的**」——
+            #    这个**关系**不会随文案变化而过期，而那正是这两条要买的东西。
+            src_md = (workspace / "step1-relations.md").read_text(encoding="utf-8")
+            src_heads = []
+            for line in src_md.splitlines():
+                if line.lstrip().startswith("|") and "---" not in line:
+                    src_heads = [c.strip() for c in line.strip().strip("|").split("|")]
+                    break
+            src_bullets = [ln.strip()[1:].strip() for ln in src_md.splitlines()
+                           if ln.lstrip().startswith("- ")]
+
+            checks.append((f"P8 关联表列 == 源文件（{step1_heads[:3]}）",
+                           bool(src_heads) and step1_heads[:len(src_heads)] == src_heads))
+            # ⚠️ 这一条今天两边都是 **0** ⇒ 它是"**不多不少**"的一致性判据，
+            # **不**证明渲染器会渲染列表（那一条在上面的 P7a，那份产物里真有列表）。
+            checks.append((f"P9 列表项数 == 源文件（渲染 {len(bullets)} / 源 {len(src_bullets)}）",
+                           len(bullets) == len(src_bullets)))
+            page.click("#apv-close")
+            page.wait_for_timeout(300)
+
+            # —— 手写探针产物：列表 / 有序列表 / 加粗（真产物里没有列表） ——
+            #
+            # ★ 为什么单要一份探针：`step2-status-table.md` 今天**一条 `- ` 都没有**
+            # ⇒ 在它上面断言"渲染出的 `<li>` 数 == 源里的 `- ` 数"永远是 **0 == 0**，
+            # 一个把列表整个吞掉的渲染器同样通过。**那种断言比没有更坏**：
+            # 它占着"这里验过了"的位置（PITFALLS #112 那一族）。
+            page.click("#ins-artifacts tbody tr:has-text('markdown-probe.md') a:has-text('预览')")
+            wait("#artifact-preview[open] .apv-md", "markdown 探针")
+            li_texts = page.eval_on_selector_all(
+                ".apv-md li", "els => els.map(e => e.textContent)")
+            src_bullets = [ln.strip()[2:].strip() for ln in MD.splitlines()
+                           if ln.lstrip().startswith("- ")]
+            checks.append((f"P9a 无序列表项（渲染 {len(li_texts)} / 源 {len(src_bullets)}）",
+                           len(src_bullets) >= 2 and len(li_texts) == len(src_bullets)))
+            checks.append((f"P9b 列表文字对得上（{li_texts[:1]}）",
+                           bool(li_texts) and "未展开" in li_texts[0]))
+            checks.append(("P9c 加粗照渲染（不是星号原文）",
+                           page.eval_on_selector_all(".apv-md li strong", "els => els.length") >= 1))
+            # ★ ool(li_texts) and 是承重的：ll(... for x in []) 在空列表上**恒真**，
+            # 而"渲染器把列表整个吞掉"恰恰会让它是空的 —— 那时这条判据
+            # 会**在缺陷版上通过**（反证实测：拆掉列表分支后它是唯一还绿的 P9*）。
+            checks.append(("P9d 列表里没有残留的星号原文",
+                           bool(li_texts) and all("**" not in x for x in li_texts)))
             page.click("#apv-close")
             page.wait_for_timeout(300)
 
@@ -214,7 +263,11 @@ def main() -> int:
                 ".apv-canvas:not([hidden]) svg text tspan", "els => els.map(e => e.textContent)")
             paths = page.eval_on_selector_all(".apv-canvas:not([hidden]) svg .apv-edge", "els => els.length")
             checks.append((f"P10 drawio 节点 {shapes} 个 / 连线 {paths} 条", shapes == 4 and paths == 3))
-            checks.append((f"P11 节点文字（{nodes[:3]}）", "开始" in nodes and "审批" in nodes))
+            # ★ 2026-09-24 修：`"审批" in nodes` 是**列表精确匹配**，而 drawio 的单元格
+            # 是 `审批任务`（`&#xa;` 把内容切成多个 tspan）⇒ 它永远不成立。
+            # 本意显然是**子串**判断 —— 一个"看起来像在验文字、其实在验整格相等"的判据。
+            checks.append((f"P11 节点文字（{nodes[:3]}）",
+                           any("开始" in n for n in nodes) and any("审批" in n for n in nodes)))
             page.click("#apv-close")
             page.wait_for_timeout(300)
 
