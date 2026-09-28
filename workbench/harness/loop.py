@@ -51,7 +51,7 @@ from .. import cache, logging_setup
 from ..plugin_api import Risk, ToolContext, ToolHub, ToolStatus, Trust
 from ..services.deepseek import DeepSeekClient
 from . import trace, transcript
-from .context import content_to_text, estimate_messages_tokens
+from .context import content_to_text, estimate_messages_tokens, estimate_request_tokens, estimate_tools_tokens
 from .safety import SafetyGate
 from .types import AgentConfig, make_event
 
@@ -243,6 +243,11 @@ class _SpanClient:
             attrs={
                 "messages": len(messages),
                 "tools": len(tools or []),
+                # ★ 「估算 vs 真实」的配对值（计划 §7.1 的偏差表靠它）。
+                # 真实值在同一条 span 的 `usage.prompt_tokens` 里 ——
+                # 两个数记在**同一条**上，比较就不需要 join，
+                # 也没有"配错了一次请求"的余地。
+                "estimatedTokens": estimate_request_tokens(messages, tools),
                 "finishReason": finish,
                 # 用量放 attrs 而不新开列：它是**这一步**的成本，而 run 级的总量
                 # 已经在 `agent_run` 上 —— 不建第二个"看起来也是总量"的列（铁律 28）
@@ -309,7 +314,12 @@ async def run_agent_loop(
     # 包一层客户端，为**每一次**模型调用记一条 `model` span（含摘要那次 `chat` ——
     # 它也是真实开销，而且几乎必然全 miss，见 `cache.UsageStats.summary_calls`）。
     client = _SpanClient(client, recorder)
-    conversation = await _build_context(messages, client, config, conversation_id, meter)
+    # ★ 工具 schema 是**每一轮都发**的常量（实测 18 个工具约 2,104 token），
+    # 而它不在 messages 里 —— 所以折叠判定要单独把它算进去（计划 §7.1）。
+    # 在这里算一次就够：`plugins` 在整个回合里不变，schema 也就不变。
+    _tools_tokens = estimate_tools_tokens(registry.list_api_for(plugins))
+    conversation = await _build_context(messages, client, config, conversation_id, meter,
+                                        tools_tokens=_tools_tokens)
 
     # 整个循环（含它内部发起的工具调用）都带 `conversationId`。
     # 注意：`contextvars` 在 `async for` 的每次迭代里**不会被自动传播**到
@@ -601,6 +611,7 @@ async def _build_context(
     config: AgentConfig,
     conversation_id: str,
     meter: UsageMeter,
+    tools_tokens: int = 0,
 ) -> list[dict]:
     """组装带**稳定前缀**的上下文；只在超预算时才折叠一次历史。
 
@@ -614,6 +625,7 @@ async def _build_context(
         window_tokens=config.context_window_tokens,
         threshold=config.context_threshold,
         keep_recent_turns=config.keep_recent_turns,
+        tools_tokens=tools_tokens,
     )
     if not plan.needs_summary():
         return plan.messages
@@ -630,6 +642,7 @@ async def _build_context(
         window_tokens=config.context_window_tokens,
         threshold=config.context_threshold,
         keep_recent_turns=config.keep_recent_turns,
+        tools_tokens=tools_tokens,
     )
     return replanned.messages
 

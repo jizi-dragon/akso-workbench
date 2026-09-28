@@ -177,6 +177,7 @@ def plan_prefix(
     window_tokens: int,
     threshold: float,
     keep_recent_turns: int,
+    tools_tokens: int = 0,
 ) -> PrefixPlan:
     """把完整对话切成「稳定前缀 + 待追加」。
 
@@ -194,7 +195,7 @@ def plan_prefix(
     tail = body[state.summarized_upto:]
     messages = _compose(pinned, tail, state.frozen)
 
-    if not _over_budget(messages, window_tokens, threshold):
+    if not _over_budget(messages, window_tokens, threshold, tools_tokens):
         return PrefixPlan(messages=messages, truncated=[])
 
     # 超预算才折叠：「摘要边界之后、最近 keep_recent_turns 轮之前」那一段并进摘要。
@@ -229,10 +230,24 @@ def _split_keep(body: list[dict], keep_recent_turns: int) -> tuple[list[dict], l
     return kept, older
 
 
-def _over_budget(messages: list[dict], window_tokens: int, threshold: float) -> bool:
+def _over_budget(messages: list[dict], window_tokens: int, threshold: float,
+                 tools_tokens: int = 0) -> bool:
+    """折叠判定：**这个请求**是不是超了软门槛（计划 §7.1）。
+
+    ★ 用 `estimate_messages_tokens + tools_tokens` 而不是只用前者：
+    超窗的是**请求**，而工具 schema 是每一轮都发的常量（实测 18 个工具约 2,104 token）。
+    不算它的话，窗口设小一点就**永远不会折叠** —— 而那正是
+    `harness/loop.py` 记下的那个实测故障（"预算 1000 token 时第 5 次请求已 12,059，
+    而折叠发生 0 次"）。
+
+    ⚠️ `tools_tokens` **缺省 0**：没有工具面的调用方行为与从前**逐字相同**，
+    不需要知道这个参数存在。
+    """
     from .harness.context import estimate_messages_tokens
 
-    return estimate_messages_tokens(messages) > int(window_tokens * threshold)
+    return estimate_messages_tokens(messages) + max(0, int(tools_tokens)) > int(
+        window_tokens * threshold
+    )
 
 
 # ---------------------------------------------------------------- 用量入账

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 _CJK = re.compile(r"[\u4e00-\u9fff]")
@@ -44,6 +45,38 @@ def estimate_tokens(text: str) -> int:
     return len(_CJK.findall(text)) + len(_WORD.findall(text))
 
 
+def tool_calls_text(message: dict) -> str:
+    """把一条消息里**不属于 `content` 的那部分**压成可估的文本（计划 §7.1）。
+
+    ## 为什么必须有这个函数
+
+    `estimate_messages_tokens` 此前**只算 `content`** —— 于是 assistant 消息里的
+    `tool_calls`（工具名 + 参数 JSON）与 tool 消息里的 `tool_call_id` **一个 token 都不算**。
+    计划 §7.1 把这个缺陷的后果写得最清楚：**估偏低会导致该折叠没折叠**。
+
+    ★ 而它们不是零头：一次 `read_local_file` 的参数是
+    `{"path": "...", "maxBytes": 4000}`，一个回合里几条这样的 JSON 加起来
+    比那些 `content: ""` 的 assistant 消息**本身大得多**。
+
+    ⚠️ 这里只管 `tool_calls` / `tool_call_id`，**不管工具 schema** ——
+    后者是**请求级**的（不在 messages 里），走 `estimate_tools_tokens`。
+    两者分开是因为调用方的需要不同（见 `estimate_request_tokens` 的文档串）。
+    """
+    parts: list[str] = []
+    calls = message.get("tool_calls")
+    if calls:
+        # 序列化而不是"数一数字段"：模型看到的就是这段 JSON，
+        # 而它的大小取决于参数内容（那正是会变的那个量）。
+        parts.append(json.dumps(calls, ensure_ascii=False))
+    call_id = message.get("tool_call_id")
+    if call_id:
+        parts.append(str(call_id))
+    name = message.get("name")
+    if name:
+        parts.append(str(name))
+    return "\n".join(parts)
+
+
 def estimate_content_tokens(content: object) -> int:
     """content（字符串或 parts）折合多少 token：文本按字算 + 每张图一个常数。"""
     if isinstance(content, list):
@@ -54,7 +87,46 @@ def estimate_content_tokens(content: object) -> int:
 
 
 def estimate_messages_tokens(messages: list[dict]) -> int:
-    return sum(estimate_content_tokens(m.get("content")) + 4 for m in messages)
+    """一批消息折合多少 token：`content` ＋ **`tool_calls` / `tool_call_id`** ＋ 每条 4。
+
+    ⚠️ **它不含工具 schema**（那是请求级的，不在 messages 里）——
+    要那个量就用 `estimate_request_tokens(messages, tools)`。
+    分开是刻意的：`_over_hard_limit` **刻意**只用不含 schema 的这一个
+    （宁可漏判也不要误判，见那里的文档串），而折叠判定要用全量。
+    """
+    return sum(
+        estimate_content_tokens(m.get("content"))
+        + estimate_tokens(tool_calls_text(m))
+        + 4
+        for m in messages
+    )
+
+
+def estimate_tools_tokens(tools: list[dict] | None) -> int:
+    """工具 schema（`tools` 请求参数）折合多少 token。
+
+    ## ★ 这是**最大**的那一块，而它此前完全没被统计
+
+    实测（2026-09-24，18 个工具）：schema 序列化约 **2,104 token**，
+    而同一段对话的"消息正文"只有 **190** —— schema 是它的 **11 倍**。
+    ⇒ 一个真实请求里 **91%** 的 token 此前不在估算范围内。
+
+    ★ 这一段是**每一轮都发**的常量：`harness/loop.py` 的文档串早就写着
+    "全量注入约 2k token/轮"，但**估算里没有它** —— 于是窗口设小一点，
+    折叠永远不会触发（估出来的数远低于真实值），直到平台把请求拒回来。
+    """
+    if not tools:
+        return 0
+    return estimate_tokens(json.dumps(tools, ensure_ascii=False))
+
+
+def estimate_request_tokens(messages: list[dict], tools: list[dict] | None = None) -> int:
+    """**一次真实请求**的估算 = 消息 ＋ 工具 schema（计划 §7.1 的口径）。
+
+    ★ 折叠判定必须用它，不能用 `estimate_messages_tokens` ——
+    前者是"这个请求有多大"，后者是"这段历史有多大"，而**超窗的是前者**。
+    """
+    return estimate_messages_tokens(messages) + estimate_tools_tokens(tools)
 
 
 def split_turns(messages: list[dict]) -> list[list[dict]]:
