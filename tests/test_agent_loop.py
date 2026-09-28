@@ -13,6 +13,7 @@ import pytest
 from pydantic import BaseModel
 
 from workbench import approvals, db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
 from workbench.harness.loop import run_agent_loop
 from workbench.harness.prompts import build_system_prompt
@@ -130,7 +131,7 @@ def hub(monkeypatch):
         pa.ToolSpec(name="probe_write", description="写动作", args_model=ProbeArgs,
                     handler=probe_write, risk=pa.Risk.DANGEROUS, reversibility=pa.Reversibility.IRREVERSIBLE, trust=pa.Trust.LOCAL, timeout_s=5),
     ]))
-    monkeypatch.setattr(pa, "_hub", fresh)
+    monkeypatch.setattr(hub_mod, "_hub", fresh)
     return fresh
 
 

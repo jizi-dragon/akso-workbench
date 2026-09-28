@@ -242,6 +242,10 @@
 
 ---
 
+| 120 | 🆕 | **★★ 一条不变量违规活了一整个项目期，因为**判据对最常见的那种写法是瞎的**** | **症状**（2026-09-24，补反证时撞到）：给 I4（`plugins → plugin_api`，**永不反向**）补反证，往 `plugin_api.py` 加一行 `from . import db` —— **判据照样绿**。查下去发现两件事：<br>　① `tests/test_dependency_direction.py` 的 `_imports()` **对 `from . import plugins` 这种形态算出来是空模块名** —— 它只取 `node.module`（这里是 `None`），**完全没看 `node.names`**。而那是本仓**最常见的写法之一**（`from .. import db` / `config` / `cache` 在 `workbench/api/` 下有十几处）；<br>　② 修好解析之后，`plugin_api.py` 的 `get_hub()` **当场变红** —— 它在里面 `from . import plugins` ＋ `load_all(_hub)`，是货真价实的反向依赖。<br>**★★ 而它为什么活这么久**：那两行是**局部导入**（函数体内），注释逐字写着「本地导入：**避免模块循环**」—— <br>**作者知道这是反向依赖，用局部导入把环绕开了**。⇒ 双重看不见：局部导入让它不出现在模块头部，解析缺口让判据读不出模块名。<br>**根因**：① ★★ **局部导入能解「循环」，解不了「方向」** —— `import` 成功 ≠ 依赖方向对，而那个区分**不在报错里**；② ★ **判据的解析能力决定了它能看见什么**，而"看不见"的表现是**全绿**（与"没有违规"不可区分）；③ ★ **最常见的写法恰好是解析器最容易漏的那一种**（`from X import a, b` 里真正的模块名在 `names` 里，不在 `module` 里）—— 漏掉它，判据就只覆盖了**少数写法**；④ 局部导入有个**正当用途**（避免循环），于是它成了一个"看起来有理由"的藏身处。<br>**判据**：`pytest tests/test_dependency_direction.py -o addopts=""`（**5 条**）＋ 反证清单里那 5 条（I4 / I5 / I7 / I9 / I14）。修复后 `_imports()` 会把 `from <base> import a, b` 解析成 `<base>.a` / `<base>.b`。<br>**处置**：**已处置** —— 修解析缺口；★ **把装配器整个搬出 `plugin_api`**，住进新的扁平模块 `workbench/hub.py`（**[ADR-0025](../docs/adr/0025-hub-assembler-lives-in-the-host.md)**）；`plugin_api` **不再提供** `get_hub` / `reset_hub`（**刻意不留兼容再导出** —— 那正是这类违规最容易复活的方式）；6 个产品文件 ＋ 16 个测试文件的调用点改到 `workbench.hub`。★ 现在 `plugin_api.py` 一处宿主 import 都没有。<br>★★ **搬迁当场又证明了一次"机械改动要靠判据兜"**：全量 pytest 抓出 **4 处漏改**（`tests/eval/runner.py` 的 `pa._hub`、`test_tools_doc.py` 的 `reset_hub`、`test_plugin_api.py` 的 import、以及一处语法被改坏）—— 而它们在 `git diff` 里**长得和改对的地方一模一样**。<br>**推广**：① ★★ **"import 成功"与"依赖方向对"是两件事** —— 局部导入、`TYPE_CHECKING` 块、字符串导入都能让前者成立而后者不成立；② ★★ **判据要拿"本仓最常见的写法"去反证**，不要拿一个方便的写法 —— 我第一版的反证注入用了 `from .. import db`（**level 2**，其实指向根部而不是 `workbench.db`）⇒ 修好解析后它**仍然不红**，而真相是我的注入**根本不是那条违规**（PITFALLS #112 那一族：**反证自己也会写错**）；③ ★ **局部导入要问一句"我在躲什么"** —— 躲循环是正当的，躲方向不是；④ ★ **搬迁类改动的判据是全量测试**，`git diff` 帮不上忙（改对与改错长得一样）。 |
+
+---
+
 ---
 
 ## 维护规则

@@ -284,6 +284,47 @@ CASES: list[tuple[str, str, str, str, str]] = [
         "    row = await asyncio.to_thread(run)",
         "    row = run()  # 缺陷版：直接在事件循环上跑那个同步函数",
     ),
+    # ── 补齐 §5 剩下的 5 条不变量（2026-09-24 完成度核对翻出来的"有判据、无反证"）
+    #    ★ 它们此前只登记在 tests/test_invariant_coverage.py 的 PENDING 里；
+    #    棘轮意味着那一份**只能变小**，所以补上之后要把它移进 COVERED。
+    (
+        "I4：plugin_api 不得依赖宿主",
+        "tests/test_dependency_direction.py::test_plugin_api_depends_on_nothing_of_the_host",
+        "workbench/plugin_api.py",
+        "from __future__ import annotations\n",
+        "from __future__ import annotations\n\nfrom . import db  # 缺陷版：认识宿主\n",
+    ),
+    (
+        "I5：`_tools` 是派生视图（禁用要让工具消失）",
+        "tests/test_skills.py::test_disable_hides_tools_but_keeps_plugin",
+        "workbench/plugin_api.py",
+        "        self._disabled.add(plugin_id)\n        self._rebuild()\n",
+        "        self._disabled.add(plugin_id)\n",
+    ),
+    (
+        "I7：审计写在唯一扼流点",
+        "tests/test_sandbox.py::test_run_records_audit_on_success_and_keeps_label",
+        "workbench/sandbox/runner.py",
+        "    audit.record(result, label=req.label, argv=req.argv)\n",
+        "",
+    ),
+    (
+        "I9：脚本式 Skill 的 risk 不得低于 write",
+        "tests/test_skill_scripts.py::test_script_risk_floor_is_write",
+        "workbench/skills/library.py",
+        "    risk = _stricter(declared or Risk.WRITE, Risk.WRITE)\n",
+        "    risk = declared or Risk.READ  # 缺陷版：不设下限\n",
+    ),
+    (
+        "I14：core 插件不可卸载",
+        "tests/test_skills.py::test_core_plugins_cannot_be_uninstalled",
+        "workbench/plugin_api.py",
+        # ★ 注入点在**第一道**守卫（空的 capability_id 直接拒）。
+        # 第一版注入的是第二道（`guarded`），而**判据照样绿** ——
+        # 因为第一道先拦住了。⇒ 判据不空，是我的注入不到位。
+        "        if not capability_id or not str(capability_id).strip():\n",
+        "        if False:  # 缺陷版：第一道守卫关了\n",
+    ),
 ]
 
 

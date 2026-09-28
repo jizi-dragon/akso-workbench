@@ -25,7 +25,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from .. import db
-from ..plugin_api import get_hub
+from ..hub import get_hub
 from ..skills import library as L
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])

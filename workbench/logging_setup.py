@@ -449,7 +449,7 @@ def _stderr_fallback(line: str) -> None:
 def reset_for_tests() -> None:
     """仅测试用：摘掉本模块装的 handler 并复位装配标志。
 
-    与 `plugin_api.reset_hub()` / `approvals.reset_store()` 同一约定——
+    与 `hub.reset_hub()` / `approvals.reset_store()` 同一约定——
     否则一个测试把 root logger 配上文件 handler 之后，后续测试会跟着往那个文件写，
     且 root 的级别被改掉会影响 `caplog` 类断言。
     """

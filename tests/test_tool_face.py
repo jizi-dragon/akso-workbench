@@ -36,6 +36,7 @@ import pytest
 from pydantic import BaseModel
 
 from workbench import db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
 from workbench.api import routes_chat
 from workbench.harness.tools import default_registry
@@ -140,7 +141,7 @@ def test_selfcheck_exposes_the_budget_failure(monkeypatch) -> None:
     hub = pa.ToolHub()
     hub.add_plugin(pa.Plugin(id="big", title="大插件",
                              tools=[_spec(f"probe_{i}") for i in range(pa.MAX_TOTAL_TOOLS + 1)]))
-    monkeypatch.setattr(pa, "_hub", hub)
+    monkeypatch.setattr(hub_mod, "_hub", hub)
 
     out = selfcheck()
     assert out["ok"] is False

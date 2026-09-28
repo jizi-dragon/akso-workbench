@@ -30,6 +30,7 @@ import pytest
 from pydantic import BaseModel
 
 from workbench import approvals, cache, db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
 from workbench.harness.loop import run_agent_loop
 from workbench.harness.tools import default_registry
@@ -55,7 +56,7 @@ class _Probe:
         hub = pa.ToolHub()
         approvals.install(hub)
         hub.add_plugin(pa.Plugin(id="probe", title="探针", tools=specs))
-        monkeypatch.setattr(pa, "_hub", hub)
+        monkeypatch.setattr(hub_mod, "_hub", hub)
         self.hub = hub
         self.ran: list[str] = []
 

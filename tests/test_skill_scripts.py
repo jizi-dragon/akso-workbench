@@ -18,7 +18,8 @@ import zipfile
 
 import pytest
 
-from workbench.plugin_api import Risk, get_hub, reset_hub
+from workbench.hub import get_hub, reset_hub
+from workbench.plugin_api import Risk
 from workbench.sandbox import layout as sandbox_layout
 from workbench.sandbox.runner import ExecResult
 from workbench.skills import layout

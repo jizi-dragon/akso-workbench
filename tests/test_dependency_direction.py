@@ -63,6 +63,21 @@ def _imports(path: pathlib.Path) -> list[tuple[str, int]]:
             else:
                 target = node.module or ""
             found.append((target, node.lineno))
+            # ★ 2026-09-24 修：`from .. import db` 这种形态**此前算出来是空串** ——
+            # 它只取了 `node.module`（这里是 `None`），完全没看 `node.names`。
+            # 而那是本仓**最常见的写法之一**（`from .. import db` / `config` / `cache`
+            # 在 `workbench/api/` 下有十几处）⇒ 一条**活着的**盲点。
+            #
+            # ★ 是**反证**翻出来的：往 `plugin_api.py` 加一行 `from .. import db`，
+            # 判据**照样绿**（`_violations` 拿到的 target 是 `""`）。
+            #
+            # 语义：`from <base> import a, b` 里，每个名字都可能指向
+            # `<base>.<name>`（子模块）或 `<base>` 自己的属性 —— 两种都要报，
+            # 否则"导入了一个子模块"会被漏掉。
+            if node.module is None:
+                for alias in node.names:
+                    found.append((f"{target}.{alias.name}" if target else alias.name,
+                                  node.lineno))
     return found
 
 

@@ -14,7 +14,9 @@ import pytest
 from pydantic import BaseModel
 
 from workbench import approvals, db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
+from workbench.hub import get_hub
 
 # ---------------------------------------------------------------- 夹具
 
@@ -26,7 +28,7 @@ def hub(monkeypatch):
     approvals.reset_store()
     fresh = pa.ToolHub()
     approvals.install(fresh)          # 审计写入器 + 确认门
-    monkeypatch.setattr(pa, "_hub", fresh)
+    monkeypatch.setattr(hub_mod, "_hub", fresh)
     return fresh
 
 
@@ -423,7 +425,7 @@ def test_real_hub_has_all_plugins_and_no_failures() -> None:
     """真实中枢（builtin + 联网检索 + 三大业务）必须装配干净，且必需工具齐。"""
     from workbench.api.routes_agent import REQUIRED_TOOLS
 
-    hub = pa.get_hub()
+    hub = get_hub()
     assert {p.id for p in hub.plugins} >= {
         "builtin", "websearch", "insight", "accounts",
     }
@@ -450,7 +452,7 @@ def test_plugin_manifest_matches_packaging_manifest() -> None:
 
 def test_web_search_tool_is_registered() -> None:
     """联网检索必须是 read 级（它只读网页，不该让用户点确认）。"""
-    spec = pa.get_hub().get("web_search")
+    spec = get_hub().get("web_search")
     assert spec is not None, "web_search 没装 —— DeepSeek API 不支持内置联网，这是唯一通路"
     assert spec.risk is pa.Risk.READ
     assert spec.plugin_id == "websearch"
@@ -463,7 +465,7 @@ def test_real_hub_risk_grading() -> None:
     > （`factory_create` 曾是唯一一个），因此这里不再有 dangerous 期望项——
     > "dangerous 归零"这件事本身由 `tests/test_app.py::test_agent_selfcheck` 守着。
     """
-    hub = pa.get_hub()
+    hub = get_hub()
     expected = {
         "insight_read_config": pa.Risk.READ,
         "insight_run": pa.Risk.READ,
@@ -490,14 +492,14 @@ def test_real_hub_schema_budget() -> None:
     ⚠️ 下次再涨之前先问：**能不能靠插件白名单把工具面按场景裁剪**
     （`hub.list_api_for(plugins)` 已经支持），而不是继续抬这个数字。
     """
-    hub = pa.get_hub()
+    hub = get_hub()
     payload = json.dumps(hub.list_api_for(None), ensure_ascii=False)
     assert len(hub.specs()) <= 18, f"工具数 {len(hub.specs())} 已超预算，考虑拆分插件白名单"
     assert len(payload) < 24_000, f"工具 schema 体积 {len(payload)} 字符，偏大"
 
 
 def test_plugin_whitelist_filters_tools() -> None:
-    hub = pa.get_hub()
+    hub = get_hub()
     only_insight = {t["function"]["name"] for t in hub.list_api_for(["insight"])}
     assert only_insight and all(n.startswith("insight_") for n in only_insight)
     assert "web_search" not in only_insight

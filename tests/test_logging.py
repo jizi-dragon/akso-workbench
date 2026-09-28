@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from workbench import approvals, db
+from workbench import hub as hub_mod
 from workbench import logging_setup as log
 from workbench import plugin_api as pa
 
@@ -363,7 +364,7 @@ def probe_hub(monkeypatch):
         pa.ToolSpec(name="probe_echo", description="回显", args_model=ProbeArgs,
                     handler=_probe_handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL, timeout_s=5),
     ]))
-    monkeypatch.setattr(pa, "_hub", hub)
+    monkeypatch.setattr(hub_mod, "_hub", hub)
     return hub
 
 

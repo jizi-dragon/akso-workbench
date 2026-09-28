@@ -40,7 +40,8 @@ from pydantic import BaseModel, Field
 
 from .. import db
 from ..approvals import current_selection, option_provider, pending_store
-from ..plugin_api import Risk, ToolContext, ToolStatus, get_hub
+from ..hub import get_hub
+from ..plugin_api import Risk, ToolContext, ToolStatus
 
 logger = logging.getLogger("workbench.agent")
 

@@ -36,6 +36,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from workbench import approvals, cache, db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
 from workbench.harness import record
 from workbench.harness.loop import run_agent_loop
@@ -172,13 +173,13 @@ def _system_prompt() -> str:
 def _prepare(case: Case) -> tuple[pa.ToolHub, list[str]]:
     """装好 approvals + 桩工具面，返回 `(hub, calls)`。
 
-    ⚠️ **它改全局状态**（`pa._hub` 是进程级单例）。所以调用方**必须**走
+    ⚠️ **它改全局状态**（`hub_mod._hub` 是进程级单例）。所以调用方**必须**走
     `_eval_environment()`，不要直接用它 —— 见那个上下文管理器的文档串。
     """
     approvals.reset_store()
     hub, calls = eval_hub(case)
     approvals.install(hub)
-    pa._hub = hub  # noqa: SLF001 —— 内置插件（确认工具）按单例取中枢
+    hub_mod._hub = hub  # noqa: SLF001 —— 内置插件（确认工具）按单例取中枢
     return hub, calls
 
 
@@ -186,7 +187,7 @@ def _prepare(case: Case) -> tuple[pa.ToolHub, list[str]]:
 def _eval_environment(case: Case):
     """装好评测环境，**退出时逐字还原全局状态**。
 
-    ★★ 这里必须还原 `pa._hub`：它是**进程级单例**，而评测把它换成
+    ★★ 这里必须还原 `hub_mod._hub`：它是**进程级单例**，而评测把它换成
     "真声明 + 桩 handler"的工具面。不换回去的话，**之后所有用例看到的都是桩**。
 
     实测（2026-09-24，第一次跑全量时）：不还原 ⇒ 全量测试 **8 条红**，
@@ -197,12 +198,12 @@ def _eval_environment(case: Case):
     这条与本仓那句老话是同一件事：**"测试之间共享的全局状态"是归因错误的温床**
     （PITFALLS #71 同族）。卸载比装载更需要被写出来。
     """
-    previous_hub = pa._hub  # noqa: SLF001
+    previous_hub = hub_mod._hub  # noqa: SLF001
     try:
         hub, calls = _prepare(case)
         yield hub, calls
     finally:
-        pa._hub = previous_hub  # noqa: SLF001
+        hub_mod._hub = previous_hub  # noqa: SLF001
         approvals.reset_store()
 
 

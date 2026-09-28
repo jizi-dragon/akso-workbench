@@ -28,6 +28,7 @@ import pytest
 from pydantic import BaseModel
 
 from workbench import approvals, cache, db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
 from workbench.api import routes_chat
 from workbench.harness import stop as stop_mod
@@ -132,7 +133,7 @@ def hub(ready, monkeypatch):
                     trust=pa.Trust.LOCAL,
                     confirm_payload=_short_confirm),
     ]))
-    monkeypatch.setattr(pa, "_hub", tool_hub)
+    monkeypatch.setattr(hub_mod, "_hub", tool_hub)
     return tool_hub, executed
 
 

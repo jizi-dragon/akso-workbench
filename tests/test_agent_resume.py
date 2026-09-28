@@ -44,6 +44,7 @@ import pytest
 from pydantic import BaseModel
 
 from workbench import approvals, db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
 from workbench.harness import transcript
 from workbench.harness.loop import run_agent_loop
@@ -212,7 +213,7 @@ def test_a_real_run_repairs_the_previous_crash(ready, monkeypatch) -> None:
     approvals.reset_store()
     hub = pa.ToolHub()
     approvals.install(hub)
-    monkeypatch.setattr(pa, "_hub", hub)
+    monkeypatch.setattr(hub_mod, "_hub", hub)
 
     async def handler(args, ctx):
         return "这次的结果"

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..hub import get_hub  # noqa: F401 —— 旧名字的再导出
 from ..plugin_api import (  # noqa: F401 —— 旧名字的再导出
     MAX_RESULT_CHARS,
     Arg,
@@ -23,7 +24,6 @@ from ..plugin_api import (  # noqa: F401 —— 旧名字的再导出
     ToolHub,
     ToolSpec,
     ToolStatus,
-    get_hub,
     ok,
     split_codes,
 )

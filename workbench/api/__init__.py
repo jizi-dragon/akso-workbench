@@ -157,7 +157,8 @@ def _tool_selfcheck() -> None:
     见 `logging_setup.banner()` 的文档串）。
     """
     try:
-        from ..plugin_api import get_hub, verify_required_tools
+        from ..hub import get_hub
+        from ..plugin_api import verify_required_tools
         from .routes_agent import REQUIRED_TOOLS
 
         hub = get_hub()

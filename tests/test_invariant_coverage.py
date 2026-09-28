@@ -37,12 +37,17 @@ COVERED: dict[str, list[str]] = {
     "I1": ["前缀：工具轮次追加"],
     "I2": ["前缀：工具轮次追加"],
     "I3": ["装配：新增声明字段不被静默丢掉"],
+    "I4": ["I4：plugin_api 不得依赖宿主"],
+    "I5": ["I5：`_tools` 是派生视图（禁用要让工具消失）"],
     "I6": ["P0-A：确认门认领已批准条目", "实时确认：同意 A 不等于同意 B"],
+    "I7": ["I7：审计写在唯一扼流点"],
     "I8": ["P0-B：敏感表与位置无关"],
+    "I9": ["I9：脚本式 Skill 的 risk 不得低于 write"],
     "I10": ["P0-B：敏感表与位置无关", "日志：JSON 形态打码"],
     "I11": ["I11：局部同步助手不得被直接调用"],
     "I12": ["实时确认：答复先到时不能丢（lost wakeup）"],
     "I13": ["问题①：输出截断必须显式说出来"],
+    "I14": ["I14：core 插件不可卸载"],
     "I15": ["前缀：工具轮次追加"],
     "I16": ["跨重启：运行开头必须补悬空调用"],
     "I17": ["估算：折叠判定必须含工具 schema"],
@@ -53,13 +58,9 @@ COVERED: dict[str, list[str]] = {
 #:
 #: ⚠️ **这一份不能变大。** 加进去之前先问：那条判据真的会红吗？
 #: 如果答案是"没试过"，那它就该被补上，而不是登记进这里。
-PENDING: dict[str, str] = {
-    "I4": "判据在 tests/test_dependency_direction.py；反证待补",
-    "I5": "判据在 tests/test_plugin_api.py 与 tests/test_tool_face.py；反证待补",
-    "I7": "判据在 tests/test_sandbox.py；反证待补",
-    "I9": "判据在 tests/test_skill_scripts.py；反证待补",
-    "I14": "判据在 tests/test_skills.py；反证待补",
-}
+PENDING: dict[str, str] = {}
+#: ★ **棘轮现在是空的**（2026-09-24 收尾）：18 条不变量**全部**有反证了。
+#: 它**不允许再变大** —— 新增不变量时要**同时**补上反证，而不是登记进这里。
 
 
 def _load_cases() -> list[tuple[str, str, str, str, str]]:
@@ -117,7 +118,7 @@ def test_the_pending_ratchet_does_not_grow() -> None:
     ★ 变**小**是改进（补上反证后从 `PENDING` 移到 `COVERED`）；
     变**大**说明有人删了反证却把它登记成"已知缺口" —— 那正是这条要挡的。
     """
-    expected = {"I4", "I5", "I7", "I9", "I14"}
+    expected: set[str] = set()   # ★ 2026-09-24：18 条全部有反证，缺口清零
     assert set(PENDING) == expected, (
         f"已知缺口变了：{sorted(PENDING)}（应当正好是 {sorted(expected)}）\n"
         "  ⇒ 补上了反证就从 PENDING 移到 COVERED，并同步本文件里的 expected；"

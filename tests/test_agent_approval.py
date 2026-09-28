@@ -44,6 +44,7 @@ import pytest
 from pydantic import BaseModel
 
 from workbench import approvals, db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
 from workbench.harness.loop import run_agent_loop
 from workbench.harness.types import AgentConfig
@@ -107,7 +108,7 @@ def hub(monkeypatch):
                     args_model=SecretArg, handler=dangerous_handler,
                     risk=pa.Risk.WRITE, reversibility=pa.Reversibility.IRREVERSIBLE, trust=pa.Trust.LOCAL, timeout_s=5),
     ]))
-    monkeypatch.setattr(pa, "_hub", fresh)
+    monkeypatch.setattr(hub_mod, "_hub", fresh)
     return fresh
 
 

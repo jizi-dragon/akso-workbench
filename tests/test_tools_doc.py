@@ -26,7 +26,7 @@ def _load_generator():
 
 def test_tools_doc_block_matches_runtime_hub() -> None:
     gen = _load_generator()
-    from workbench.plugin_api import get_hub
+    from workbench.hub import get_hub
 
     hub = get_hub()
     doc = gen.DOC.read_text(encoding="utf-8")
@@ -39,7 +39,7 @@ def test_tools_doc_block_matches_runtime_hub() -> None:
 
 def test_count_claims_in_active_docs_match_runtime() -> None:
     gen = _load_generator()
-    from workbench.plugin_api import get_hub
+    from workbench.hub import get_hub
 
     catalog = get_hub().catalog()
     # **只比 core**：文档承诺的是产品自带能力，与用户装了什么无关（见 gen._core 的说明）
@@ -49,6 +49,7 @@ def test_count_claims_in_active_docs_match_runtime() -> None:
 
 
 def test_installed_skill_never_turns_the_doc_gate_red() -> None:
+    from workbench.hub import get_hub
     """**目录里多出一个自装 Skill，不该让文档门禁红。**
 
     这条是那个口径的回归：`catalog()` 返回"当前注册的一切"，而 `render()` 与数字核对
@@ -58,6 +59,7 @@ def test_installed_skill_never_turns_the_doc_gate_red() -> None:
     gen = _load_generator()
     from pydantic import BaseModel
 
+    from workbench.hub import reset_hub
     from workbench.plugin_api import (
         Plugin,
         PluginOrigin,
@@ -65,8 +67,6 @@ def test_installed_skill_never_turns_the_doc_gate_red() -> None:
         Risk,
         ToolSpec,
         Trust,
-        get_hub,
-        reset_hub,
     )
 
     async def _noop(args, ctx):  # pragma: no cover —— 只为凑一个可注册的工具
@@ -100,7 +100,7 @@ def test_installed_skill_never_turns_the_doc_gate_red() -> None:
 def test_tools_doc_is_idempotent() -> None:
     """整段替换必须幂等——曾因 `str.replace("", x)` 把文档炸成 11 万行。"""
     gen = _load_generator()
-    from workbench.plugin_api import get_hub
+    from workbench.hub import get_hub
 
     hub = get_hub()
     doc = gen.DOC.read_text(encoding="utf-8")

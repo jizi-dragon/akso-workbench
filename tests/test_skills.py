@@ -15,7 +15,8 @@ import zipfile
 
 import pytest
 
-from workbench.plugin_api import PluginOrigin, Risk, get_hub, reset_hub
+from workbench.hub import get_hub, reset_hub
+from workbench.plugin_api import PluginOrigin, Risk
 from workbench.skills import layout
 from workbench.skills import library as L
 from workbench.skills import security as S

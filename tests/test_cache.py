@@ -15,6 +15,7 @@ import pytest
 from pydantic import BaseModel
 
 from workbench import approvals, cache, db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
 from workbench.harness.context import estimate_messages_tokens
 from workbench.harness.loop import run_agent_loop
@@ -336,7 +337,7 @@ def test_loop_freezes_summary_and_keeps_prefix(ready, monkeypatch) -> None:
     approvals.reset_store()
     hub = pa.ToolHub()
     approvals.install(hub)
-    monkeypatch.setattr(pa, "_hub", hub)
+    monkeypatch.setattr(hub_mod, "_hub", hub)
 
     class Client:
         model = "fake"
@@ -440,7 +441,7 @@ def echo_hub(ready, monkeypatch):
         pa.ToolSpec(name="echo_huge", description="回显超长内容", args_model=EchoArgs,
                     handler=_echo_huge, risk=pa.Risk.READ, trust=pa.Trust.LOCAL, timeout_s=5),
     ]))
-    monkeypatch.setattr(pa, "_hub", hub)
+    monkeypatch.setattr(hub_mod, "_hub", hub)
     return hub
 
 

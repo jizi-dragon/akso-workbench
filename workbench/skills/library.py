@@ -139,7 +139,7 @@ def upload(data: bytes, *, filename: str = "", allow_warn: bool = False) -> Uplo
         return UploadResult(ok=False, verdict="reject", reason=str(exc))
 
     # 被包装的工具必须真实存在——**上传期就查**，不要等安装时才失败
-    from ..plugin_api import get_hub
+    from ..hub import get_hub
 
     hub = get_hub()
     missing = [t.wraps for t in manifest.tools if t.wraps and hub.get(t.wraps) is None]
@@ -280,7 +280,7 @@ def list_library() -> list[dict]:
 
 def installed_list() -> list[dict]:
     """列出已安装的能力（含它贡献的工具与是否启用）。"""
-    from ..plugin_api import get_hub
+    from ..hub import get_hub
 
     hub = get_hub()
     layout.ensure_dirs()
@@ -307,7 +307,7 @@ def installed_list() -> list[dict]:
 def install(capability_id: str, version: str = "") -> dict:
     """从共享库安装（或切换版本）某个能力。**幂等**：重复安装同版本 = 重新注册。"""
     layout.ensure_dirs()
-    from ..plugin_api import get_hub
+    from ..hub import get_hub
 
     versions = layout.library_versions(capability_id)
     if not versions:
@@ -333,7 +333,7 @@ def install(capability_id: str, version: str = "") -> dict:
 
 def uninstall(capability_id: str) -> dict:
     """卸载：摘插件 + 删 `current` 指针。**库里的版本一个都不删。**"""
-    from ..plugin_api import get_hub
+    from ..hub import get_hub
 
     hub = get_hub()
     removed_plugins = hub.deregister_capability(capability_id)
@@ -383,7 +383,7 @@ def _build_plugin(data: dict) -> Plugin:
     把它标成 `read` 意味着"模型可以不经确认随便跑"——对上传代码这是错的默认。
     声明式可以 `read`，因为被包装工具的语义是我们自己定的。
     """
-    from ..plugin_api import get_hub
+    from ..hub import get_hub
 
     hub = get_hub()
     tools: list[ToolSpec] = []
@@ -482,7 +482,7 @@ def _make_forwarder(wrapped_name: str):
     "所有 Skill 工具都调用了最后一个被包装的工具"。
     """
     async def _handler(args, ctx, _target: str = wrapped_name):
-        from ..plugin_api import get_hub as _hub
+        from ..hub import get_hub as _hub
 
         payload = args.model_dump(exclude_none=True) if hasattr(args, "model_dump") else dict(args)
         invocation = await _hub().execute(_target, payload, ctx)

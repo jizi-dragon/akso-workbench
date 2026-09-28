@@ -25,6 +25,7 @@ import pytest
 from pydantic import BaseModel
 
 from workbench import approvals, cache, db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
 from workbench.harness import trace
 from workbench.harness.loop import run_agent_loop
@@ -86,7 +87,7 @@ def hub(ready, monkeypatch):
         pa.ToolSpec(name="echo_text", description="回显", args_model=EchoArgs,
                     handler=handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL, timeout_s=5),
     ]))
-    monkeypatch.setattr(pa, "_hub", tool_hub)
+    monkeypatch.setattr(hub_mod, "_hub", tool_hub)
     return tool_hub, executed
 
 

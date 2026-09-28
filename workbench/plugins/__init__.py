@@ -1,6 +1,6 @@
 """工具插件包：工作台的能力以「进程内工具插件」形式接入 Agent 核心。
 
-装配入口是 `load_all(hub)`（由 `plugin_api.get_hub()` 唯一调用）。四个插件：
+装配入口是 `load_all(hub)`（由 `workbench/hub.py::get_hub()` 唯一调用）。四个插件：
 
 | 插件 | 业务 | 工具 |
 |---|---|---|

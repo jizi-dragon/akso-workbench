@@ -5,7 +5,7 @@
 用户的原话是「之前有一篇调研提到了创建了 19 个 tools，我完全不知情」。
 **人记的数字必然会漂**，所以这里把"清单"和"数字"都变成可机检的：
 
-1. `docs/TOOLS.md` 的清单块由本脚本从 `plugin_api.get_hub()` 生成（**不许手改**）；
+1. `docs/TOOLS.md` 的清单块由本脚本从 `hub.get_hub()` 生成（**不许手改**）；
 2. 活跃文档里出现的"N 个工具 / N 个插件"一律与实际比对，对不上即红；
 3. `REQUIRED_TOOLS` 必须都能在装配后的中枢里找到（缺 = 某个插件没装起来）。
 
@@ -27,7 +27,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from workbench.api.routes_agent import REQUIRED_TOOLS  # noqa: E402
-from workbench.plugin_api import ToolHub, get_hub, verify_required_tools  # noqa: E402
+from workbench.hub import get_hub  # noqa: E402
+from workbench.plugin_api import ToolHub, verify_required_tools  # noqa: E40202
 
 DOC = ROOT / "docs" / "TOOLS.md"
 BEGIN = "<!-- TOOLS-TABLE:BEGIN —— 由 tools/gen_tools_doc.py 生成，勿手改；改插件后跑 --write -->"

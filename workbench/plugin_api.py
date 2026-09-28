@@ -1427,34 +1427,16 @@ class ToolHub:
 
 
 # ---------------------------------------------------------------- 单例
-
-
-_hub: ToolHub | None = None
-
-
-def get_hub() -> ToolHub:
-    """进程级工具中枢（唯一装配点）。"""
-    global _hub
-    if _hub is None:
-        _hub = ToolHub()
-        from . import approvals as approvals_mod  # 本地导入：避免模块循环
-        from . import plugins as plugins_pkg
-
-        approvals_mod.install(_hub)
-        plugins_pkg.load_all(_hub)
-    return _hub
-
-
-def reset_hub() -> None:
-    """清空单例（仅测试用）。
-
-    ⚠️ 本函数的语义在 2026-09-17 变了：**生产路径现在确实有"运行期增删"了**
-    （用户从共享库安装/卸载 Skill，见 `ToolHub` 类文档的两层表），
-    但那是走 `register_installed` / `deregister_capability`，
-    **不是**走这个函数。这里仍然是"把单例整个丢掉重建"，只给测试隔离用。
-    """
-    global _hub
-    _hub = None
+#
+# ★ 装配器（`get_hub` / `reset_hub`）**已搬到 `workbench/hub.py`**（2026-09-24）。
+#
+# 它原先住在这里，而这里是**被注入**的一侧：本模块不得认识宿主的任何一部分
+# （I4 / 规则 7：`plugins → plugin_api`，**永不反向**）。搬走之前它在这里
+# `from . import plugins` ＋ `load_all(...)` —— 那是货真价实的反向依赖，
+# 只是用**局部导入**绕开了模块循环，而 I4 的判据当时**对那种写法是瞎的**。
+#
+# ⇒ 新代码用 `from .hub import get_hub`。**本模块不再提供这两个名字** ——
+# 留一个再导出就等于把那条反向依赖又请回来了。
 
 
 def verify_required_tools(hub: ToolHub, required: tuple[str, ...]) -> list[str]:

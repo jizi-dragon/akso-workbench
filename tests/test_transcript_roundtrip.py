@@ -37,6 +37,7 @@ import pytest
 from pydantic import BaseModel
 
 from workbench import approvals, db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
 from workbench.harness import record, transcript
 from workbench.harness.loop import run_agent_loop
@@ -117,7 +118,7 @@ def _hub(monkeypatch, *, parallel_safe: bool) -> pa.ToolHub:
     approvals.reset_store()
     hub = pa.ToolHub()
     approvals.install(hub)
-    monkeypatch.setattr(pa, "_hub", hub)
+    monkeypatch.setattr(hub_mod, "_hub", hub)
 
     async def handler(args: Args, ctx: pa.ToolContext) -> str:
         return f"结果-{args.n}"

@@ -29,6 +29,7 @@ import pytest
 from pydantic import BaseModel
 
 from workbench import approvals, db
+from workbench import hub as hub_mod
 from workbench import plugin_api as pa
 from workbench.harness.loop import run_agent_loop
 from workbench.harness.types import AgentConfig
@@ -88,7 +89,7 @@ def hub(monkeypatch):
     # 用**真实**的内置插件（而不是测试里另写一份声明）：
     # 本文件要验的正是它那条 needs_confirmation + confirm_payload 声明，另写一份就验不到了
     fresh.add_plugin(builtins.PLUGIN)
-    monkeypatch.setattr(pa, "_hub", fresh)
+    monkeypatch.setattr(hub_mod, "_hub", fresh)
     return fresh
 
 
