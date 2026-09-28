@@ -290,3 +290,144 @@ def test_c5_context_hard_limit_terminates_before_an_over_window_request(ready, h
         assert estimate_messages_tokens(sent) <= config.context_hard_limit_tokens, (
             f"第 {index} 次请求超了硬上限：{estimate_messages_tokens(sent)}"
         )
+
+
+# ---------------------------------------------------------------- C6 / 账本（§5.4a）
+
+
+class ExplodingClient(ScriptedClient):
+    """**先花钱再炸**：第一轮正常跑完（还执行了一次工具），第二轮直接抛。
+
+    ## 为什么是跨轮，而不是"同一轮里先吐 usage 再抛"
+
+    第一版就是那么写的，结果 `DID NOT RAISE` —— 因为 **`_one_model_turn` 收到 `end`
+    事件就 `return` 了，它不会再向 `stream_chat` 要下一个元素**：写在同一轮 `end`
+    之后的 `raise` 永远不会被执行（`stream_chat` 被 `aclose()`，异常路径根本没走到）。
+
+    这不是测试的怪癖，而是**真实的失败时序**：钱在**已经收完的那一轮**里花掉了
+    （`prompt_tokens` 是真的），炸发生在**下一轮**。改造前这一笔一条都不落。
+    """
+
+    def __init__(self) -> None:
+        super().__init__([
+            {"content": "", "tool_calls": _calls(1)},
+            {"content": "（第二轮不会返回）"},
+        ])
+
+    async def stream_chat(self, messages, tools=None, temperature=0.7, max_tokens=None):
+        self.calls.append([dict(m) for m in messages])
+        if len(self.calls) == 1:
+            yield {
+                "type": "end",
+                "content": "",
+                "tool_calls": _calls(1),
+                "usage": {"prompt_tokens": 1000, "prompt_cache_hit_tokens": 800,
+                          "prompt_cache_miss_tokens": 200, "completion_tokens": 7},
+            }
+            return
+        raise RuntimeError("模拟：第二轮请求时网络断了")
+
+
+def _usage_rows(conv_id: str) -> list[dict]:
+    return db.query("SELECT * FROM deepseek_usage WHERE conversation_id = ?", (conv_id,))
+
+
+def test_c6_a_failed_turn_still_records_usage(ready, hub) -> None:
+    """★ C6：**异常出口也要入账**（计划 §5.4a）。
+
+    改造前全仓只有两处 `persist()`，都在正常收尾路径上 —— 于是任何异常出口
+    （LLM 抛错、工具层意外抛出、`asyncio` 取消、消费方断开）**一条用量都不落**，
+    账面表现是"这次回答没花钱"，而钱已经花了。`deepseek_usage` 是**唯一**的用量
+    事实源，命中率与"省钱口径"都从它算 ⇒ 这类丢失不可恢复。
+    """
+    tool_hub, _ = hub
+    conv_id = "contract-c6-fail"
+    cache.clear_state(conv_id)
+    client = ExplodingClient()
+
+    with pytest.raises(RuntimeError, match="网络断了"):
+        asyncio.run(_drain(run_agent_loop(
+            [{"role": "user", "content": "开始"}], client, tool_hub,
+            AgentConfig(system_prompt="sys", max_steps=4), conversation_id=conv_id,
+        )))
+
+    rows = _usage_rows(conv_id)
+    assert len(rows) == 1, f"异常终止的回合没有落用量（落了 {len(rows)} 行）"
+    assert rows[0]["prompt_tokens"] == 1000, "落下来的数字不对"
+    assert rows[0]["cache_hit_tokens"] == 800, "命中量丢了——那是省钱口径的依据"
+
+
+def test_c6_usage_is_persisted_exactly_once_on_a_normal_turn(ready, hub) -> None:
+    """★ C6 的另一半：正常出口**只落一行**。
+
+    这条是给上面那条兜底的。让"任何出口都入账"能成立的做法是"在 `finally` 里
+    再落一次"，而**不幂等**的 `persist` 会写出**两行** —— 那比丢一行更难发现：
+    丢一行让数字偏小（有人会去查），多一行让账单变成双份，看起来只像"这次特别贵"。
+    """
+    tool_hub, _ = hub
+    conv_id = "contract-c6-once"
+    _client, events = _drive(tool_hub, conv_id, [{"content": "好"}],
+                             AgentConfig(system_prompt="sys", max_steps=4))
+
+    assert [e["type"] for e in events][-2:] == ["final", "usage"], (
+        f"正常出口的事件序列变了：{[e['type'] for e in events]}"
+    )
+    assert len(_usage_rows(conv_id)) == 1, "正常回合落了不止一行用量"
+
+
+def test_c6_usage_event_is_not_attempted_on_the_exception_path(ready, hub) -> None:
+    """异常出口**不发** `usage` 事件，只入账。
+
+    `finally` 可能正因 `GeneratorExit`（消费方 `aclose()`）而执行，此时 `yield` 会抛
+    `RuntimeError: async generator ignored GeneratorExit`。所以约定是：
+    **入账是账本的事，`usage` 事件是界面的事**。这条断言钉住这个分工 ——
+    谁"顺手"在 `_accounted` 里补一个 `yield`，这里就会红。
+    """
+    tool_hub, _ = hub
+    conv_id = "contract-c6-silent"
+    cache.clear_state(conv_id)
+    seen: list[str] = []
+
+    async def drive() -> None:
+        with pytest.raises(RuntimeError):
+            async for event in run_agent_loop(
+                [{"role": "user", "content": "开始"}], ExplodingClient(), tool_hub,
+                AgentConfig(system_prompt="sys", max_steps=4), conversation_id=conv_id,
+            ):
+                seen.append(event["type"])
+
+    asyncio.run(drive())
+    assert "usage" not in seen, f"异常出口发了 usage 事件：{seen}"
+    assert len(_usage_rows(conv_id)) == 1, "不发事件 ≠ 不入账"
+
+
+def test_c6_persist_failure_is_counted_not_swallowed_silently(ready, hub, monkeypatch) -> None:
+    """★ C6：入账失败**继续吞异常**（度量不该影响回答），但**必须留下计数**（§5.4d）。
+
+    从前只有一条 `logger.warning` —— 而持续失败的表现是"用量曲线莫名其妙变低"，
+    没有任何迹象。计数由 `/api/agent/selfcheck` 的 `usagePersistFailures` 暴露。
+    """
+    tool_hub, _ = hub
+    conv_id = "contract-c6-counted"
+    cache.clear_state(conv_id)
+    before = cache.usage_persist_failures()
+
+    real_execute = db.execute
+
+    def broken_execute(sql, params=()):  # noqa: ANN001, ANN202
+        if "deepseek_usage" in sql:
+            raise RuntimeError("模拟：磁盘满了")
+        return real_execute(sql, params)
+
+    monkeypatch.setattr(db, "execute", broken_execute)
+    _client, events = _drive(tool_hub, conv_id, [{"content": "好"}],
+                             AgentConfig(system_prompt="sys", max_steps=4))
+    monkeypatch.undo()
+
+    assert events[-1]["type"] == "usage", "入账失败不该改变事件流（度量不该影响回答）"
+    assert cache.usage_persist_failures() == before + 1, "入账失败没有被计数"
+    assert _usage_rows(conv_id) == [], "这条用例的前提是它真的没落上库"
+
+    from workbench.api.routes_agent import selfcheck
+
+    assert selfcheck()["usagePersistFailures"] >= 1, "selfcheck 没有暴露这个计数"

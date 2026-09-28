@@ -50,6 +50,18 @@ from .services.storage import now_ms
 
 logger = logging.getLogger("workbench.cache")
 
+#: 用量入账失败的**进程内**累计次数。见 `UsageStats.persist` 与 `usage_persist_failures`。
+_USAGE_PERSIST_FAILURES = 0
+
+
+def usage_persist_failures() -> int:
+    """入账失败累计次数（`/api/agent/selfcheck` 暴露它）。
+
+    它存在只为一件事：**把"刻意吞掉的失败"变成"看得见的失败"**。
+    与 `sandbox` 的审计口径同族 —— 一条永远不会被读到的 warning 等于没有。
+    """
+    return _USAGE_PERSIST_FAILURES
+
 
 # ---------------------------------------------------------------- 摘要暂存
 
@@ -290,15 +302,23 @@ class UsageStats:
             "summaryCalls": self.summary_calls,
         }
 
-    def persist(self) -> None:
-        """把这一轮的用量落库。
+    def persist(self) -> bool:
+        """把这一轮的用量落库。**返回是否成功；失败不抛**（见下）。
 
         ⚠️ 主键必须是**不可预测地唯一**的。旧实现用 `f"{now_ms()}-{conversation_id[:8]}"`，
         同一毫秒内的两次入账（"摘要调用"与"回答收尾"经常挨在一起）会 PK 撞车 →
         `INSERT` 抛 IntegrityError → 被下面的 `except` 吞成一条 warning ⇒ **静默丢账**。
         而 `deepseek_usage` 是**唯一**的用量事实源，命中率与"省钱口径"都从它算 ——
         丢一条就永久偏小，且没有任何迹象。
+
+        ## 为什么 `except` 保留、但要返回 `False` 并计数
+
+        "度量失败绝不影响回答"是对的，所以这里**继续吞异常**。但"刻意吞掉"与
+        "静默失败"的区别在于**有没有一个能被看见的地方**：从前只有一条 `logger.warning`，
+        而持续失败的表现是"用量曲线莫名其妙变低"——没有任何迹象。
+        现在失败会累进 `usage_persist_failures()`，由 `/api/agent/selfcheck` 暴露。
         """
+        global _USAGE_PERSIST_FAILURES
         try:
             db.execute(
                 "INSERT INTO deepseek_usage (id, conversation_id, model, calls, prompt_tokens, "
@@ -310,8 +330,12 @@ class UsageStats:
                  self.completion_tokens, self.reasoning_tokens, self.summary_calls,
                  self.latency_ms, now_ms()),
             )
+            return True
         except Exception:  # noqa: BLE001 —— 度量失败绝不影响回答
-            logger.warning("用量入账失败", exc_info=True)
+            _USAGE_PERSIST_FAILURES += 1
+            logger.warning("用量入账失败（进程内累计 %d 次）",
+                           _USAGE_PERSIST_FAILURES, exc_info=True)
+            return False
 
 
 def usage_overview(days: int = 7, conversation_id: str = "") -> dict:

@@ -348,11 +348,16 @@ def audit_detail(audit_id: str) -> dict:
 
 @router.get("/selfcheck")
 def selfcheck() -> dict:
-    """启动自检的可查视图：插件数、工具数、**必需工具是否齐**、装配失败。
+    """启动自检的可查视图：插件数、工具数、**必需工具是否齐**、装配失败、**用量入账失败**。
 
     与启动期 `verify_required_tools()` 同一判据——这样"打包后静默少一个插件"
     不必等到用户点下去才发现（PLUGIN-UPSTREAM-RESEARCH §R3 的公开失败案例）。
+
+    `usagePersistFailures` 是**进程内累计**的用量入账失败次数（2026-09-24 加）。
+    它是"刻意吞掉的失败"唯一能被看见的地方：`UsageStats.persist` 继续吞异常
+    （度量不该影响回答），但没有这个计数时，持续失败只表现为"用量曲线莫名其妙变低"。
     """
+    from ..cache import usage_persist_failures
     from ..plugin_api import verify_required_tools
 
     hub = get_hub()
@@ -368,6 +373,7 @@ def selfcheck() -> dict:
         "requiredTools": list(REQUIRED_TOOLS),
         "missingRequired": missing,
         "failures": hub.failures,
+        "usagePersistFailures": usage_persist_failures(),
     }
 
 

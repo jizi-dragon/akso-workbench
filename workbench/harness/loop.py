@@ -37,10 +37,11 @@ SSE / WebSocket / 测试断言都直接消费同一事件序列。
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import replace
 from typing import Any
 
@@ -67,6 +68,8 @@ class UsageMeter:
     def __init__(self, conversation_id: str = "", model: str = "") -> None:
         self.stats = cache.UsageStats(conversation_id=conversation_id, model=model)
         self._started = time.perf_counter()
+        self._finished: dict | None = None
+        self._persisted = False
 
     def feed(self, usage: dict | None, *, summary: bool = False) -> None:
         if not usage:
@@ -76,8 +79,53 @@ class UsageMeter:
             self.stats.summary_calls += 1
 
     def finish(self) -> dict:
-        self.stats.latency_ms = int((time.perf_counter() - self._started) * 1000)
-        return self.stats.to_api()
+        """收尾：冻结延迟并给出 API 形状。**幂等** —— 第二次返回同一个 dict。
+
+        幂等是必需的，不是优化：`run_agent_loop` 现在保证"**任何出口都入账**"
+        （含异常出口），而正常出口早就调过一次 —— 不幂等就会把延迟算两遍
+        （第二次的时间戳更晚，账面看起来只是"慢了一点"，没人会怀疑）。
+        """
+        if self._finished is None:
+            self.stats.latency_ms = int((time.perf_counter() - self._started) * 1000)
+            self._finished = self.stats.to_api()
+        return self._finished
+
+    def persist(self) -> bool:
+        """把用量落库。**幂等** —— 第二次调用不写第二行，返回 `False`。
+
+        与 `finish` 同理，而且后果更重：不幂等就是**一条回答两行用量**，
+        那比丢一行更难发现 —— 丢一行让数字偏小（有人会去查），
+        多一行让账单偏大而且是"双份"，看起来只像"这次特别贵"。
+        """
+        if self._persisted:
+            return False
+        self._persisted = True
+        return self.stats.persist()
+
+
+@contextlib.contextmanager
+def _accounted(meter: UsageMeter) -> Iterator[None]:
+    """离开这个块时**必定**把用量入账（计划 §5.4a）。
+
+    ## 为什么必须有它
+
+    改造前全仓只有两处 `persist()`，都在**正常收尾**的路径上。于是任何异常出口
+    （LLM 抛错、工具层意外抛出、`asyncio` 取消、消费方断开）**一条用量都不落** ——
+    账面表现是"这次回答没花钱"，而钱已经花了。`deepseek_usage` 是唯一的用量事实源，
+    命中率与"省钱口径"都从它算，所以这类丢失是**不可恢复**的偏差。
+
+    ## 三个约定
+
+    1. **幂等**：正常出口已落过库，这里靠 `UsageMeter.persist` 的守卫不写第二行。
+    2. **绝不 `yield`**：`finally` 可能正因 `GeneratorExit`（消费方 `aclose()`）而执行，
+       此时 `yield` 会抛 `RuntimeError: async generator ignored GeneratorExit`。
+       **入账是账本的事，`usage` 事件是界面的事 —— 两者分开处理**：事件只在正常出口发。
+    3. **不吞掉异常**：只做记账，让原异常继续往外抛（`routes_chat` 那侧已有兜底）。
+    """
+    try:
+        yield
+    finally:
+        meter.persist()
 
 
 async def run_agent_loop(
@@ -105,7 +153,9 @@ async def run_agent_loop(
     # 注意：`contextvars` 在 `async for` 的每次迭代里**不会被自动传播**到
     # `registry.execute` 内部的同步代码——工具调用那一段由 `ToolHub._audit`
     # 自己再 bind 一次（那里同时补上 `auditId` / `tool`），两边合起来才是完整链路。
-    with logging_setup.bind(conversationId=conversation_id):
+    #
+    # `_accounted` 保证**任何出口**都入账（含异常出口），见它的文档串与计划 §5.4a。
+    with logging_setup.bind(conversationId=conversation_id), _accounted(meter):
         logger.info("Agent 循环开始：%d 条历史消息，%d 个工具可用，步数预算 %d",
                     len(conversation), len(registry.specs()), config.max_steps)
         while True:
@@ -186,10 +236,15 @@ def _budget_exhausted_message(max_steps: int) -> str:
 
 
 def _finish_usage(meter: UsageMeter, config: AgentConfig) -> dict:
-    """收尾统一出口：算 latency → 补上下文口径 → 落库（三个终止分支共用）。"""
+    """收尾统一出口：算 latency → 补上下文口径 → 落库（三个终止分支共用）。
+
+    落库走 `meter.persist()`（**幂等**）而不是 `meter.stats.persist()`：
+    `run_agent_loop` 的 `_accounted` 会在异常出口再落一次，没有幂等守卫
+    就会写出两行用量。
+    """
     usage = meter.finish()
     usage.update(_context_usage(meter, config))
-    meter.stats.persist()
+    meter.persist()
     return usage
 
 

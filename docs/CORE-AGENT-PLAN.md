@@ -23,7 +23,8 @@ _2026-09-21 撰写。锚定 `c50ed87`（main）。_
 > | 阶段 1 | **§5.3 步数预算逐调用 + 未执行回填（缺陷③ / I16）** | ✅ **已完成**：`loop._fill_unexecuted`（一处实现）＋ `_skipped_observation`；预算检查移进 `for call in …` 内；**重复调用检测那条早退路径也一并回填**（它此前同样直接 `return`） |
 > | 阶段 1 | **§5.2 的一半：硬上限复检（缺陷② / I17）** | ✅ **已完成（P0-4a）**：`AgentConfig.context_hard_limit_tokens`＋`loop._over_hard_limit`，每次模型调用前复检，超限则**不发请求**、以可行动文案终止。⚠️ **P0-4b（轮内折叠）未做**——它需要把 `loop` 的 `source`（原始会话）与 `context`（`plan_prefix` 的输出）拆开，`_one_model_turn` 目前只持有后者并就地 append |
 > | —— | 窗口默认值改为 `deepseek-flash` 满窗口 | ✅ **已完成**（用户 2026-09-24 下达）：`AgentConfig.context_window_tokens` `131072` → **`1048576`**（1M，按 2²⁰ 读，判据见 `harness/types.py` 的字段文档串） |
-> | 其余 | §5.4 / §5.5 / §5.6 / §8.2 / §8.3，以及阶段 2 / 3 / 5 | ⬜ **未开始** |
+> | 阶段 1 | **§5.4 的四笔账：(a) 异常出口入账 ＋ (d) 失败计数可见** | ✅ **已完成**（2026-09-24）：`loop._accounted`（`contextmanager`，与 `logging_setup.bind` 组合进同一 `with`）保证**任何出口**都 `persist()`；`UsageMeter.finish/persist` 改**幂等**（不幂等会写出两行，比丢一行更难发现）；`UsageStats.persist` 返回 `bool` ＋ `cache.usage_persist_failures()`，由 `/api/agent/selfcheck` 的 `usagePersistFailures` 暴露。判据：`tests/test_agent_contract.py` 的 **C6 四条**（8 → 12）。⚠️ **本条的 (b) 与 (c) 仍未做** —— 它们要动 `routes_chat` 与迁移（`kind` 列；**编号用 23，因为 22 已被 `summary_boundary_excludes_system` 占用**） |
+> | 其余 | §5.4(b)(c) / §5.5 / §5.6 / §8.2 / §8.3，以及阶段 2 / 3 / 5 | ⬜ **未开始** |
 >
 > **基线数字更正**：本计划正文写的是 `c50ed87` 的 **5 插件 / 22 工具（19 read·2 write·1 dangerous）**。
 > HEAD（`d9cc39b` 起）实测为 **4 插件 / 18 工具（16 read · 2 write · 0 dangerous）** —— 配置工厂已于
