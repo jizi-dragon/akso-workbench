@@ -273,6 +273,17 @@ CASES: list[tuple[str, str, str, str, str]] = [
         "    if not args.yes:",
         "    if False:",
     ),
+    # ── 不变量 I11：同步阻塞调用一律 to_thread（tests/test_invariant_i11.py）
+    (
+        # ★ 这条反证**逼出了判据的第二条规则**：原来的名单法抓不到它 ——
+        # 改完之后判据照样绿，因为 `run` 是**局部**同步函数，不在阻塞名单里。
+        # ⇒ 判据补了"规则 S"（嵌套同步函数不得被直接调用）才抓得到。
+        "I11：局部同步助手不得被直接调用",
+        "tests/test_invariant_i11.py::test_no_blocking_call_runs_directly_on_the_event_loop",
+        "workbench/api/routes_attachments.py",
+        "    row = await asyncio.to_thread(run)",
+        "    row = run()  # 缺陷版：直接在事件循环上跑那个同步函数",
+    ),
 ]
 
 
