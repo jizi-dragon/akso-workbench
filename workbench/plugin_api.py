@@ -228,6 +228,38 @@ class ToolContext(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
 
+class Reversibility(str, Enum):
+    """「这次写**能不能撤**」（计划 §8.3）。
+
+    ★ 为什么需要有这么一个字段，而不是在文档里写一句"记得写回滚脚本"：
+    "能不能撤"是**每次写操作都要回答的问题**，而它今天在代码里**没有任何地方被问过**。
+    不变成声明，它就只会在出事之后才被想起。
+
+    ★ 它不是 `risk` 的同义词：`risk` 管"要不要先问人"，`reversibility` 管
+    "问完之后**做错了怎么办**"。两者独立 —— 一次 `Risk.WRITE` 完全可能不可逆。
+
+    ★★ **幂等不是回滚**（计划原文）：幂等层防的是"重复执行同一次调用"，
+    防不了"这一次本来就做错了"。所以"再跑一遍就好了"**不是** `REVERSIBLE` 的理由。
+    """
+
+    REVERSIBLE = "reversible"
+    """**不留残留，也没有需要撤的东西**（例如"释放一个我们自己开的资源"）。
+
+    ⚠️ 用它之前先回答：**它真的没有留下任何需要撤销的痕迹吗？**
+    不确定就选 `UNDOABLE`（给配方）或 `IRREVERSIBLE`（说清撤不了）。
+    """
+
+    UNDOABLE = "undoable"
+    """**有反向配方**（必须同时给 `undo_recipe`）—— 例如"这次开出来的那个会话 id"。
+
+    这是唯一一档**能真的撤**的。配方会被写进 `agent_audit.meta`，
+    所以它是可以事后照着做的一条**具体指令**，不是一句"应该能关掉"。
+    """
+
+    IRREVERSIBLE = "irreversible"
+    """**撤不了** —— 必须显式声明它，因为那正是用户在做决定前要知道的事。"""
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     """一个可被模型调用的工具：声明 + 实现 + 风险分级。"""
@@ -332,6 +364,38 @@ class ToolSpec:
     - **它必须是只读的**（通常是几次查询）：它在**没有用户同意**的情况下跑。
     """
 
+    reversibility: Reversibility | None = None
+    """这个工具**改状态之后能不能撤**（计划 §8.3）。**会改状态的工具必须声明。**
+
+    ## 为什么对"所有写工具"强制，而不是只对 `DANGEROUS`
+
+    计划 §8.3 的原话是「接第一个"不可逆写"工具时，它必须声明 `Risk.DANGEROUS`
+    并同时带上反向配方」。而**今天全仓 0 个 DANGEROUS 工具** —— 只按那句话实现的话，
+    这个字段在第一个 DANGEROUS 工具出现之前**没有任何调用方**。
+
+    ★ 本仓对"零调用方的扩展点"有明确态度（见 `summary_fn` 的文档串）：
+    「零调用方的扩展点是**下一次重构里最容易被无声改坏的东西**」。
+    所以口径落到**所有会改状态的工具**（`risk is not READ`）—— 今天就有 2 个真实调用方。
+
+    ## 判据（`valid()` 在装配期强制）
+
+    - 会改状态的工具**没声明** ⇒ 装配期报错（与 `trust` 同一种纪律：这一条**没有安全的缺省**，
+      缺省成 `REVERSIBLE` 等于静默地断言"做错了也没关系"）；
+    - 声明 `UNDOABLE` 却**没给 `undo_recipe`** ⇒ 报错（"能撤"必须落成一条具体指令）；
+    - 给了 `undo_recipe` 却声明成别的档 ⇒ 报错（自相矛盾，而且它会让读的人以为有配方可依）。
+    """
+
+    undo_recipe: Callable[[BaseModel], dict[str, Any]] | None = None
+    """反向操作配方：从这次调用的**参数**里抽出"怎么撤"。
+
+    返回值会与 `audit_extra` 一起落进 `agent_audit.meta`（**同一个扼流点** `_extra`），
+    所以它必须**可序列化、且短**（`meta` 上限 1000 字符）。
+
+    ⚠️ **它只描述"怎么撤"，不执行撤销。** 自动撤销是**刻意不做**的（计划 §8.3：
+    「逐条展示 + 逐条确认（**不做"一键全撤"**：批量回滚比批量创建更危险）」）——
+    这条配方是给**人**看的一条指令，不是给程序执行的一步。
+    """
+
     parallel_safe: bool = False
     """这一批里若**全是**标了它的调用，允许**并发执行**（计划 §7.4）。缺省 `False`。
 
@@ -427,6 +491,32 @@ class ToolSpec:
                 f"工具 {self.name} 提供了 confirm_payload 但没标 needs_confirmation=True："
                 "该属性会被静默忽略（用户永远看不到那段内容），声明要么补齐要么删掉"
             )
+        # ---- 可撤销性（计划 §8.3）----
+        #
+        # ★ 只对**会改状态**的工具强制。理由与 `trust` 同一种纪律：
+        # 这一条**没有安全的缺省** —— 缺省成 `REVERSIBLE` 等于静默地断言
+        # "做错了也没关系"，而那句话在出事之前**没有任何地方会反驳它**。
+        if self.risk is not Risk.READ:
+            if self.reversibility is None:
+                problems.append(
+                    f"工具 {self.name} 会改状态（risk={self.risk.value}）"
+                    "却没有声明 reversibility（必须是 Reversibility 枚举）："
+                    "**这一次写做错了能不能撤**？能撤就给 undo_recipe，撤不了就明说 irreversible。"
+                    "这一条**没有缺省值**——缺省成 reversible 等于静默断言「做错了也没关系」"
+                )
+            elif self.reversibility is Reversibility.UNDOABLE and self.undo_recipe is None:
+                problems.append(
+                    f"工具 {self.name} 声明了 UNDOABLE 却没给 undo_recipe："
+                    "「能撤」必须落成一条**具体指令**（例如「关掉这次开出来的那个会话」），"
+                    "否则事后没有人知道该怎么撤"
+                )
+            elif self.reversibility is not Reversibility.UNDOABLE \
+                    and self.undo_recipe is not None:
+                problems.append(
+                    f"工具 {self.name} 给了 undo_recipe 却声明 reversibility="
+                    f"{self.reversibility.value}：两者自相矛盾，而且它会让读的人"
+                    "以为有一条配方可以照着做"
+                )
         return problems
 
 
@@ -1312,7 +1402,25 @@ class ToolHub:
                 "args": _redact(extra),
                 "summary": (inv.content or inv.error)[:1000],
                 "duration_ms": inv.duration_ms,
-                "meta": {"source": inv.meta.get("source", "")},
+                # ★ 可展示的审计维度 + 反向配方落进 `meta`（计划 §8.3）。
+                #
+                # ★★ 2026-09-24 修：此前这里写的是 `{"source": inv.meta.get("source", "")}`
+                # —— 于是 `meta` **只有一个几乎恒为空的 `source`**，而
+                # `audit_extra` 的文档串（"写进 agent_audit.meta"）与计划 §8.3
+                # （"落 agent_audit.meta"）**都不成立**：维度全进了 `args`。
+                #
+                # 后果很具体：`GET /api/agent/audit` **刻意不返回 `args`**
+                # （"`args` 里可能有用户输入的敏感片段"），而 `audit_extra` 的维度
+                # **恰恰是设计成可展示的**（它的文档串明确写"不得含凭据"）。
+                # ⇒ **精心设计的可展示维度，一个都展示不出来。**
+                # 而 `meta`（那个"只回元数据"的列）是空的，所以没有任何人发现。
+                #
+                # ⚠️ `args` 同时保留同一份维度，**是刻意的冗余**：`args` 自迁移 9 起
+                # 就是维度的落点，`tests/test_plugin_api.py` 的凭据脱敏用例与
+                # `routes_agent` 的列表端点都建立在那个语义上。两列**写在同一条 INSERT 里、
+                # 出自同一个 dict**，所以不会漂（与铁律 28 说的"两处各写全量"不同：
+                # 那是两个独立的事实源，这是一次写入的两个投影）。
+                "meta": {"source": inv.meta.get("source", ""), **extra},
             })
         except Exception:  # noqa: BLE001 —— 审计失败绝不影响工具结果
             logger.warning("审计写入失败：%s", spec.name, exc_info=True)
@@ -1451,12 +1559,38 @@ def _confirm_view(plan: ConfirmPlan, pending_id: str) -> dict[str, Any]:
 
 
 def _extra(spec: ToolSpec, args: BaseModel) -> dict[str, Any]:
-    if spec.audit_extra is None:
-        return {}
-    try:
-        return dict(spec.audit_extra(args))
-    except Exception:  # noqa: BLE001 —— 维度抽取失败不该影响调用
-        return {}
+    """审计的 `meta`（`agent_audit.meta`）——**唯一产出点**。
+
+    两类内容：
+    - `audit_extra(args)`：业务维度（环境 / 对象 / 账号）
+    - **反向配方**（计划 §8.3）：`reversibility` + `undo_recipe(args)`
+
+    ★ 两件事共用一个产出点，是为了让"配方落进审计"**不需要调用方记得**——
+    审计有多个写入路径（成功 / 失败 / 待确认 / 拒绝），在每一处补一遍，
+    迟早会漏掉一条，而漏掉的那条**看起来完全正常**（审计里有记录、只是没有配方）。
+
+    ⚠️ 配方抽取失败**不影响调用**（同 `audit_extra`）：它只是"事后怎么办"的线索，
+    不该让一次本来能成的写操作失败。失败时**留一条说明**而不是静默丢掉 ——
+    审计里少一个键与"这个操作本来就没有配方"在事后看是一样的。
+    """
+    out: dict[str, Any] = {}
+    if spec.audit_extra is not None:
+        try:
+            out.update(dict(spec.audit_extra(args)))
+        except Exception:  # noqa: BLE001 —— 维度抽取失败不该影响调用
+            pass
+
+    if spec.reversibility is not None and spec.risk is not Risk.READ:
+        out["reversibility"] = spec.reversibility.value
+        if spec.undo_recipe is not None:
+            try:
+                recipe = spec.undo_recipe(args)
+            except Exception as exc:  # noqa: BLE001
+                out["undoError"] = f"{type(exc).__name__}: {exc}"[:200]
+            else:
+                if recipe:
+                    out["undo"] = recipe
+    return out
 
 
 def _trust_prefix(spec: ToolSpec, args: BaseModel | None) -> str:

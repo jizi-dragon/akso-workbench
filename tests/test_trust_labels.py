@@ -70,7 +70,7 @@ def _spec(probe: _Probe, name: str, *, trust: pa.Trust, risk: pa.Risk = pa.Risk.
           **kw) -> pa.ToolSpec:
     """造一个工具**并注册进中枢**（一次一个插件，够用且不会与别的工具重名冲突）。"""
     spec = pa.ToolSpec(name=name, description=f"{name} 说明", args_model=Args,
-                       handler=probe.handler(name), risk=risk, trust=trust,
+                       handler=probe.handler(name), risk=risk, reversibility=pa.Reversibility.IRREVERSIBLE, trust=trust,
                        timeout_s=5, **kw)
     probe.hub.add_plugin(pa.Plugin(id=f"probe-{name}", title=name, tools=[spec]))
     return spec

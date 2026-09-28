@@ -44,7 +44,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..plugin_api import Plugin, PluginOrigin, Risk, ToolSpec, Trust
+from ..plugin_api import (
+    Plugin,
+    PluginOrigin,
+    Reversibility,
+    Risk,
+    ToolSpec,
+    Trust,
+)
 from . import layout, security
 from .manifest import (
     SkillManifest,
@@ -403,6 +410,14 @@ def _build_plugin(data: dict) -> Plugin:
                 # 这也是 `risk` 那条纪律（"脚本式 Skill 的 risk 不得低于 write"）的同族判断：
                 # 无法被静态证明的东西，不许按"自己人"对待。
                 trust=Trust.UNTRUSTED,
+                # ★ 可撤销性：**只能声明"撤不了"**（计划 §8.3）。
+                #
+                # 与上面 `risk` / `trust` 是**同一条推理**：上传的脚本无法被静态证明只读，
+                # 所以风险抬到 write；同样地，它**也无法被静态证明可逆** ——
+                # 我们不知道它往哪里写了什么，也就给不出反向配方。
+                # ⇒ 保守的那一档是 `IRREVERSIBLE`（而不是"反正没配方，填个可逆吧"）。
+                # 这一档的意义正是：**用户在做决定之前能被告知"这一步撤不了"**。
+                reversibility=Reversibility.IRREVERSIBLE,
                 # 策略超时是上限；这里跟随策略（`skill-script` = 120s）
                 timeout_s=120.0,
             ))
@@ -430,6 +445,12 @@ def _build_plugin(data: dict) -> Plugin:
             # 一律按 LOCAL 处理的话，一个包装 `read_web_page` 的 Skill
             # 就成了绕过 I18 标签的通道（而那是一条**没有任何报错**的绕过路径）。
             trust=wrapped.trust,
+            # ★ 转发式 Skill **继承**被包装工具的可撤销性（同 `trust` 的理由）：
+            # 它只是换个名字转调，**改的是同一个东西**、撤也是同一条指令。
+            # 一律填 REVERSIBLE 的话，一个包装写工具的 Skill 会**静默地**
+            # 把一次不可逆的操作说成"没有残留" —— 而那正是用户做决定时看的那句话。
+            reversibility=wrapped.reversibility,
+            undo_recipe=wrapped.undo_recipe,
             timeout_s=wrapped.timeout_s,
             audit_extra=wrapped.audit_extra,
         ))

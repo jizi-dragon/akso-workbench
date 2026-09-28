@@ -61,6 +61,7 @@ def test_installed_skill_never_turns_the_doc_gate_red() -> None:
     from workbench.plugin_api import (
         Plugin,
         PluginOrigin,
+        Reversibility,
         Risk,
         ToolSpec,
         Trust,
@@ -80,7 +81,7 @@ def test_installed_skill_never_turns_the_doc_gate_red() -> None:
         hub.register_installed(Plugin(
             id="skill:doc-gate-probe", title="探针", version="1.0.0",
             tools=[ToolSpec(name="doc_gate_probe", description="探针工具",
-                            args_model=_Args, handler=_noop, risk=Risk.WRITE,
+                            args_model=_Args, handler=_noop, risk=Risk.WRITE, reversibility=Reversibility.IRREVERSIBLE,
                             trust=Trust.LOCAL)],
             origin=PluginOrigin.INSTALLED, capability_id="doc-gate-probe", removable=True,
         ))

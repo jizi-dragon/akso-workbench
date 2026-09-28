@@ -95,7 +95,7 @@ class Hub:
 
         self.hub.add_plugin(pa.Plugin(id=f"p-{name}", title=name, tools=[
             pa.ToolSpec(name=name, description=f"{name} 说明", args_model=Args,
-                        handler=handler, risk=risk, trust=pa.Trust.LOCAL,
+                        handler=handler, risk=risk, reversibility=pa.Reversibility.IRREVERSIBLE, trust=pa.Trust.LOCAL,
                         parallel_safe=parallel_safe, needs_confirmation=needs_confirmation,
                         confirm_payload=payload if needs_confirmation else None,
                         timeout_s=5),

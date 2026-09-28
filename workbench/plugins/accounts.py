@@ -198,6 +198,14 @@ PLUGIN = pa.Plugin(
             trust=pa.Trust.LOCAL,
             timeout_s=180,
             audit_extra=pa.audit_env_key("account_id", "headful"),
+            # ★ 可撤销性（计划 §8.3）：它**开出一个资源**，反向操作就是关掉它。
+            # 配方给的是**具体的**那一条指令（哪个账号的窗口），不是"应该能关掉"。
+            reversibility=pa.Reversibility.UNDOABLE,
+            undo_recipe=lambda args: {
+                "action": "accounts_browser_close",
+                "accountId": getattr(args, "account_id", ""),
+                "说明": "关掉这次开出来的那个账号窗口（登录态保留）",
+            },
         ),
         pa.ToolSpec(
             name="accounts_browser_sessions",
@@ -220,6 +228,12 @@ PLUGIN = pa.Plugin(
             trust=pa.Trust.LOCAL,
             timeout_s=30,
             audit_extra=pa.audit_env_key("account_id"),
+            # ★ 可撤销性：**关掉一个我们自己开的资源，没有需要撤的残留** ——
+            # 它释放的东西（窗口）随时能再开一个，而且关它**不写平台**
+            # （描述里那句"登录态保留"是关键：令牌与会话文件都不动）。
+            # ⚠️ 这一档问的是"**有没有需要撤销的痕迹**"，不是"能不能回到一模一样的状态"
+            # —— 重新开出来的是**新窗口**，但没有任何东西被留在平台上或文件里。
+            reversibility=pa.Reversibility.REVERSIBLE,
         ),
     ],
 )

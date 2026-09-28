@@ -128,7 +128,7 @@ def hub(monkeypatch):
         pa.ToolSpec(name="probe_echo", description="回显", args_model=ProbeArgs,
                     handler=probe, risk=pa.Risk.READ, trust=pa.Trust.LOCAL, timeout_s=5),
         pa.ToolSpec(name="probe_write", description="写动作", args_model=ProbeArgs,
-                    handler=probe_write, risk=pa.Risk.DANGEROUS, trust=pa.Trust.LOCAL, timeout_s=5),
+                    handler=probe_write, risk=pa.Risk.DANGEROUS, reversibility=pa.Reversibility.IRREVERSIBLE, trust=pa.Trust.LOCAL, timeout_s=5),
     ]))
     monkeypatch.setattr(pa, "_hub", fresh)
     return fresh

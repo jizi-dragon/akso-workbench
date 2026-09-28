@@ -36,7 +36,8 @@ _2026-09-21 撰写。锚定 `c50ed87`（main）。_
 > | 阶段 3 | **§7.4 并行工具调用（窄口径）** | ✅ **已完成**（2026-09-24，[ADR-0023](adr/0023-parallel-read-batches.md)）。★★ **口径被收窄了，而且有硬证据**：计划原文写「只并发整批都是 `Risk.READ` 且都不需确认的调用」，按它实现后**计划自己 §5.6 的两条停止判据 + 一条评测用例当场变红** —— 并发必然把停止的检查点从"每次调用之间"退到"每批之间"。改成**逐工具举证**的 `ToolSpec.parallel_safe`（缺省 `False`，全仓今天只有 `get_current_time` 标了）。事件按 index 回填（前端本就按 `auditId` 配对，`chat-tools.js` 里写着"同轮可以并发多次调用"）。判据 `tests/test_agent_parallel.py`（**14 条**）。PITFALLS #107（预检必须是纯的） |
 > | 阶段 3 其余 | §7.1 精确 token 计数 / §7.3 transcript 断点续跑 | ⬜ **未开始**。★ **§7.1 本轮实测受阻**：它要求 `tiktoken cl100k_base`，而 `tiktoken` **不在 venv 且执行时无网络**（编码文件是首次使用时现下的）⇒ 按本节自己写的「**先取证再换**」纪律，**不许**在没有偏差表的情况下上线 |
 > | 阶段 2 | **§6.2 运行时间线视图** | ✅ **已完成**（2026-09-24）：`GET /api/agent/runs`（run **与 span 一次返回** —— 分两个请求会让前端出现"这次运行没有任何步骤"的半截态）+ 对话页「运行」面板（`static/js/run-timeline.js`）。★ **摘要那次调用单独标红**，而且**由产生它的地方声明**（`_SpanClient.chat` 写 `attrs.summary=True`，span 名「摘要」）—— 不让前端按内部的 `kind == "chat"` 自己判断（那会变成两边各写一份语义，改一边另一边不红）。缓存命中**按 span 显示、不按 run 平均**（平均会把"摘要全 miss"与"三次工具轮全命中"抹成中间值，而那个值指不出该改哪里）。判据：`pytest tests/test_agent_timeline.py -o addopts=""`（**5 条**）＋ `python tools\verify_agent_ui.py`（**19 项**端到端：真起生产入口、真开 chromium、真点按钮，读**计算样式**验证"红色真的画出来了"）。<br>★ **本节的起点是"数据落了库但没人能读"**：`recent_runs`/`run_spans` 早就存在，而**没有任何 API 路由暴露它们** —— 只有 `sqlite3` 命令行看得见。这正是 PITFALLS #106「写了一半的可观测性不是可观测性」的形态 |
-> | 其余 | §6.3 在线层 / §8.3，以及阶段 5 | ⬜ **未开始** |
+> | 阶段 4 | **§8.3 危险操作的可撤销性声明** | ✅ **已完成**（2026-09-24）：`ToolSpec.reversibility`（`REVERSIBLE` / `UNDOABLE` / `IRREVERSIBLE`）＋ `undo_recipe`；**装配期强制**（会改状态的工具没声明就报错；说 `UNDOABLE` 必须有配方；给了配方却不声明 `UNDOABLE` 也报错 —— 自相矛盾）。配方落 `agent_audit.meta`。判据 `tests/test_undo_recipe.py`（**8 条**）。<br>★ **口径比本节原文宽**：原文说「接第一个"不可逆写"工具时，它必须声明 `DANGEROUS` 并带上反向配方」，而**今天全仓 0 个 DANGEROUS 工具** ⇒ 只按那句话实现的话这个字段**没有调用方**（本仓对零调用方扩展点的态度见 `summary_fn` 的文档串）。所以口径落到**所有会改状态的工具**，今天就有 2 个真实调用方。<br>★ **脚本式 Skill 只能声明 `IRREVERSIBLE`**（上传的脚本无法被静态证明可逆 —— 与"risk 不得低于 write"同一条推理）；**转发式 Skill 继承**被包装工具的档位与配方。<br>★★ **本轮顺带修了一个更根本的缺陷**（PITFALLS #110）：`audit_extra` 的文档串说落 `meta`，代码却落在 `args` —— 而 `GET /api/agent/audit` **刻意不返回 `args`**（"可能有敏感片段"）。于是**精心设计成可展示的维度，一个都展示不出来**，而因为两列都没有读者，一直没人发现。★ 抓到它的是那条**端到端**断言（"这次真实写调用之后，审计那一行里能不能查到配方"）—— 其余七条当时全绿。<br>⏸ **「撤销本次会话的写操作」界面仍未做**：它需要一个 `UNDOABLE` 的工具才有内容可列（今天的 `accounts_browser_open` 有配方，但界面要等"逐条展示 + 逐条确认"的交互定稿）。**本节明确不做"一键全撤"**（批量回滚比批量创建更危险） |
+> | 其余 | §6.3 在线层，以及阶段 5 | ⬜ **未开始**（阶段 5 全部按触发条件，见 §9） |
 >
 > **基线数字更正**：本计划正文写的是 `c50ed87` 的 **5 插件 / 22 工具（19 read·2 write·1 dangerous）**。
 > HEAD（`d9cc39b` 起）实测为 **4 插件 / 18 工具（16 read · 2 write · 0 dangerous）** —— 配置工厂已于
@@ -526,7 +527,26 @@ UI 提供「撤销本次会话的写操作」，逐条展示 + 逐条确认（**
 | **Skills 渐进披露** | 想用社区 Skill / 正文里有真知识 | 新增内建 `read_skill`（read 级，按需取正文）；读取端兼容规范字段（`name` / `compatibility` 作别名）——**兼容读取不改写出**（ADR-0013 的既有手法） | 2–3 人日 |
 | **跨会话长期记忆** | 出现"每次都要重新交代同一件事" | `user_fact` 表 + `memory_remember` / `memory_recall` 两个工具；**可查看、可删除、进审计**——比向量库更合 GxP 的"可解释"要求 | 2–3 人日 |
 | **MCP 客户端** | 需要的外部能力 > 5 个 | `mcp` 插件：stdio server → `ToolSpec`；**risk 默认 WRITE**；capabilities 映射沙箱 `mcp-stdio` 策略。**前置：7.2 的工具面裁剪必须已上线**（MCP 会让工具数暴涨） | 3–5 人日 |
-| **沙箱内工具编排（PTC 形态）** | `insight_run` / `attachment_read` 的中间产物把上下文打满 | 新策略 `tool-orchestrate`；编排脚本经 stdio 请求宿主执行下游工具（**宿主仍是唯一执行者**，确认门与审计一步不省）。对齐 Anthropic PTC 的 token −37%（[来源](https://www.anthropic.com/engineering/advanced-tool-use)） | 3–5 人日 |
+>
+> ★★ **2026-09-24 核查（执行者注，供后续每一轮直接引用，不必再查一遍）**：本项的**前置已满足**
+> （§7.2 已上线：`ChatBody.plugins` ＋ `MAX_TOTAL_TOOLS = 40`），但**触发条件仍未满足**，
+> 而且还有一道**更硬的闸门**：
+>
+> | 事实 | 出处 |
+> |---|---|
+> | 「**MCP 管理 → 用户明确暂缓（仍未做）**」 | [ADR-0014](adr/0014-sandbox-for-untrusted-code.md) §D-4 表 + §D-6 的 ❌ 清单（逐字） |
+> | MCP 的 `ToolAnnotations`（`readOnlyHint` / `destructiveHint`）**只是提示**，规范明确写着客户端**不应**基于不可信服务端提供的 annotations 做工具使用决策 | [ADR-0014](adr/0014-sandbox-for-untrusted-code.md) §162-165、[ADR-0015](adr/0015-extension-access-token.md) §200-202 |
+> | MCP 出现"以扩展身份访问"的需求时，**令牌分发要重新设计**（不能只从 settings 读） | [ADR-0015](adr/0015-extension-access-token.md) §190 |
+> | 沙箱策略 `mcp-stdio` **已备好**（政策层不用新写） | `sandbox/policy.py::POLICIES` |
+>
+> ⇒ **在做 MCP 之前必须先有一次明确的"解冻"决定**（用户点头即可，形式上补一篇 ADR 记录它取代
+> ADR-0014 的那条 ❌）。**不要**因为"目标里点名了 MCP"就绕过它 —— 那条 ❌ 是用户自己下的。
+>
+> ★ **本轮已把两条 MCP 精神落到了本仓既有的地方**（不需要 MCP 就能做，也不需要解冻）：
+> ① **"不可信方不能自证安全"**：第三方 Skill 的声明（`risk` / `trust` / `reversibility`）一律**只能往严的方向**抬
+> —— 脚本式 Skill 的 `risk` 不得低于 write、`trust` 一律 `UNTRUSTED`、`reversibility` 一律 `IRREVERSIBLE`；
+> 转发式 Skill 则**逐项继承**被包装工具（不继承的话，包装一层就能把它"洗白"）。
+> ② **annotations/声明是提示而非边界**：`needs_confirmation` 与 `risk` 的分工写在铁律 33 里。| **沙箱内工具编排（PTC 形态）** | `insight_run` / `attachment_read` 的中间产物把上下文打满 | 新策略 `tool-orchestrate`；编排脚本经 stdio 请求宿主执行下游工具（**宿主仍是唯一执行者**，确认门与审计一步不省）。对齐 Anthropic PTC 的 token −37%（[来源](https://www.anthropic.com/engineering/advanced-tool-use)） | 3–5 人日 |
 
 ---
 

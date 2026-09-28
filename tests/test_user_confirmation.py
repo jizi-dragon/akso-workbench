@@ -80,7 +80,7 @@ def hub(monkeypatch):
     approvals.install(fresh)
     fresh.add_plugin(pa.Plugin(id="probe", title="探针", tools=[
         pa.ToolSpec(name="probe_dangerous", description="写动作", args_model=Arg,
-                    handler=danger_handler, risk=pa.Risk.DANGEROUS, trust=pa.Trust.LOCAL, timeout_s=5),
+                    handler=danger_handler, risk=pa.Risk.DANGEROUS, reversibility=pa.Reversibility.IRREVERSIBLE, trust=pa.Trust.LOCAL, timeout_s=5),
         pa.ToolSpec(name="probe_confirm2", description="第二个确认工具（用来验「确认不能嵌套」）",
                     args_model=Arg, handler=danger_handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL,
                     timeout_s=5, needs_confirmation=True),
@@ -317,7 +317,7 @@ def test_confirmation_tool_must_be_read(hub) -> None:
     """装配期自检：`needs_confirmation` + 非只读 = 无限递归，必须在装配时就拒掉。"""
     spec = pa.ToolSpec(
         name="probe_confirm_write", description="d", args_model=Arg,
-        handler=danger_handler, risk=pa.Risk.WRITE, trust=pa.Trust.LOCAL, needs_confirmation=True,
+        handler=danger_handler, risk=pa.Risk.WRITE, reversibility=pa.Reversibility.IRREVERSIBLE, trust=pa.Trust.LOCAL, needs_confirmation=True,
     )
     problems = spec.valid()
     assert any("无限递归" in p for p in problems), problems

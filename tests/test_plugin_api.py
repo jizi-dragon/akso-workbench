@@ -61,7 +61,7 @@ def probe_plugin(risk: pa.Risk = pa.Risk.READ, timeout_s: float = 5.0,
             pa.ToolSpec(name="probe_echo", description="回显工具", args_model=EchoArgs,
                         handler=echo_handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL, timeout_s=timeout_s),
             pa.ToolSpec(name="probe_write", description="写工具（过确认门）", args_model=EchoArgs,
-                        handler=write_handler, risk=risk, trust=pa.Trust.LOCAL, timeout_s=timeout_s,
+                        handler=write_handler, risk=risk, reversibility=pa.Reversibility.IRREVERSIBLE, trust=pa.Trust.LOCAL, timeout_s=timeout_s,
                         precheck=precheck, summary_fn=summary_fn),
         ],
     )
