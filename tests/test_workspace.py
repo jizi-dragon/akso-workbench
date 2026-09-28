@@ -331,12 +331,17 @@ def test_run_spider_missing_object_raises_instead_of_empty_graph(tmp_path: Path)
     assert not list(tmp_path.rglob(workspace.MANIFEST_NAME)), "失败不得留下 manifest"
 
 
-# ---------------------------------------------------------------- 路由状态映射
+# ---------------------------------------------------------------- 任务状态映射
+#
+# ⚠️ 这三条 import 的是 **`services/egmp/insight/jobs.py`** 而不是 `api/routes_insight.py`：
+# 2026-09-24 把领域逻辑从路由下沉到了服务层（理由是插件不许 import `api/`，
+# 而路径守卫必须两边共用 —— 见 `jobs.py` 的模块文档串）。
+# 断言本身一字未改：机制还在，只是换了住处。
 
 
 def test_coverage_maps_to_job_status() -> None:
     """complete→succeeded、partial→partial、degraded→failed；无 coverage 时退回布尔。"""
-    from workbench.api.routes_insight import _status_from_coverage
+    from workbench.services.egmp.insight.jobs import _status_from_coverage
 
     assert _status_from_coverage({"coverage": {"status": "complete"}}) == "succeeded"
     assert _status_from_coverage({"coverage": {"status": "partial"}}) == "partial"
@@ -353,7 +358,7 @@ def test_job_reports_workspace_only_when_it_really_is_one() -> None:
     `workspaces` 因此恒空 → `insight_runs.workspace_dir` 恒空 → 产物面板回落到
     runtime 任务目录，**用户在工作区里明明有 8 件产物，界面上「只有一个 proc.log」**。
     """
-    from workbench.api.routes_insight import _workspace_paths
+    from workbench.services.egmp.insight.jobs import _workspace_paths
 
     workdir = Path("D:/data/runtime/insight/abc123")
     ws = Path("D:/Documents/Workbench/洞察/change_plan__c/20260914-223238")
@@ -363,7 +368,7 @@ def test_job_reports_workspace_only_when_it_really_is_one() -> None:
 
 def test_artifact_lookup_prefers_workspace_then_falls_back() -> None:
     """产物接口的取目录口径：工作区列优先，空则回落 `artifact_dir`（两半都要能读）。"""
-    from workbench.api.routes_insight import _workspace_dirs
+    from workbench.services.egmp.insight.jobs import _workspace_dirs
 
     assert _workspace_dirs({"workspace_dir": ""}) == [], "空 → 调用方回落 artifact_dir"
     assert [p.name for p in _workspace_dirs({"workspace_dir": "a\nb"})] == ["a", "b"]

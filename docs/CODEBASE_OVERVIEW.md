@@ -398,6 +398,7 @@ HTTP 端点 **97 个**（`@router.` 计数）。
 | T5 | `egmp` HTTP 内核无单测；前端无 JS 测试框架（`accounts.js` 1,136 行是最大且回归面最薄的模块） | 改动风险靠人工 |
 | T6 | **工具插件的真实平台路径无自动化回归**（`insight_run`/`accounts_browser_open` 只能真机手验；原先的 `factory_create` 已随配置工厂删除） | 契约层（分级/确认门/审计/schema）已有 `tests/test_plugin_api.py` 钉住；"调下去真的对"仍靠真机冒烟 |
 | T7 | 前端工具卡片（`chat.js` 的 action/observation/approval 渲染）无自动化回归 | 与 `accounts.js` 同一处境：靠人工看。事件契约本身在 `tests/test_agent_loop.py` 里钉住了，前端只消费它 |
+| T8 | **`tools/verify_insight_preview.py` 在 `main` 上长期是 `11/14`，而且它不在 [AGENTS.md](../AGENTS.md) §3 的门禁矩阵里** | 2026-09-24 实测（`aa57acc`）：**P8**「step1 关联表列」、**P9**「列表项渲染」、**P11**「drawio 节点文字」三条红。判据：同一次改动**回退前后结果逐条一致**（都是 11/14、红的是同三条）⇒ 是**既有失败**，与当轮重构无关。<br>★ **两个问题分开看**：① 三条红本身还没定性（夹具过期？还是渲染器真坏了？——P8/P9 吃的是 `step1-relations.md`，P11 吃 `spider-network.drawio` 的节点文字，都在前端渲染侧）；② **更要紧的是它不在矩阵里** ⇒ 改洞察页 / 产物渲染时**没有人会去跑它**，"它红了"这件事传不出来。**待办**：先定性三条，再决定是修渲染还是修期望值，**然后把它补进 §3 矩阵** |
 
 ### 仓库卫生（**2026-09-17 重写**）
 

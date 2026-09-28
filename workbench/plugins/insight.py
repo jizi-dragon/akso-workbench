@@ -1,4 +1,4 @@
-"""平台洞察插件：把 akso-cc 沉淀的「读平台元数据 → 跑织网 → 取产物」接进 Agent。
+r"""平台洞察插件：把 akso-cc 沉淀的「读平台元数据 → 跑织网 → 取产物」接进 Agent。
 
 四个工具都走**已在仓库里的原生实现**，不新增平台调用面。插件层只做三件事：
 参数校验（pydantic）、风险分级、把结果压成模型读得懂的文本。
@@ -9,10 +9,17 @@
    （`kernel/endpoints.py:74-77` 那三条探针是上游 README 给的，可用性需按环境实测、
    可能全 404）。CODEBASE_OVERVIEW 的红线是「端点常量必须实证来源，不许凭观察猜」，
    所以宁可不给这个能力——模型应当先问用户对象编码，再用 `insight_read_config` 验证。
-2. **跑洞察必须复用页面同一条入口**（`api.routes_insight.run`）。绕过去就会漏掉
+2. **跑洞察必须与页面调同一份实现**（`services/egmp/insight/jobs.py`）。绕过去就会漏掉
    `workspace_dir` / `coverage_status` 的回填（2026-09-14 修的真实缺陷，见
-   `routes_insight._workspace_paths` 的文档）。插件另写一套 spider 调用会造成
+   `jobs._workspace_paths` 的文档）。插件另写一套 spider 调用会造成
    「页面上看不到产物、Agent 却说自己跑完了」——这比调用层次不干净严重得多。
+   > **2026-09-24 调整了"同一份实现"住在哪**：此前它住在 `api/routes_insight.py`，
+   > 于是本插件只能 `from ..api import routes_insight` 去调 **HTTP handler** ——
+   > 违反 AGENTS.md 规则 7（`plugins → plugin_api`，永不反向），而且**路径守卫的
+   > 真身也跟着住在 `api/` 里**。现在逻辑下沉到 `services/egmp/insight/jobs.py`：
+   > 上面那条"不许另写一套"的约束**没变**，只是被约束的那一份实现搬到了两边都能
+   > 合法依赖的地方。判据：`Select-String -Path workbench\plugins\*.py -Pattern
+   > 'from \.\.api'` 必须零命中。
 """
 
 from __future__ import annotations
@@ -125,18 +132,22 @@ async def read_config(args: ReadConfigArgs, ctx: pa.ToolContext) -> str:
 
 
 async def run_insight(args: RunInsightArgs, ctx: pa.ToolContext) -> str:
-    """跑一次洞察任务（login / spider），与洞察页同一条入口。"""
-    from ..api import routes_insight
+    """跑一次洞察任务（login / spider），与洞察页同一条实现。"""
+    from ..services.egmp.insight import jobs
 
     account_id = pick_account(args.account_id)
     command = (args.command or "spider").strip()
     if command not in {"login", "spider"}:
         raise ValueError(f"未知命令：{command}（login/spider）")
 
-    req = routes_insight.InsightRequest(
+    req = jobs.InsightRequest(
         command=command, account_id=account_id, objects=args.objects or "",
     )
-    outcome = await _in_thread(routes_insight.run, req)
+    try:
+        outcome = await _in_thread(jobs.run_sync, req)
+    except jobs.InsightError as exc:
+        # 领域错误 → 工具层的观测（AGENTS.md 规则 11：异常 = 观测，不要抛出去打断循环）
+        raise ValueError(str(exc)) from exc
     result = outcome.get("result") or {}
     coverage = result.get("coverage") or {}
     return json.dumps(
@@ -157,26 +168,32 @@ async def run_insight(args: RunInsightArgs, ctx: pa.ToolContext) -> str:
 
 async def artifacts(args: ArtifactsArgs, ctx: pa.ToolContext) -> str:
     """产物清单（含日志与工作区落点）。"""
-    from ..api import routes_insight
+    from ..services.egmp.insight import jobs
 
     job_id = str(pa.require(args.job_id, "job_id 不能为空")).strip()
-    data = await _in_thread(routes_insight.list_artifacts, job_id)
+    try:
+        data = await _in_thread(jobs.job_artifacts, job_id)
+    except jobs.InsightError as exc:
+        raise ValueError(str(exc)) from exc
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
 async def read_artifact(args: ReadArtifactArgs, ctx: pa.ToolContext) -> str:
     """读一件产物正文（markdown/drawio/日志）。
 
-    复用页面的路径守卫（`routes_insight.read_artifact` 里的 `is_relative_to` 检查）：
-    自己拼路径会绕过守卫，等于给模型开一个任意文件读。
+    **路径守卫在 `jobs.resolve_artifact` 里**，与页面那条 `/artifacts/{job_id}/file`
+    走的是同一个函数。自己拼路径会绕过守卫，等于给模型开一个任意文件读 ——
+    所以这里只允许"把它解析出来的路径读出来"，不做任何路径运算。
     """
-    from ..api import routes_insight
+    from ..services.egmp.insight import jobs
 
     job_id = str(pa.require(args.job_id, "job_id 不能为空")).strip()
     name = str(pa.require(args.name, "name 不能为空")).strip()
-    response = await _in_thread(routes_insight.read_artifact, job_id, name, False)
-    raw = getattr(response, "body", b"")
-    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+    try:
+        target = await _in_thread(jobs.resolve_artifact, job_id, name)
+        text = await _in_thread(jobs.read_artifact_text, target)
+    except jobs.InsightError as exc:
+        raise ValueError(str(exc)) from exc
     return json.dumps(
         {
             "job_id": job_id, "name": name, "suffix": Path(name).suffix.lower(),
