@@ -97,6 +97,32 @@ MAX_CONFIRM_TIMEOUT_S = 1_800.0
 不夹的话一个写错的 `timeoutS`（比如把毫秒当秒填了 `300000`）会让会话静默卡住三天。
 """
 
+MAX_TOTAL_TOOLS = 40
+"""工具总面（core + 用户装的 Skill）的**全局上限**（计划 §7.2）。
+
+## 为什么需要一个上限
+
+工具 schema 是**每一轮请求的前缀**里最贵的那一块 —— 18 个工具约 2,192 token/轮，
+而且是**每一轮都发**。数目一旦失控（每装一个 Skill 加几个），代价是线性的、
+静默的、且发生在每一次调用上。MCP 会让这件事量级地变坏（一个 server 就能带几十个工具），
+所以这条上限是**接 MCP 的前置**。
+
+## 为什么是"记 failure"而不是"拦住装配"
+
+与本仓对坏插件的既有语义一致（`mark_load_failure`）：**静默降级比崩溃更难查，
+但崩溃比降级更糟**。超限时：
+- 工具**照常可用**（用户装的东西不会突然失效）；
+- `hub.failures` 里留一条，由 `/api/agent/selfcheck` 暴露；
+- 日志里 WARNING 一条。
+
+⇒ 现象可见、行为不变。**不要**改成"超限就拒装"：那会让一次装机在用户毫无预期时失败，
+而他看到的只是一个他没见过的工具没出现。
+
+40 这个数字的来源：DeepSeek/OpenAI 的 function calling 没有硬上限，但
+**选择质量**随工具数下降是共识（Anthropic 的经验阈值是"10 个以上就该按需发现"）。
+本仓目前 18 个，40 给了近乎一倍的余量 —— 它是**警报线**，不是容量线。
+"""
+
 MAX_CONFIRM_OPTIONS = 50
 """一次「让用户选一个」最多给几张卡片。**超上限直接拒绝，不截断。**
 
@@ -713,6 +739,32 @@ class ToolHub:
         if collisions:  # pragma: no cover —— 装配期已逐个查重，这里是最后一道保险
             raise ValueError("工具名在多个插件间冲突——_rebuild 检测到覆盖，装配逻辑有 bug")
         self._tools = rebuilt
+        self._check_tool_budget()
+
+    def _check_tool_budget(self) -> None:
+        """工具总面超过 `MAX_TOTAL_TOOLS` 时**记一条 failure**（计划 §7.2）。
+
+        ★ **幂等**：`_rebuild` 在装配、卸载、禁用、装 Skill 时都会被调用，
+        每次都 append 的话 `failures` 会随操作次数线性增长 —— 而它的消费方
+        （selfcheck / 前端）看的是"有没有问题"，不是"被提醒过几次"。
+        所以先撤掉上一次那条，再按当前状态决定要不要加。
+        """
+        self._failures = [f for f in self._failures if f.get("kind") != "tool_budget"]
+        count = len(self._tools)
+        if count <= MAX_TOTAL_TOOLS:
+            return
+        self._failures.append({
+            "kind": "tool_budget",
+            "plugin": "(全局)",
+            "error": (
+                f"工具总面 {count} 个，超过上限 {MAX_TOTAL_TOOLS}。"
+                "工具 schema 是**每一轮请求**都要发的前缀，数目线性推高成本、"
+                "并让模型的选择质量下降。处置：禁用/卸载不用的插件，"
+                "或分页面传 `plugins` 子集（`/api/chat/stream` 的 `plugins` 参数）。"
+            ),
+        })
+        logger.warning("工具总面 %d 个，超过上限 %d —— 已记入 failures（不拦装配）",
+                       count, MAX_TOTAL_TOOLS)
 
     def load(self, loader: Callable[[ToolHub], None]) -> None:
         """跑一次装配函数，**隔离失败**：坏插件只记不进清单，宿主照常启动。"""

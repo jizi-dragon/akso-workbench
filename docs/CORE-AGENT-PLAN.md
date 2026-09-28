@@ -32,7 +32,9 @@ _2026-09-21 撰写。锚定 `c50ed87`（main）。_
 > | 阶段 2 | **§6.1 `agent_run` + `agent_span` ＋ OTel 导出层** | ✅ **已完成**（2026-09-24）：**迁移 24**（不是计划写的 22 —— 22/23 已被占用）；`harness/trace.py`（`RunRecorder` / `recent_runs` / `run_spans`）；埋点在**循环层两处**（模型调用用 `_SpanClient` 包一层、工具调用取 `ToolInvocation.duration_ms`）。★ **对计划的一处偏离**：计划写"`ToolHub.execute` 前后"，实际两处都在 `loop.py` —— 因为 `plugin_api` 不许 import `db`（规则 7），要写就得再加一个注入面，而它的唯一调用方就是循环（触发器写在 ADR-0021 §7）。判据：`tests/test_agent_spans.py`（**15 条**）＋ `python tools\export_otel.py --dry-run`。⚠️ **属性名未逐条核**（写映射时网络不可达）⇒ 11 条全标 `verify`，`--list-attributes` 可逐条核 |
 > | 阶段 2 | **§6.3 评测集（离线层）** | ✅ **已完成**（2026-09-24）：`tests/eval/`（`cases.py` 用例表 / `runner.py` 执行与汇总 / `test_eval_offline.py` 门禁入口 / `fixtures/` **12 份夹具**）＋ `tools/run_evals.py`（`--offline` / `--record` / `--list` / `--json`）。★ **三条设计选择**：① **真工具面 + 桩 handler** —— 声明是真的（那才是模型看到的东西，也是"工具选择"有意义的前提），实现是桩（不碰平台、可复现）；② **模型侧走 `ReplayLLM` 而不是脚本化客户端** —— 夹具按**请求指纹**匹配，所以**改了系统提示词/工具描述/消息装配 ⇒ 回放 miss ⇒ 可见的红**。实测：改一句系统提示词 ⇒ **0.8 秒**内 12 条全 miss（这正是计划要的那条门禁）；③ **期望是手写的，不是从运行结果抄的** —— 抄了就是同义反复。**当前 12/12 通过**（工具选择准确率 100%）。⚠️ 夹具是**合成**的（无 Key/网络），`note` 字段逐份标注；换真机 `--record` 即可，**期望一行都不用改**。遗留：在线层（`-m eval`，真调 API）与"蓝图校验"用例未做 |
 > | 阶段 4 | **§8.2 工具结果的可信度标签 ＋ taint 传播（立 I18）** | ✅ **已完成**（2026-09-24）：[ADR-0022](adr/0022-trust-labels-and-taint.md)。`Trust`（`LOCAL`/`UNTRUSTED`）**装配期必填、无缺省值**（比 `risk` 严 —— `risk` 缺省落到最安全档，而 `trust` 缺省成 `LOCAL` 会把外部内容**静默**声明为可信）；外部结果带机器可读前缀（贴在 `_render` 之后 = 唯一产出内容处）；taint **单调**传播到确认门，用户读到的摘要末尾追加「这真的是你要它做的吗」。★ **硬拦截刻意不做**（会与"用户明确要求照网页建对象"冲突），判断与重启条件见 ADR。判据：`tests/test_trust_labels.py`（**12 条**）。真实工具面 18 个逐个声明；脚本式 Skill = `UNTRUSTED`、转发式 Skill **继承**被包装工具的 trust（否则包装 `read_web_page` 就成了绕过标签的通道） |
-> | 其余 | §6.2 / §6.3 在线层 / §8.3，以及阶段 3 / 5 | ⬜ **未开始** |
+> | 阶段 3 | **§7.2 工具面裁剪接线 ＋ 全局上限** | ✅ **已完成**（2026-09-24，**接 MCP 的前置**）：`ChatBody.plugins` 端到端接线（`None` = 不裁剪 / `[]` = 一个都不给，**两者刻意不同义**）＋ `MAX_TOTAL_TOOLS = 40`（超限记 `failures` 但**不拦装配**，且**幂等**、降回上限内自动清除）。★ **对计划原文的一处更正**：「按页面传子集」在当前架构下**没有落点**（工厂页已移除；四个工具页全都没有对话输入区，唯一的对话面是通用助手，它本来就要全量）⇒ 交付的是**机制**。`examples` 一项**未做**（要联网核 `input_examples`，见本节更正）。判据 `tests/test_tool_face.py`（**10 条**）。PITFALLS #106 |
+> | 阶段 3 其余 | §7.1 精确 token 计数 / §7.3 transcript 断点续跑 / §7.4 并行工具调用 | ⬜ **未开始**。★ **§7.1 本轮实测受阻**：它要求 `tiktoken cl100k_base`，而 `tiktoken` **不在 venv 且执行时无网络**（编码文件是首次使用时现下的）⇒ 按本节自己写的「**先取证再换**」纪律，**不许**在没有偏差表的情况下上线 |
+> | 其余 | §6.2 / §6.3 在线层 / §8.3，以及阶段 5 | ⬜ **未开始** |
 >
 > **基线数字更正**：本计划正文写的是 `c50ed87` 的 **5 插件 / 22 工具（19 read·2 write·1 dangerous）**。
 > HEAD（`d9cc39b` 起）实测为 **4 插件 / 18 工具（16 read · 2 write · 0 dangerous）** —— 配置工厂已于
@@ -396,6 +398,27 @@ agent_span(id, run_id, step, span_kind, name, started_at, duration_ms,
 
 **判据**：`pytest tests/test_agent_loop.py::test_plugin_whitelist_narrows_the_tool_surface`
 （已有）＋ 断言前端每个页面传的 `plugins` 与 `TOOLS.md` 的插件 id 一致（机检，防手抄漂移）。
+
+> **⚠️ 2026-09-24 执行时的实测更正**：本节的设计写「前端按**当前页面**传子集：
+> 账号页挂 `accounts`+`builtin`，工厂页挂 `factory`+`builtin`，通用助手页 = 全量」。
+> **这条在当前架构下不成立**，两处原因各自独立：
+>
+> ① **工厂页已随配置工厂移除**（2026-09-22）；
+> ② ★ **四个工具页（`pages/accounts|insight|skills|sandbox.html`）全都没有对话输入区** ——
+> 全仓**唯一**的对话面是主界面那个通用助手，而它本来就该拿到全量工具（用户在那里能问任何事）。
+>
+> ⇒ **"按页面裁剪"没有落点**。交付的是**机制**而不是"某页传某子集"：
+> `ChatBody.plugins`（端到端接线，`None`=不裁剪 / `[]`=一个都不给，**两者刻意不同义**）
+> ＋ `MAX_TOTAL_TOOLS = 40` 全局上限（超限记 `failures` 但不拦装配，**幂等**）。
+> 判据 `tests/test_tool_face.py`（**10 条**），其中
+> `test_no_tool_page_embeds_a_chat_composer` **守的是这条结论本身**：
+> 哪天有人给工具页加了对话，它会红，提醒把那一页的 `plugins` 子集补上。
+> **本案的 PITFALLS 是 #106**（"留白不是能力"）。
+>
+> ③ 本节的 `ToolSpec.examples` 一项**未做**：它要求"先核实 DeepSeek 是否支持
+> `input_examples`"，而执行时**无网络** ⇒ 按本节自己写的纪律
+> （"不支持则只用于文档与 few-shot 注入，**不要塞进 schema 赌运气**"）**不动**。
+> 触发条件：能联网核实该字段时。
 
 ### 7.3 transcript 落库 ＋ 对话级断点续跑
 

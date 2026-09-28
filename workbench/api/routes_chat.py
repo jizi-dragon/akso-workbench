@@ -85,6 +85,33 @@ class ChatBody(BaseModel):
     而不是 `None`（漏传与传空必须同义，否则每个消费方都要写一遍兜底）。
     """
 
+    plugins: list[str] | None = None
+    """本轮允许模型看到的**插件白名单**（计划 §7.2）。`None` = 全部。
+
+    ## 它为什么存在
+
+    工具 schema 是**每一轮请求**都要发的前缀里最贵的一块（18 个工具约 2,192 token/轮），
+    而且是每一轮都发。让调用方按当前场景传一个子集，是唯一能在**不删功能**的前提下
+    把这块成本降下来的手段。
+
+    ## 它**不是**安全边界
+
+    ⚠️ 读清楚这一条再改它：白名单只决定"模型**看得见**哪些工具"，
+    **不决定"能调用哪些"**。真实闸门是 `ToolHub.execute` 里那道
+    （未知工具 → 观测、风险工具 → 没有令牌不执行）。所以传一个子集
+    **不会**让任何危险操作变得安全，不传也**不会**让它变得危险。
+    把它写成"权限控制"是本文件最容易被误读的一处。
+
+    ## `None` 与 `[]` **不同义**（这里刻意与 `attachmentIds` 相反）
+
+    - `None` = 不裁剪（全部插件）；
+    - `[]` = 一个插件都不给 ⇒ 模型没有任何工具可用。
+
+    `attachmentIds` 那边"漏传与传空同义"是对的（空附件条与没有附件条是一回事），
+    但这里不同：漏传的语义是"我不关心"，传空的语义是"我明确要求它没有工具"。
+    把两者合并会让**一个写错的调用方静默地把模型的手脚全砍掉**。
+    """
+
 
 class FeedbackBody(BaseModel):
     metricId: str
@@ -329,7 +356,8 @@ async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
     # `_STOP_TOKENS` 那份唯一的用途就是让 `POST /api/chat/stop` 找到它。
     stop_token = _register_stop(conversation_id)
     try:
-        async for sse in _stream_agent(history, cfg, result, conversation_id, stop_token):
+        async for sse in _stream_agent(history, cfg, result, conversation_id, stop_token,
+                                       body.plugins):
             yield sse
         completed = True
     finally:
@@ -409,6 +437,7 @@ async def _stream_agent(
     result: dict,
     conversation_id: str = "",
     should_stop=None,
+    plugins: list[str] | None = None,
 ) -> AsyncIterator[str]:
     """跑 Agent 循环并逐事件转发 SSE；把最终内容/错误写入 result 供调用方收尾。
 
@@ -432,6 +461,7 @@ async def _stream_agent(
             history, client, default_registry(), agent_config,
             conversation_id=conversation_id,
             should_stop=should_stop,
+            plugins=plugins,
         ):
             if event["type"] == "token":
                 assistant_content += event["text"]
