@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
   逐列适配并对未知 `NOT NULL` 无默认值列填中性值，避免接管旧库时 IntegrityError。
 - `checksum` 按 sqlx 语义取迁移 SQL 的 SHA-384 摘要。
 
-### 迁移账（1–23，全部已应用）
+### 迁移账（1–24，全部已应用）
 
 | # | 名称 | 内容 | 血统 |
 |---|---|---|---|
@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | 21 | `attachments` | 新建 `attachments`（用户交给 agent 的**文件/图片**：名字/mime/字节/sha256/解析状态/正文长度/坐标 JSON）+ 索引 | [Agent 文件输入](AGENT-FILE-INPUT-PLAN.md) |
 | 22 | `summary_boundary_excludes_system` | 数据行改写：`conversation_context.summarized_upto` 整体减 1 —— 摘要边界改为**不含首条 system**计数（I15：折叠永不吞 system） | [ADR-0019](adr/0019-in-turn-context-and-budget-governance.md) |
 | 23 | `messages_kind` | `messages` 增 `kind`（`message` / `error` / `tool`）；并把历史里 `role='assistant' AND content LIKE '错误：%'` 的行标成 `error`（**启发式**，边界写在迁移注释里） | [ADR-0019](adr/0019-in-turn-context-and-budget-governance.md) §5.4b |
+| 24 | `agent_run_and_span` | 新建 `agent_run`（一次用户回合：状态/步数/用量/耗时）与 `agent_span`（该回合每一步：model/tool/sandbox/confirm + 耗时/状态/attrs）+ 索引 | [ADR-0021](adr/0021-agent-run-and-otel-export.md) |
 
 > **迁移 1–6 为 fork 历史，按不可变纪律保留**。其中 `documents` / `doc_chunks` / `qa_metrics`
 > 的知识库相关功能**源码已删**（表仅留存、不再读写）；`knowledge_nodes` / `knowledge_edges` /

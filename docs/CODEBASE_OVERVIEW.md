@@ -6,7 +6,7 @@ _由 learn-codebase 技能生成；**2026-09-16 复核**，锚定 `c8753ce`（v0
 > `d0efa84`（v0.3.5，2026-09-13 全面重写）→ **`c8753ce`（v0.3.12，2026-09-16 复核）。**
 > 上一版锚定 v0.3.5：正文的插件层是新的，但**页头与 Summary 的版本号、代码体量口径、插件与迁移计数**三处已过期。
 > **★ 2026-09-24 现状（配置工厂整体移除后）**：**4 个插件 / 18 个工具**（16 read + 2 write + 0 dangerous）、
-> **迁移 1–23**。紧接下面那句"五插件 / 20 工具 / 迁移 1–20"是 `c8753ce` 当时（v0.3.12）的实测，**已过期**——
+> **迁移 1–24**。紧接下面那句"五插件 / 20 工具 / 迁移 1–20"是 `c8753ce` 当时（v0.3.12）的实测，**已过期**——
 > 保留它是为了留痕，**引用前先按 §关键模块 的数字**。
 > 本轮按代码实测逐条重校（口径见下）：**五插件 / 20 工具**（原写四插件 / 19 工具）、**迁移 1–20**（原写 1–16）、
 > 行数口径全面上修。失效的历史架构文档见 [docs/archive/](archive/README.md)。
@@ -46,7 +46,7 @@ _由 learn-codebase 技能生成；**2026-09-16 复核**，锚定 `c8753ce`（v0
   > 口径说明：本表行数为**物理行数**（含空行），`workbench/**` 实测于 2026-09-17（沙箱层与 Skill 共享库落地后）。用 `Get-Content \| Measure-Object -Line` 统计会漏掉空行（例如 `client.py` 会得 153 而非 197），已删除的原 `AGENT.md` 里的 8,167 行即为此类偏低的计数。**上一版（v0.3.5）的 70 文件 10,172 行 / 24 前端文件 5,947 行 / 4 个壳文件 1,006 行均已过期**——增量主要来自插件层（`plugin_api` 646 + `approvals` 350 + `cache` 287 + `plugins/` 1,374）、**不受信代码执行层（`sandbox/` 1,150 + `skills/` 1,775）**，以及新增的前端 `chat-tools.js` / `settings.js` / `sandbox.js` / `skills.js`。
 - **框架 / 运行时：** FastAPI + uvicorn[standard]（REST + SSE + 静态托管）；pydantic v2；**Electron 33** 桌面壳（窗口 / 托盘 / 全局热键 / 更新器 / 出网通道 / sidecar 生命周期）
 - **构建 / 包管理：** uv（`uv.lock`，默认清华镜像 `pyproject.toml:37-39`）；hatchling；ruff（`E4/E7/E9/F/I/B`，line-length 110）；**PyInstaller**（`build` extra，`workbench/server.spec` → `dist/WorkbenchServer/` onedir）；**electron-builder → NSIS**（`tools/build.ps1` 一键出安装包）；esbuild 0.24（扩展打包）；版本真源 `pyproject.toml`
-- **存储 / 外部服务：** SQLite（WAL，**迁移 1–23**）；Playwright chromium；cryptography Fernet；DeepSeek API；networkx；GitHub Releases（electron-updater）
+- **存储 / 外部服务：** SQLite（WAL，**迁移 1–24**）；Playwright chromium；cryptography Fernet；DeepSeek API；networkx；GitHub Releases（electron-updater）
 - **端口：** **固定常量** 18765 服务 · 18766 CDP · 18767 壳控制服务，**不顺延**（[ADR-0012](adr/0012-fixed-ports.md) 取代
   [ADR-0011](adr/0011-port-and-session-negotiation.md) §D-1）。被占则报错退出并说清占用者是谁；
   仍经环境变量下发 + 公布到 `runtime/desktop-ports.json` + 由 `/whoami` 答给扩展（那三条是**身份**手段，与顺延无关）。
@@ -145,7 +145,7 @@ db.py（SQLite 单连接 + **22 条**迁移常量表 + 方言边界）
 | `workbench/services/accounts.py` | Fernet 密钥管理、环境/账号/盒子 CRUD、分配池（config/monitor）、备份导出导入（`fernetKey` 随文件下发） |
 | `workbench/services/autologin.py` | 节奏门控五重门（MAIN world JS 注入 + TokenCapture JWT） |
 | `workbench/services/egmp/` | 平台内核：`client`（code==0 信封 / paged_post / 55min token 缓存）、`kernel`（端点表 + 语义词典）、`queries`（**平台元数据读层**，与 `cache.py` 一并刻意保留）、`insight`、`monitor`。~~`writers`（含 `spec.py`：给 agent 的蓝图规格 + 给用户的审阅材料）/ `orchestrate`（**只做确定性执行**：拓扑排序 / 8 步管道 / checkpoint）~~ → **2026-09-22 随配置工厂整体删除** |
-| `workbench/db.py` | SQLite + `MIGRATIONS`（**1–23**；13 = `add_created_at_indexes`，14 = 洞察工作区与覆盖度，15 = 模块 id 数据改写，16 = `tool_plugin_layer`（`agent_audit` 加列 + `pending_action`），17 = `agent_cache_layer`，18 = `rename_factory_module_id`，19 = `sandbox_run`（沙箱执行审计），20 = `skill_audit`（能力供给链留痕），21 = `attachments`，**22 = `summary_boundary_excludes_system`（摘要边界不含 system，I15）**，**23 = `messages_kind`（错误记录与真实对话分离，§5.4b）**）；迁移**只增不改** |
+| `workbench/db.py` | SQLite + `MIGRATIONS`（**1–24**；13 = `add_created_at_indexes`，14 = 洞察工作区与覆盖度，15 = 模块 id 数据改写，16 = `tool_plugin_layer`（`agent_audit` 加列 + `pending_action`），17 = `agent_cache_layer`，18 = `rename_factory_module_id`，19 = `sandbox_run`（沙箱执行审计），20 = `skill_audit`（能力供给链留痕），21 = `attachments`，**22 = `summary_boundary_excludes_system`（摘要边界不含 system，I15）**，**23 = `messages_kind`（错误记录与真实对话分离，§5.4b）**）；迁移**只增不改** |
 | `workbench/plugin_api.py` | **插件 SDK 契约**：`ToolHub`（工具注册表/执行器，**分 core / installed 两层**）+ `ToolSpec`（含 `Risk` 分级）+ `ToolContext` + `Plugin`（含 `PluginOrigin`）。零领域知识（不 import 插件、不 import `services/egmp`、连 `db` 都不 import） |
 | `workbench/approvals.py` | **危险操作确认门**（单次令牌 / 5 分钟 / 参数指纹）+ **审计写入器**（唯一入口）+ 人话摘要 |
 | `workbench/plugins/` | 四个工具插件（`builtins` / `websearch` / `insight` / `accounts`，共 18 个工具；风险分布：**16 read + 2 write + 0 dangerous**）。`plugins/__init__.py::_MODULES` 是显式清单，坏插件隔离成 failure |

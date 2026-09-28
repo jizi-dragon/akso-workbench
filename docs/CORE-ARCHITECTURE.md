@@ -627,7 +627,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 - **裁剪**：`plugins` 白名单口子已留。可按页面/意图注入子集，进一步压低每轮 schema 成本。
   当前工具数下不必要，但**是接 MCP 之前必须有的能力**（MCP 会让工具数暴涨）。
 
-### 7.5 【中成本】可观测性对齐 OTel
+### 7.5 【中成本】可观测性对齐 OTel —— **2026-09-24 已落地一半**
 
 **缺口**：审计是自建表，不是 OTel GenAI 语义约定。好处是零依赖、可 SQL 查询；
 代价是无法直接接入既有可观测后端（Jaeger / Langfuse / Phoenix 等）。
@@ -636,7 +636,15 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 把 `agent_audit` + `deepseek_usage` + `sandbox_run` 的字段映射到
 `gen_ai.*` 语义约定。这样既保住审计，又能接入通用工具。
 
-**触发条件**：需要给外部（客户/审计方）看调用链。
+**落地状态（2026-09-24）**：✅ 已实现，见 [ADR-0021](adr/0021-agent-run-and-otel-export.md)。
+- **粒度选择与本节原建议不同**：没有映射 `agent_audit`，而是新增了
+  `agent_run` / `agent_span`（**迁移 24**）—— 理由是"一次用户回合"此前在数据里
+  **不是一个实体**，而 span 需要那个父子结构（详见该 ADR §2 D-1）。
+- 导出层是 `tools/export_otel.py`（OTLP/JSON，**零运行时依赖**，离线跑）。
+- ⚠️ **仍差一半**：`gen_ai.*` 的**具体属性名未逐条核实**（见本文档尾部的边界说明），
+  当前全部标着 `verify`；另**不做** Langfuse 等生态工具的私有导入格式。
+
+**触发条件**：需要给外部（客户/审计方）看调用链 —— **已触发**。
 
 ### 7.6 【低成本，值得现在做】评估集（Evals）
 
@@ -739,7 +747,7 @@ Codex 之所以必须提供 `unelevated` 回退，正是因为企业策略常常
 | 模型接入（L1） | `deepseek.py` **255 行** | — |
 | 工具规模 | **4 插件 / 18 core 工具**（**16 read · 2 write · 0 dangerous**） | `python tools/gen_tools_doc.py` |
 | HTTP 端点 | **99** | `@router.` 计数 |
-| 数据库迁移 | **1–23** | `workbench/db.py::MIGRATIONS` |
+| 数据库迁移 | **1–24** | `workbench/db.py::MIGRATIONS` |
 | **仓库全量** | `workbench/**.py` **85 文件 20,201 行**；前端 `static` js+css **25 文件 10,039 行**；扩展 TS **25 文件 5,917 行**；测试 **35 文件 10,216 行**；`tools/` **36 文件 6,846 行**（`.py`/`.mjs`/`.ps1`/`.js`）；Electron 壳 `desktop/*.js` **5 文件 1,697 行** | 同上 |
 | 测试 | **516 passed / 11 deselected**（默认跳过 slow 层）——**2026-09-18 记录，未重跑** | `pytest -o addopts="" -q -m "not slow"` |
 | 打包静态检查 | **13/13** | `tools/verify_packaging.py` |
@@ -786,6 +794,14 @@ Codex 之所以必须提供 `unelevated` 回退，正是因为企业策略常常
   ⇒ 本项目把 `Risk` 做进执行器（无令牌不调 handler）**在安全语义上强于 MCP 的提示层**。
   ⚠️ 本节结论来自子代理对 MCP 规范页（2025-06-18 与 draft）的实读回报，**主代理未逐字复核规范全文**。
 - **OTel GenAI 语义约定**：用于 span/trace 的 `gen_ai.*` 属性约定存在并被生态工具（Traceloop、Splunk 等）采用；本文 §7.5 的建议基于此。**具体属性名未逐条核实**，落地前需查 OpenTelemetry 官方语义约定文档。
+  > **2026-09-24 更新（仍未核实，但已变成一条可执行的检查）**：[ADR-0021](adr/0021-agent-run-and-otel-export.md)
+  > 落地了导出层，映射**集中在一张表**里 —— `tools/export_otel.py` 的 `OTEL_ATTRS`，
+  > 每条带一个核实状态（`ok` / `verify`）。核对只需一条命令：
+  > `python tools\export_otel.py --list-attributes`。
+  > **写那份映射时网络不可达**（`github.com` / `raw.githubusercontent.com` 均 DNS 失败），
+  > 所以 11 条**全部标着 `verify`** —— 它们是按记忆写下的候选名，**语义方向可信、拼写未核**。
+  > ★ 这条从"一句空泛的提醒"变成了"一条命令 + 一张表"：
+  > **`verify` 不许因为"看起来对"就改成 `ok`**（`tests/test_agent_spans.py` 有一条断言守着它）。
 - **star 数**：`anthropics/skills` 177,188 与 `obra/superpowers` 288,874 为 **2026-09-20 GitHub REST API 直接实测**
   （两个渠道独立采集结果一致：主代理走 `api.github.com`，子代理走 `ungh.cc`）。
   `microsoft/playwright-mcp` 37,362 ★ / Apache-2.0、`langchain` 146,694 ★ 等同批实测，完整表见

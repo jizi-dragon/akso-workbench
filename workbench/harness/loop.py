@@ -48,6 +48,7 @@ from typing import Any
 from .. import cache, logging_setup
 from ..plugin_api import Risk, ToolContext, ToolHub, ToolStatus
 from ..services.deepseek import DeepSeekClient
+from . import trace
 from .context import content_to_text, estimate_messages_tokens
 from .safety import SafetyGate
 from .types import AgentConfig, make_event
@@ -104,8 +105,8 @@ class UsageMeter:
 
 
 @contextlib.contextmanager
-def _accounted(meter: UsageMeter) -> Iterator[None]:
-    """离开这个块时**必定**把用量入账（计划 §5.4a）。
+def _accounted(meter: UsageMeter, recorder: trace.RunRecorder | None = None) -> Iterator[None]:
+    """离开这个块时**必定**把用量入账（计划 §5.4a）并收掉运行记录（§6.1）。
 
     ## 为什么必须有它
 
@@ -124,8 +125,115 @@ def _accounted(meter: UsageMeter) -> Iterator[None]:
     """
     try:
         yield
+    except GeneratorExit:
+        # 消费方断开（关页面 / 切会话）。**与"它坏了"分开记** —— 见 `trace.RUN_ABORTED`。
+        if recorder is not None:
+            recorder.abort()
+        raise
+    except BaseException as exc:
+        # ★ 异常出口必须把 run 标成失败。不标的话 `finish()` 会把它当成功
+        #   （`status` 仍是 `running` ⇒ 见 `RunRecorder.finish` 的兜底），
+        #   于是**一次崩溃在数据里看起来是一次成功的回合** —— 而那是这个模块
+        #   最不该犯的错（它的全部价值就是"哪一回合坏了"）。
+        if recorder is not None:
+            recorder.fail(f"{type(exc).__name__}: {exc}")
+        raise
     finally:
+        # 顺序是**承重**的：先入账（计费口径），再收运行记录（轨迹口径）。
+        # 反过来会出现"run 里记着用量、用量表里却没有"这种不一致 ——
+        # 而 `recorder.finish(usage)` 的入参正是这份用量，读的必须是**已冻结**的那份
+        # （`meter.finish()` 幂等，这里再调一次只是取回同一个 dict）。
+        usage = meter.finish()
         meter.persist()
+        if recorder is not None:
+            recorder.finish(usage)
+
+
+class _SpanClient:
+    """包住 LLM 客户端，为**每一次模型调用**记一条 `model` span。
+
+    ## 为什么包客户端，而不是在 `_one_model_turn` 里埋点
+
+    `_one_model_turn` 的 `async for` 有**多个提前 `return`**（截断终止、早退分支）。
+    要覆盖全部出口就得把那一整段缩进一层 —— 而缩进是纯机械操作，**最容易出笔误、
+    且出了笔误测试未必变红**。包一层客户端等价、不动调用方一个字符，
+    还顺带覆盖了摘要那次 `chat()` 调用（它也是真实的模型开销）。
+
+    ## ★ 记在 `yield` **之前**（PITFALLS #99 的教训）
+
+    消费方收到 `end` 就 `return`，于是本生成器在 `yield` 处被 `aclose()` ——
+    **循环之后再记就永远记不上**。这条坑本会话踩过两次（#98 / #99），
+    所以这里刻意写在 `yield` 之前。
+    """
+
+    def __init__(self, inner, recorder: trace.RunRecorder) -> None:
+        self._inner = inner
+        self._recorder = recorder
+        self.last_usage: dict = {}
+
+    @property
+    def model(self) -> str:
+        return str(getattr(self._inner, "model", "") or "")
+
+    async def stream_chat(self, messages, tools=None, temperature=0.7, max_tokens=None):
+        started = time.perf_counter()
+        status, error, finish = "ok", "", ""
+        recorded = False
+        try:
+            async for event in self._inner.stream_chat(
+                messages, tools=tools, temperature=temperature, max_tokens=max_tokens
+            ):
+                if event.get("type") == "end":
+                    finish = str(event.get("finish_reason") or "")
+                    if finish == "length":
+                        # 被长度上限截断是**这一步**的失败，不是整轮的失败：
+                        # 时间线要能指出"是这里截断的"（PITFALLS #58）
+                        status, error = "truncated", "输出被长度上限截断"
+                    self.last_usage = dict(event.get("usage") or {})
+                    # ★ 记在 `yield` **之前**（见类文档串）
+                    self._record(started, status, error, finish, messages, tools)
+                    recorded = True
+                yield event
+        except Exception as exc:  # noqa: BLE001 —— 失败也要留下这一步
+            self._record(started, "error", str(exc), finish, messages, tools)
+            recorded = True
+            raise
+        finally:
+            self.last_usage = dict(getattr(self._inner, "last_usage", {}) or {})
+            if not recorded:
+                # 没收到 `end`、也没抛异常 —— 消费方提前放弃，或流本身不完整。
+                # **仍然留下这一步**：时间线上缺的那一块恰好是"出事的那一步"。
+                self._record(started, "aborted", "", finish, messages, tools)
+
+    def _record(self, started: float, status: str, error: str, finish: str,
+                messages: list[dict], tools) -> None:
+        self._recorder.span(
+            trace.SPAN_MODEL, self.model, started=started, status=status, error=error,
+            attrs={
+                "messages": len(messages),
+                "tools": len(tools or []),
+                "finishReason": finish,
+                # 用量放 attrs 而不新开列：它是**这一步**的成本，而 run 级的总量
+                # 已经在 `agent_run` 上 —— 不建第二个"看起来也是总量"的列（铁律 28）
+                "usage": self.last_usage,
+            },
+        )
+
+    async def chat(self, messages, temperature=0.7, max_tokens=None, json_mode=False):
+        started = time.perf_counter()
+        try:
+            text = await self._inner.chat(messages, temperature=temperature,
+                                          max_tokens=max_tokens, json_mode=json_mode)
+        except Exception as exc:  # noqa: BLE001
+            self._recorder.span(trace.SPAN_MODEL, self.model, started=started,
+                                status="error", error=str(exc),
+                                attrs={"kind": "chat", "messages": len(messages)})
+            raise
+        self.last_usage = dict(getattr(self._inner, "last_usage", {}) or {})
+        self._recorder.span(trace.SPAN_MODEL, self.model, started=started, status="ok",
+                            attrs={"kind": "chat", "messages": len(messages),
+                                   "usage": self.last_usage})
+        return text
 
 
 async def run_agent_loop(
@@ -147,6 +255,13 @@ async def run_agent_loop(
     """
     safety = SafetyGate(max_steps=config.max_steps)
     meter = meter or UsageMeter(conversation_id, getattr(client, "model", ""))
+    # 运行记录：**一次用户回合是一个实体**（计划 §6.1）。它在 `_accounted` 的 `finally`
+    # 里收尾 —— 与用量同一条理由：循环有多个出口（final / error / 预算 / 上下文 /
+    # 异常 / 消费方断开），收尾只能挂在 `finally` 上，交给调用方记得就会重演 §5.4a。
+    recorder = trace.RunRecorder(conversation_id, getattr(client, "model", ""))
+    # 包一层客户端，为**每一次**模型调用记一条 `model` span（含摘要那次 `chat` ——
+    # 它也是真实开销，而且几乎必然全 miss，见 `cache.UsageStats.summary_calls`）。
+    client = _SpanClient(client, recorder)
     conversation = await _build_context(messages, client, config, conversation_id, meter)
 
     # 整个循环（含它内部发起的工具调用）都带 `conversationId`。
@@ -155,7 +270,7 @@ async def run_agent_loop(
     # 自己再 bind 一次（那里同时补上 `auditId` / `tool`），两边合起来才是完整链路。
     #
     # `_accounted` 保证**任何出口**都入账（含异常出口），见它的文档串与计划 §5.4a。
-    with logging_setup.bind(conversationId=conversation_id), _accounted(meter):
+    with logging_setup.bind(conversationId=conversation_id), _accounted(meter, recorder):
         logger.info("Agent 循环开始：%d 条历史消息，%d 个工具可用，步数预算 %d",
                     len(conversation), len(registry.specs()), config.max_steps)
         while True:
@@ -167,6 +282,7 @@ async def run_agent_loop(
                 # 文案由 `_budget_exhausted_message` 统一给（另一处出口在工具批次内）。
                 yield make_event("error", reason="budget_exhausted",
                                  message=_budget_exhausted_message(config.max_steps))
+                recorder.fail(f"budget_exhausted: 步数预算耗尽（{config.max_steps}）")
                 yield make_event("usage", usage=_finish_usage(meter, config))
                 return
 
@@ -189,13 +305,26 @@ async def run_agent_loop(
                         "请把这件事分成两次做，比如「先读其中两份，我确认后你再读剩下的」。"
                     ),
                 )
+                recorder.fail(f"context_exceeded: 上下文超过硬上限（{window} token）")
                 yield make_event("usage", usage=_finish_usage(meter, config))
                 return
 
             async for event in _one_model_turn(
                 conversation, client, registry, config, safety,
                 conversation_id=conversation_id, plugins=plugins, meter=meter,
+                recorder=recorder,
             ):
+                # ★ `error` 事件也要把 run 标成失败（2026-09-24）。
+                #
+                # 这些终止（预算耗尽 / 上下文超限 / 重复调用 / 模型报错）走的是
+                # **正常 `return`**，不是抛异常 —— 所以 `_accounted` 的 `except`
+                # 看不到它们。不在这里标的话，它们全都会被记成 **succeeded**，
+                # 而这几类恰好是用户最常遇到的"没做完"。
+                #
+                # 放在这里而不是每个 `yield error` 旁边：**这是唯一那个扼流点**
+                # （`_one_model_turn` 内部发出的 error 也都从这里过）。
+                if event["type"] == "error" and recorder is not None:
+                    recorder.fail(str(event.get("message") or event.get("reason") or "error"))
                 yield event
                 if event["type"] in ("final", "error"):
                     # 用量在**收尾时**发一条：命中量要等所有 LLM 调用（含摘要重算）都结束
@@ -366,6 +495,7 @@ async def _one_model_turn(
     conversation_id: str = "",
     plugins: list[str] | None = None,
     meter: UsageMeter | None = None,
+    recorder: trace.RunRecorder | None = None,
 ) -> AsyncIterator[dict]:
     """一轮「模型流式输出 →（可能）工具循环」，工具回填后返回交由外层再开一轮。"""
     async for event in client.stream_chat(
@@ -560,6 +690,25 @@ async def _one_model_turn(
                         )
                     else:
                         invocation = _apply_confirmation(invocation, outcome)
+
+                # 工具 span（计划 §6.1 的第二处写入点）。耗时用 `invocation.duration_ms`
+                # —— 那是 `ToolHub` 自己测的，**不含**用户等待；若在这里另测墙钟，
+                # "用户点了 3 分钟才同意"会被算成工具耗时，于是"哪个工具慢"完全失真。
+                if recorder is not None:
+                    recorder.span(
+                        trace.SPAN_TOOL, str(invocation.tool or call.get("name") or ""),
+                        started=0.0, duration_ms=invocation.duration_ms,
+                        status="error" if invocation.is_error else "ok",
+                        error=_summarize_result(invocation) if invocation.is_error else "",
+                        attrs={
+                            # 只放**指针**，不放参数与账号：审计才是那些东西的事实源（铁律 28）
+                            "auditId": invocation.audit_id,
+                            "plugin": invocation.plugin_id,
+                            "risk": invocation.risk.value,
+                            "status": invocation.status.value,
+                            "step": safety.steps_used,
+                        },
+                    )
 
                 yield make_event(
                     "observation",

@@ -462,6 +462,63 @@ ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'message';
 UPDATE messages SET kind = 'error'
  WHERE role = 'assistant' AND content LIKE '错误：%';
 """),
+    (24, "agent_run_and_span", """
+-- Agent 运行记录（计划 §6.1 / ADR-0021）：把**一次用户回合**记成一个实体，把里面每一步记成 span。
+--
+-- ## 修的是什么
+--
+-- 此前"一次用户回合"在数据里**不是一个实体**：`agent_audit` 记单次工具调用、
+-- `deepseek_usage` 记一次回答的用量，两者只能靠**时间戳猜**关联。于是
+-- "这一回合失败了"没有载体、"这次为什么慢"只能翻日志、跨步因果表达不了。
+--
+-- ## 三张表的分工（不要合并）
+--
+--   agent_audit        审计：谁对哪个对象做了什么。有合规含义，只增不改。
+--   deepseek_usage     计费：token 与缓存命中。成本口径的唯一事实源。
+--   agent_run/span     轨迹：一次回合里每一步的耗时/状态/用量。
+--
+-- ★ 三者是"同一个事件的三份投影"，**权威各自独立**（铁律 28）。所以 `attrs_json`
+-- 只放与该步有关的最小内容 + 指向审计的 `auditId`，**不复制参数与账号**。
+--
+-- ## 为什么不与 agent_audit 合并
+--
+-- 粒度不同：一次回合里的多次模型调用**没有**审计记录（审计只覆盖工具），
+-- 而工具调用在时间线上需要一层"它属于哪一步"的父子关系 —— 那是 span 的职责。
+-- 合并会让审计表被写入大量非审计行，而它的合规含义依赖于"一行 = 一次有副作用的操作"。
+CREATE TABLE IF NOT EXISTS agent_run (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL DEFAULT '',
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER,
+    status TEXT NOT NULL,
+    error TEXT NOT NULL DEFAULT '',
+    steps INTEGER NOT NULL DEFAULT 0,
+    model TEXT NOT NULL DEFAULT '',
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_hit_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    summary_calls INTEGER NOT NULL DEFAULT 0,
+    latency_ms INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_agent_run_conversation ON agent_run(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_agent_run_started_at ON agent_run(started_at);
+
+CREATE TABLE IF NOT EXISTS agent_span (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    step INTEGER NOT NULL,
+    span_kind TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    started_at INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'ok',
+    error TEXT NOT NULL DEFAULT '',
+    attrs_json TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (run_id) REFERENCES agent_run(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_agent_span_run ON agent_span(run_id, step);
+"""),
 ]
 
 

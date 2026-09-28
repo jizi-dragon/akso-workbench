@@ -356,8 +356,14 @@ def selfcheck() -> dict:
     `usagePersistFailures` 是**进程内累计**的用量入账失败次数（2026-09-24 加）。
     它是"刻意吞掉的失败"唯一能被看见的地方：`UsageStats.persist` 继续吞异常
     （度量不该影响回答），但没有这个计数时，持续失败只表现为"用量曲线莫名其妙变低"。
+
+    `traceWriteFailures`（2026-09-24 加）是同一个理由的第二个计数：
+    `harness/trace.py` 的每一次写库都吞异常（轨迹不该影响回答），
+    而没有计数时，**运行时间线会安静地缺步**——那比用量变低更难发现，
+    因为"少了三步"看起来就像"这次它只走了三步"。
     """
     from ..cache import usage_persist_failures
+    from ..harness.trace import trace_write_failures
     from ..plugin_api import verify_required_tools
 
     hub = get_hub()
@@ -374,6 +380,7 @@ def selfcheck() -> dict:
         "missingRequired": missing,
         "failures": hub.failures,
         "usagePersistFailures": usage_persist_failures(),
+        "traceWriteFailures": trace_write_failures(),
     }
 
 
