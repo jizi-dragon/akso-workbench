@@ -50,7 +50,7 @@ from typing import Any
 from .. import cache, logging_setup
 from ..plugin_api import Risk, ToolContext, ToolHub, ToolStatus, Trust
 from ..services.deepseek import DeepSeekClient
-from . import trace
+from . import trace, transcript
 from .context import content_to_text, estimate_messages_tokens
 from .safety import SafetyGate
 from .types import AgentConfig, make_event
@@ -700,6 +700,9 @@ async def _one_model_turn(
             if assistant["content"]:
                 yield make_event("thought", text=assistant["content"])
             context.append(assistant)
+            # ★ 工具轨迹落库（计划 §7.3）：落的是**刚发出去的那一个对象**，
+            # 不是重新构造的近似 —— 只有那样"重放组装 == 当时请求"才断言得出来。
+            transcript.record(conversation_id, assistant)
 
             # ★ **整批只读调用的并发快路径**（计划 §7.4，2026-09-24）。
             #
@@ -923,7 +926,9 @@ async def _one_model_turn(
                     )
 
                 yield _observation_event(call, invocation)
-                context.append(_tool_message(call, invocation))
+                _tm = _tool_message(call, invocation)
+                context.append(_tm)
+                transcript.record(conversation_id, _tm)
             return  # 工具结果已回填，外层 while 发起下一轮
 
     if not ended:
@@ -1153,7 +1158,9 @@ async def _run_parallel_batch(calls: list[dict], registry, config, safety, *, co
             )
 
         yield _observation_event(call, invocation)
-        context.append(_tool_message(call, invocation))
+        _tm = _tool_message(call, invocation)
+        context.append(_tm)
+        transcript.record(conversation_id, _tm)
 
     if failure is not None:
         raise failure

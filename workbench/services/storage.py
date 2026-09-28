@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 
@@ -82,13 +83,37 @@ MESSAGE_KIND_ERROR = "error"
 
 
 def insert_message(conv_id: str, role: str, content: str,
-                   *, kind: str = MESSAGE_KIND_DEFAULT) -> str:
-    """落一条消息。`kind` 决定它**会不会进模型上下文**（由 `_model_history` 过滤）。"""
+                   *, kind: str = MESSAGE_KIND_DEFAULT,
+                   tool_calls: list[dict] | None = None,
+                   tool_call_id: str = "") -> str:
+    """落一条消息。`kind` 决定它**会不会进模型上下文**（由 `_model_history` 过滤）。
+
+    ## `seq` 在这里自动分配（调用方不用管）
+
+    `seq` 是**会话内单调递增**的序号，也是 `list_messages` 唯一的排序键。
+    ★ 交给调用方传是错的：它要的是"上一条是多少"，而那个数字**只有写的时候
+    才拿得到** —— 让每个调用方自己查一次 `MAX(seq)` 既慢又会在并发下重号。
+
+    ## 为什么排序不能用 `created_at`
+
+    它是**毫秒**。实测 8 条连续插入的消息落在 **7 个毫秒**里 —— 并列是常态。
+    一条没有决胜列的 `ORDER BY` 顺序在 SQL 语义上是**未定义的**
+    （今天看着对，是因为简单扫描恰好按 rowid 返回）。
+    ★ 回合只有 2 条消息时无所谓；**加上工具轨迹后一个回合有 3–6 条背靠背写入**，
+    那时"assistant 排在它的 tool 结果后面"会让整段历史**非法**（I16）。
+    """
     msg_id = new_id()
+    row = db.query_one(
+        "SELECT COALESCE(MAX(seq), 0) AS n FROM messages WHERE conversation_id = ?",
+        (conv_id,),
+    )
+    seq = int(row["n"] if row else 0) + 1
     db.execute(
-        "INSERT INTO messages (id, conversation_id, role, content, kind, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (msg_id, conv_id, role, content, kind, now_ms()),
+        "INSERT INTO messages (id, conversation_id, role, content, kind, created_at, "
+        "tool_calls, tool_call_id, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (msg_id, conv_id, role, content, kind, now_ms(),
+         json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None,
+         tool_call_id or None, seq),
     )
     return msg_id
 
@@ -100,13 +125,59 @@ def list_messages(conv_id: str) -> list[dict]:
     而"哪些能发给模型"是**另一个问题**，它的答案在唯一那个扼流点
     （`routes_chat._model_history`）里。把过滤放在这里会让"界面的数据源"与
     "模型的数据源"变成同一条查询的两个变体 —— 那正是扼流点要防的分散。
+
+    ★ 排序键是 `seq`（见 `insert_message`）。`created_at` 只作**兜底**：
+    迁移 25 已把既有行的 `seq` 回填成 `rowid`，所以正常情况下它不会生效。
     """
     return db.query(
         "SELECT id, conversation_id AS conversationId, role, content, kind, "
+        "tool_calls, tool_call_id AS toolCallId, seq, "
         "created_at AS createdAt FROM messages WHERE conversation_id = ? "
-        "ORDER BY created_at ASC",
+        "ORDER BY seq ASC, created_at ASC",
         (conv_id,),
     )
+
+
+def model_transcript(conv_id: str) -> list[dict]:
+    """会话里**曾经发给模型的那几条消息**，按原样翻回模型形状（计划 §7.3）。
+
+    ## 它存在的理由：让"当时发出去了什么"变成**可复算**的
+
+    `_model_history` 是"从界面数据源翻出模型要的东西"；这个函数是
+    "把**当时发出去的那一条**原样取回来"。两者看起来像重复，其实是两个方向：
+    - `_model_history`：**构造**下一轮要发的（含 `note` → `user` 的翻译、附件展开）
+    - `model_transcript`：**取回**已经发过的（一个字段都不翻译）
+
+    ★ 判据在 `tests/test_transcript_roundtrip.py`：录一次真实运行，
+    从库里取回的这一段必须与**录下来的那次请求**逐字段相等。
+    没有它，"逐字节"只是一句口号。
+
+    ## 只翻 `assistant` / `tool`
+
+    `user` 消息由 `_model_history` 走扼流点负责（它要处理附件展开与 `note` 翻译），
+    这里**不重复那条路径** —— 两条路各翻一次就会出现"两个会漂的事实源"（铁律 28）。
+    """
+    out: list[dict] = []
+    for row in list_messages(conv_id):
+        role = str(row.get("role") or "")
+        if role == "assistant":
+            message: dict = {"role": "assistant", "content": row.get("content") or ""}
+            raw = row.get("tool_calls")
+            if raw:
+                try:
+                    calls = json.loads(raw)
+                except (TypeError, ValueError):
+                    calls = None
+                if calls:
+                    message["tool_calls"] = calls
+            out.append(message)
+        elif role == "tool":
+            out.append({
+                "role": "tool",
+                "tool_call_id": row.get("toolCallId") or "",
+                "content": row.get("content") or "",
+            })
+    return out
 
 
 def count_user_messages(conv_id: str) -> int:

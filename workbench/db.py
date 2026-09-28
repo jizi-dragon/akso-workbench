@@ -519,6 +519,47 @@ CREATE TABLE IF NOT EXISTS agent_span (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_span_run ON agent_span(run_id, step);
 """),
+    (25, "transcript_columns", """
+-- transcript 落库（计划 §7.3）：`messages` 补上工具轨迹与**定序**。
+--
+-- ## 修的是两件事
+--
+-- ### ① 工具轨迹此前**完全不落库**
+--
+-- 一个回合里的 `assistant(tool_calls)` 与它配对的 `tool(...)` 只活在
+-- `run_agent_loop` 的局部 `context` 里，回合结束就没了。后果是
+-- "刷新页面后模型看不到自己上一步调了什么工具"，而且**没有任何地方记着
+-- 当时究竟发出去了什么** —— 事后想复现一次请求只能靠猜。
+--
+-- ★ 落库的口径是**「当时逐字节发出去的那一条」**，不是重新构造的近似：
+-- 只有那样，"重放组装 == 当时请求"才是一个**能断言**的等式
+-- （`tests/test_transcript_roundtrip.py`）。这是与 I1 的接口。
+--
+-- ### ② ★ `created_at` **排不了序**（这条是顺带发现的一个潜在缺陷）
+--
+-- `list_messages` 一直是 `ORDER BY created_at ASC`，而它是**毫秒**。
+-- 实测 8 条连续插入的消息落在 **7 个毫秒**里 —— 并列是常态，不是理论。
+-- 一条没有决胜列的 ORDER BY，顺序在 SQL 语义上**是未定义的**
+-- （今天看着对，是因为简单扫描恰好按 rowid 返回）。
+--
+-- 回合只有 2 条消息（user + assistant）时它无所谓；**加上工具轨迹之后
+-- 一个回合会有 3–6 条**，而它们必然是**背靠背**写进去的 —— 那时
+-- "assistant 排在它的 tool 结果后面"会让整段历史**非法**（I16：
+-- assistant 带了 tool_calls，配对的 tool 消息必须紧跟其后）。
+--
+-- ## `seq` 的口径
+--
+-- **会话内单调递增**，与 `cache.summarized_upto` 用"消息条数"是同一个理由：
+-- 单调递增能做到，而"按 id 排"做不到（id 是随机 hex）。
+--
+-- 回填用 `rowid`：它对全表单调，因此**在每个会话内也单调** —— 对既有数据够用，
+-- 而且它正是"今天碰巧对"的那个顺序，所以回填不会改变任何现有会话的读回顺序。
+ALTER TABLE messages ADD COLUMN tool_calls TEXT;
+ALTER TABLE messages ADD COLUMN tool_call_id TEXT;
+ALTER TABLE messages ADD COLUMN seq INTEGER;
+UPDATE messages SET seq = rowid;
+CREATE INDEX IF NOT EXISTS idx_messages_conv_seq ON messages(conversation_id, seq);
+"""),
 ]
 
 
