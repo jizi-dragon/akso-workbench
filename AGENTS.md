@@ -8,6 +8,17 @@
 > 所以下面每一条都是**规则形状**的（祈使句 + 判据），且**每条都注明了它来自哪次真实事故**。
 > 没有事故背书的偏好不写在这里——`CONTRIBUTING.md` 才是人的入口。
 >
+> **本文件只放「祈使句 + 判据 + 出处指针」，不复述事故经过。** 完整故事在
+> [docs/PITFALLS.md](docs/PITFALLS.md)（每条都指到编号）。这是**把本文件自己的规则 28
+> 用在自己身上**："两处都写全量 = 第二个会漂的事实源"——叙事抄一遍，两处迟早不一致，
+> 而读的人**不知道哪份是真的**。所以看到"事故见 PITFALLS #NN"就去读那一条，
+> 别在这里找细节。
+>
+> **规则编号是稳定 ID，不是排序号，也永不重编**：全仓有 **38 处**按编号引用它们
+> （`CHANGELOG.md` / `PITFALLS.md` / 源码注释 / ADR）。分节按**主题**，所以**同一节里的
+> 编号可能不连续**；但**整份文件的阅读顺序必须单调递增**——这条有机器守卫，
+> 见 `pytest tests/test_agents_md.py -o addopts=""`。
+>
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
@@ -60,11 +71,6 @@
 | 10 | **工具名必须匹配 `[A-Za-z0-9_-]{1,64}` 且是 ASCII**。中文工具名会被 DeepSeek/OpenAI **在请求侧拒绝**，本地校验发现不了 |
 | 11 | **工具异常 = 观测，不是异常。** `execute()` 里任何失败都要转成 `ToolStatus`，让它成为模型可自我纠正的观测，不要抛出去打断循环 |
 | 12 | **同步阻塞调用一律 `asyncio.to_thread`**（`egmp.client` / `browser_pool` / `proc` / `sandbox.run` 都是同步的）。否则表现是**整个服务卡住**，不是报错 |
-| 33 | **模型发起的确认（`needs_confirmation`）不是安全边界**，它买的是"模型可以先问再做"，`Risk` 买的是"不做就不能做"（[ADR-0016](docs/adr/0016-model-initiated-confirmation.md) §5）。**不要**把它写成"高风险操作的批准环节"，**不要**因为它存在而放宽任何 `Risk` 分级。判据：`grep -rn "needs_confirmation=True" workbench/plugins/` 里每一个的 `risk` 都必须是 `READ`（`ToolSpec.valid()` 在装配期强制） |
-| 34 | **不要在工具 handler 里等用户**。`execute()` 一旦 `await`，调用它的异步生成器就挂起了，事件发不出去 → 界面不知道有东西要确认 → 用户永远点不了。跨"通知 → 等答复 → 继续"的交互**必须把等待放在循环层**（`harness/loop.py` 发完 `confirm_required` 再 `await registry.await_confirmation`）。这条不是偏好，是架构约束（[ADR-0016](docs/adr/0016-model-initiated-confirmation.md) §D-2） |
-| 35 | **"发通知 → 等对方回 → 我再登记等待"的形状，接收端必须提前建好**。对方（用户/子进程/worker）的响应会比你开始等更早到达，晚建的 `Future` 接不住它 → 表现为"对方明明答复了，我方干等满一个超时"（PITFALLS #57 实测：实时确认卡了整整一个 `timeoutS`）。判据：`pytest tests/test_user_confirmation.py -o addopts=""`——它**在 `confirm_required` 事件的回调里**就答复，命中这个时序；挂起不返回 = 本条复发 |
-| 36 | **给 Agent 接一条既有能力链时，先问"这条路上有哪几步只有人能做的"，把答案逐个变成工具**。缺一个动词不会报错、不会让测试变红——它只让流程走不通，而走不通的表现是**模型开始输出"请你去做某事"**（PITFALLS #59 实测：模型能校验蓝图、能创建，却**不能把校验通过的东西交给执行**，于是只能让用户"把文件拖进页面"）。判据：`Get-ChildItem -Recurse workbench -Include *.py,*.js \| Select-String '拖进页面\|页面上传\|让用户上传'` —— **必须零命中** |
-| 37 | **"输出太长被截断"必须与"参数写错了"分开**。`finish_reason == "length"` 是唯一的信号，丢了他模型只会看到「参数解析失败」，于是原样重试、又截断一次（PITFALLS #58）。收流式响应时**必须收 `finish_reason`**；截断时**绝不让半截参数进工具层**，并明说"没有执行任何工具"。判据：`pytest tests/test_agent_loop.py::test_truncated_output_is_not_reported_as_bad_args -o addopts=""` |
 
 ### 沙箱与技能
 
@@ -109,8 +115,23 @@
 | # | 规则 |
 |---|---|
 | 31 | **凡"由父进程负责清理"的资源**（子进程 / 端口 / 锁文件 / 临时目录），必须回答一句 **"父非正常死亡时谁释放"**。答案只有两个：**子进程自己盯着父**（`workbench/lifecycle.py::watch_parent()` 用 `WaitForSingleObject` 等父的句柄），或**由 OS 内核对象担保**（Job Object / cgroup / `prctl(PDEATHSIG)`）。**不要**把清理只挂在 `before-quit` 这类正常退出链上——强杀与崩溃时那条链根本不跑（PITFALLS #54 实测复现：父被 `taskkill /F` 后 sidecar 存活并占着 18765） |
-| 32 | **界面文案是承诺**：菜单项 / 提示条 / 错误页指引里描述的每个行为，都必须能在代码里找到实现。**改行为与改文案必须一起做**（PITFALLS #55：「关闭窗口（应用继续在托盘运行）」而实际关窗即退出，托盘「显示主窗」因此永远点不出窗口）。判据：`Select-String -Path desktop/main.js -Pattern "on\('close'"` —— 零命中就说明"关窗不退出"没有实现 |
-| 38 | **交付给用户实测之前，最后一步必须是「杀干净 + 重启」，不是「跑完测试」。** 违反它的后果**不是报错，是归因错误**——而错误归因会烧掉整轮排查。2026-09-21 实录：用户三次报告「自动更新弹窗自己冒出来」，前两轮我在 `workbench/` 与 `desktop/` 里翻遍了调用方（先后误判成"误点角标""外部网页"），真凶是**我自己跑的测试**：`tests/test_update.py` 里一条用例**真的**去 POST 了本机控制端口，于是每跑一次全量，用户屏幕上就弹一次模态框——而它**始终是绿的**（PITFALLS #71）。同一个晚上还有另一半：改了壳侧代码却没重启，用户测的还是旧进程（#20/#25 的交付侧版本）。<br>**判据（交付前跑，三条都要过）**：① `Get-NetTCPConnection -LocalPort 18765,18766,18767 -State Listen` —— **必须为空，或全部属于同一个刚启动的进程**；② 改过 `workbench/**` 或 `desktop/**`（Python / 壳）**必须重启应用**（只刷新页面对 `static/**` 才够）；③ **跑测试与用户实测分成两段**，跑完测试要重启一次再交付——别让测试的副作用留在现场。<br>**为什么单列一条**：固定端口（[ADR-0012](docs/adr/0012-fixed-ports.md)）让"旧进程还活着"和"测试戳到了真端口"这两件事**都不报错**，只让现象指向错误的嫌疑人 |
+| 32 | **界面文案是承诺**：菜单项 / 提示条 / 错误页指引里描述的每个行为，都必须能在代码里找到实现。**改行为与改文案必须一起做**（事故见 PITFALLS #55：「关闭窗口（应用继续在托盘运行）」而实际关窗即退出，托盘「显示主窗」因此永远点不出窗口）。判据：`Select-String -Path desktop/main.js -Pattern "on\('close'"` —— 零命中就说明"关窗不退出"没有实现 |
+
+### 循环、确认门与工具完整性
+
+| # | 规则 |
+|---|---|
+| 33 | **模型发起的确认（`needs_confirmation`）不是安全边界**：它买的是"模型可以先问再做"，`Risk` 买的是"不做就不能做"。**不要**把它写成"高风险操作的批准环节"，**不要**因为它存在而放宽任何 `Risk` 分级（[ADR-0016](docs/adr/0016-model-initiated-confirmation.md) §5）。判据：`grep -rn "needs_confirmation=True" workbench/plugins/` 里每一个的 `risk` 都必须是 `READ`（`ToolSpec.valid()` 在装配期强制） |
+| 34 | **不要在工具 handler 里等用户。** `execute()` 一旦 `await`，调用它的异步生成器就挂起了，事件发不出去 → 界面不知道有东西要确认 → 用户永远点不了。跨"通知 → 等答复 → 继续"的交互**必须把等待放在循环层**（`harness/loop.py` 发完 `confirm_required` 再 `await registry.await_confirmation`）。这条不是偏好，是架构约束（[ADR-0016](docs/adr/0016-model-initiated-confirmation.md) §D-2） |
+| 35 | **"发通知 → 等对方回 → 我再登记等待"的形状，接收端必须提前建好。** 对方的响应会比你开始等更早到达，晚建的 `Future` 接不住它 → 表现为"对方明明答复了，我方干等满一个超时"（事故见 PITFALLS #57：实时确认卡了整整一个 `timeoutS`）。判据：`pytest tests/test_user_confirmation.py -o addopts=""`——它**在 `confirm_required` 事件的回调里**就答复，命中这个时序；挂起不返回 = 本条复发 |
+| 36 | **给 Agent 接一条既有能力链时，先问"这条路上有哪几步只有人能做的"，把答案逐个变成工具。** 缺一个动词**不会报错、不会让测试变红**——它只让流程走不通，而走不通的表现是**模型开始输出"请你去做某事"**（事故见 PITFALLS #59）。判据：`Get-ChildItem -Recurse workbench -Include *.py,*.js \| Select-String '拖进页面\|页面上传\|让用户上传'` —— **必须零命中** |
+| 37 | **"输出太长被截断"必须与"参数写错了"分开。** `finish_reason == "length"` 是唯一的信号，丢了它模型只会看到「参数解析失败」，于是原样重试、又截断一次（事故见 PITFALLS #58）。收流式响应时**必须收 `finish_reason`**；截断时**绝不让半截参数进工具层**，并明说"没有执行任何工具"。判据：`pytest tests/test_agent_loop.py::test_truncated_output_is_not_reported_as_bad_args -o addopts=""` |
+
+### 交付纪律
+
+| # | 规则 |
+|---|---|
+| 38 | **交付给用户实测之前，最后一步必须是「杀干净 + 重启」，不是「跑完测试」。** 违反它的后果**不是报错，是归因错误**——而错误归因会烧掉整轮排查（两次实录见 PITFALLS #71）。<br>**判据（交付前跑，三条都要过）**：① `Get-NetTCPConnection -LocalPort 18765,18766,18767 -State Listen` —— **必须为空，或全部属于同一个刚启动的进程**；② 改过 `workbench/**` 或 `desktop/**`（Python / 壳）**必须重启应用**（只刷新页面对 `static/**` 才够）；③ **跑测试与用户实测分成两段**，跑完测试要重启一次再交付——别让测试的副作用留在现场。<br>**为什么单列一条**：固定端口（[ADR-0012](docs/adr/0012-fixed-ports.md)）让"旧进程还活着"和"测试戳到了真端口"这两件事**都不报错**，只让现象指向错误的嫌疑人 |
 
 ---
 
@@ -135,7 +156,7 @@
 ```powershell
 # 基线（动手前 + 改完后各跑一次）
 .\.venv\Scripts\python.exe -m pytest -o addopts=""        # 全量；默认 addopts 跳过 slow 层
-.\.venv\Scripts\uv.exe tool run ruff check .              # ★ lint —— 先探一次，见 §4（这条会漂；2026-09-22 实测走这条）
+.\.venv\Scripts\uv.exe tool run ruff check .              # ★ lint —— 先探一次，见 §4（这条会漂；2026-09-24 实测走这条）
 .\.venv\Scripts\python.exe tools\gen_tools_doc.py         # 工具清单/数字 == 运行期中枢
 .\.venv\Scripts\python.exe tools\verify_packaging.py      # 打包静态核对 13 项
 ```
@@ -176,10 +197,10 @@
 | 项 | 实际情况 |
 |---|---|
 | Python | `.\.venv\Scripts\python.exe`（**不在 PATH**；AI 直接敲 `python` 会拿到系统里另一个解释器） |
-| **`ruff` / `uv` 在不在 venv 里？** | ⚠️ **这条会漂，别背命令——先探一次**：<br>`Get-ChildItem .venv\Scripts -Filter "uv*.exe","ruff*.exe"`<br>**2026-09-20 实测**：`ruff.exe` **存在**（0.16.0）→ 用 `.\.venv\Scripts\ruff.exe check .`；`uv.exe` **不存在**（只有 `uvicorn.exe`，`python -m uv` 报 `No module named uv`）。若哪天 `uv.exe` 回来，回退是 `.\.venv\Scripts\uv.exe tool run ruff check .`。<br>**2026-09-22 实测（又翻回来了）**：`ruff.exe` **不存在**、`uv.exe` **存在**（还有 `uvw.exe` / `uvx.exe`；`python -m ruff` 报 `No module named ruff`）→ 本次用的是 **`.\.venv\Scripts\uv.exe tool run ruff check .`**，实测 `All checks passed!`（exit 0）。<br>**为什么写这么啰嗦**：这条口径在本仓**已翻转过三次**（见 PITFALLS #50）——它是**环境事实**，而环境会变。**两条都记着**，别只记一条 |
+| **`ruff` / `uv` 在不在 venv 里？** | ⚠️ **这条会漂（已翻转过三次，见 PITFALLS #50）——别背命令，先探一次**：<br>`Get-ChildItem .venv\Scripts -Filter "uv*.exe","ruff*.exe"`<br>**2026-09-24 实测**：`uv.exe` **在**（还有 `uvw.exe` / `uvx.exe`）、`ruff.exe` **不在**（`python -m ruff` 报 `No module named ruff`）⇒ 用 **`.\.venv\Scripts\uv.exe tool run ruff check .`**（首次会按需下载 ruff，约 10 MiB）。<br>**若哪天翻回去**（`ruff.exe` 在）⇒ 用 `.\.venv\Scripts\ruff.exe check .`。**两条都记着，别只记一条** |
 | pytest 汇总行 | `addopts` 已有 `-q -m 'not slow'`；**再加 `-q` 会进 ultra-quiet，连 `=== N passed ===` 都不打印**。要看汇总行用 `-o addopts=""` |
 | slow 层 | 默认跳过。全量：`-o addopts=""`；只跑慢层：`-m slow`（无慢层用例时 pytest 以 **exit 5** 退出，这是刻意的守卫，不是故障） |
-| 解释器口径 | `.python-version`（= 3.12）是**唯一真源**，`tests/test_python_version_contract.py` 断言它与 CI 逐字一致。开发机是 3.14 —— **两边跳过项不同，"本地全绿"推不出"CI 全绿"** |
+| 解释器口径 | `.python-version`（= 3.12）是**唯一真源**，`tests/test_python_version_contract.py` 断言它与 CI 逐字一致。**2026-09-24 实测**：项目 `.venv` 已经是 **uv 管理的 3.12.14**（`pyvenv.cfg` 的 `home` 指向 `…\uv\python\cpython-3.12-…`）—— **不再是** conda 3.14 ⇒ 当年"本机 3.14 vs CI 3.12"那条差集**只剩 chromium 那一半**（CI runner 不装 chromium）。**"本地全绿"仍然推不出"CI 全绿"** |
 | 写文本文件 | 用 Python 或编辑器，**不要用 PowerShell `>`**——它按 UTF-16LE 落盘（PITFALLS #38） |
 | 中文乱码 | **先跑判据再动手**：`python -c "import pathlib;t=pathlib.Path('F').read_text(encoding='utf-8');print('U+FFFD=',t.count('\ufffd'))"`。`U+FFFD=0` 就是好的，**不要改文件**（控制台渲染 ≠ 文件内容） |
 | GitHub 通道 | **哪个通道通是随时刻变化的**，不是常量。推送前先探测（PITFALLS #9 / #45），别把上次的成功当依据 |
@@ -205,6 +226,12 @@
   只有"跑一遍标题清单"才看得出来（该文件此后会少一节，而读的人以为它不存在）。
   判据（改完任何文档立刻跑一次）：`Select-String -Path <文件> -Pattern '^#{2,3} '` ——
   **逐行看编号是否连续**（`§0 → §1 → §1.5 → §2 …`）。本次三次都靠这条才发现并修回。
+- **本文件自己的纪律也走机检，不靠自觉**：`pytest tests/test_agents_md.py -o addopts=""`
+  （**6 条**）守四件事 —— 铁律编号**无缺号**、铁律在**阅读顺序上单调递增**、
+  头部声明的**坑数与 ADR 篇数**与 `PITFALLS.md` / `docs/adr/` 实际一致、**全部链接存活**。
+  ★ 每一条都对应一次**已经发生过**的漂移（"89 条"其实已是 92；"16 篇 ADR"其实是 17 个文件；
+  阅读顺序 1–12 → 33–37 → 13–32）。**加了规则 / 坑 / ADR 就跑它** —— 本文件是入口，
+  它写错的数字会被逐字继承。
 
 ---
 
