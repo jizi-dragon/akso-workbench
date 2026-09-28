@@ -442,6 +442,11 @@ PLUGIN = pa.Plugin(
             handler=get_current_time,
             risk=pa.Risk.READ,
             trust=pa.Trust.LOCAL,
+            # ★ 全仓**唯一**标了并发的工具（计划 §7.4）：纯计算 —— 读一次系统时钟，
+            # 没有 IO、没有共享状态、没有 `to_thread`。
+            # 其余工具一律保持缺省 `False`（见 `ToolSpec.parallel_safe` 的文档串：
+            # 核实一个标一个，别按"它看起来只是读"批量放行）。
+            parallel_safe=True,
             timeout_s=5,
         ),
         pa.ToolSpec(

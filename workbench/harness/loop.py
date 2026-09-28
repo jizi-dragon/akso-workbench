@@ -693,6 +693,19 @@ async def _one_model_turn(
                 yield make_event("thought", text=assistant["content"])
             context.append(assistant)
 
+            # ★ **整批只读调用的并发快路径**（计划 §7.4，2026-09-24）。
+            #
+            # 条件全中才走它；任何一条不满足就**原封不动**走下面的串行路径 ——
+            # 那条路上的预算耗尽 / 重复检测 / 停止 / 确认门的既有语义**一个都不动**。
+            # 这是"窄口径"的全部含义：快路径只负责它**能证明安全**的那一种批次。
+            if _parallel_eligible(assistant["tool_calls"], registry, safety, config):
+                async for event in _run_parallel_batch(
+                    assistant["tool_calls"], registry, config, safety, context=context,
+                    conversation_id=conversation_id, recorder=recorder, taint=taint,
+                ):
+                    yield event
+                return
+
             for index, call in enumerate(assistant["tool_calls"]):
                 # ★ 检查点②：每次工具调用前（计划 §5.6）。
                 #
@@ -901,43 +914,8 @@ async def _one_model_turn(
                         },
                     )
 
-                yield make_event(
-                    "observation",
-                    result={
-                        "ok": not invocation.is_error,
-                        "summary": _summarize_result(invocation),
-                        "status": invocation.status.value,
-                    },
-                    invocation={
-                        # ★ 优先用**模型给的** tool_call id，回落到 `request_id`（2026-09-24 修）。
-                        #
-                        # 旧写法是 `invocation.request_id`，而那个值来自
-                        # `plugin_api._call_id(arguments)` —— 它从**参数 JSON 里**找 id，
-                        # 于是模型发起的调用（参数里没有那个键）拿到的是**空串**。
-                        # 后果：`observation.invocation.toolCallId` 对每一条真实观测都是 `""`，
-                        # 而"因预算/停止被跳过"的观测带的却是真实 id —— **同一个字段两种口径**，
-                        # 谁想拿它配对工具卡都会配错（按空串配对 = 全部配到第一条）。
-                        #
-                        # 回填那侧的写法一直是对的（见 `_skipped_observation` 与
-                        # 下面构造 tool 消息的那行：`call.get("id") or invocation.request_id`），
-                        # 所以这里对齐到它，而不是反过来。今天没有消费方读这个字段
-                        # （`grep toolCallId workbench/static/` 零命中），
-                        # 正因为如此现在改**零风险**，而留着它迟早会有人按"它应该是 id"来用。
-                        "toolCallId": call.get("id") or invocation.request_id,
-                        "tool": invocation.tool,
-                        "auditId": invocation.audit_id,
-                        "durationMs": invocation.duration_ms,
-                        "risk": invocation.risk.value,
-                        "plugin": invocation.plugin_id,
-                        "status": invocation.status.value,
-                        "isError": invocation.is_error,
-                    },
-                )
-                context.append({
-                    "role": "tool",
-                    "tool_call_id": call.get("id") or invocation.request_id,
-                    "content": invocation.content,
-                })
+                yield _observation_event(call, invocation)
+                context.append(_tool_message(call, invocation))
             return  # 工具结果已回填，外层 while 发起下一轮
 
     if not ended:
@@ -972,6 +950,205 @@ def _tool_meta(spec, call: dict) -> dict:
         return {"name": str(call.get("name") or ""), "risk": Risk.READ.value,
                 "plugin": "", "known": False}
     return {"name": spec.name, "risk": spec.risk.value, "plugin": spec.plugin_id, "known": True}
+
+
+# ---------------------------------------------------------------- 观测事件的唯一构造处
+
+
+def _observation_event(call: dict, invocation) -> dict:
+    """观测事件的**唯一构造处**（串行与并发两条路径共用）。
+
+    ★ 为什么必须抽出来：下面那些注释里的每一条都是**踩过的坑**（`toolCallId` 的两种口径、
+    "只放指针不放参数"、`status` 三态）。抄第二份必然只抄到**形**、抄不到那些**理由** ——
+    而两份漂开之后，**没有任何测试会同时看它们**。
+    """
+    return make_event(
+        "observation",
+        result={
+            "ok": not invocation.is_error,
+            "summary": _summarize_result(invocation),
+            "status": invocation.status.value,
+        },
+        invocation={
+            # ★ 优先用**模型给的** tool_call id，回落到 `request_id`（2026-09-24 修）。
+            #
+            # 旧写法是 `invocation.request_id`，而那个值来自
+            # `plugin_api._call_id(arguments)` —— 它从**参数 JSON 里**找 id，
+            # 于是模型发起的调用（参数里没有那个键）拿到的是**空串**。
+            # 后果：`observation.invocation.toolCallId` 对每一条真实观测都是 `""`，
+            # 而"因预算/停止被跳过"的观测带的却是真实 id —— **同一个字段两种口径**，
+            # 谁想拿它配对工具卡都会配错（按空串配对 = 全部配到第一条）。
+            #
+            # 回填那侧的写法一直是对的（见 `_skipped_observation` 与 `_tool_message`），
+            # 所以这里对齐到它，而不是反过来。今天没有消费方读这个字段
+            # （`grep toolCallId workbench/static/` 零命中），
+            # 正因为如此现在改**零风险**，而留着它迟早会有人按"它应该是 id"来用。
+            "toolCallId": call.get("id") or invocation.request_id,
+            "tool": invocation.tool,
+            "auditId": invocation.audit_id,
+            "durationMs": invocation.duration_ms,
+            "risk": invocation.risk.value,
+            "plugin": invocation.plugin_id,
+            "status": invocation.status.value,
+            "isError": invocation.is_error,
+        },
+    )
+
+
+def _tool_message(call: dict, invocation) -> dict:
+    """进上下文的 `tool` 消息。
+
+    ★ `tool_call_id` 与 `_observation_event` 里的 `toolCallId` **必须同源**
+    （都是 `call.get("id") or invocation.request_id`）—— 一个是给模型看的回填，
+    一个是给界面看的配对键。两者一旦用了不同的取法，就会出现
+    "界面上配得上、平台侧配不上"（I16 的非法历史）。
+    """
+    return {
+        "role": "tool",
+        "tool_call_id": call.get("id") or invocation.request_id,
+        "content": invocation.content,
+    }
+
+
+# ---------------------------------------------------------------- 整批只读调用并发（计划 §7.4）
+
+PARALLEL_READ_MAX = 4
+"""一批最多并发几个只读调用（计划 §7.4 的"上限 4"）。
+
+**超过这个数的批次整批退回串行**，而不是切成几波并发。理由：切波要引入
+"波与波之间要不要重新查停止/预算"的额外语义，而那正是这条快路径最该保持简单的地方。
+模型一次发 2–4 个独立只读调用是最常见的形状，所以这个上限覆盖了绝大多数收益场景。
+想放宽它时，先回答"波之间怎么处理停止请求"（见 ADR-0023）。
+"""
+
+
+def _parallel_eligible(calls: list[dict], registry, safety, config) -> bool:
+    """整批能不能走并发路径。**条件全中才为真**；任何一条不满足就走串行。
+
+    ★ 这是"窄口径"的全部实现。宁可**少并发**，也不要让并发路径去承担
+    预算耗尽 / 重复检测 / 停止 / 确认门这些**已经有精确语义**的分支 ——
+    那些分支的每一条都有回归断言，而快路径重写它们等于把那些断言一起弄失效。
+
+    ## ★★ 它**刻意不问** `should_stop`（2026-09-24 实测踩到）
+
+    第一版在这里调了一次 `_stopped(should_stop)`，结果 `tests/test_agent_stop.py`
+    的两条 + 一条评测用例**当场变红**，而且红得很怪："该只执行第 0 个，实际 **[]**"
+    —— 一个都没执行。原因是那句询问**消耗了一个检查点**：
+    测试用 `StopAfter(2)` 这样的**计数器**来模拟"用户在第 N 个检查点按了停止"，
+    多问一次就把整个停止时序**往前挪了一位**。
+
+    生产里 `StopToken.__call__` 只读一个 bool（无副作用），所以这不是线上缺陷 ——
+    但它暴露了一条值得记住的东西：**"问是否停止"这个动作本身是可观测的**，
+    而资格判定是一个**关于批次的纯谓词**，不该消费停止通道。
+    所以这里不问；停止仍然由串行路径那三个检查点（以及并发批次之后的下一轮）负责。
+    """
+    size = len(calls)
+    if size < 2 or size > PARALLEL_READ_MAX:
+        return False
+    if config.max_steps - safety.steps_used < size:
+        return False
+
+    keys: set[str] = set()
+    for call in calls:
+        spec = registry.get(str(call.get("name") or ""))
+        # ★ `parallel_safe` 是**逐工具举证**的那个位（缺省 False）。
+        # 计划原文只要求 `Risk.READ`，实测那个口径太粗 —— 见 `ToolSpec.parallel_safe`。
+        if spec is None or spec.risk is not Risk.READ or not spec.parallel_safe \
+                or spec.needs_confirmation:
+            return False
+        key = f"{call.get('name')}:{call.get('arguments')}"
+        if key in keys:  # 批内重复 → 交给串行路径的重复检测去处理
+            return False
+        keys.add(key)
+        if safety.would_loop(call):
+            return False
+    return True
+
+
+async def _run_parallel_batch(calls: list[dict], registry, config, safety, *, context,
+                              conversation_id: str = "", recorder=None,
+                              taint=None) -> AsyncIterator[dict]:
+    """整批只读调用并发执行，事件**按 index 顺序**回填（计划 §7.4）。
+
+    ## 事件顺序为什么按 index 而不是完成顺序
+
+    完成顺序取决于网络与平台，**不确定**。前端、测试、审计轨迹都依赖事件流可复现 ——
+    一个"这次先回来的是 B、下次是 A"的流会让所有基于顺序的断言变成掷骰子。
+    所以：**先按 index 发完全部 `action`，gather，再按 index 发完全部 `observation`**。
+
+    （前端本来就按 `auditId` 配对卡片，`chat-tools.js` 里逐字写着
+    "同轮可以并发多次调用" —— 所以 `action, action, observation, observation`
+    这种分组形状它已经能处理。）
+
+    ## ★ 它对"停止"意味着什么（必须写清楚，见 ADR-0023）
+
+    §5.6 的检查点②是**每次工具调用前**问一次；这条快路径把粒度放到了**整批之前**。
+    也就是说：**一批全只读调用已经并发出去之后，用户的停止请求要等这一批跑完才生效。**
+
+    为什么这个取舍可接受：并发批次**只含 `Risk.READ` 且不需确认**的调用 ——
+    它们**没有副作用**，所以"少跑两个"省不下任何东西，也不会留下半完成的状态。
+    凡**可能改状态**的批次（write / dangerous / needs_confirmation）一律走串行路径，
+    那里"每个动作要么完整发生、要么完全没发生"的保证**原样保留**。
+    """
+    prepared: list[tuple[dict, object, str]] = []
+    for call in calls:
+        spec = registry.get(str(call.get("name") or ""))
+        audit_id = uuid.uuid4().hex[:12]
+        prepared.append((call, spec, audit_id))
+        yield make_event("action", call=call, auditId=audit_id,
+                         tool=_tool_meta(spec, call))
+
+    async def run_one(item: tuple[dict, object, str]):
+        call, _spec, audit_id = item
+        return await registry.execute(
+            str(call.get("name") or ""),
+            call.get("arguments") or "{}",
+            ToolContext(audit_id=audit_id, source="agent",
+                        conversation_id=conversation_id,
+                        tainted=bool(taint and taint.on)),
+        )
+
+    results = await asyncio.gather(*(run_one(item) for item in prepared),
+                                   return_exceptions=True)
+
+    failure: BaseException | None = None
+    for (call, spec, _audit_id), invocation in zip(prepared, results, strict=True):
+        if isinstance(invocation, BaseException):
+            # `execute` 按 I13 **从不抛** —— 真走到这里说明那条保证被破坏了。
+            # 仍然把已经拿到的结果发完（**不让做过的工作变成看不见的**），
+            # 最后再把异常抛出去，与本轮终止的语义一致。
+            failure = failure or invocation
+            continue
+
+        # ★ 预算与 taint 都在 gather **之后**按 index 一次性结算 ——
+        # 与串行路径**同一时点**（结果已经进上下文之后），所以 I18 的语义不变。
+        safety.consume_step()
+        if taint is not None and spec is not None and not invocation.is_error \
+                and spec.trust is Trust.UNTRUSTED:
+            taint.mark()
+
+        if recorder is not None:
+            recorder.span(
+                trace.SPAN_TOOL, str(invocation.tool or call.get("name") or ""),
+                started=0.0, duration_ms=invocation.duration_ms,
+                status="error" if invocation.is_error else "ok",
+                error=_summarize_result(invocation) if invocation.is_error else "",
+                attrs={
+                    # 只放**指针**，不放参数与账号：审计才是那些东西的事实源（铁律 28）
+                    "auditId": invocation.audit_id,
+                    "plugin": invocation.plugin_id,
+                    "risk": invocation.risk.value,
+                    "status": invocation.status.value,
+                    "step": safety.steps_used,
+                    "parallel": True,
+                },
+            )
+
+        yield _observation_event(call, invocation)
+        context.append(_tool_message(call, invocation))
+
+    if failure is not None:
+        raise failure
 
 
 def _summarize_result(invocation) -> str:

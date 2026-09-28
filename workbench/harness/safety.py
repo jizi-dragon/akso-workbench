@@ -39,3 +39,22 @@ class SafetyGate:
         key = f"{call.get('name')}:{call.get('arguments')}"
         self._history.append(key)
         return sum(1 for k in self._history if k == key) >= self.loop_threshold
+
+    def would_loop(self, call: dict) -> bool:
+        """`is_loop` 的**只读**版本：只回答"假如现在记下这一条，会不会触发"。
+
+        ★ 为什么必须有它（2026-09-24 加，为计划 §7.4 的并发快路径）：
+
+        并发路径要在**动手之前**做资格预检，而预检失败时必须**原封不动地**退回串行路径。
+        用 `is_loop` 做预检会在 `_history` 里留下记录 ——
+        退回串行后同一次调用**会被记第二遍**，于是重复检测**提前一轮误报**
+        （本该第 3 次才触发，变成第 2 次就触发）。
+
+        这个缺陷的形态很难看：它**只在"预检失败"时出现**，也就是只在
+        "有风险批次 / 有重复 / 有确认"的那些回合里出现，而那时人正在盯别的问题。
+        判据：`tests/test_agent_parallel.py::test_a_rejected_batch_leaves_the_loop_history_untouched`。
+        """
+        key = f"{call.get('name')}:{call.get('arguments')}"
+        probe = deque(self._history, maxlen=self._history.maxlen)
+        probe.append(key)  # 与 `is_loop` 里的 append 语义**逐字一致**（含 maxlen 截断）
+        return sum(1 for k in probe if k == key) >= self.loop_threshold

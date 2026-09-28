@@ -22,8 +22,8 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（**106 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
-> | 不再变的决策（**19 篇** ADR ＋ `0000-template.md` 模板 = 20 个文件） | [docs/adr/](docs/adr/) |
+> | 真机环境坑（**107 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 不再变的决策（**20 篇** ADR ＋ `0000-template.md` 模板 = 21 个文件） | [docs/adr/](docs/adr/) |
 > | **★ 平台事实台账（端点 / 真机线格式 / 样本量 n / 平台约束，逐条带证据）** | [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md) |
 > | **★ 平台配置面整体认知（Gaia V3.8 手册语义与配置分层）** | [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) |
 > | **★ 用户传图片/文件给 agent（方案 + 判据 + 已知限制）** | [docs/AGENT-FILE-INPUT-PLAN.md](docs/AGENT-FILE-INPUT-PLAN.md) |
@@ -133,6 +133,7 @@
 |---|---|
 | 38 | **交付给用户实测之前，最后一步必须是「杀干净 + 重启」，不是「跑完测试」。** 违反它的后果**不是报错，是归因错误**——而错误归因会烧掉整轮排查（两次实录见 PITFALLS #71）。<br>**判据（交付前跑，三条都要过）**：① `Get-NetTCPConnection -LocalPort 18765,18766,18767 -State Listen` —— **必须为空，或全部属于同一个刚启动的进程**；② 改过 `workbench/**` 或 `desktop/**`（Python / 壳）**必须重启应用**（只刷新页面对 `static/**` 才够）；③ **跑测试与用户实测分成两段**，跑完测试要重启一次再交付——别让测试的副作用留在现场。<br>**为什么单列一条**：固定端口（[ADR-0012](docs/adr/0012-fixed-ports.md)）让"旧进程还活着"和"测试戳到了真端口"这两件事**都不报错**，只让现象指向错误的嫌疑人 |
 | 39 | **每个工具都要声明 `trust`（`LOCAL` / `UNTRUSTED`），而且它没有缺省值。** 问的是「这个工具的**返回值是谁写的**」：外部抓来的（网页 / 搜索 / 上传的脚本产物）标 `UNTRUSTED`，自己边界内的（平台 API / 本机文件）标 `LOCAL`。未声明 ⇒ `ToolSpec.valid()` 在**装配期**报错（[ADR-0022](docs/adr/0022-trust-labels-and-taint.md)）。<br>★ **为什么比 `risk` 严**：`risk` 的缺省 `READ` 落到**最安全的那一档**（不过确认门），而 `trust` **没有安全的缺省** —— 缺省成 `LOCAL` 等于把外部内容**静默**声明为自己边界内的数据，**不报错**。**同一类字段，缺省值的后果可以完全相反**，所以"照抄隔壁字段的默认值"是一个会静默出错的直觉（PITFALLS #105）。<br>★ **系统提示词里写"工具结果比用户的话可信"是劝告，贴在内容上的标签才是结构** —— 前者与外部内容在上下文里**并列**，后者与它**同生共死**。<br>判据：`pytest tests/test_trust_labels.py -o addopts=""`（**12 条**）。其中 `test_the_real_web_tools_are_declared_untrusted` 是**对着手写清单**核的 —— 把 `read_web_page` 改成 `LOCAL`，I18 当场失效而**别的测试一条都不会红** |
+| 40 | **`parallel_safe` 要逐工具举证，缺省 `False`。** 标它之前必须回答一句 **「这个工具并发跑两个，会不会碰同一份可变状态？」** —— ★ **"只读"不足以支撑并发**：HTTP 会话（`requests.Session` 非线程安全）、浏览器那条**单工作线程队列**（并发只排队，不加速）、sqlite 连接（跨线程直接抛）都是"只读但会碰"的例子，而其中两类**不报错**。今天全仓只有 `get_current_time` 标了它（纯计算）；其余 17 个保持缺省不是"判定安全"，而是**还没核实**（[ADR-0023](docs/adr/0023-parallel-read-batches.md)）。<br>★ **为什么口径比计划原文窄**：§7.4 原文是「整批都是 `Risk.READ` 就并发」，按它实现会让**计划自己 §5.6 的两条停止判据 + 一条评测用例变红** —— 因为并发必然把停止的检查点从"每次调用之间"退到"每批之间"。**新功能让已批准的判据变红时，默认假设是新功能错了，不是判据该改**（PITFALLS #107）。<br>★ **预检必须是纯的**：`SafetyGate.is_loop` / `_stopped(should_stop)` **都不能**拿来做资格判定 —— 一个改滑窗、一个消费检查点（后者一度让停止测试报出"该只执行第 0 个，实际 `[]`"）。用只读探针 `would_loop`。<br>判据：`pytest tests/test_agent_parallel.py -o addopts=""`（**14 条**），其中 `test_a_tool_that_did_not_opt_in_stays_serial` 与 `test_real_tools_are_not_opted_in_by_default` 是守门人 —— 它们红了**不要改它们**，回去读 ADR-0023 §1 |
 
 ---
 
