@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
   逐列适配并对未知 `NOT NULL` 无默认值列填中性值，避免接管旧库时 IntegrityError。
 - `checksum` 按 sqlx 语义取迁移 SQL 的 SHA-384 摘要。
 
-### 迁移账（1–21，全部已应用）
+### 迁移账（1–23，全部已应用）
 
 | # | 名称 | 内容 | 血统 |
 |---|---|---|---|
@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | 19 | `sandbox_run_audit` | 新建 `sandbox_run`（沙箱执行审计：策略/退出码/耗时/**树杀手段**/输出摘要）+ 索引 | 沙箱（[ADR-0014](adr/0014-sandbox-for-untrusted-code.md)） |
 | 20 | `skill_audit` | 新建 `skill_audit`（**能力供给链**留痕：上传/安装/卸载/删除）+ 索引 | Skill 共享库 |
 | 21 | `attachments` | 新建 `attachments`（用户交给 agent 的**文件/图片**：名字/mime/字节/sha256/解析状态/正文长度/坐标 JSON）+ 索引 | [Agent 文件输入](AGENT-FILE-INPUT-PLAN.md) |
+| 22 | `summary_boundary_excludes_system` | 数据行改写：`conversation_context.summarized_upto` 整体减 1 —— 摘要边界改为**不含首条 system**计数（I15：折叠永不吞 system） | [ADR-0019](adr/0019-in-turn-context-and-budget-governance.md) |
+| 23 | `messages_kind` | `messages` 增 `kind`（`message` / `error` / `tool`）；并把历史里 `role='assistant' AND content LIKE '错误：%'` 的行标成 `error`（**启发式**，边界写在迁移注释里） | [ADR-0019](adr/0019-in-turn-context-and-budget-governance.md) §5.4b |
 
 > **迁移 1–6 为 fork 历史，按不可变纪律保留**。其中 `documents` / `doc_chunks` / `qa_metrics`
 > 的知识库相关功能**源码已删**（表仅留存、不再读写）；`knowledge_nodes` / `knowledge_edges` /
@@ -88,15 +90,23 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | `created_at` | INTEGER | NOT NULL | 毫秒时间戳 |
 | `updated_at` | INTEGER | NOT NULL | 毫秒时间戳 |
 
-### 3.2 `messages` — 对话消息（迁移 1）
+### 3.2 `messages` — 对话消息（迁移 1；`kind` 由**迁移 23** 加）
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | TEXT | PK | UUID4 |
 | `conversation_id` | TEXT | NOT NULL, FK → `conversations(id) ON DELETE CASCADE` | |
-| `role` | TEXT | NOT NULL | `user` / `assistant` / `system` / `tool` |
+| `role` | TEXT | NOT NULL | `user` / `assistant` / `system` / `tool`（还有 `note`：**界面事件**，见 `approvals.NOTE_ROLE`） |
 | `content` | TEXT | NOT NULL | |
+| `kind` | TEXT | NOT NULL DEFAULT `'message'` | **与 `role` 正交**：`message`（真实对话）/ `error`（系统记录）/ `tool`（预留）。**`error` 绝不进模型上下文** |
 | `created_at` | INTEGER | NOT NULL | |
+
+> **`kind='error'` 的语义（迁移 23）**：一轮失败时落的那条「错误：…」。
+> 它带着 `role='assistant'` **只是为了界面能照常渲染成气泡**，而模型那侧由
+> `routes_chat._model_history`（**唯一那个扼流点**）过滤掉。
+> 不滤的后果不是报错 —— 是模型把一次网络错误当成**自己说过的话**，据此继续推理。
+> 过滤**刻意不放在 `storage.list_messages`**：界面需要看见错误，
+> 而"哪些能发给模型"是另一个问题。详见 [PITFALLS #97](PITFALLS.md)。
 
 ### 3.3 `settings` — 键值设置（迁移 1）
 

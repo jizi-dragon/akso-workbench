@@ -739,7 +739,7 @@ Codex 之所以必须提供 `unelevated` 回退，正是因为企业策略常常
 | 模型接入（L1） | `deepseek.py` **255 行** | — |
 | 工具规模 | **4 插件 / 18 core 工具**（**16 read · 2 write · 0 dangerous**） | `python tools/gen_tools_doc.py` |
 | HTTP 端点 | **99** | `@router.` 计数 |
-| 数据库迁移 | **1–20** | `workbench/db.py::MIGRATIONS` |
+| 数据库迁移 | **1–23** | `workbench/db.py::MIGRATIONS` |
 | **仓库全量** | `workbench/**.py` **85 文件 20,201 行**；前端 `static` js+css **25 文件 10,039 行**；扩展 TS **25 文件 5,917 行**；测试 **35 文件 10,216 行**；`tools/` **36 文件 6,846 行**（`.py`/`.mjs`/`.ps1`/`.js`）；Electron 壳 `desktop/*.js` **5 文件 1,697 行** | 同上 |
 | 测试 | **516 passed / 11 deselected**（默认跳过 slow 层）——**2026-09-18 记录，未重跑** | `pytest -o addopts="" -q -m "not slow"` |
 | 打包静态检查 | **13/13** | `tools/verify_packaging.py` |

@@ -27,6 +27,7 @@ from ..services import attachments as attachment_store
 from ..services import storage
 from ..services.deepseek import DeepSeekClient
 from ..services.settings import load_deepseek, load_max_steps
+from ..services.storage import MESSAGE_KIND_DEFAULT, MESSAGE_KIND_ERROR
 
 logger = logging.getLogger("workbench.chat")
 
@@ -198,6 +199,14 @@ def _model_history(messages: list[dict]) -> list[dict]:
     for index, row in enumerate(messages):
         role = str(row.get("role") or "")
         content = str(row.get("content") or "")
+        # ★ `kind != "message"` 的行**绝不进模型上下文**（迁移 23 / 计划 §5.4b）。
+        # 错误记录是**我们写的**（"错误：网络连接失败"），它带着 `role="assistant"`
+        # 只是为了让界面照常渲染成气泡 —— 原样发给模型，等于让它以为**自己说过**
+        # 那句它从没说过的话，于是据此继续推理（"我好像已经回答过了"）。
+        # 过滤放在这里而不是 `storage.list_messages`：**这是唯一那个扼流点**，
+        # 而界面需要看见错误（见 `list_messages` 的文档串）。
+        if str(row.get("kind") or MESSAGE_KIND_DEFAULT) != MESSAGE_KIND_DEFAULT:
+            continue
         markers = attachment_store.iter_markers(content)
         if role == NOTE_ROLE:
             out.append({"role": "user", "content": f"（界面事件）{content}"})
@@ -246,15 +255,25 @@ async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
         yield _sse({"type": "attachment", "attachmentId": att_id, "name": name})
 
     result: dict = {"content": "", "error": None}
-    async for sse in _stream_agent(history, cfg, result, conversation_id):
-        yield sse
+    completed = False
+    try:
+        async for sse in _stream_agent(history, cfg, result, conversation_id):
+            yield sse
+        completed = True
+    finally:
+        # ★ 收尾必须在 `finally`（计划 §5.4c）：消费方断开（关页面 / 切会话 / 网络断）
+        # 时 `async for` 被 `aclose()`，**正常路径的收尾代码根本不会执行** ⇒
+        # 库里留下"用户说了话、助手那侧什么都没有"的**半截会话** ——
+        # 刷新后那一轮凭空消失，而用户明明看着它跑过。
+        #
+        # ⚠️ 这里**不发 `done` 事件** —— 与 `harness/loop._accounted` 同一条理由：
+        # `finally` 可能正因 `GeneratorExit` 而执行，`yield` 会抛
+        # `RuntimeError: async generator ignored GeneratorExit`。
+        # **落库是账本的事，`done` 事件是界面的事。**
+        final_content, final_kind = _turn_final_text(result, completed=completed)
+        storage.insert_message(conversation_id, "assistant", final_content, kind=final_kind)
 
-    error_message = result["error"]
-    final_content = f"错误：{error_message}" if error_message else result["content"]
-    if not final_content:
-        final_content = "（模型未返回内容）"
-    storage.insert_message(conversation_id, "assistant", final_content)
-
+    # 只有正常跑完才走到这里（`GeneratorExit` 会径直穿过去）
     metric_id = _record_metric(body.message, started)
     yield _sse({
         "type": "done",
@@ -265,6 +284,29 @@ async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
         "latencyMs": int((time.perf_counter() - started) * 1000),
         "usage": result.get("usage") or {},
     })
+
+
+def _turn_final_text(result: dict, *, completed: bool) -> tuple[str, str]:
+    """这一轮该落库的正文与它的 `kind`。返回 `(content, kind)`。
+
+    ## 三条口径（每一条都对应一次真实踩坑）
+
+    1. **绝不落空串**：`（模型未返回内容）` 这条兜底早就在（前端也认它），
+       **复用它**而不是新造一句 —— 两处文案漂开会让用户看到两种"什么都没发生"。
+    2. **中止要标注**：半截正文后面补 `（已中止）`。不标的话，用户刷新后看到一句
+       戛然而止的话，会以为**是模型答坏了** —— 而真实原因是他自己关掉了页面。
+    3. **错误单独记 `kind`**：见迁移 23 与 `_model_history` 的过滤。
+       错误**优先于**中止标注 —— 一次失败的网络调用，说清"它失败了"比"它被中止了"有用。
+    """
+    error_message = result.get("error")
+    if error_message:
+        return f"错误：{error_message}", MESSAGE_KIND_ERROR
+    content = str(result.get("content") or "")
+    if not content:
+        content = "（模型未返回内容）"
+    if not completed:
+        content += "（已中止）"
+    return content, MESSAGE_KIND_DEFAULT
 
 
 def _prepare_conversation(body: ChatBody) -> tuple[str, bool]:
@@ -308,6 +350,18 @@ async def _stream_agent(
         ):
             if event["type"] == "token":
                 assistant_content += event["text"]
+                # ★ **每帧同步一份到 `result`**，而不是等收尾时再补。
+                #
+                # 为什么不能省：中止时收尾读的是 `result`，而 `final` 事件永远不会到达。
+                # "在本生成器的 `finally` 里补一下"是**行不通**的 —— 实测（2026-09-24）：
+                #
+                #     外层 finally 跑时，内层还挂在它上次 yield 的地方；
+                #     内层的 finally 是在 `aclose()` **返回之后**才跑的。
+                #
+                # 原因：被打断的 `async for` **不会**关闭内层生成器（`with` 才会），
+                # 它只是挂在那里，等到被垃圾回收时才由事件循环 finalize。
+                # ⇒ **跨生成器的"收尾顺序"不能靠 `finally` 保证，只能靠"边发生边记"。**
+                result["content"] = assistant_content
             elif event["type"] == "final":
                 assistant_content = event["content"]
                 result["content"] = assistant_content

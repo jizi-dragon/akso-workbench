@@ -70,19 +70,39 @@ def delete_conversation(conv_id: str) -> None:
     db.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
 
 
-def insert_message(conv_id: str, role: str, content: str) -> str:
+#: `messages.kind` 的取值。**与 `role` 正交**：`role` 是发给模型的协议字段
+#: （system/user/assistant/tool），`kind` 是**我们自己的**分类维度。
+#:
+#: - `message` —— 真实对话内容（含 `note`，那是界面事件，见 `approvals.NOTE_ROLE`）
+#: - `error`   —— 系统记录（这一轮失败了）。**必须留在界面上、绝不能进模型上下文**：
+#:   模型读到"自己说过"一句它从没说过的话，会据此继续推理（计划 §5.4b）
+#: - `tool`    —— 工具回填（**预留**：当前工具观测不落库，见计划 §7.3 的 transcript 落库）
+MESSAGE_KIND_DEFAULT = "message"
+MESSAGE_KIND_ERROR = "error"
+
+
+def insert_message(conv_id: str, role: str, content: str,
+                   *, kind: str = MESSAGE_KIND_DEFAULT) -> str:
+    """落一条消息。`kind` 决定它**会不会进模型上下文**（由 `_model_history` 过滤）。"""
     msg_id = new_id()
     db.execute(
-        "INSERT INTO messages (id, conversation_id, role, content, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (msg_id, conv_id, role, content, now_ms()),
+        "INSERT INTO messages (id, conversation_id, role, content, kind, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (msg_id, conv_id, role, content, kind, now_ms()),
     )
     return msg_id
 
 
 def list_messages(conv_id: str) -> list[dict]:
+    """会话的全部消息（**含错误记录**），供界面渲染。
+
+    ⚠️ 这里**刻意不过滤** `kind='error'`：界面需要看见"这一轮失败了"，
+    而"哪些能发给模型"是**另一个问题**，它的答案在唯一那个扼流点
+    （`routes_chat._model_history`）里。把过滤放在这里会让"界面的数据源"与
+    "模型的数据源"变成同一条查询的两个变体 —— 那正是扼流点要防的分散。
+    """
     return db.query(
-        "SELECT id, conversation_id AS conversationId, role, content, "
+        "SELECT id, conversation_id AS conversationId, role, content, kind, "
         "created_at AS createdAt FROM messages WHERE conversation_id = ? "
         "ORDER BY created_at ASC",
         (conv_id,),

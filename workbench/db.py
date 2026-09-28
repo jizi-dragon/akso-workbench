@@ -432,6 +432,36 @@ CREATE INDEX IF NOT EXISTS idx_attachments_created_at ON attachments(created_at)
 -- 只前进的语义不变（I2）：减 1 是同一个单调序列的平移，不产生回退。
 UPDATE conversation_context SET summarized_upto = summarized_upto - 1 WHERE summarized_upto > 0;
 """),
+    (23, "messages_kind", """
+-- `messages.kind`：把「真实对话内容」与「系统记录」分开（2026-09-24，计划 §5.4b）。
+--
+-- ## 修的是什么
+--
+-- `routes_chat` 在收尾时把错误也写成一条 assistant 消息：
+--     final_content = f"错误：{error_message}" if error_message else result["content"]
+--     storage.insert_message(conversation_id, "assistant", final_content)
+-- 而 `_model_history` 会把整段历史原样翻给模型 ⇒ **模型读到"自己说过"一句它从没说过的话**。
+-- 后果不是报错，是模型据此继续推理（例如把一次网络错误当成自己"已经回答过了"），
+-- 表现为"它怎么突然开始胡说"。刷新页面后那条错误还在气泡里，看起来完全正常。
+--
+-- ## 为什么用 `kind` 而不是新 role
+--
+-- `role` 是**发给模型的协议字段**（DeepSeek/OpenAI 只认 system/user/assistant/tool），
+-- 加一个 `role='error'` 会让 `_model_history` 那条"未知角色丢掉"的兜底逻辑
+-- 变成唯一防线 —— 而它一旦漏掉，**整个请求会被 400 掉**（不是少一条，是全废）。
+-- `kind` 是**我们自己的**分类维度，与协议无关，风险面小得多。
+--
+-- ## 历史数据回填（启发式，说清楚它的边界）
+--
+-- 既有库里那批错误行只能靠前缀认出来。这是**启发式**：
+-- 唯一的写入方是 `routes_chat` 那一行，所以 `role='assistant' AND content LIKE '错误：%'`
+-- 在实践中是精确的；但如果模型**自己**答出以"错误："开头的一句真话，它会被误判成
+-- 错误记录、从而不再进模型上下文。那个代价是**温和且自愈的**：消息仍在界面上，
+-- 只是模型下一轮看不见它（相比"错误被当成模型的话"那种会把它带偏的后果，这个方向更安全）。
+ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'message';
+UPDATE messages SET kind = 'error'
+ WHERE role = 'assistant' AND content LIKE '错误：%';
+"""),
 ]
 
 
