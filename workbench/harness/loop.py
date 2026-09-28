@@ -33,15 +33,17 @@ SSE / WebSocket / 测试断言都直接消费同一事件序列。
     usage             本轮 token 用量与**缓存命中量**（一次回答只发一条，收尾时）
     final            最终回答
     error            终止性错误
+    cancelled        ★ 用户请求停止，在**两次动作之间**收尾（计划 §5.6）
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import replace
 from typing import Any
 
@@ -54,6 +56,12 @@ from .safety import SafetyGate
 from .types import AgentConfig, make_event
 
 logger = logging.getLogger("workbench.harness")
+
+#: 等待确认时"多久问一次停止信号"。0.2s 是**手感与开销的折中**：
+#: 用户点停止到真正放弃等待，最长多等这么久（人感觉不到），
+#: 而一次空转只是读一个 bool —— 一个 300 秒的确认等待 ≈ 1500 次读，可忽略。
+#: **不要调成 0**：那会变成忙等，把事件循环占满。
+_STOP_POLL_INTERVAL_S = 0.2
 
 SUMMARY_SYSTEM_PROMPT = "你是对话摘要助手。请将以下对话压缩为简洁摘要，保留关键事实、用户意图与结论。"
 
@@ -245,10 +253,16 @@ async def run_agent_loop(
     conversation_id: str = "",
     plugins: list[str] | None = None,
     meter: UsageMeter | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> AsyncIterator[dict]:
     """运行 Agent 循环，逐事件 yield。
 
-    事件序列：token* → (thought? → action → observation)* → usage? → final | error
+    事件序列：token* → (thought? → action → observation)* → usage? → final | error | cancelled
+
+    `should_stop`：**协作式取消**（计划 §5.6）。在三个检查点被问一次 ——
+    每次模型调用前、每次工具调用前、等待确认答复期间。它是"能不能停下来"的全部机制；
+    不再是 `None` 时行为与从前**逐字相同**（默认关，所以不改变任何既有调用方）。
+    见 `harness/stop.py` 讲为什么是协作式而不是 `Task.cancel()`。
 
     `plugins` 为插件白名单（None = 全部工具）。给未来"按页面裁剪工具面"留的口子——
     工具 schema 是真实的 token 成本，全量注入约 2k token/轮。
@@ -274,6 +288,18 @@ async def run_agent_loop(
         logger.info("Agent 循环开始：%d 条历史消息，%d 个工具可用，步数预算 %d",
                     len(conversation), len(registry.specs()), config.max_steps)
         while True:
+            # ★ 检查点①：每次模型调用前（计划 §5.6）。
+            # 放在这里而不是循环开头之后：模型调用是**唯一一处会花钱**的动作，
+            # 用户点了停止之后不该再发一次请求。
+            if _stopped(should_stop):
+                logger.info("收到停止请求（检查点：模型调用前），已用 %d 次工具调用",
+                            safety.steps_used)
+                yield make_event("cancelled", reason="user_stop",
+                                 message=_cancelled_message(safety.steps_used))
+                recorder.abort()
+                yield make_event("usage", usage=_finish_usage(meter, config))
+                return
+
             if safety.exhausted:
                 # "为什么这次没答完"最需要这条：前端的错误提示很短，日志要留下预算与轮次
                 logger.warning("步数预算耗尽，终止本轮（max_steps=%d，已用 %d 次工具调用）",
@@ -312,7 +338,7 @@ async def run_agent_loop(
             async for event in _one_model_turn(
                 conversation, client, registry, config, safety,
                 conversation_id=conversation_id, plugins=plugins, meter=meter,
-                recorder=recorder,
+                recorder=recorder, should_stop=should_stop,
             ):
                 # ★ `error` 事件也要把 run 标成失败（2026-09-24）。
                 #
@@ -326,7 +352,7 @@ async def run_agent_loop(
                 if event["type"] == "error" and recorder is not None:
                     recorder.fail(str(event.get("message") or event.get("reason") or "error"))
                 yield event
-                if event["type"] in ("final", "error"):
+                if event["type"] in ("final", "error", "cancelled"):
                     # 用量在**收尾时**发一条：命中量要等所有 LLM 调用（含摘要重算）都结束
                     # 才有完整答案；提前发会让前端显示一个偏低的数字
                     yield make_event("usage", usage=_finish_usage(meter, config))
@@ -362,6 +388,74 @@ def _budget_exhausted_message(max_steps: int) -> str:
         "**已完成的部分都保留着**——直接回一句「继续」我就接着做。"
         "如果是配置这类多步任务反复撞上限，可以在「设置 → 推理参数」里调大这个数字。"
     )
+
+
+def _cancelled_message(executed_steps: int) -> str:
+    """用户点了停止之后的文案（计划 §5.6）。
+
+    ★ **必须说清"已执行的动作不会撤销"**。这是这一条最容易被写错的地方：
+    写"已取消"会让人以为"什么都没发生"，而平台侧可能**已经建了东西**。
+    工具调用是真调用，停止只能阻止下一步 —— 文案不许把这件事含糊过去。
+    """
+    if executed_steps <= 0:
+        return "已停止。这次还没有执行任何工具调用，没有产生任何影响。"
+    return (
+        f"已停止（这次已经执行了 {executed_steps} 次工具调用）。"
+        "**已经做过的事情不会因为停止而撤销** —— 如果刚才有写操作，"
+        "请确认一下平台上的结果是不是你要的。这一轮的记录都留着，你可以直接说「继续」。"
+    )
+
+
+def _stopped(should_stop: Callable[[], bool] | None) -> bool:
+    """问一次"用户要停吗"。
+
+    `should_stop` 自己的异常**按"不停"处理**：一个坏掉的停止信号不该把正在干的活打断
+    （同 `logging_setup` 的"日志失败不影响主流程"、`Trace._write` 的"轨迹失败不影响回答"）。
+    """
+    if should_stop is None:
+        return False
+    try:
+        return bool(should_stop())
+    except Exception:  # noqa: BLE001 —— 见 docstring
+        logger.warning("停止信号求值失败，按「不停」处理", exc_info=True)
+        return False
+
+
+async def _await_confirmation_or_stop(
+    registry: ToolHub,
+    pending_id: str,
+    timeout_s: float,
+    should_stop: Callable[[], bool] | None,
+):
+    """等确认答复，但**可以被停止请求打断**。
+
+    ★ 打断走的是 `approvals` **已有**的那条路：`CancelledError` ⇒
+    `expire(pending_id, "对话已中断")`（计划 §5.6 点名"**不要另写一套**"）。
+    所以这里 cancel 的是**等待任务**，而不是给 `await_confirmation` 加一个
+    `should_stop` 形参 —— 那会把"等待 + 超时 + 中断"那套协议复制成两份，
+    而两份迟早不一致（本仓已经因为"两处都写全量"栽过，见铁律 28）。
+
+    返回 `None` 表示**因为停止请求而放弃等待**（调用方据此走取消分支）；
+    其余情况原样返回 `ConfirmOutcome`。`should_stop is None` 时**一行都不多走**。
+    """
+    if should_stop is None:
+        return await registry.await_confirmation(pending_id, timeout_s)
+
+    task = asyncio.create_task(registry.await_confirmation(pending_id, timeout_s))
+    try:
+        while True:
+            done, _pending = await asyncio.wait({task}, timeout=_STOP_POLL_INTERVAL_S)
+            if task in done:
+                return task.result()
+            if _stopped(should_stop):
+                logger.info("等待确认期间收到停止请求，放弃等待：%s", pending_id)
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                return None
+    finally:
+        if not task.done():  # pragma: no cover —— 消费方放弃时的兜底
+            task.cancel()
 
 
 def _finish_usage(meter: UsageMeter, config: AgentConfig) -> dict:
@@ -415,6 +509,28 @@ def _fill_unexecuted(context: list[dict], calls: list[dict], reason: str) -> Non
             "tool_call_id": call.get("id") or "",
             "content": f"[未执行] {reason}",
         })
+
+
+def _cancel_events(context: list[dict], calls: list[dict], index: int, reason: str,
+                   steps_used: int, recorder: trace.RunRecorder | None) -> list[dict]:
+    """取消一个工具批次的**统一收尾**（三个检查点共用）。返回**要发的事件列表**。
+
+    抽出来是因为三处要做的事**逐字相同**：回填未执行调用 → 记 span 状态 →
+    逐条发"跳过"观测 → 发 `cancelled`。抄三遍的话，将来改文案或改回填口径
+    必然只改到一两处 —— 而**半截的取消收尾正是 §5.4c 那个缺陷的形态**。
+
+    ⚠️ 返回列表而不是生成器：调用方是**异步**生成器，`yield from` 在那里是语法错误，
+    而 `for e in ...: yield e` 也要求它是个可迭代对象 —— 列表最简单，
+    且这三个事件本来就要一次性发完（没有"边算边发"的必要）。
+    """
+    remainder = calls[index:]
+    _fill_unexecuted(context, remainder, reason)
+    if recorder is not None:
+        recorder.abort()
+    events = [_skipped_observation(pending, reason) for pending in remainder]
+    events.append(make_event("cancelled", reason="user_stop",
+                             message=_cancelled_message(steps_used)))
+    return events
 
 
 def _skipped_observation(call: dict, reason: str) -> dict:
@@ -496,6 +612,7 @@ async def _one_model_turn(
     plugins: list[str] | None = None,
     meter: UsageMeter | None = None,
     recorder: trace.RunRecorder | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> AsyncIterator[dict]:
     """一轮「模型流式输出 →（可能）工具循环」，工具回填后返回交由外层再开一轮。"""
     async for event in client.stream_chat(
@@ -549,6 +666,22 @@ async def _one_model_turn(
             context.append(assistant)
 
             for index, call in enumerate(assistant["tool_calls"]):
+                # ★ 检查点②：每次工具调用前（计划 §5.6）。
+                #
+                # 放在**预算检查之前**：用户说停就停，与预算还剩多少无关。
+                # 也放在 `action` 事件之前 —— 否则界面会先显示"正在调用 X"，
+                # 然后立刻显示"已停止"，而 X 根本没跑（那句"正在调用"是假的）。
+                if _stopped(should_stop):
+                    logger.info("收到停止请求（检查点：工具调用前），本批还有 %d 个调用未执行",
+                                len(assistant["tool_calls"]) - index)
+                    # 未执行的每一条都要回填（与预算耗尽 / 重复调用共用同一条纪律，I16）：
+                    # 少一条，这段历史对平台就是**非法**的（assistant 带了 tool_calls
+                    # 却没有配对响应）
+                    for _ce in _cancel_events(context, assistant["tool_calls"], index,
+                                              "用户请求停止", safety.steps_used, recorder):
+                        yield _ce
+                    return
+
                 # ★ 步数预算**逐调用**检查（不变量 I16，2026-09-24 加，修复缺陷③）。
                 # 旧实现只在**两次模型轮次之间**检查（外层 while 的 `safety.exhausted`），
                 # 于是模型一轮里发 N 个 tool_call 就 N 个全执行——实测 max_steps=2 +
@@ -617,10 +750,17 @@ async def _one_model_turn(
                         tool=invocation.tool,
                         **invocation.confirm,
                     )
-                    outcome = await registry.await_confirmation(
-                        invocation.pending_id,
-                        float(invocation.confirm.get("timeoutS") or 0),
-                    )
+                    outcome = await _await_confirmation_or_stop(
+                        registry, invocation.pending_id,
+                        float(invocation.confirm.get("timeoutS") or 0), should_stop)
+                    if outcome is None:
+                        # 等待期间用户点了停止：**这一步没执行**，按未执行回填
+                        # （`execute` 只登记、没跑 handler），与检查点②同一条收尾
+                        logger.info("实时确认等待被停止请求打断：%s", invocation.tool)
+                        for _ce in _cancel_events(context, assistant["tool_calls"], index,
+                                                  "用户请求停止", safety.steps_used, recorder):
+                            yield _ce
+                        return
                     logger.info("实时确认有答复：%s → %s（approved=%s expired=%s）",
                                 invocation.pending_id, invocation.tool,
                                 outcome.approved, outcome.expired)
@@ -655,8 +795,16 @@ async def _one_model_turn(
                     # 那条批准被搁置、界面表现为"我点了，什么都没发生"（15:08 真机实测）。
                     # 现在与实时确认对称：等答复 → 同意则**由服务端用完全相同的参数执行**，
                     # 用户只点一次；拒绝/超时则把答复如实写进观测，本轮结束。
-                    outcome = await registry.await_confirmation(
-                        invocation.pending_id, config.approval_wait_s)
+                    outcome = await _await_confirmation_or_stop(
+                        registry, invocation.pending_id, config.approval_wait_s, should_stop)
+                    if outcome is None:
+                        # 危险操作**本来就没执行**（确认门拦下了，handler 没跑）——
+                        # 所以这一步与"没发生过"等价，按未执行回填即可
+                        logger.info("风险确认等待被停止请求打断：%s", invocation.tool)
+                        for _ce in _cancel_events(context, assistant["tool_calls"], index,
+                                                  "用户请求停止", safety.steps_used, recorder):
+                            yield _ce
+                        return
                     logger.info("风险确认有答复：%s → %s（approved=%s expired=%s）",
                                 invocation.pending_id, invocation.tool,
                                 outcome.approved, outcome.expired)
@@ -718,7 +866,21 @@ async def _one_model_turn(
                         "status": invocation.status.value,
                     },
                     invocation={
-                        "toolCallId": invocation.request_id,
+                        # ★ 优先用**模型给的** tool_call id，回落到 `request_id`（2026-09-24 修）。
+                        #
+                        # 旧写法是 `invocation.request_id`，而那个值来自
+                        # `plugin_api._call_id(arguments)` —— 它从**参数 JSON 里**找 id，
+                        # 于是模型发起的调用（参数里没有那个键）拿到的是**空串**。
+                        # 后果：`observation.invocation.toolCallId` 对每一条真实观测都是 `""`，
+                        # 而"因预算/停止被跳过"的观测带的却是真实 id —— **同一个字段两种口径**，
+                        # 谁想拿它配对工具卡都会配错（按空串配对 = 全部配到第一条）。
+                        #
+                        # 回填那侧的写法一直是对的（见 `_skipped_observation` 与
+                        # 下面构造 tool 消息的那行：`call.get("id") or invocation.request_id`），
+                        # 所以这里对齐到它，而不是反过来。今天没有消费方读这个字段
+                        # （`grep toolCallId workbench/static/` 零命中），
+                        # 正因为如此现在改**零风险**，而留着它迟早会有人按"它应该是 id"来用。
+                        "toolCallId": call.get("id") or invocation.request_id,
                         "tool": invocation.tool,
                         "auditId": invocation.audit_id,
                         "durationMs": invocation.duration_ms,

@@ -133,6 +133,8 @@ EventType = Literal[
     "confirm_resolved",   # 实时确认有了答复 {pendingId, approved, expired, answer}
     "final",      # 最终回答 {content}
     "error",      # 终止性错误 {message}
+    "usage",      # 本轮用量汇总 {usage: {...}}（收尾时发一条，见 loop）
+    "cancelled",  # ★ 用户请求停止，本轮在**两次动作之间**收尾 {message}（计划 §5.6）
 ]
 
 TokenEvent = Annotated[dict, Field]  # 占位说明；实际事件用 make_event 构造

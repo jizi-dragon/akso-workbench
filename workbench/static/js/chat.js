@@ -122,8 +122,17 @@ export function initChat() {
   });
 
   const submit = () => {
+    // ★ 正在跑的时候，发送键**就是停止键**（计划 §5.6）。
+    //
+    // 为什么不另加一个按钮：`isRunning` 时提交本来就被下面的 `if (isRunning) return`
+    // 忽略 —— 也就是说这个按键在跑的时候**没有任何别的用途**。
+    // 让"停不下来"这件事有一个不必找按钮的解法，比多放一个只在特定时刻可用的
+    // 图标更可靠（而那个图标在停止请求在途时该显示什么，是个没有答案的问题）。
+    if (isRunning) {
+      void requestStop();
+      return;
+    }
     const text = input.value.trim();
-    if (isRunning) return;
     // 只有附件、没有文字也要能发（"看看这张图"是最自然的用法，而用户不该被迫配一句话）
     if (!text && tray.isEmpty()) return;
     input.value = "";
@@ -433,9 +442,64 @@ function showComposerNotice(message) {
 
 // ———— 流式发送 ————
 
+/** 发送键的三种状态。**显式写出来**而不是"保存原值再恢复"：
+ *  恢复式写法在两条路径交错时会留下错误的状态（例如停止请求的 3 秒兜底
+ *  与回合正常收尾撞在一起，后跑的那个把先跑的那个的状态覆盖掉）。 */
+function setSendButton(mode) {
+  const btn = document.getElementById("btn-send");
+  if (!btn) return;
+  if (mode === "send") {
+    btn.disabled = false;
+    btn.textContent = "➤";
+    btn.title = "发送";
+  } else if (mode === "stop") {
+    btn.disabled = false;
+    btn.textContent = "⏹";
+    btn.title = "停止这一轮";
+  } else if (mode === "stopping") {
+    btn.disabled = true;
+    btn.textContent = "…";
+    btn.title = "正在停止，做完了手上这一步就会停";
+  } else if (mode === "already-done") {
+    btn.disabled = true;
+    btn.textContent = "✓";
+    btn.title = "这一轮已经结束了";
+  }
+}
+
+/** 请求停止当前这一轮（计划 §5.6）。
+ *
+ *  ★ 它**只发请求**，界面状态**不在这里切成"已停止"** —— 见 `api.stopChat`：
+ *  服务端只是置一个位，循环要在下一个检查点才收尾，真正的确认是 `cancelled` 事件。
+ *
+ *  但按钮必须**立刻**给出反馈：不给的话用户会以为没点上、于是连点五下
+ *  （服务端会记一条"重复的停止请求 —— 界面可能没有及时给出反馈"，
+ *  那条日志存在的意义就是指出这是个**界面缺陷**）。
+ */
+async function requestStop() {
+  const conv = state.currentConversationId;
+  if (!conv) return;
+  setSendButton("stopping");
+  try {
+    const out = await api.stopChat(conv);
+    if (out && out.running === false) {
+      // 回合已经结束了（用户手快 / 网络延迟）。如实说一句就够，**不要**报错 ——
+      // 报错会让他以为"停止功能坏了"。
+      setSendButton("already-done");
+      setTimeout(() => setSendButton("send"), 1200);
+    }
+  } catch {
+    // 请求本身失败（网络断了）：按键退回"停止"，用户可以再点一次。
+    // 这里**不能**退回"发送" —— 回合还在跑，退回发送态会让那次点击变成
+    // "又发了一条消息"，而用户的本意是停止。
+    setSendButton("stop");
+  }
+}
+
 async function sendMessage(text, attachmentIds = [], onSent = null) {
   if (isRunning) return;
   isRunning = true;
+  setSendButton("stop"); // 跑起来之后，发送键就是停止键（见 initChat 的 submit）
   document.getElementById("chat-running-badge").hidden = false;
 
   const el = messagesEl();
@@ -577,6 +641,13 @@ async function sendMessage(text, attachmentIds = [], onSent = null) {
             ? `✂ ${event.message}`
             : `错误：${event.message}`;
         softStop = event.reason === "budget_exhausted" || event.reason === "output_truncated";
+      } else if (event.type === "cancelled") {
+        // ★ 用户自己按的停止（计划 §5.6）。与 `error` 那条路的区别必须体现在**颜色与措辞**上：
+        // 用户按了停止却看到一条红色"错误"，会以为是自己把东西弄坏了。
+        // `⏹` + 正常字色 = "这是你要求的，不是故障"；文案由服务端给
+        // （`loop._cancelled_message` 会说清"已执行的动作不会撤销"）。
+        content = `⏹ ${event.message}`;
+        softStop = true;
       } else if (event.type === "usage") {
         // 用量在 final/error 之后单独发一条：命中量要等所有模型调用（含摘要重算）
         // 都结束才是完整答案，提前显示会给出一个偏低的数字
@@ -633,6 +704,7 @@ async function sendMessage(text, attachmentIds = [], onSent = null) {
   if (usage && usage.promptTokens) metaActions.appendChild(usageChip(usage, metaActions));
 
   isRunning = false;
+  setSendButton("send");
   document.getElementById("chat-running-badge").hidden = true;
   scrollToBottom();
 }

@@ -21,6 +21,7 @@ from .. import config
 from ..approvals import NOTE_ROLE
 from ..harness.loop import run_agent_loop
 from ..harness.prompts import build_system_prompt
+from ..harness.stop import StopToken
 from ..harness.tools import default_registry
 from ..harness.types import AgentConfig
 from ..services import attachments as attachment_store
@@ -32,6 +33,46 @@ from ..services.storage import MESSAGE_KIND_DEFAULT, MESSAGE_KIND_ERROR
 logger = logging.getLogger("workbench.chat")
 
 router = APIRouter(prefix="/api", tags=["chat"])
+
+# ———— 取消登记表（计划 §5.6） ————
+#
+# ★ **进程内、按会话 id 索引、不用全局单例**（计划点名）。理由不是洁癖：
+# 一个模块级单例会让"上一条用例留下的取消状态"泄进下一条用例，
+# 而那种失败**看起来像是"循环自己停了"** —— 归因会烧掉一整轮排查（PITFALLS #71 同族）。
+#
+# 生命周期与"一条 SSE 连接"对齐：`_chat_events` 进入时登记、`finally` 里摘掉。
+# 摘掉这一步是承重的 —— 不摘的话这张表会随会话数无限增长，
+# 而"某个会话停止后永远停着"会让它下一轮**一上来就被取消**。
+_STOP_TOKENS: dict[str, StopToken] = {}
+
+
+def _register_stop(conversation_id: str) -> StopToken:
+    """为一条对话登记一枚取消令牌（重复登记则**换新**，见下）。"""
+    token = StopToken(conversation_id)
+    _STOP_TOKENS[conversation_id] = token
+    return token
+
+
+def _release_stop(conversation_id: str, token: StopToken) -> None:
+    """摘掉令牌。**只摘自己那一枚** —— 同一会话可能有另一条连接已经登记了新令牌。"""
+    if _STOP_TOKENS.get(conversation_id) is token:
+        _STOP_TOKENS.pop(conversation_id, None)
+
+
+def stop_conversation(conversation_id: str) -> bool:
+    """请求停止某个会话的进行中回合。返回"是否真的有一轮在跑"。
+
+    ★ 返回 `False` 不是错误：用户可能在回合**刚结束**时点了停止（网络延迟、
+    或者他手快）。那时如实回一句"这一轮已经结束了"比报 404 有用得多 ——
+    404 会让他以为"停止功能坏了"。
+    """
+    token = _STOP_TOKENS.get(conversation_id)
+    if token is None:
+        return False
+    if not token.request():
+        logger.info("重复的停止请求（会话 %s）—— 界面可能没有及时给出反馈",
+                    conversation_id)
+    return True
 
 
 class ChatBody(BaseModel):
@@ -48,6 +89,34 @@ class ChatBody(BaseModel):
 class FeedbackBody(BaseModel):
     metricId: str
     helpful: bool
+
+
+class StopBody(BaseModel):
+    conversationId: str
+    """要停止哪个会话的进行中回合。
+
+    **按会话 id，不按"当前会话"** —— 服务端没有"当前会话"这个概念（那是界面的状态），
+    而且用户可能在停止请求在途时切了会话。
+    """
+
+
+@router.post("/chat/stop")
+def stop(body: StopBody) -> dict:
+    """停止某个会话正在进行的一轮（计划 §5.6）。
+
+    **协作式**：它只是置一个位，循环会在下一个检查点（模型调用前 / 工具调用前 /
+    等待确认期间）收尾。所以响应立刻返回，而"真的停了"由 SSE 流里的 `cancelled`
+    事件确认 —— 前端不该把这里的 200 当成"已经停了"。
+
+    ⚠️ **它不撤销已经执行过的工具调用**。文案由 `loop._cancelled_message` 统一给。
+    """
+    running = stop_conversation(body.conversationId)
+    return {
+        "ok": True,
+        "running": running,
+        "message": ("已请求停止，做完了手上这一步就会停。"
+                    if running else "这一轮已经结束了。"),
+    }
 
 
 @router.post("/chat/stream")
@@ -256,11 +325,17 @@ async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
 
     result: dict = {"content": "", "error": None}
     completed = False
+    # 取消令牌与这条 SSE 连接同生命周期（计划 §5.6 的"进程内登记表"）。
+    # `_STOP_TOKENS` 那份唯一的用途就是让 `POST /api/chat/stop` 找到它。
+    stop_token = _register_stop(conversation_id)
     try:
-        async for sse in _stream_agent(history, cfg, result, conversation_id):
+        async for sse in _stream_agent(history, cfg, result, conversation_id, stop_token):
             yield sse
         completed = True
     finally:
+        # ★ 摘掉令牌（承重）：不摘的话这张表随会话数无限增长，
+        # 而"某个会话停止后令牌永远停着"会让它**下一轮一上来就被取消**。
+        _release_stop(conversation_id, stop_token)
         # ★ 收尾必须在 `finally`（计划 §5.4c）：消费方断开（关页面 / 切会话 / 网络断）
         # 时 `async for` 被 `aclose()`，**正常路径的收尾代码根本不会执行** ⇒
         # 库里留下"用户说了话、助手那侧什么都没有"的**半截会话** ——
@@ -289,7 +364,7 @@ async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
 def _turn_final_text(result: dict, *, completed: bool) -> tuple[str, str]:
     """这一轮该落库的正文与它的 `kind`。返回 `(content, kind)`。
 
-    ## 三条口径（每一条都对应一次真实踩坑）
+    ## 四条口径（每一条都对应一次真实踩坑）
 
     1. **绝不落空串**：`（模型未返回内容）` 这条兜底早就在（前端也认它），
        **复用它**而不是新造一句 —— 两处文案漂开会让用户看到两种"什么都没发生"。
@@ -297,6 +372,11 @@ def _turn_final_text(result: dict, *, completed: bool) -> tuple[str, str]:
        戛然而止的话，会以为**是模型答坏了** —— 而真实原因是他自己关掉了页面。
     3. **错误单独记 `kind`**：见迁移 23 与 `_model_history` 的过滤。
        错误**优先于**中止标注 —— 一次失败的网络调用，说清"它失败了"比"它被中止了"有用。
+    4. ★ **停止也要标注，而且与中止分开**（计划 §5.6）：`（已停止）` ≠ `（已中止）`。
+       前者是**用户自己按的**，后者是**连接断了**。两者对用户的含义完全不同：
+       看到"已中止"他会怀疑网络，看到"已停止"他知道是自己干的。
+       **事件流里的 `cancelled` 事件刷新后就没了**，所以标注必须落进库 ——
+       否则刷新之后那一轮看起来就是"模型答到一半不说了"。
     """
     error_message = result.get("error")
     if error_message:
@@ -304,7 +384,9 @@ def _turn_final_text(result: dict, *, completed: bool) -> tuple[str, str]:
     content = str(result.get("content") or "")
     if not content:
         content = "（模型未返回内容）"
-    if not completed:
+    if result.get("cancelled"):
+        content += "（已停止）"
+    elif not completed:
         content += "（已中止）"
     return content, MESSAGE_KIND_DEFAULT
 
@@ -326,11 +408,13 @@ async def _stream_agent(
     cfg,
     result: dict,
     conversation_id: str = "",
+    should_stop=None,
 ) -> AsyncIterator[str]:
     """跑 Agent 循环并逐事件转发 SSE；把最终内容/错误写入 result 供调用方收尾。
 
     事件**原样透传**（token / thought / action / observation / approval_required /
-    usage / final / error）——前端工具卡片靠 action/observation，缓存命中量靠 usage。
+    usage / final / error / **cancelled**）——前端工具卡片靠 action/observation，
+    缓存命中量靠 usage，停止靠 cancelled。
     """
     client = DeepSeekClient(cfg.api_key, model=cfg.model)
     agent_config = AgentConfig(
@@ -347,6 +431,7 @@ async def _stream_agent(
         async for event in run_agent_loop(
             history, client, default_registry(), agent_config,
             conversation_id=conversation_id,
+            should_stop=should_stop,
         ):
             if event["type"] == "token":
                 assistant_content += event["text"]
@@ -367,6 +452,12 @@ async def _stream_agent(
                 result["content"] = assistant_content
             elif event["type"] == "error":
                 result["error"] = event["message"]
+            elif event["type"] == "cancelled":
+                # ★ 记下来，好让收尾给落库的正文补 `（已停止）`。
+                # `cancelled` 事件本身**刷新后就没了**（事件不落库），
+                # 所以"用户按了停止"这件事必须由正文自己带着 ——
+                # 否则刷新之后那一轮看起来就是"模型答到一半不说了"。
+                result["cancelled"] = True
             elif event["type"] == "usage":
                 # 一起塞进 done 事件，前端不必额外记状态
                 result["usage"] = event.get("usage") or {}

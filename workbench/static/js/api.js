@@ -97,6 +97,17 @@ export const api = {
   /** 原文件的 URL（图片在对话里直接 <img> 显示它） */
   attachmentRawUrl: (id) => `/api/attachments/${encodeURIComponent(id)}/raw`,
 
+  /** 请求停止某个会话正在进行的一轮（计划 §5.6）。
+   *
+   *  ⚠️ **它是"请求"，不是"已经停了"**：服务端只是置一个位，循环会在下一个检查点
+   *  （模型调用前 / 工具调用前 / 等待确认期间）收尾。所以调用方**不该**在这里就把界面
+   *  切成"已停止" —— 真正的确认是 SSE 流里的 `cancelled` 事件。
+   *  这也正是本仓不用 `AbortController` 做取消通道的原因：断连式取消留下半截状态
+   *  （§5.4c 的成因），而这里的 `running: false` 只是"没在跑"的如实回报。
+   */
+  stopChat: (conversationId) =>
+    jsonFetch("/api/chat/stop", { method: "POST", body: { conversationId } }),
+
   /** SSE 流式对话：onEvent(event) 回调每个事件 */
   async streamChat({ conversationId, message, attachmentIds = [] }, onEvent) {
     const res = await fetch("/api/chat/stream", {
