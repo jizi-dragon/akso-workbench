@@ -1008,3 +1008,85 @@
   color: var(--text-1);
   letter-spacing: 0.5px;
 }
+
+/* ============================================================
+   「本次运行」时间线（计划 §6.2）
+   —— 加在 app.css 末尾，复用 tokens.css 的色板与 base.css 的 .badge
+   ============================================================ */
+
+.run-timeline {
+  margin: 0 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--ink-1);
+  max-height: 46vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rt-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--ink-3);
+}
+
+.rt-title { font-family: var(--font-display); font-weight: 600; color: var(--text-1); font-size: 13px; }
+.rt-hint { color: var(--text-3); font-size: 11px; flex: 1; }
+
+.rt-body { overflow-y: auto; padding: 8px 12px 12px; }
+
+.rt-empty { color: var(--text-3); font-size: 12px; padding: 10px 2px; line-height: 1.7; }
+
+.rt-run { margin-bottom: 14px; }
+
+.rt-run-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--line);
+  margin-bottom: 6px;
+}
+
+.rt-run-time { font-family: var(--font-mono); font-size: 11px; color: var(--text-2); }
+.rt-run-meta { font-size: 11px; color: var(--text-3); }
+.rt-run-summary { color: var(--amber); }
+
+.rt-span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 8px;
+  border-radius: var(--radius-s);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.rt-span:nth-child(odd) { background: var(--ink-2); }
+
+/* ★ 摘要那次调用：标红并且在**文字里**说明为什么 ——
+   它几乎必然全 miss（摘要要读完整段历史，前缀命中概率最低），
+   而 miss 的价是命中的 50 倍。只标颜色不解释，用户不知道该看什么。 */
+.rt-span-summary {
+  border-left: 3px solid var(--red);
+  background: var(--red-dim);
+}
+
+.rt-step { font-family: var(--font-mono); color: var(--text-3); font-size: 11px; min-width: 26px; }
+.rt-kind { font-size: 11px; color: var(--text-3); min-width: 30px; }
+.rt-kind-model { color: var(--teal); }
+.rt-kind-tool { color: var(--sky); }
+.rt-kind-confirm { color: var(--amber); }
+.rt-name { font-family: var(--font-mono); color: var(--text-1); flex: 0 0 auto; }
+.rt-dur { font-family: var(--font-mono); color: var(--text-2); font-size: 11px; }
+.rt-status { font-size: 10px; }
+.rt-note { font-size: 11px; color: var(--red); }
+.rt-cache { font-size: 11px; color: var(--lime); }
+.rt-cache-miss { color: var(--red); }
+.rt-error { font-size: 11px; color: var(--red); }

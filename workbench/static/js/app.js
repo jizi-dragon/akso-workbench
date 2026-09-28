@@ -2,6 +2,7 @@
 
 import { api } from "./api.js";
 import { initChat, renderConversations, setChatContext } from "./chat.js";
+import { initRunTimeline } from "./run-timeline.js";
 import { initSettings, fillSettings } from "./settings.js";
 
 export const state = {
@@ -56,6 +57,7 @@ async function bootstrap() {
     setChatContext();
     initChat();
     initSettings();
+    initRunTimeline();
   } catch (error) {
     const el = document.getElementById("splash-status-text");
     if (el) el.textContent = `初始化失败：${error.message}`;

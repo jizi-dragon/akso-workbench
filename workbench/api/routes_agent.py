@@ -321,6 +321,41 @@ def audit_log(limit: int = 50) -> dict:
     return {"audit": rows}
 
 
+@router.get("/runs")
+def runs(conversationId: str = "", limit: int = 20) -> dict:
+    """「本次运行」时间线（计划 §6.2）：run → 每步 span（模型 / 工具 / 确认）。
+
+    ## 为什么 run 与 span 一次返回
+
+    面板要的是"这一次运行的全部步骤"。分两个请求会让前端在两者之间出现
+    **半截状态**（run 到了、span 还没到），而那个状态在界面上看起来就是
+    "这次运行没有任何步骤" —— 一个**看起来像数据缺失**的渲染中间态。
+
+    ## 为什么 `summary` 标记在这一层不重新推导
+
+    摘要那次调用由**产生它的地方**标（`_SpanClient.chat` 写 `attrs.summary=True`，
+    见那里的文档串）。这里只透传。★ 如果前端或路由按 `kind == "chat"` 自己判断，
+    就成了"两边各写一份语义"，而**改了一边不会让另一边变红**。
+
+    ## 空结果不是错误
+
+    没有运行记录时返回 `{"runs": []}`（HTTP 200）。★ "这次对话还没跑过"
+    与"查询坏了"必须分得开 —— 让前者返回 404 会训练前端把两者当同一件事处理。
+    """
+    try:
+        from ..harness import trace
+    except Exception:  # noqa: BLE001 —— harness 是核心，取不到说明装配坏了
+        return {"runs": [], "error": "trace 层不可用"}
+
+    items = trace.recent_runs(limit=limit, conversation_id=conversationId)
+    for item in items:
+        item["spans"] = trace.run_spans(str(item.get("id") or ""))
+    return {
+        "runs": items,
+        "traceWriteFailures": trace.trace_write_failures(),
+    }
+
+
 @router.get("/audit/{audit_id}")
 def audit_detail(audit_id: str) -> dict:
     row = db.query_one("SELECT * FROM agent_audit WHERE id = ?", (audit_id,))

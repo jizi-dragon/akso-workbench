@@ -26,6 +26,10 @@ export const api = {
   createConversation: () => jsonFetch("/api/conversations", { method: "POST" }),
   deleteConversation: (id) => jsonFetch(`/api/conversations/${id}`, { method: "DELETE" }),
   listMessages: (id) => jsonFetch(`/api/conversations/${id}/messages`),
+  /** 「本次运行」时间线（计划 §6.2）：run → 每步 span（模型/工具/确认）。
+   *  `id` 为空表示不过滤会话（运维视角），传会话 id 才是"本次"。 */
+  getRuns: (id = "", limit = 20) =>
+    jsonFetch(`/api/agent/runs?conversationId=${encodeURIComponent(id)}&limit=${limit}`),
   saveSettings: (body) => jsonFetch("/api/settings", { method: "PUT", body: JSON.stringify(body) }),
   feedback: (metricId, helpful) =>
     jsonFetch("/api/feedback", { method: "POST", body: JSON.stringify({ metricId, helpful }) }),

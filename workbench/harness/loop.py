@@ -251,6 +251,12 @@ class _SpanClient:
         )
 
     async def chat(self, messages, temperature=0.7, max_tokens=None, json_mode=False):
+        """摘要那次调用（本仓唯一的非流式模型调用）。
+
+        ★ 它**自己声明语义**（`attrs.summary = True` 且 span 名写作「摘要」），
+        而不是让时间线前端去认 `kind == "chat"` 这个内部字符串 ——
+        前端认出语义的代价是"两边各写一份判断"，而**改了一边不会让另一边变红**。
+        """
         started = time.perf_counter()
         try:
             text = await self._inner.chat(messages, temperature=temperature,
@@ -258,11 +264,13 @@ class _SpanClient:
         except Exception as exc:  # noqa: BLE001
             self._recorder.span(trace.SPAN_MODEL, self.model, started=started,
                                 status="error", error=str(exc),
-                                attrs={"kind": "chat", "messages": len(messages)})
+                                attrs={"kind": "chat", "summary": True,
+                                       "messages": len(messages)})
             raise
         self.last_usage = dict(getattr(self._inner, "last_usage", {}) or {})
         self._recorder.span(trace.SPAN_MODEL, self.model, started=started, status="ok",
-                            attrs={"kind": "chat", "messages": len(messages),
+                            attrs={"kind": "chat", "summary": True,
+                                   "messages": len(messages),
                                    "usage": self.last_usage})
         return text
 

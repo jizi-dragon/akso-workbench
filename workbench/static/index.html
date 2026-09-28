@@ -110,6 +110,14 @@
                 <span class="spin">◌</span>&nbsp;生成中
               </span>
             </header>
+            <div class="run-timeline" id="run-timeline" hidden>
+              <div class="rt-head">
+                <span class="rt-title">本次运行</span>
+                <span class="rt-hint">每一步的耗时 / 状态 / 缓存命中；摘要那次调用是几乎必然全 miss 的开销</span>
+                <button class="icon-btn" id="btn-run-timeline-close" title="关闭">✕</button>
+              </div>
+              <div class="rt-body" id="run-timeline-body"></div>
+            </div>
             <div class="messages" id="messages">
               <div class="chat-loading"><span class="spin">◌</span> 正在初始化…</div>
             </div>
@@ -122,6 +130,7 @@
                 <div class="composer-footer">
                   <div class="composer-left tool-palette-anchor" id="tool-palette-anchor">
                     <button class="tool-palette-btn" id="btn-tool-palette" type="button" aria-haspopup="dialog" aria-expanded="false" title="可用工具清单（点工具名即插入输入框）">工具</button>
+                    <button class="tool-palette-btn" id="btn-run-timeline" type="button" title="本次运行的每一步：模型 / 工具 / 确认，含耗时与缓存命中">运行</button>
                     <button class="tool-palette-btn attach-btn" id="btn-attach" type="button" title="添加图片或文件（word / excel / pdf / markdown / 文本 / 图片）">📎 附件</button>
                     <input type="file" id="attach-input" multiple hidden
                            accept=".md,.markdown,.txt,.csv,.docx,.xlsx,.pdf,.png,.jpg,.jpeg,.webp">

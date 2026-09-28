@@ -199,9 +199,23 @@ class RunRecorder:
 # ---------------------------------------------------------------- 查询（前端时间线用）
 
 
-def recent_runs(limit: int = 20) -> list[dict]:
-    """最近若干次运行（含状态、步数、耗时、用量）。"""
+def recent_runs(limit: int = 20, conversation_id: str = "") -> list[dict]:
+    """最近若干次运行（含状态、步数、耗时、用量）。
+
+    `conversation_id` 非空时只取那个会话的 —— 面板是「**本次**运行」，
+    而不是"这台机器上最近的运行"。默认空 = 不过滤（运维视角看全局）。
+    """
     size = max(1, min(int(limit), 200))
+    if conversation_id:
+        return db.query(
+            "SELECT id, conversation_id AS conversationId, started_at AS startedAt, "
+            "ended_at AS endedAt, status, error, steps, model, prompt_tokens AS promptTokens, "
+            "cache_hit_tokens AS cacheHitTokens, cache_miss_tokens AS cacheMissTokens, "
+            "completion_tokens AS completionTokens, summary_calls AS summaryCalls, "
+            "latency_ms AS latencyMs FROM agent_run WHERE conversation_id = ? "
+            "ORDER BY started_at DESC LIMIT ?",
+            (conversation_id, size),
+        )
     return db.query(
         "SELECT id, conversation_id AS conversationId, started_at AS startedAt, "
         "ended_at AS endedAt, status, error, steps, model, prompt_tokens AS promptTokens, "
