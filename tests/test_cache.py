@@ -436,9 +436,9 @@ def echo_hub(ready, monkeypatch):
     approvals.install(hub)
     hub.add_plugin(pa.Plugin(id="echo", title="回显", tools=[
         pa.ToolSpec(name="echo_text", description="回显", args_model=EchoArgs,
-                    handler=_echo, risk=pa.Risk.READ, timeout_s=5),
+                    handler=_echo, risk=pa.Risk.READ, trust=pa.Trust.LOCAL, timeout_s=5),
         pa.ToolSpec(name="echo_huge", description="回显超长内容", args_model=EchoArgs,
-                    handler=_echo_huge, risk=pa.Risk.READ, timeout_s=5),
+                    handler=_echo_huge, risk=pa.Risk.READ, trust=pa.Trust.LOCAL, timeout_s=5),
     ]))
     monkeypatch.setattr(pa, "_hub", hub)
     return hub

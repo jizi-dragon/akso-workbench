@@ -84,7 +84,7 @@ def hub(ready, monkeypatch):
 
     tool_hub.add_plugin(pa.Plugin(id="echo", title="回显", tools=[
         pa.ToolSpec(name="echo_text", description="回显", args_model=EchoArgs,
-                    handler=handler, risk=pa.Risk.READ, timeout_s=5),
+                    handler=handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL, timeout_s=5),
     ]))
     monkeypatch.setattr(pa, "_hub", tool_hub)
     return tool_hub, executed

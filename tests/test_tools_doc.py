@@ -63,6 +63,7 @@ def test_installed_skill_never_turns_the_doc_gate_red() -> None:
         PluginOrigin,
         Risk,
         ToolSpec,
+        Trust,
         get_hub,
         reset_hub,
     )
@@ -79,7 +80,8 @@ def test_installed_skill_never_turns_the_doc_gate_red() -> None:
         hub.register_installed(Plugin(
             id="skill:doc-gate-probe", title="探针", version="1.0.0",
             tools=[ToolSpec(name="doc_gate_probe", description="探针工具",
-                            args_model=_Args, handler=_noop, risk=Risk.WRITE)],
+                            args_model=_Args, handler=_noop, risk=Risk.WRITE,
+                            trust=Trust.LOCAL)],
             origin=PluginOrigin.INSTALLED, capability_id="doc-gate-probe", removable=True,
         ))
         after_catalog = hub.catalog()

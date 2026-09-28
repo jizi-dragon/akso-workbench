@@ -22,8 +22,8 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
-> | 真机环境坑（**104 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
-> | 不再变的决策（**18 篇** ADR ＋ `0000-template.md` 模板 = 19 个文件） | [docs/adr/](docs/adr/) |
+> | 真机环境坑（**105 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 不再变的决策（**19 篇** ADR ＋ `0000-template.md` 模板 = 20 个文件） | [docs/adr/](docs/adr/) |
 > | **★ 平台事实台账（端点 / 真机线格式 / 样本量 n / 平台约束，逐条带证据）** | [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md) |
 > | **★ 平台配置面整体认知（Gaia V3.8 手册语义与配置分层）** | [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) |
 > | **★ 用户传图片/文件给 agent（方案 + 判据 + 已知限制）** | [docs/AGENT-FILE-INPUT-PLAN.md](docs/AGENT-FILE-INPUT-PLAN.md) |
@@ -132,6 +132,7 @@
 | # | 规则 |
 |---|---|
 | 38 | **交付给用户实测之前，最后一步必须是「杀干净 + 重启」，不是「跑完测试」。** 违反它的后果**不是报错，是归因错误**——而错误归因会烧掉整轮排查（两次实录见 PITFALLS #71）。<br>**判据（交付前跑，三条都要过）**：① `Get-NetTCPConnection -LocalPort 18765,18766,18767 -State Listen` —— **必须为空，或全部属于同一个刚启动的进程**；② 改过 `workbench/**` 或 `desktop/**`（Python / 壳）**必须重启应用**（只刷新页面对 `static/**` 才够）；③ **跑测试与用户实测分成两段**，跑完测试要重启一次再交付——别让测试的副作用留在现场。<br>**为什么单列一条**：固定端口（[ADR-0012](docs/adr/0012-fixed-ports.md)）让"旧进程还活着"和"测试戳到了真端口"这两件事**都不报错**，只让现象指向错误的嫌疑人 |
+| 39 | **每个工具都要声明 `trust`（`LOCAL` / `UNTRUSTED`），而且它没有缺省值。** 问的是「这个工具的**返回值是谁写的**」：外部抓来的（网页 / 搜索 / 上传的脚本产物）标 `UNTRUSTED`，自己边界内的（平台 API / 本机文件）标 `LOCAL`。未声明 ⇒ `ToolSpec.valid()` 在**装配期**报错（[ADR-0022](docs/adr/0022-trust-labels-and-taint.md)）。<br>★ **为什么比 `risk` 严**：`risk` 的缺省 `READ` 落到**最安全的那一档**（不过确认门），而 `trust` **没有安全的缺省** —— 缺省成 `LOCAL` 等于把外部内容**静默**声明为自己边界内的数据，**不报错**。**同一类字段，缺省值的后果可以完全相反**，所以"照抄隔壁字段的默认值"是一个会静默出错的直觉（PITFALLS #105）。<br>★ **系统提示词里写"工具结果比用户的话可信"是劝告，贴在内容上的标签才是结构** —— 前者与外部内容在上下文里**并列**，后者与它**同生共死**。<br>判据：`pytest tests/test_trust_labels.py -o addopts=""`（**12 条**）。其中 `test_the_real_web_tools_are_declared_untrusted` 是**对着手写清单**核的 —— 把 `read_web_page` 改成 `LOCAL`，I18 当场失效而**别的测试一条都不会红** |
 
 ---
 

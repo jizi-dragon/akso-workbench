@@ -361,7 +361,7 @@ def probe_hub(monkeypatch):
     approvals.install(hub)
     hub.add_plugin(pa.Plugin(id="probe", title="探针", tools=[
         pa.ToolSpec(name="probe_echo", description="回显", args_model=ProbeArgs,
-                    handler=_probe_handler, risk=pa.Risk.READ, timeout_s=5),
+                    handler=_probe_handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL, timeout_s=5),
     ]))
     monkeypatch.setattr(pa, "_hub", hub)
     return hub

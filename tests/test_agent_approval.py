@@ -102,10 +102,10 @@ def hub(monkeypatch):
     approvals.install(fresh)
     fresh.add_plugin(pa.Plugin(id="probe", title="探针", tools=[
         pa.ToolSpec(name="probe_dangerous", description="写动作", args_model=Arg,
-                    handler=dangerous_handler, risk=pa.Risk.DANGEROUS, timeout_s=5),
+                    handler=dangerous_handler, risk=pa.Risk.DANGEROUS, trust=pa.Trust.LOCAL, timeout_s=5),
         pa.ToolSpec(name="probe_secret", description="参数名叫 token 的写动作",
                     args_model=SecretArg, handler=dangerous_handler,
-                    risk=pa.Risk.WRITE, timeout_s=5),
+                    risk=pa.Risk.WRITE, trust=pa.Trust.LOCAL, timeout_s=5),
     ]))
     monkeypatch.setattr(pa, "_hub", fresh)
     return fresh

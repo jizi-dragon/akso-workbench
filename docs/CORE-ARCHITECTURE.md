@@ -451,11 +451,13 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 | I18 | **从外部读入的内容一律带可信度标签**，且标签随本回合传播到确认门与审计 | 提示注入（OWASP LLM #1）无结构防线 |
 
 > **I15–I18 来自 [`CORE-AGENT-PLAN.md`](CORE-AGENT-PLAN.md) §2。**
-> 落地状态：**I15 ✅ / I16 ✅ / I17 ✅**（2026-09-24，判据见 `tests/test_cache.py`
-> 与 `tests/test_agent_contract.py`；前两条的 PITFALLS 是 #90 / #93 / #94）；
-> **I18 ⬜ 未落地**（属计划 §8.2 工具结果的可信度标签 ＋ taint 传播）。
-> 三条已落地的合并记录在 **[ADR-0019](adr/0019-in-turn-context-and-budget-governance.md)**
+> 落地状态：**I15 ✅ / I16 ✅ / I17 ✅ / I18 ✅**（2026-09-24 全部落地；I15–I17 的判据见
+> `tests/test_cache.py` 与 `tests/test_agent_contract.py`，前两条的 PITFALLS 是 #90 / #93 / #94）。
+> 三条上下文类的合并记录在 **[ADR-0019](adr/0019-in-turn-context-and-budget-governance.md)**
 > （上下文窗口的**轮内**治理：折叠永不吞 system ＋ 预算每次调用前复检 ＋ 未执行的调用必须回填）。
+> **I18 单独成篇：[ADR-0022](adr/0022-trust-labels-and-taint.md)** —— 它管的不是上下文**大小**
+> 而是上下文**来源**：`ToolSpec.trust` 装配期必填（`LOCAL` / `UNTRUSTED`）、外部结果带机器可读前缀、
+> 读过外部内容后过确认门时**给用户**带提示。判据 `tests/test_trust_labels.py`（**12 条**）。
 > ⚠️ **编号是 0019 不是 0018** —— 0017/0018 曾被已删除的配置工厂 ADR 占用，而本仓
 > （`PLATFORM-OPERATIONS-LEARNED.md` / `factory-tuning/reports/**`）**至今仍引用那个
 > 已不存在的 ADR-0018**，复用会让那些引用悄悄指向错误的文档。

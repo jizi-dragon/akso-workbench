@@ -48,7 +48,7 @@ from dataclasses import replace
 from typing import Any
 
 from .. import cache, logging_setup
-from ..plugin_api import Risk, ToolContext, ToolHub, ToolStatus
+from ..plugin_api import Risk, ToolContext, ToolHub, ToolStatus, Trust
 from ..services.deepseek import DeepSeekClient
 from . import trace
 from .context import content_to_text, estimate_messages_tokens
@@ -155,6 +155,29 @@ def _accounted(meter: UsageMeter, recorder: trace.RunRecorder | None = None) -> 
         meter.persist()
         if recorder is not None:
             recorder.finish(usage)
+
+
+class _Taint:
+    """本回合的 taint 状态（不变量 I18）：**这一轮里有没有读过外部不可信内容**。
+
+    ★ **单调**：一旦为真就不再变假。"读过"这件事无法撤销 ——
+    而一个"读过外部内容、但后来又干净了"的判断会让人以为风险已经过去了。
+
+    它跨轮次存活（一次 run 内），所以必须是**一个对象**而不是一个局部 bool：
+    `_one_model_turn` 每轮被调一次，局部变量活不过一轮。
+    """
+
+    __slots__ = ("_on",)
+
+    def __init__(self) -> None:
+        self._on = False
+
+    def mark(self) -> None:
+        self._on = True
+
+    @property
+    def on(self) -> bool:
+        return self._on
 
 
 class _SpanClient:
@@ -273,6 +296,8 @@ async def run_agent_loop(
     # 里收尾 —— 与用量同一条理由：循环有多个出口（final / error / 预算 / 上下文 /
     # 异常 / 消费方断开），收尾只能挂在 `finally` 上，交给调用方记得就会重演 §5.4a。
     recorder = trace.RunRecorder(conversation_id, getattr(client, "model", ""))
+    # 本回合的 taint 状态（不变量 I18）：跨轮次存活，见 _Taint。
+    taint = _Taint()
     # 包一层客户端，为**每一次**模型调用记一条 `model` span（含摘要那次 `chat` ——
     # 它也是真实开销，而且几乎必然全 miss，见 `cache.UsageStats.summary_calls`）。
     client = _SpanClient(client, recorder)
@@ -338,7 +363,7 @@ async def run_agent_loop(
             async for event in _one_model_turn(
                 conversation, client, registry, config, safety,
                 conversation_id=conversation_id, plugins=plugins, meter=meter,
-                recorder=recorder, should_stop=should_stop,
+                recorder=recorder, should_stop=should_stop, taint=taint,
             ):
                 # ★ `error` 事件也要把 run 标成失败（2026-09-24）。
                 #
@@ -613,6 +638,7 @@ async def _one_model_turn(
     meter: UsageMeter | None = None,
     recorder: trace.RunRecorder | None = None,
     should_stop: Callable[[], bool] | None = None,
+    taint: _Taint | None = None,
 ) -> AsyncIterator[dict]:
     """一轮「模型流式输出 →（可能）工具循环」，工具回填后返回交由外层再开一轮。"""
     ended = False
@@ -734,6 +760,7 @@ async def _one_model_turn(
                         audit_id=audit_id,
                         source="agent",
                         conversation_id=conversation_id,
+                        tainted=bool(taint and taint.on),
                     ),
                 )
                 safety.consume_step()
@@ -836,6 +863,7 @@ async def _one_model_turn(
                                 audit_id=retry_audit,
                                 source="agent",
                                 conversation_id=conversation_id,
+                                tainted=bool(taint and taint.on),
                             ),
                         )
                     else:
@@ -844,6 +872,19 @@ async def _one_model_turn(
                 # 工具 span（计划 §6.1 的第二处写入点）。耗时用 `invocation.duration_ms`
                 # —— 那是 `ToolHub` 自己测的，**不含**用户等待；若在这里另测墙钟，
                 # "用户点了 3 分钟才同意"会被算成工具耗时，于是"哪个工具慢"完全失真。
+                if taint is not None and spec is not None and not invocation.is_error \
+                        and spec.trust is Trust.UNTRUSTED:
+                    # ★ 外部内容**已经进了上下文**（I18）。从这一步起，本回合后续所有
+                    # 工具调用的 ToolContext 都带 tainted=True，于是过确认门时
+                    # 用户能看到「这次操作可能是被诱导的」。
+                    #
+                    # 只在**成功**时标：失败/超时那条路上进上下文的正文是**我们自己写的**
+                    # 错误话术，不是外部内容 —— 标了会让标签失去意义。
+                    if not taint.on:
+                        logger.info("本回合已读过外部不可信内容（%s），后续确认将带 taint 提示",
+                                    spec.name)
+                    taint.mark()
+
                 if recorder is not None:
                     recorder.span(
                         trace.SPAN_TOOL, str(invocation.tool or call.get("name") or ""),

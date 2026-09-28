@@ -125,10 +125,11 @@ def hub(ready, monkeypatch):
 
     tool_hub.add_plugin(pa.Plugin(id="probe", title="探针", tools=[
         pa.ToolSpec(name="probe_echo", description="回显", args_model=EchoArgs,
-                    handler=handler, risk=pa.Risk.READ, timeout_s=5),
+                    handler=handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL, timeout_s=5),
         pa.ToolSpec(name="probe_confirm", description="需要确认的回显",
                     args_model=EchoArgs, handler=confirm_handler,
                     risk=pa.Risk.READ, timeout_s=5, needs_confirmation=True,
+                    trust=pa.Trust.LOCAL,
                     confirm_payload=_short_confirm),
     ]))
     monkeypatch.setattr(pa, "_hub", tool_hub)

@@ -80,9 +80,9 @@ def hub(monkeypatch):
     approvals.install(fresh)
     fresh.add_plugin(pa.Plugin(id="probe", title="探针", tools=[
         pa.ToolSpec(name="probe_dangerous", description="写动作", args_model=Arg,
-                    handler=danger_handler, risk=pa.Risk.DANGEROUS, timeout_s=5),
+                    handler=danger_handler, risk=pa.Risk.DANGEROUS, trust=pa.Trust.LOCAL, timeout_s=5),
         pa.ToolSpec(name="probe_confirm2", description="第二个确认工具（用来验「确认不能嵌套」）",
-                    args_model=Arg, handler=danger_handler, risk=pa.Risk.READ,
+                    args_model=Arg, handler=danger_handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL,
                     timeout_s=5, needs_confirmation=True),
     ]))
     # 用**真实**的内置插件（而不是测试里另写一份声明）：
@@ -317,7 +317,7 @@ def test_confirmation_tool_must_be_read(hub) -> None:
     """装配期自检：`needs_confirmation` + 非只读 = 无限递归，必须在装配时就拒掉。"""
     spec = pa.ToolSpec(
         name="probe_confirm_write", description="d", args_model=Arg,
-        handler=danger_handler, risk=pa.Risk.WRITE, needs_confirmation=True,
+        handler=danger_handler, risk=pa.Risk.WRITE, trust=pa.Trust.LOCAL, needs_confirmation=True,
     )
     problems = spec.valid()
     assert any("无限递归" in p for p in problems), problems
@@ -326,6 +326,7 @@ def test_confirmation_tool_must_be_read(hub) -> None:
     loose = pa.ToolSpec(
         name="probe_loose", description="d", args_model=Arg, handler=danger_handler,
         risk=pa.Risk.READ, confirm_payload=lambda args: {"question": "q"},
+        trust=pa.Trust.LOCAL,
     )
     assert any("静默忽略" in p for p in loose.valid())
 
@@ -631,7 +632,6 @@ def test_confirm_payload_keys_all_have_a_frontend_consumer() -> None:
     plan = pa.ConfirmPlan(
         question="q", details="d", timeout_s=12.0,
         target=pa.ToolSpec(name="t", description="d", args_model=Arg, handler=danger_handler),
-        target_args=Arg(text="x"), target_args_raw={"text": "x"},
     )
     view = pa._confirm_view(plan, "pid")
     assert set(view) == {"pendingId", "question", "details", "timeoutS", "target", "options"}

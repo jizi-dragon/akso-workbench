@@ -92,6 +92,18 @@ class PendingAction:
     这是收 P0-A 时顺带发现的既有缺陷（当时所有工具的参数名恰好都不敏感，所以没暴露）。
     """
 
+    tainted: bool = False
+    """**建这条待确认时，本回合是否已经读过外部不可信内容**（不变量 I18）。
+
+    ★ 它**不参与任何放行判定** —— 一次"读过外部内容"不会让批准变得更难或更容易。
+    它只做一件事：让**用户**在按下同意之前知道"这次操作可能是被别人诱导的"。
+    用户需要的是**后果**，不是机制名（`summarize()` 的既有取向）。
+
+    为什么不做成硬闸门（"有 untrusted 就不许调写工具"）：那会与"用户明确要求写入"
+    的日常场景直接冲突 —— 一次正常的"看看这个网页，然后照它建个对象"会被拦死。
+    判断与理由见 ADR-0022。
+    """
+
     target_tool: str = ""
     """`request_user_confirmation` 预先批准的那次调用的工具名（空 = 纯意图确认，不绑定调用）。
 
@@ -187,8 +199,13 @@ class PendingStore:
 
     # ------------------------------------------------------------ 申请
 
-    def request(self, spec: ToolSpec, args: BaseModel, conversation_id: str = "") -> PendingAction:
-        """建一条待确认（同一工具+同一参数在有效期内**复用**，避免刷屏）。"""
+    def request(self, spec: ToolSpec, args: BaseModel, conversation_id: str = "",
+                tainted: bool = False) -> PendingAction:
+        """建一条待确认（同一工具+同一参数在有效期内**复用**，避免刷屏）。
+
+        `tainted`：本回合是否已经读过**外部不可信内容**（不变量 I18）。
+        它只影响**给用户看的那句话**与留痕，不影响任何放行判定 —— 见 `gate()`。
+        """
         fingerprint = _fingerprint(spec.name, args)
         with self._lock:
             self._expire_locked()
@@ -199,8 +216,15 @@ class PendingStore:
                     # `id not in self._waiters` 是必须的：**有一方正在等答复**的条目
                     # 不能被复用。复用会让第二个等待者挂到一个已经 resolve 过的 future 上，
                     # 于是它立刻拿到上一个人的答案——"用户同意过 A" 于是变成了 "同意 B"。
+                    #
+                    # ★ 复用也要补 taint：这一条可能是**读外部内容之前**建的，
+                    # 而用户此刻看到的那句话必须反映**现在**的风险。
+                    if tainted and not item.tainted:
+                        item.tainted = True
+                        item.summary += _TAINT_NOTE
                     return item
-            return self._mint(spec, args, conversation_id, summary="")
+            return self._mint(spec, args, conversation_id, summary="",
+                              tainted=tainted)
 
     def request_confirmation(
         self, spec: ToolSpec, args: BaseModel, plan: ConfirmPlan, conversation_id: str = ""
@@ -236,7 +260,8 @@ class PendingStore:
         return item.id
 
     def _mint(
-        self, spec: ToolSpec, args: BaseModel, conversation_id: str, summary: str
+        self, spec: ToolSpec, args: BaseModel, conversation_id: str, summary: str,
+        tainted: bool = False,
     ) -> PendingAction:
         """建一条待确认行（**不查重**）。调用方必须已持有 `self._lock`。"""
         args_dump = redact_args(_dump(args))
@@ -250,10 +275,17 @@ class PendingStore:
             created_at=_now_ms(),
             conversation_id=conversation_id,
             fingerprint=_fingerprint(spec.name, args),
+            tainted=tainted,
         )
+        if tainted:
+            # ★ 提示写在**摘要末尾**而不是别处：摘要就是用户在卡片上读到的那句话，
+            # 而这条信息必须与那句"将要做什么"**在同一段文字里** —— 分成两处，
+            # 用户会读到其中一处就当自己看完了。
+            item.summary += _TAINT_NOTE
         self._items[item.id] = item
         self._record(item)
-        logger.info("待确认操作：%s（%s，%s）", item.id, item.tool, item.risk)
+        logger.info("待确认操作：%s（%s，%s%s）", item.id, item.tool, item.risk,
+                    "，本回合读过外部内容" if tainted else "")
         return item
 
     # ------------------------------------------------------------ 决策
@@ -475,7 +507,8 @@ class PendingStore:
     # ------------------------------------------------------------ 确认门
 
     def gate(
-        self, spec: ToolSpec, args: BaseModel, token: str, conversation_id: str = ""
+        self, spec: ToolSpec, args: BaseModel, token: str, conversation_id: str = "",
+        tainted: bool = False,
     ) -> tuple[bool, str, str]:
         """`ToolHub` 的确认门实现：返回 (放行?, pending_id, 需确认原因)。
 
@@ -510,7 +543,7 @@ class PendingStore:
         if claimed is not None:
             return True, claimed.id, ""
 
-        item = self.request(spec, args, conversation_id)
+        item = self.request(spec, args, conversation_id, tainted=tainted)
         return False, item.id, item.summary
 
     def claim_approved(self, spec: ToolSpec, args: BaseModel) -> PendingAction | None:
@@ -643,6 +676,23 @@ class PendingStore:
 
 
 # ---------------------------------------------------------------- 人话摘要
+
+
+_TAINT_NOTE = (
+    "\n\n⚠️ 这一回合里模型**读过外部内容**（网页 / 搜索结果），"
+    "有可能是在那些内容的引导下提出的这次操作。"
+    "请核对一下：**这真的是你要它做的吗？**"
+)
+"""外部内容污染过的回合，给用户的额外提示（不变量 I18）。
+
+★ 措辞是刻意的：**说后果，不说机制**。写成"本回合 taint=true"对用户毫无意义，
+而他需要判断的是一件很具体的事 ——「这次操作是不是我自己要的」。
+同 `summarize()` 的既有取向（用户要判断的是后果，不是参数名）。
+
+★ 它**不改变放行判定**：一次"读过外部内容"不会让批准变得更难。
+硬闸门（"有 untrusted 就不许调写工具"）会与"用户明确要求写入"直接冲突 ——
+判断与理由见 ADR-0022。
+"""
 
 
 _SUMMARY_LABEL = {
@@ -813,8 +863,8 @@ def install(hub: ToolHub) -> None:
     """
     hub.set_audit_writer(write_audit)
     hub.set_approval_gate(
-        lambda spec, args, token, conversation_id: pending_store().gate(
-            spec, args, token, conversation_id
+        lambda spec, args, token, conversation_id, tainted=False: pending_store().gate(
+            spec, args, token, conversation_id, tainted
         )
     )
     hub.set_confirmation_gate(

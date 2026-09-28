@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..plugin_api import Plugin, PluginOrigin, Risk, ToolSpec
+from ..plugin_api import Plugin, PluginOrigin, Risk, ToolSpec, Trust
 from . import layout, security
 from .manifest import (
     SkillManifest,
@@ -398,6 +398,11 @@ def _build_plugin(data: dict) -> Plugin:
                 args_model=args_model,
                 handler=_make_script_handler(capability_id, version, script, name),
                 risk=risk,
+                # ★ 脚本式 Skill 的产物一律 UNTRUSTED（不变量 I18）：**上传的代码不是我们写的**，
+                # 它返回什么完全由作者决定 —— 与"网页抓来的正文"是同一种东西。
+                # 这也是 `risk` 那条纪律（"脚本式 Skill 的 risk 不得低于 write"）的同族判断：
+                # 无法被静态证明的东西，不许按"自己人"对待。
+                trust=Trust.UNTRUSTED,
                 # 策略超时是上限；这里跟随策略（`skill-script` = 120s）
                 timeout_s=120.0,
             ))
@@ -420,6 +425,11 @@ def _build_plugin(data: dict) -> Plugin:
             args_model=args_model,
             handler=_make_forwarder(wrapped_name),
             risk=risk,
+            # ★ 转发式 Skill **继承**被包装工具的 trust，而不是一律 LOCAL：
+            # 它只是换个名字转调，返回的仍是那个工具写的内容。
+            # 一律按 LOCAL 处理的话，一个包装 `read_web_page` 的 Skill
+            # 就成了绕过 I18 标签的通道（而那是一条**没有任何报错**的绕过路径）。
+            trust=wrapped.trust,
             timeout_s=wrapped.timeout_s,
             audit_extra=wrapped.audit_extra,
         ))

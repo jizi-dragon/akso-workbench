@@ -319,6 +319,7 @@ PLUGIN = pa.Plugin(
             args_model=SearchArgs,
             handler=web_search,
             risk=pa.Risk.READ,
+            trust=pa.Trust.UNTRUSTED,
             # 预算给足：主通道最慢实测 18.5s（×2 次重试）+ 兜底通道解析跳转
             timeout_s=120,
             audit_extra=pa.audit_env_key("query"),

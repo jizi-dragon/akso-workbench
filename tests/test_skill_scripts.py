@@ -446,8 +446,14 @@ def test_script_skill_end_to_end_through_http(clean_hub) -> None:
             "tool": "script_double", "args": {"n": 21}, "approvalToken": token,
         })
         assert ran.status_code == 200, ran.text
-        # `result` 回来的已经是解析好的对象（HTTP 面把工具正文还原成 JSON）
-        assert ran.json()["result"] == {"doubled": 42}, ran.text
+        # ★ 脚本式 Skill 的结果**必须带不可信前缀**（不变量 I18，2026-09-24 加）：
+        # 上传的代码不是我们写的，它返回什么完全由作者决定 —— 与"网页抓来的正文"同类。
+        # 所以这条断言同时钉两件事：**载荷没被弄坏**，且**标签在**。
+        # （只断言载荷 = 漏掉 I18；只断言标签 = 漏掉"渲染没坏"。）
+        payload = ran.json()["result"]
+        assert "外部不可信内容" in payload, f"脚本 Skill 的结果没带不可信标签：{payload!r}"
+        assert "script_double" in payload, "标签里应当指出这段内容来自哪个工具"
+        assert json.loads(payload.split("\n", 1)[1]) == {"doubled": 42}, ran.text
 
         # 6) 沙箱审计里留下了一次执行（含策略指纹与退出码）
         runs = client.get("/api/sandbox/runs").json()["runs"]

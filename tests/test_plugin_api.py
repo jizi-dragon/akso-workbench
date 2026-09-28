@@ -59,9 +59,9 @@ def probe_plugin(risk: pa.Risk = pa.Risk.READ, timeout_s: float = 5.0,
         id="probe", title="探针插件",
         tools=[
             pa.ToolSpec(name="probe_echo", description="回显工具", args_model=EchoArgs,
-                        handler=echo_handler, risk=pa.Risk.READ, timeout_s=timeout_s),
+                        handler=echo_handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL, timeout_s=timeout_s),
             pa.ToolSpec(name="probe_write", description="写工具（过确认门）", args_model=EchoArgs,
-                        handler=write_handler, risk=risk, timeout_s=timeout_s,
+                        handler=write_handler, risk=risk, trust=pa.Trust.LOCAL, timeout_s=timeout_s,
                         precheck=precheck, summary_fn=summary_fn),
         ],
     )
@@ -105,7 +105,7 @@ def test_duplicate_tool_name_rejected(hub) -> None:
     hub.add_plugin(probe_plugin())
     other = pa.Plugin(id="other", title="撞名插件", tools=[
         pa.ToolSpec(name="probe_echo", description="撞名", args_model=EchoArgs,
-                    handler=echo_handler, risk=pa.Risk.READ),
+                    handler=echo_handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL),
     ])
     with pytest.raises(ValueError, match="已被插件"):
         hub.add_plugin(other)
@@ -115,7 +115,7 @@ def test_non_ascii_tool_name_rejected(hub) -> None:
     """function name 只接受 [A-Za-z0-9_-]；中文工具名会在请求侧被拒（本地看不出来）。"""
     bad = pa.Plugin(id="bad", title="中文名插件", tools=[
         pa.ToolSpec(name="洞察_运行", description="中文工具名", args_model=EchoArgs,
-                    handler=echo_handler, risk=pa.Risk.READ),
+                    handler=echo_handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL),
     ])
     with pytest.raises(ValueError, match="工具名"):
         hub.add_plugin(bad)
@@ -152,7 +152,7 @@ def test_zero_args_schema_is_object(hub) -> None:
     """无参工具也要是 object schema——不然 OpenAI 侧直接拒。"""
     hub.add_plugin(pa.Plugin(id="z", title="z", tools=[
         pa.ToolSpec(name="z_ping", description="ping", args_model=pa.ZERO_ARGS,
-                    handler=echo_handler, risk=pa.Risk.READ),
+                    handler=echo_handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL),
     ]))
     params = hub.get("z_ping").to_api()["function"]["parameters"]
     assert params["type"] == "object"
@@ -203,7 +203,7 @@ def test_long_result_is_truncated(hub) -> None:
     hub.add_plugin(pa.Plugin(id="big", title="big", tools=[
         pa.ToolSpec(name="big_dump", description="超长输出",
                     args_model=pa.ZERO_ARGS,
-                    handler=lambda _a, _c: _long(), risk=pa.Risk.READ),
+                    handler=lambda _a, _c: _long(), risk=pa.Risk.READ, trust=pa.Trust.LOCAL),
     ]))
     inv = run(hub.execute("big_dump", {}))
     assert len(inv.content) <= pa.MAX_RESULT_CHARS + 100
@@ -390,7 +390,7 @@ def test_audit_never_stores_plaintext_credentials(hub) -> None:
     """凭据不落明文：审计里出现口令/令牌键必须被打码。"""
     hub.add_plugin(pa.Plugin(id="sec", title="sec", tools=[
         pa.ToolSpec(name="sec_login", description="带口令的工具", args_model=_SecretArgs,
-                    handler=echo_handler, risk=pa.Risk.READ,
+                    handler=echo_handler, risk=pa.Risk.READ, trust=pa.Trust.LOCAL,
                     audit_extra=pa.audit_env_key("username", "password", "token")),
     ]))
     inv = run(hub.execute("sec_login", {"username": "u", "password": "p@ss", "token": "abc"}))
