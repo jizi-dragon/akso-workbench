@@ -5,6 +5,9 @@ _由 learn-codebase 技能生成；**2026-09-16 复核**，锚定 `c8753ce`（v0
 > **修订轨迹**：`1e82439`（v0.1，pywebview 壳，已被 git 历史取代）→ `2e725a5`（v0.2.2，Electron sidecar 改造）→
 > `d0efa84`（v0.3.5，2026-09-13 全面重写）→ **`c8753ce`（v0.3.12，2026-09-16 复核）。**
 > 上一版锚定 v0.3.5：正文的插件层是新的，但**页头与 Summary 的版本号、代码体量口径、插件与迁移计数**三处已过期。
+> **★ 2026-09-24 现状（配置工厂整体移除后）**：**4 个插件 / 18 个工具**（16 read + 2 write + 0 dangerous）、
+> **迁移 1–22**。紧接下面那句"五插件 / 20 工具 / 迁移 1–20"是 `c8753ce` 当时（v0.3.12）的实测，**已过期**——
+> 保留它是为了留痕，**引用前先按 §关键模块 的数字**。
 > 本轮按代码实测逐条重校（口径见下）：**五插件 / 20 工具**（原写四插件 / 19 工具）、**迁移 1–20**（原写 1–16）、
 > 行数口径全面上修。失效的历史架构文档见 [docs/archive/](archive/README.md)。
 >
@@ -43,7 +46,7 @@ _由 learn-codebase 技能生成；**2026-09-16 复核**，锚定 `c8753ce`（v0
   > 口径说明：本表行数为**物理行数**（含空行），`workbench/**` 实测于 2026-09-17（沙箱层与 Skill 共享库落地后）。用 `Get-Content \| Measure-Object -Line` 统计会漏掉空行（例如 `client.py` 会得 153 而非 197），已删除的原 `AGENT.md` 里的 8,167 行即为此类偏低的计数。**上一版（v0.3.5）的 70 文件 10,172 行 / 24 前端文件 5,947 行 / 4 个壳文件 1,006 行均已过期**——增量主要来自插件层（`plugin_api` 646 + `approvals` 350 + `cache` 287 + `plugins/` 1,374）、**不受信代码执行层（`sandbox/` 1,150 + `skills/` 1,775）**，以及新增的前端 `chat-tools.js` / `settings.js` / `sandbox.js` / `skills.js`。
 - **框架 / 运行时：** FastAPI + uvicorn[standard]（REST + SSE + 静态托管）；pydantic v2；**Electron 33** 桌面壳（窗口 / 托盘 / 全局热键 / 更新器 / 出网通道 / sidecar 生命周期）
 - **构建 / 包管理：** uv（`uv.lock`，默认清华镜像 `pyproject.toml:37-39`）；hatchling；ruff（`E4/E7/E9/F/I/B`，line-length 110）；**PyInstaller**（`build` extra，`workbench/server.spec` → `dist/WorkbenchServer/` onedir）；**electron-builder → NSIS**（`tools/build.ps1` 一键出安装包）；esbuild 0.24（扩展打包）；版本真源 `pyproject.toml`
-- **存储 / 外部服务：** SQLite（WAL，**迁移 1–20**）；Playwright chromium；cryptography Fernet；DeepSeek API；networkx；GitHub Releases（electron-updater）
+- **存储 / 外部服务：** SQLite（WAL，**迁移 1–22**）；Playwright chromium；cryptography Fernet；DeepSeek API；networkx；GitHub Releases（electron-updater）
 - **端口：** **固定常量** 18765 服务 · 18766 CDP · 18767 壳控制服务，**不顺延**（[ADR-0012](adr/0012-fixed-ports.md) 取代
   [ADR-0011](adr/0011-port-and-session-negotiation.md) §D-1）。被占则报错退出并说清占用者是谁；
   仍经环境变量下发 + 公布到 `runtime/desktop-ports.json` + 由 `/whoami` 答给扩展（那三条是**身份**手段，与顺延无关）。
@@ -109,7 +112,7 @@ services/
 > [FACTORY-PLATFORM-COGNITION.md](FACTORY-PLATFORM-COGNITION.md) 与 `factory-tuning/reports/**`。
 > 两份决策记录 ADR-0017 / ADR-0018 随本链路下架（原文可取回：`git show 1fa2301:docs/adr/0017-factory-agent-interface.md`）。
 harness/（对话 Agent 循环：loop 事件流 · tools **已降级为兼容垫片** · types/prompts/safety/context）
-db.py（SQLite 单连接 + **18 条**迁移常量表 + 方言边界）
+db.py（SQLite 单连接 + **22 条**迁移常量表 + 方言边界）
 ```
 
 > **2026-09-15 变更（工具插件层）**：新增 `plugin_api.py` / `approvals.py` / `plugins/`（**5 插件 20 工具**）。

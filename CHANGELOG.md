@@ -21,6 +21,14 @@
 ## [Unreleased]
 
 > 新条目写在这里（`tools/publish_release.py` 逐字认这一行标题，说明与约束见文件顶部注释）。
+>
+> ⚠️ **发版前必须先清理本段（2026-09-24 记）**：下面的 `### Fixed` 与 `### Added` 里仍有若干
+> **描述已删除能力**的条目（配置工厂 / `factory_*` 工具 / `docs/FACTORY-*.md` / `ADR-0017` / `ADR-0018`
+> 相关的行）。而 `notes_from_changelog()` 是**逐字**把 `- ` 与 `### ` 开头的块抽成发布说明的
+> ⇒ **不清理就会把已删功能当"新增"对外发布**，且这中间**不会报任何错**。
+> 逐条位置：`grep -n '配置工厂\|factory\|FACTORY\|ADR-001[78]' CHANGELOG.md` 取行号落在本段内的那些。
+> （本警示写成引用块是**刻意的**：`notes_from_changelog()` 只收 `- `/`### ` 开头的行，
+> `>` 不会被抽进发布说明。）
 
 ### Removed
 
@@ -158,7 +166,7 @@
   `factory_create` 声明它，且与真正执行时**同一段** `precheck_blueprint`（不是第二套规则）。
 
 - **配置工厂：`createIfMissing` 显式意图位 —— 「用户确认新建」第一次有了出口**（2026-09-22 晚，
-  用户下达「方案1」；[ADR-0018 §8 补记](docs/adr/0018-no-silent-object-creation.md)）。
+  用户下达「方案1」；ADR-0018 §8 补记 —— **该 ADR 已随配置工厂一并移除**）。
   真机实测暴露：防误建的预检闸门是**确定性**检查，**看不见对话** ——
   用户被问了「确认要新建吗」、答了"确认"、蓝图也校验通过，`factory_create` **仍被同一个理由拒回**，
   且重试多少次都一样；而本平台的测试对象是**流水号命名**（`测试09-01/02/03`），
@@ -264,7 +272,7 @@
   这条链一次抓到两个**单元测试照不到**的缺陷（`_pending` 永不绑定 / 这一轮的消息绕过扼流点，
   当时 pytest 23 passed 全绿）——记在 [PITFALLS #86](docs/PITFALLS.md)，判据也补进了测试。
 
-- **对象不存在时不许静默新建**（2026-09-22，用户定稿；[ADR-0018](docs/adr/0018-no-silent-object-creation.md)）：
+- **对象不存在时不许静默新建**（2026-09-22，用户定稿；ADR-0018 —— **已随配置工厂移除**）：
   工厂的对象步骤是**幂等**的（code 存在→复用、不存在→**新建**），于是"code 打错一个字"的后果
   **不是报错，而是静默多出一个空对象**。现在三层拦：① 规格文本要求先确认；
   ② 新增只读工具 **`factory_resolve_object`**（查不到就回**相近对象清单** + 给用户的话术）；
@@ -480,7 +488,8 @@
      单列这条的理由是本仓 PITFALLS #42 的教训：`test_plugin_api` 验的是 `_truncate()`
      **这个函数**，而"loop 回填进 context 的那条 tool 消息真的被截断了"是**另一件事**。
 
-  **三条均已实测对模拟回归 FAIL**（反证脚本 [`tools/verify_prefix_tests.py`](tools/verify_prefix_tests.py)：
+  **三条均已实测对模拟回归 FAIL**（反证脚本 `tools/verify_prefix_tests.py` —— **该脚本后来被
+  `tools/verify_regression_tests.py` 取代，已不存在**：
   分别注入"每轮重新注入系统提示词"与"`_truncate` 空转"两种**看似无害**的改动，对应测试立刻红；
   脚本跑完对源文件做**字节级还原核验**，还原失败则 `exit 2`）。
   这遵循本仓纪律：回归断言必须"实测对旧实现 FAIL"——**一条从没红过的测试，你不知道它测的是什么**。
@@ -664,12 +673,12 @@
   确认框此前会写"含菜单挂载"，而 `orchestrate.execute_menu` **至今没有任何调用方**
   ——菜单根本不会被创建。现在菜单与声明区（规则/权限/报表模板）一律归到
   "**引擎不执行**，需要你人工配置"里。这是"如实描述现状"，不是修复；
-  底层缺陷与判据见 [FACTORY-VERIFICATION-PLAN.md](docs/FACTORY-VERIFICATION-PLAN.md) 的 T1 / T2。
+  底层缺陷与判据见 FACTORY-VERIFICATION-PLAN.md 的 T1 / T2（**该台账已随配置工厂移除**；
+  其中的平台事实已迁进 [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md)）。
 
 
 - **配置工厂 × Agent 的接口改造：四条实测问题一次收口**（2026-09-20，
-  [ADR-0017](docs/adr/0017-factory-agent-interface.md)；取证过程见
-  [FACTORY-AGENT-GAP.md](docs/FACTORY-AGENT-GAP.md)）。
+  ADR-0017 —— **已随配置工厂移除**；取证过程见 FACTORY-AGENT-GAP.md，**同已移除**）。
 
   用户在真机跑配置工厂后报了四条问题。逐条取证后发现**共同根因**：这条能力链是**照着
   "人在网页上点按钮"设计的**，接上对话 Agent 之后只补了"读"与"写"两端。
