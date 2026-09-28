@@ -24,7 +24,9 @@ _2026-09-21 撰写。锚定 `c50ed87`（main）。_
 > | 阶段 1 | **§5.2 的一半：硬上限复检（缺陷② / I17）** | ✅ **已完成（P0-4a）**：`AgentConfig.context_hard_limit_tokens`＋`loop._over_hard_limit`，每次模型调用前复检，超限则**不发请求**、以可行动文案终止。⚠️ **P0-4b（轮内折叠）未做**——它需要把 `loop` 的 `source`（原始会话）与 `context`（`plan_prefix` 的输出）拆开，`_one_model_turn` 目前只持有后者并就地 append |
 > | —— | 窗口默认值改为 `deepseek-flash` 满窗口 | ✅ **已完成**（用户 2026-09-24 下达）：`AgentConfig.context_window_tokens` `131072` → **`1048576`**（1M，按 2²⁰ 读，判据见 `harness/types.py` 的字段文档串） |
 > | 阶段 1 | **§5.4 的四笔账：(a) 异常出口入账 ＋ (d) 失败计数可见** | ✅ **已完成**（2026-09-24）：`loop._accounted`（`contextmanager`，与 `logging_setup.bind` 组合进同一 `with`）保证**任何出口**都 `persist()`；`UsageMeter.finish/persist` 改**幂等**（不幂等会写出两行，比丢一行更难发现）；`UsageStats.persist` 返回 `bool` ＋ `cache.usage_persist_failures()`，由 `/api/agent/selfcheck` 的 `usagePersistFailures` 暴露。判据：`tests/test_agent_contract.py` 的 **C6 四条**（8 → 12）。⚠️ **本条的 (b) 与 (c) 仍未做** —— 它们要动 `routes_chat` 与迁移（`kind` 列；**编号用 23，因为 22 已被 `summary_boundary_excludes_system` 占用**） |
-> | 其余 | §5.4(b)(c) / §5.5 / §5.6 / §8.2 / §8.3，以及阶段 2 / 3 / 5 | ⬜ **未开始** |
+> | 阶段 1 | **§5.5 LLM 调用重试与退避** | ✅ **已完成**（2026-09-24）：`services/deepseek.py` 新增 `MAX_ATTEMPTS=4` / `RETRYABLE_STATUS={429,500,502,503,504}` / `_retry_delay`（`min(0.5*2ⁿ, 8s)` ＋ jitter ＋ 尊重 `Retry-After` 上限 30s）/ `_sleep`（**测试缝**，同 `net_guard.guarded_get(transport=…)` 的理由）。★ **流式铁律**：`sent_delta` 一旦置位就**不再重试**（吐字后重试 = 正文重复）；每次尝试**重置累加器**（否则上一次的半截 tool_call 分片会拼进来 ⇒ 参数错乱的调用，而那看起来像"模型自己写错了"）。判据：`tests/test_deepseek_retry.py`（**25 条**）。⚠️ **`chat()`（非流式）未加重试** —— 它没有"已吐字"问题，但本轮没做，留待需要时 |
+> | 文档 | **不变量 I15–I17 并入 `CORE-ARCHITECTURE.md` §5** ＋ **ADR-0019** | ✅ **已完成**（2026-09-24）：这是**欠账** —— I15–I17 此前只在代码注释与 PITFALLS 里被引用，而 §5 的表里**没有它们** ⇒ 那些引用指向的是**不存在的不变量**。★ 顺带发现**计划自身自相矛盾**：文档头写着"新 ADR 必须从 0019 起"，而 §14 的表仍写 ADR-0018~0021 —— **已按文档头改正为 0019~0022**（0017/0018 曾被已删除的工厂 ADR 占用，且 `PLATFORM-OPERATIONS-LEARNED.md` 与 `factory-tuning/reports/**` **至今仍引用那个已不存在的 ADR-0018**） |
+> | 其余 | §5.4(b)(c) / §5.6 / §8.2 / §8.3，以及阶段 2 / 3 / 5 | ⬜ **未开始** |
 >
 > **基线数字更正**：本计划正文写的是 `c50ed87` 的 **5 插件 / 22 工具（19 read·2 write·1 dangerous）**。
 > HEAD（`d9cc39b` 起）实测为 **4 插件 / 18 工具（16 read · 2 write · 0 dangerous）** —— 配置工厂已于
@@ -571,10 +573,10 @@ UI 提供「撤销本次会话的写操作」，逐条展示 + 逐条确认（**
 | 动作 | 落到哪 |
 |---|---|
 | 四条新不变量 I15–I18 | 执行时直接写进 `CORE-ARCHITECTURE.md` §5 |
-| **ADR-0018** 上下文窗口的轮内治理（折叠永不吞 system ＋ 每次调用前复检） | `docs/adr/0018-*.md`（用 0000 模板，**别省「外部参照」栏**） |
-| **ADR-0019** 工具结果的可信度标签与 taint（含 SSRF 出站策略、D1 的取舍） | 同上 |
-| **ADR-0020** Agent 运行记录（`agent_run`/`agent_span`）与 OTel 导出层 | 同上 |
-| **ADR-0021** 评测：录制回放式离线评测进 CI、真机评测手跑 | 同上 |
+| **ADR-0019** 上下文窗口的轮内治理（折叠永不吞 system ＋ 每次调用前复检 ＋ 步数预算逐调用） | `docs/adr/0019-*.md`（用 0000 模板，**别省「外部参照」栏」**）<br>⚠️ **是 0019 而不是 0018** —— 0017/0018 已被删除的工厂 ADR 占用过，且 [PLATFORM-OPERATIONS-LEARNED.md](PLATFORM-OPERATIONS-LEARNED.md) 至今仍引用 ADR-0018（见本文档头的冲突② ③）。**本节表格原先写的 0018~0021 是错的，已改** |
+| **ADR-0020** 工具结果的可信度标签与 taint（含 SSRF 出站策略、D1 的取舍） | 同上 |
+| **ADR-0021** Agent 运行记录（`agent_run`/`agent_span`）与 OTel 导出层 | 同上 |
+| **ADR-0022** 评测：录制回放式离线评测进 CI、真机评测手跑 | 同上 |
 | **PITFALLS 5 条**（每条五段：症状/根因/判据/处置/推广） | `PITFALLS.md` 只增不改：① 折叠吃掉 system ② 轮内无预算复检 ③ 步数预算在多调用轮失效 ④ 报错被当作模型的话入历史 ⑤ `read_web_page` 无 SSRF 防护 |
 | 阶段 0.3 的三处数字漂移 | 改 `CORE-ARCHITECTURE.md` / `OPENSOURCE-LANDSCAPE.md`，跑 `gen_tools_doc.py` |
 | 本计划执行完 | 结论并回 `CORE-ARCHITECTURE.md` §6/§7，本文归档 |

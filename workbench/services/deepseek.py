@@ -25,10 +25,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+import random
 from typing import AsyncIterator
 
 import httpx
+
+logger = logging.getLogger("workbench.deepseek")
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 
@@ -46,6 +51,61 @@ MODEL_ALIASES = {
 
 _STREAM_TIMEOUT = httpx.Timeout(120.0, connect=15.0)
 _CHAT_TIMEOUT = httpx.Timeout(90.0, connect=15.0)
+
+# ---------------------------------------------------------------- 重试与退避（计划 §5.5）
+#
+# 一次 429/5xx 抖动原先会**废掉整轮** —— 而那一轮可能已经烧掉 20 步工具调用
+# （用户看到的是"跑了半天白跑"）。这里补上可靠性地板。
+
+#: 总尝试次数（首次 + 3 次重试）。
+MAX_ATTEMPTS = 4
+
+#: 可重试的状态码。**401/402/400/422 一律不重试** —— 重试不会变好，只会更慢地失败
+#: （401 是密钥错、402 是余额不足、400/422 是请求本身不合法：这三个都是"改请求才有救"）。
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
+_BACKOFF_BASE_S = 0.5
+_BACKOFF_CAP_S = 8.0
+#: `Retry-After` 的上限：平台让我们等 10 分钟也不能真等（那等于挂死一个请求）。
+RETRY_AFTER_CAP_S = 30.0
+
+
+async def _sleep(seconds: float) -> None:
+    """`asyncio.sleep` 的**测试缝**。
+
+    重试退避在用例里必须可控：否则"连续两次 429 后成功"那条要真等 0.5 + 1.0 秒，
+    而"三次重试全跑"要 3.5 秒 —— 用例会慢到没人愿意跑。
+    与 `net_guard.guarded_get(transport=...)` 的存在理由一致：**只为可测性**。
+    """
+    await asyncio.sleep(seconds)
+
+
+def _retry_delay(attempt: int, status: int | None, retry_after: str | None) -> float | None:
+    """这次失败该等多久再试；**返回 `None` 表示不该重试**。
+
+    调用方只看 `None` 一个信号，三条"不该重试"的理由在这里收口：
+    ① 次数已用完；② 状态码不在 `RETRYABLE_STATUS` 里；③（连接层错误没有状态码，
+    按可重试处理 —— `status is None`）。
+
+    退避 = `min(0.5 * 2**attempt, 8s)`，**尊重 `Retry-After`**（取两者较大，
+    上限 30s），再加 **jitter**：同时重试的多个客户端会形成新的尖峰，
+    而"整齐地一起重试"正是把 429 变成 429 的原因。
+    """
+    if attempt + 1 >= MAX_ATTEMPTS:
+        return None
+    if status is not None and status not in RETRYABLE_STATUS:
+        return None
+
+    base = min(_BACKOFF_BASE_S * (2 ** attempt), _BACKOFF_CAP_S)
+    hinted: float | None = None
+    if retry_after:
+        try:
+            hinted = float(str(retry_after).strip())
+        except (TypeError, ValueError):
+            hinted = None
+    if hinted is not None:
+        base = max(base, min(hinted, RETRY_AFTER_CAP_S))
+    return base + random.uniform(0, base * 0.25)
 
 
 def normalize_model(name: str | None) -> str:
@@ -145,67 +205,101 @@ class DeepSeekClient:
         if max_tokens:
             body["max_tokens"] = max_tokens
 
-        try:
-            async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self.base_url}/chat/completions",
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {self.api_key}",
-                    },
-                    json=body,
-                ) as res:
-                    if res.status_code != 200:
-                        text = (await res.aread()).decode("utf-8", "replace")
-                        raise _map_error(res.status_code, text)
+        # ★ 重试只覆盖「建连 + 状态码检查」这一段（计划 §5.5 的**流式专用铁律**）：
+        # **一旦开始收正文（进入 aiter_lines）就不再重试** —— 已经吐字了再重试
+        # 等于把同一段话发两遍，用户会看到重复正文。
+        # `sent_delta` 就是这个分界线的哨兵。
+        tool_calls: dict[int, dict] = {}
+        content_parts: list[str] = []
+        usage: dict = {}
+        finish_reason = ""
+        sent_delta = False
 
-                    tool_calls: dict[int, dict] = {}
-                    content_parts: list[str] = []
-                    usage: dict = {}
-                    finish_reason = ""
-                    async for line in res.aiter_lines():
-                        line = line.strip()
-                        if not line.startswith("data:"):
-                            continue
-                        payload = line[5:].strip()
-                        if not payload or payload == "[DONE]":
-                            continue
-                        try:
-                            data = json.loads(payload)
-                        except ValueError:
-                            continue
-                        if data.get("usage"):
-                            # include_usage 的最后一帧：choices 为空、只有 usage。
-                            # 并存一份到局部变量，保证即使这一帧形态有差异（某些网关会
-                            # 把它塞进最后一帧的 choices 里），`end` 事件仍带得上用量。
-                            usage = data["usage"]
-                            yield {"type": "usage", "usage": usage}
-                        choice = (data.get("choices") or [{}])[0]
-                        # ⚠️ `finish_reason` **必须收**：它唯一的值 `length` 表示
-                        # "这次输出被长度上限截断了"。丢了它，被截断的 tool_call
-                        # （半截 JSON）会在上层表现为「参数解析失败」——模型完全不知道
-                        # 是自己被截断，于是重试一次，又截断一次（见 PITFALLS #58）。
-                        if choice.get("finish_reason"):
-                            finish_reason = str(choice["finish_reason"])
-                        delta = choice.get("delta") or {}
-                        if delta.get("content"):
-                            content_parts.append(delta["content"])
-                            yield {"type": "delta", "text": delta["content"]}
-                        for tc in delta.get("tool_calls") or []:
-                            index = tc.get("index", 0)
-                            slot = tool_calls.setdefault(
-                                index, {"id": "", "name": "", "arguments": ""}
+        for attempt in range(MAX_ATTEMPTS):
+            # 每次尝试都要**重置累加器**：上一次失败可能已经攒了半截 tool_call 分片，
+            # 不清掉就会和这次的分片拼在一起，产出一个参数错乱的调用。
+            tool_calls, content_parts, usage, finish_reason = {}, [], {}, ""
+
+            try:
+                async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{self.base_url}/chat/completions",
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {self.api_key}",
+                        },
+                        json=body,
+                    ) as res:
+                        if res.status_code != 200:
+                            text = (await res.aread()).decode("utf-8", "replace")
+                            err = _map_error(res.status_code, text)
+                            # 状态码阶段**必然**还没吐正文（还没进 aiter_lines），所以这里
+                            # 不必看 `sent_delta`。
+                            delay = _retry_delay(attempt, res.status_code,
+                                                 res.headers.get("retry-after"))
+                            if delay is None:
+                                raise err
+                            logger.warning(
+                                "DeepSeek 返回 %d，%.1fs 后重试（第 %d/%d 次）：%s",
+                                res.status_code, delay, attempt + 2, MAX_ATTEMPTS, err,
                             )
-                            if tc.get("id"):
-                                slot["id"] = tc["id"]
-                            fn = tc.get("function") or {}
-                            if fn.get("name"):
-                                slot["name"] += fn["name"]
-                            if fn.get("arguments"):
-                                slot["arguments"] += fn["arguments"]
-        except httpx.HTTPError as exc:
-            raise DeepSeekError("网络连接失败，请检查网络后重试") from exc
+                            await _sleep(delay)
+                            continue
+
+                        async for line in res.aiter_lines():
+                            line = line.strip()
+                            if not line.startswith("data:"):
+                                continue
+                            payload = line[5:].strip()
+                            if not payload or payload == "[DONE]":
+                                continue
+                            try:
+                                data = json.loads(payload)
+                            except ValueError:
+                                continue
+                            if data.get("usage"):
+                                # include_usage 的最后一帧：choices 为空、只有 usage。
+                                # 并存一份到局部变量，保证即使这一帧形态有差异（某些网关会
+                                # 把它塞进最后一帧的 choices 里），`end` 事件仍带得上用量。
+                                usage = data["usage"]
+                                yield {"type": "usage", "usage": usage}
+                            choice = (data.get("choices") or [{}])[0]
+                            # ⚠️ `finish_reason` **必须收**：它唯一的值 `length` 表示
+                            # "这次输出被长度上限截断了"。丢了它，被截断的 tool_call
+                            # （半截 JSON）会在上层表现为「参数解析失败」——模型完全不知道
+                            # 是自己被截断，于是重试一次，又截断一次（见 PITFALLS #58）。
+                            if choice.get("finish_reason"):
+                                finish_reason = str(choice["finish_reason"])
+                            delta = choice.get("delta") or {}
+                            if delta.get("content"):
+                                # ★ 从这一行起，本次尝试**不可重试**了（正文已经出去了）
+                                sent_delta = True
+                                content_parts.append(delta["content"])
+                                yield {"type": "delta", "text": delta["content"]}
+                            for tc in delta.get("tool_calls") or []:
+                                index = tc.get("index", 0)
+                                slot = tool_calls.setdefault(
+                                    index, {"id": "", "name": "", "arguments": ""}
+                                )
+                                if tc.get("id"):
+                                    slot["id"] = tc["id"]
+                                fn = tc.get("function") or {}
+                                if fn.get("name"):
+                                    slot["name"] += fn["name"]
+                                if fn.get("arguments"):
+                                    slot["arguments"] += fn["arguments"]
+            except httpx.HTTPError as exc:
+                # 连接层错误（超时 / 断连 / DNS）。**吐过正文就不再重试**：重试会把
+                # 已经发出去的那半段再说一遍。
+                delay = None if sent_delta else _retry_delay(attempt, None, None)
+                if delay is None:
+                    raise DeepSeekError("网络连接失败，请检查网络后重试") from exc
+                logger.warning("DeepSeek 连接失败，%.1fs 后重试（第 %d/%d 次）：%s",
+                               delay, attempt + 2, MAX_ATTEMPTS, exc)
+                await _sleep(delay)
+                continue
+            break
 
         yield {
             "type": "end",
