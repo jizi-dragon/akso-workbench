@@ -28,10 +28,9 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-import httpx
 from pydantic import BaseModel
 
-from .. import config
+from .. import config, net_guard
 from .. import plugin_api as pa
 
 PLUGIN_ID = "builtin"
@@ -200,15 +199,17 @@ def _guard_path(path: Path) -> None:
 
 async def read_web_page(args: ReadWebPageArgs, ctx: pa.ToolContext) -> str:
     url = str(pa.require(args.url, "url 不能为空"))
-    if not url.startswith(("http://", "https://")):
-        raise ValueError("仅支持 http/https 地址")
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(20.0, connect=10.0), follow_redirects=True
-    ) as client:
-        res = await client.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MogulWorkbench/1.0"},
-        )
+    # 出站守卫：**逐跳**校验。net_guard 的文档串里写了威胁模型与它的诚实边界
+    # （限损措施，不是 DNS 绑定防护）。
+    #
+    # ⚠️ 这里刻意**不用** httpx 的 `follow_redirects=True`：那个写法只校验第一跳，
+    # 一个完全正常的公网地址 `302 Location: http://127.0.0.1:18765/api/...`
+    # 就绕过了整个守卫 —— 而首跳校验看起来一切正常。
+    res = await net_guard.guarded_get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MogulWorkbench/1.0"},
+        timeout=20.0,
+    )
     res.raise_for_status()
     title, text = _extract_text(res.text)
     truncated = len(text) > MAX_PAGE_CHARS

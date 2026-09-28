@@ -51,6 +51,7 @@ from xml.etree import ElementTree
 import httpx
 from pydantic import BaseModel
 
+from .. import net_guard
 from .. import plugin_api as pa
 
 PLUGIN_ID = "websearch"
@@ -175,19 +176,22 @@ async def _resolve_redirect(url: str) -> str:
 
     360 的 `m=` 参数会过期（实测事后重放得到 400），所以这不是"偶尔失败"，
     而是多数情况下解不开——因此 `_so360` 会把这类条目直接丢掉。
+
+    ⚠️ 走 `net_guard.guarded_get` 而不是裸 httpx：这条路径**也在发请求**，
+    而它拿到的地址来自**外部搜索结果**。少了守卫就等于"检索通道"是绕过出站
+    策略的后门。守卫拒绝时同样返回空串（该条结果被丢弃），与本函数的契约一致。
     """
     if "so.com/link" not in url:
         return url
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(12.0, connect=8.0), follow_redirects=True
-        ) as client:
-            res = await client.head(url, headers=_HEADERS)
+        res = await net_guard.guarded_get(
+            url, headers=_HEADERS, timeout=12.0, method="HEAD"
+        )
         final = str(res.url)
         if (res.status_code < 400 and final.startswith(("http://", "https://"))
                 and "so.com/link" not in final):
             return final
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):
         pass
     return ""
 
@@ -201,18 +205,19 @@ async def _fetch(url: str) -> str:
     为什么不重试 3 次以上：实测失败是**突发成簇**的（连打 8 次可能前 4 次全 ERR），
     重试全落在同一个窗口里，只会把失败耗时从 4s 拉到 10s 而不提高成功率。
     两次足够覆盖单次抖动，剩下的交给兜底通道。
+
+    走 `net_guard.guarded_get` 而不是裸 httpx：这里的目标主机是**硬编码**的
+    （bing / so.com），风险本来就低，但**盲目跟随重定向**会让"公网地址 302 到内网"
+    这条路径重新出现。统一走守卫之后，"`workbench/` 里不存在 `follow_redirects=True`"
+    就成为一条可机检的不变量（见 `tests/test_net_guard.py`），不必逐个模块记。
     """
     last: Exception | None = None
     for attempt in range(_ATTEMPTS):
         try:
-            async with httpx.AsyncClient(
-                # 30s 而非 20s：实测最快 1.2s、最慢 18.5s，20s 会把正常请求误判成失败
-                timeout=httpx.Timeout(30.0, connect=15.0), follow_redirects=True
-            ) as client:
-                res = await client.get(url, headers=_HEADERS)
+            res = await net_guard.guarded_get(url, headers=_HEADERS, timeout=30.0)
             res.raise_for_status()
             return res.text
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ValueError) as exc:
             last = exc
             if attempt < _ATTEMPTS - 1:
                 await asyncio.sleep(_BACKOFF_S)

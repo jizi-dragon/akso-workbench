@@ -33,6 +33,12 @@ hiddenimports = [
     "workbench.plugin_api",
     "workbench.approvals",
     "workbench.cache",
+    # 出站地址守卫（2026-09-24）。它是被**静态**导入的（plugins/builtins.py 与
+    # plugins/websearch.py），照理 PyInstaller 跟得下去；但这两个插件本身是
+    # hiddenimport、登记它们是本仓的既有惯例（cache 同样被静态导入却也在列）。
+    # 漏收的后果是**静默的**：plugins/__init__.py 的 load_all 会把 ImportError
+    # 吞成一条 failure，于是 builtins 整插件消失（6 个工具没了）而应用照常启动。
+    "workbench.net_guard",
     "workbench.plugins",
     "workbench.plugins.builtins",
     "workbench.plugins.websearch",
