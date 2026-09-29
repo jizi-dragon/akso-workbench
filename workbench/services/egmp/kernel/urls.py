@@ -1,7 +1,7 @@
 """平台地址归一化（**唯一**事实来源，读写两侧共用）。
 
 为什么需要它（2026-09-14 真机实证）：把浏览器地址栏里的**登录页**地址整段粘成环境的
-baseUrl（`https://tonbridge-config.aksoegmp.com/login`）后，AUTH 端点会被拼成
+baseUrl（`https://demo-val.example.com/login`）后，AUTH 端点会被拼成
 `.../login/api/openapi/v1.0/Auth`，网关直接回 **405 Not Allowed**（nginx），
 界面上的表现就是「login 连通测试无法连通」。同主机的根地址 POST 同名端点返回的是
 平台信封 `{"code":500,...}` 而不是 405 —— 这就是「根地址 vs 登录页地址」的判据。

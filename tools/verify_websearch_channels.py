@@ -6,8 +6,8 @@ import time
 
 sys.path.insert(0, ".")
 
-from workbench.plugin_api import ToolContext  # noqa: E402
-from workbench.plugins.websearch import SearchArgs, web_search  # noqa: E402
+from workbench.plugin_api import ToolContext
+from workbench.plugins.websearch import SearchArgs, web_search
 
 
 async def main():

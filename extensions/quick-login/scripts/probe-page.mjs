@@ -1,23 +1,29 @@
 /**
- * 配置页结构探针（交互式调研用）—— node tools/e2e/probe-page.mjs
+ * 配置页结构探针（交互式调研用）—— `node scripts/probe-page.mjs`
  *
- * 启动带 dist 扩展的隔离浏览器（档案 tmp/probe-profile，跨次保留登录态），
+ * ★ 落盘与产物路径都以**模块根**（`extensions/quick-login/`）为基准。
+ * 本文件原住在 `tools/e2e/`，2026-09-29 随模块化搬到 `scripts/` ——
+ * 那时 `ROOT` 少减了一层，算出 `extensions/dist`（不存在）而当场抛错。
+ * 判据：`ROOT` 必须等于本文件的上一级。
+ *
+ * 启动带 dist 扩展的隔离浏览器（档案 `tmp/probe-profile`，跨次保留登录态），
  * 持续采集所有页面/iframe 的：URL、document.title、面包屑/标题候选、iframe 列表，
  * 并经 CDP 抓取名称型 API 响应（guid→name 候选）。
  *
- * 落盘：
+ * 落盘（**相对模块根**）：
  *   tmp/probe/current.md     —— 最新页面快照（每次变化重写，主持方读取并复述）
  *   tmp/probe/api-log.jsonl  —— 名称型 API 响应候选（append-only）
  *   tmp/probe/history.jsonl  —— 页面切换历史（append-only）
  *
  * 主持方交互：读 current.md + api-log 尾部 → 向用户复述 → 用户切页 → 重复。
+ * ⚠️ 它会驱动浏览器页面：按 `factory-tuning/README.md` §二 的口径，**先告知用户**再跑。
  */
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..', '..');
+const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 const DIST = path.join(ROOT, 'dist');
 const PROFILE = path.join(ROOT, 'tmp', 'probe-profile');
 const CURRENT = path.join(ROOT, 'tmp', 'probe', 'current.md');

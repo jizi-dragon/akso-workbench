@@ -30,6 +30,58 @@
 > （本警示写成引用块是**刻意的**：`notes_from_changelog()` 只收 `- `/`### ` 开头的行，
 > `>` 不会被抽进发布说明。）
 
+### Fixed
+
+- **全面审计（三路并行 + 逐条复核）：修掉一处安全漏网、一处静默失效的门禁、一处
+  被 `.gitignore` 掩盖的残留、以及若干假注解与空操作抑制指令**（2026-09-29）。
+
+  **① 安全：真实部署域名漏网** —— `services/egmp/kernel/urls.py` 的 docstring 里写着
+  `https://tonbridge-config.aksoegmp.com/login`。本仓做过 `filter-repo` 全历史脱敏，规则明写
+  「真实部署域名 → `*.example.com`、客户租户名 → `example-config`」，而 `egmp/client.py` 用的
+  正是占位值 ⇒ **这一处是漏网**。已改为占位值；全仓该域名已清零。
+
+  **② 门禁静默失效** —— `tools/gen_tools_doc.py` 的 `_claim_problems()` 对
+  `CLAIM_DOCS` 里不存在的路径是 `continue`（**静默跳过**）。2026-09-29 的文档瘦身删掉了
+  其中两个目标 ⇒ 那两块"N 个工具/插件"核对**从此不再执行，而门禁照报 PASS**。
+  已改为报出一条 problem，并**做了反证**（注入一条不存在的路径 ⇒ 退出码 1 且打印正确消息；
+  还原后逐字节相等）。这是 PITFALLS #108 那一族："一个**自己坏掉的**检查会**静默地什么都不查**"。
+
+  **③ `.gitignore` 掩盖了 28 个孤儿文件** —— `factory-tuning/data/` 下
+  `factory-runs/` / `layout-snapshots/` / `where/` 共 28 个文件一直在工作区里
+  （含产出它的 `services/egmp/checkpoint.py` **早已删除**的 `checkpoint.json`）。
+  它们被 `.gitignore` 忽略 ⇒ **`git status` 是干净的**，所以从没人发现。
+  三方各说一套：README 说"删了"、`.gitignore` 说"重跑即得"、工作区实际还在。
+  ★ 而"重跑即得"这条理由**已失效**——生成它们的工具链随配置工厂一并删除了。
+  已删除三类残留，并订正 README 与 `.gitignore` 的口径。
+
+  **④ 11 处空操作的 `# noqa: E402`** —— `pyproject.toml` 的 `per-file-ignores`
+  已豁免整个 `tools/` 目录。**反证**：`ruff check tools --ignore-noqa --select E402`
+  → `All checks passed`（把 noqa 全关掉也报不出 E402）⇒ 这些抑制指令什么都没抑制。
+  其中 `gen_tools_doc.py` 里写的是 **`# noqa: E40202`**（多一位数字，该码不存在）——
+  **它因为从不承重，所以从未被发现**。
+
+  **⑤ 假注解与不可达兜底**（`skills/library.py`）：
+  `tools: list[str] = None` + `# type: ignore[assignment]`（**注解是假的**，靠 `to_dict()`
+  的 `or []` 兜着）→ 改 `list[str] | None`；两处
+  `args.model_dump(...) if hasattr(args, "model_dump") else dict(args)` → 直接调用
+  （`ToolSpec.valid()` 在**装配期**强制 `args_model` 是 `BaseModel` 子类 ⇒ `hasattr` 恒真、
+  `else` 分支**不可达**；对自己边界内的对象做防御性 `hasattr` 会掩盖真正的契约违约）。
+
+  **⑥ 修一个被这次模块化弄坏的脚本** —— `extensions/quick-login/scripts/probe-page.mjs`
+  的 `ROOT` 仍按旧位置（`tools/e2e/`）计算（用了两级 `..`）⇒ 搬到 `scripts/` 后算出
+  `extensions/dist`（不存在），**脚本当场抛错**。
+
+  **清理**：`tmp/` **36 项 / 43.5 MB**（其中 36 MB 是 `gws-v1.0.0` —— 一份下载后
+  从未被任何代码引用的第三方 CLI 多平台发行包）。删前扫过凭据：**0 处真凭据**。
+
+  **★ 一条被撤回的清理建议（值得留痕）**：审计报「整个扩展 `site-auth` 子系统已死
+  （9 个符号在打包产物里 0 命中）」。判据本身成立，但**结论错了** ——
+  [ADR-0004](docs/adr/0004-extension-as-execution-plane.md) 与
+  `extensions/quick-login/CHANGELOG.md` 都写着它是 **0.2.21 定稿保留的「休眠源码」**，
+  且 `parallel-session.ts` 确实在 `import type { Scheme } from './site-auth'`。
+  ⇒ "打包后 0 命中"是**保留决策的预期结果，不是缺陷证据**。
+  这正是本仓「零调用方的扩展点是刻意保留」那条纪律要防的误报。
+
 ### Removed
 
 - **文档瘦身：删掉 234 个文件里的过程件、调研件与第三方逐字存档**（2026-09-29，用户下达

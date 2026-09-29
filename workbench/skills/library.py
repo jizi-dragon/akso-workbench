@@ -92,8 +92,8 @@ class UploadResult:
     version: str = ""
     verdict: str = ""            # ok | warn | reject
     reason: str = ""
-    tools: list[str] = None      # type: ignore[assignment]
-    findings: list[dict] = None  # type: ignore[assignment]
+    tools: list[str] | None = None
+    findings: list[dict] | None = None
     boundary: str = ""
 
     def to_dict(self) -> dict:
@@ -484,7 +484,11 @@ def _make_forwarder(wrapped_name: str):
     async def _handler(args, ctx, _target: str = wrapped_name):
         from ..hub import get_hub as _hub
 
-        payload = args.model_dump(exclude_none=True) if hasattr(args, "model_dump") else dict(args)
+        # `args` 恒为 `BaseModel` 实例，不需要 `hasattr` 兜底：
+        # `plugin_api._validate()` → `spec.args_model.model_validate(raw)` 必返回 BaseModel，
+        # 且 `ToolSpec.valid()` 在**装配期**强制 `args_model` 是 BaseModel 子类。
+        # （对自己边界内的对象做防御性 hasattr 会掩盖真正的契约违约。）
+        payload = args.model_dump(exclude_none=True)
         invocation = await _hub().execute(_target, payload, ctx)
         return invocation.content
 
@@ -509,7 +513,8 @@ def _make_script_handler(capability_id: str, version: str, script: str, tool_nam
 
         from .script_runner import run_script
 
-        payload = args.model_dump(exclude_none=True) if hasattr(args, "model_dump") else dict(args)
+        # 同上一处：`args` 恒为 BaseModel（见上面那条注释），不做 `hasattr` 兜底。
+        payload = args.model_dump(exclude_none=True)
         package_dir = layout.library_version_dir(_cap, _ver, create=False)
         outcome = await asyncio.to_thread(
             run_script,

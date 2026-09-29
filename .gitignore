@@ -59,13 +59,16 @@ node_modules/
 #   · 其余是业务内容：对象/字段/选项集的**名字本身**（如 `测试09-01`）与平台内置菜单名。
 # 仓库是**私有**的（`api.github.com/repos/...` 未认证返回 404）。
 #
-# 但 `factory-tuning/data/` 下**三类是"跑一次就有"的中间产物，不入库**（2026-09-22 加）：
-#   · `factory-runs/`  —— 每次 `run_blueprint.py` 的逐步结果（13 个文件，随跑随增）；
-#   · `layout-snapshots/` —— 布局读回的整份 JSON（20KB 级，可随时重读一次拿回来）；
-#   · `where/`         —— 页面身份探针的快照（`--diff` 用的前后对比）。
-# 判据：删掉它们，`factory-tuning/` 的工具**不丢任何能力**（重跑即得）；
-# 而 `sessions/`（脱敏后的真实流量）与 `blueprints/`（人工写的输入）**是资产，必须入库**。
-# 注意 `data/sessions/*` 里只有 `.gitkeep` 是特例：它保住空目录，别一起忽略掉。
-factory-tuning/data/factory-runs/
-factory-tuning/data/layout-snapshots/
-factory-tuning/data/where/
+# ⚠️ 2026-09-29：`factory-tuning/data/` **整棵目录已删除**，下面三条忽略规则随之作废。
+#
+# 原先这里忽略三类"跑一次就有"的中间产物（`factory-runs/` / `layout-snapshots/` / `where/`），
+# 理由是「删掉它们不丢能力，**重跑即得**」。★ 该理由已失效：生成它们的工具链
+# （`tools/run_blueprint.py` / `where.py` / `layout_read.py` / `analyze/**`）
+# **已随配置工厂于 d9cc39b 一并删除** ⇒ 不可能再"重跑即得"，它们成了不可再生的孤儿产物。
+#
+# 实测（2026-09-29）：那 28 个文件当时仍躺在工作区里（含 `checkpoint.json` ——
+# 产出它的 `services/egmp/checkpoint.py` 早已删除），而因为它们被本文件忽略，
+# **`git status` 是干净的** ⇒ 三方各说一套：README 说"删了"、本文件说"可再生"、工作区实际还在。
+# 这种"对一切基于 git 的清点不可见"的状态，正是删减没删干净能长期存活的机制（PITFALLS 同族）。
+#
+# 口径已统一为：**整棵 `data/` 不存在**。若将来重建采集工具链，再按新口径重新决定哪些入库。

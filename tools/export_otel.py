@@ -47,8 +47,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from workbench import db  # noqa: E402
-from workbench.harness import trace  # noqa: E402
+from workbench import db
+from workbench.harness import trace
 
 #: 我们的数据 → OTel GenAI 属性名。`(属性名, 核实状态)`。
 #:

@@ -26,21 +26,23 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from workbench.api.routes_agent import REQUIRED_TOOLS  # noqa: E402
-from workbench.hub import get_hub  # noqa: E402
-from workbench.plugin_api import ToolHub, verify_required_tools  # noqa: E40202
+from workbench.api.routes_agent import REQUIRED_TOOLS
+from workbench.hub import get_hub
+from workbench.plugin_api import ToolHub, verify_required_tools
 
 DOC = ROOT / "docs" / "TOOLS.md"
 BEGIN = "<!-- TOOLS-TABLE:BEGIN —— 由 tools/gen_tools_doc.py 生成，勿手改；改插件后跑 --write -->"
 END = "<!-- TOOLS-TABLE:END -->"
 
 # 参与"N 个工具/插件"数字核对的活跃文档（**不含 CHANGELOG**：历史条目里的数字是当时的事实）
+#
+# ⚠️ 这里的每一项都**必须存在** —— `_claim_problems` 会把"清单里有但文件不在"
+# 报成一条 problem，不再静默跳过（2026-09-29 修，见该函数的注释）。
+# 2026-09-29 文档瘦身移除了两项：`docs/PLUGIN-SDK.md`、`docs/CODEBASE_OVERVIEW.md`。
 CLAIM_DOCS = (
     ROOT / "README.md",
     ROOT / "docs" / "TOOLS.md",
-    ROOT / "docs" / "PLUGIN-SDK.md",
     ROOT / "docs" / "API.md",
-    ROOT / "docs" / "CODEBASE_OVERVIEW.md",
 )
 
 RISK_ORDER = {"read": 0, "write": 1, "dangerous": 2}
@@ -154,6 +156,21 @@ def _claim_problems(n_plugins: int, n_tools: int) -> list[str]:
     problems: list[str] = []
     for path in CLAIM_DOCS:
         if not path.exists():
+            # ★ 不静默跳过（2026-09-29 修）。
+            #
+            # 原先这里是 `continue` —— 而 2026-09-29 的文档瘦身删掉了
+            # `docs/PLUGIN-SDK.md` 与 `docs/CODEBASE_OVERVIEW.md`，
+            # 于是**这两份的"N 个工具/插件"再也不会被核对**，而门禁照报 PASS。
+            #
+            # 这正是 PITFALLS #108 那一族："一个**自己坏掉的**检查会**静默地什么都不查**"。
+            # 本仓对同类形态的判据是 `check_doc_links.py` 的
+            # `test_every_excluded_archive_actually_exists_and_has_a_reason` ——
+            # **清单里的路径必须真实存在**。这里补上同一条。
+            rel = path.relative_to(ROOT).as_posix()
+            problems.append(
+                f"{rel}: 在 CLAIM_DOCS 里但文件不存在 —— "
+                f"要么恢复该文档，要么把它从 CLAIM_DOCS 移除（别让它静默不被检查）"
+            )
             continue
         text = path.read_text(encoding="utf-8")
         rel = path.relative_to(ROOT).as_posix()

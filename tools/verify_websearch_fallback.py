@@ -17,8 +17,8 @@ import time
 
 sys.path.insert(0, ".")
 
-from workbench.plugin_api import ToolContext  # noqa: E402
-from workbench.plugins import websearch as ws  # noqa: E402
+from workbench.plugin_api import ToolContext
+from workbench.plugins import websearch as ws
 
 
 async def main() -> int:

@@ -14,8 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from workbench import config, db  # noqa: E402
-from workbench.services import accounts  # noqa: E402
+from workbench import config, db
+from workbench.services import accounts
 
 
 def main() -> int:

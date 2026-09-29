@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from workbench.services.egmp.insight import drawio  # noqa: E402
+from workbench.services.egmp.insight import drawio
 
 DEFAULT_CLI_CANDIDATES = [
     r"F:\Software\drawio\draw.io\draw.io.exe",
