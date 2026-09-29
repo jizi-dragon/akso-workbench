@@ -67,7 +67,7 @@ Workbench 侧传 `--url/--user/--pass` 内联凭据调两个原仓库的 CLI。�
 |---|---|
 | 一次性重写工作量巨大 | `services/egmp/` 约 3.5k 行，含 11 个 insight 模块与 9 个 writers 模块 |
 | 与原项目存在**行为漂移风险** | 原仓库继续演进时本项目不会自动跟上。缓解：`adapters/*.json` 作为对照存档 + 本 ADR 记录口径来源 |
-| 遗留对照代码未清理 | `services/proc.py`（Node 子进程封装）与 `services/modules.py` 的部分描述仍是遗留口径（如 `proc.py` 的文档字符串指向已删除的 `docs/模块契约.md`）——见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 的风险台账 |
+| 遗留对照代码未清理 | `services/proc.py`（Node 子进程封装）与 `services/modules.py` 的部分描述仍是遗留口径（如 `proc.py` 的文档字符串指向已删除的 `docs/模块契约.md`）——见 `../CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账 |
 | `tests/test_proc.py`（7 项）仍在测 | 它测的是遗留封装本身（Node 探测/超时/流式日志），**不代表运行时链路**——不要误认为「项目仍依赖 Node」 |
 
 ### 明确排除的方案
@@ -83,7 +83,7 @@ Workbench 侧传 `--url/--user/--pass` 内联凭据调两个原仓库的 CLI。�
 - **原仓库只读**是硬纪律：`adapters/*.json` 指向的目录**任何情况下不修改**
   （`services/accounts.py` 的「原项目 env 导入」也只读扫描）。
 - `docs/模块契约.md`、`docs/迁移台账.md` 等融合期文档已删除；代码里仍有指向它们的引用，
-  属于待清理的文档债（见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 的风险台账）。
+  属于待清理的文档债（见 `../CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账）。
 
 
 ---
@@ -105,5 +105,5 @@ Workbench 侧传 `--url/--user/--pass` 内联凭据调两个原仓库的 CLI。�
 **「运行时零依赖」「原仓库只读」两条红线不受影响，反而更强**：现在这个仓库连
 「写平台数据」的能力都没有了——它对本仓引用的平台**只读**。
 内化出来的平台知识没有丢，转成了两份不依赖代码的文档：
-[docs/PLATFORM-OPERATIONS-LEARNED.md](../PLATFORM-OPERATIONS-LEARNED.md) 与
-[docs/FACTORY-PLATFORM-COGNITION.md](../FACTORY-PLATFORM-COGNITION.md)。
+`../PLATFORM-OPERATIONS-LEARNED.md`（**该文件已于 2026-09-29 删除**） 与
+`../FACTORY-PLATFORM-COGNITION.md`（**该文件已于 2026-09-29 删除**）。

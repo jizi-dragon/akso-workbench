@@ -2,7 +2,7 @@
 
 - **状态**：已采纳（0.2.23 定稿，净删 2,849 行）
 - **决策者**：用户定稿（「不影响功能」）
-- **相关**：[EXTENSION-PLANE.md](../EXTENSION-PLANE.md)、[ADR-0002](0002-browser-allocation-policy.md)、
+- **相关**：`../EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**）、[ADR-0002](0002-browser-allocation-policy.md)、
   [ADR-0007](0007-credentials-never-plaintext.md)、[SCHEMA.md](../SCHEMA.md) §5
 
 ## 背景
@@ -46,8 +46,10 @@
 
 - **数据只有一个真源**（桌面 SQLite），消除「两边都能改」的分裂。
 - 扩展的职责边界变得可验证：`sync.ts` 是唯一入口，实体是快照 + 映射表（`akso:acctMap`）。
-- 上游同步的冲突面缩小：本项目只需维护一份「私有改造清单」（见
+- ~~上游同步的冲突面缩小：本项目只需维护一份「私有改造清单」~~（见
   [extensions/quick-login/CHANGELOG.md](../../extensions/quick-login/CHANGELOG.md)）。
+  **2026-09-29 后补**：上游协作已终止，**"同步冲突面"这个收益随之消失** —— 改造清单仍然要维护，
+  但它现在服务的读者是**本项目**（"哪些改动别误删"），不再是"下次同步上游要摘哪些"。
 
 ### 代价（已接受）
 
@@ -63,7 +65,7 @@
 ## 后果
 
 - 协议三面（数据/指令/状态）的语义与护栏成为扩展侧最需要读的代码路径，已固化为
-  [EXTENSION-PLANE.md](../EXTENSION-PLANE.md) §4。
+  `../EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**） §4。
 - **四条实锤护栏**（都源于这次收敛之后暴露的问题，改动 `sync.ts` 前必读）：
   ① `snapshotId` 幂等；② 空快照护栏（否则桌面瞬时半量快照会删光本地账号）；
   ③ `consuming` 互斥（防同一 `par.open` 开两个页签）；④ `streaming` 幂等 + `longPoll` 退避（防热循环）。
@@ -83,7 +85,7 @@
 | [nanobrowser](https://github.com/nanobrowser/nanobrowser)（约 13,810 ★） | **MV3 扩展即全部**：agent 循环、工具、账号都在扩展里，**没有宿主后端**；不做多账号存储平面隔离 | **分歧** | 我们需要承载「业务写路径 + 审计 + 凭据库」，而扩展没有这些载体（无 SQLite、无 Fernet 密钥管理、无法跑平台 SDK）。**数据面放桌面不是为了架构好看，是因为扩展装不下** |
 | [browser-use](https://github.com/browser-use/browser-use) / [Skyvern](https://github.com/Skyvern-AI/skyvern) / [Stagehand](https://github.com/browserbase/stagehand) | 一律用**受控的浏览器上下文**（可弃、无登录态），因此**不需要**存储平面隔离 | **分歧** | 我们的执行面是**用户自己已登录的真实 Chrome**——这是本项目的核心前提（真实登录态不复制、凭据不出本机）。隔离问题正是这个前提的**代价**，不是可选项 |
 | [camoufox](https://github.com/daijro/camoufox) / [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright) | 解决**跨站点指纹一致性 / 反检测** | **正交** | 我们要的是**同站点内多账号的存储平面隔离**，与指纹无关。且本项目的用户是合法持有这些账号的实施工程师——**刻意不做反检测**（合规取向） |
-| Multilogin / AdsPower 一类商用多账号浏览器 | 商业闭源 | **无开源对应物** | 本次调研（[OPENSOURCE-LANDSCAPE.md](../OPENSOURCE-LANDSCAPE.md) §2.7）**未找到**六个平面同时显式隔离 + 会话切换 + 回放的开源实现。⚠️ 该结论**限于检索范围，非穷尽性证明** |
+| Multilogin / AdsPower 一类商用多账号浏览器 | 商业闭源 | **无开源对应物** | 本次调研（`../OPENSOURCE-LANDSCAPE.md`（**该文件已于 2026-09-29 删除**） §2.7）**未找到**六个平面同时显式隔离 + 会话切换 + 回放的开源实现。⚠️ 该结论**限于检索范围，非穷尽性证明** |
 
 **由本次对照得出的结论**：
 

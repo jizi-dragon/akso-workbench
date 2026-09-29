@@ -3,7 +3,7 @@
 - **状态**：已采纳（0.2.2 用户定稿）
 - **决策者**：用户定稿
 - **相关**：[ADR-0003](0003-electron-desktop-shell.md)、[ADR-0004](0004-extension-as-execution-plane.md)、
-  [EXTENSION-PLANE.md](../EXTENSION-PLANE.md)、[API.md](../API.md) §12.5
+  `../EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**）、[API.md](../API.md) §12.5
 
 ## 背景
 

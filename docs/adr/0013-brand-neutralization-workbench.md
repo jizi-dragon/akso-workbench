@@ -109,7 +109,7 @@
 
 ## 4. 重新评估触发器
 
-- 用户决定改仓库名（`akso-mogul` → 任意名）→ 同步 `publish.repo`、remote URL、[HISTORY-REWRITE-NOTICE](../HISTORY-REWRITE-NOTICE.md)。
+- 用户决定改仓库名（`akso-mogul` → 任意名）→ 同步 `publish.repo`、remote URL、`../HISTORY-REWRITE-NOTICE.md`（**该文件已于 2026-09-29 删除**）。
 - 第二个平台适配层落地 → 那时应把 `services/egmp/` 提升为"平台适配目录 + 各平台子包"，
   本条 ADR 的 D-4 需要重新审视（平台名会从"唯一"变成"之一"）。
 - 兼容读取（D-3）建议**保留一个大版本**后清理；清理时删掉旧名回落与旧 `format` 分支，并补一条 CHANGELOG。

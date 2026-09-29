@@ -1,7 +1,7 @@
 # ADR-0007：凭据全程密文，明文只在内存（含已知风险窗口）
 
 - **状态**：已采纳（阶段 2A）—— **含一处已登记的未修风险**（见「已知风险」）
-- **相关**：[SCHEMA.md](../SCHEMA.md) §3.5/§5.2、[EXTENSION-PLANE.md](../EXTENSION-PLANE.md) §4.1/§8.2、
+- **相关**：[SCHEMA.md](../SCHEMA.md) §3.5/§5.2、`../EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**） §4.1/§8.2、
   [ADR-0004](0004-extension-as-execution-plane.md)、[API.md](../API.md) §8
 
 ## 背景
@@ -67,7 +67,7 @@ GET /extension/snapshot
 
 ## 已知风险（已登记，未修）
 
-> 这两条属于**扩展侧的产品级隐患**，用户已知悉并暂挂；代码修复需另开一轮（见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 的风险台账）。
+> 这两条属于**扩展侧的产品级隐患**，用户已知悉并暂挂；代码修复需另开一轮（见 `../CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账）。
 
 ### R1 明文凭据 60s 投递窗口（`getPendingAutoLogin` 读后不删）
 
@@ -96,6 +96,6 @@ manifest `host_permissions: ["<all_urls>"]`（0.2.21 起）——权限面比功
 - **密钥轮换是本项目尚未实现的运维动作**：轮换需要重写全部 `password_enc` 并通知扩展重新同步。
   当前若手工改 `account_fernet_key`，表现是接口能读、扩展静默丢弃全部账号（有 `console.warn` 留痕）。
 - 审计与日志纪律：`agent_audit.args` 目前会原样存工具入参（截断 2,000 字符）。
-  **凡是把凭据作为工具入参的调用都会落库**——见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 风险台账中的待修项。
+  **凡是把凭据作为工具入参的调用都会落库**——见 `../CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 风险台账中的待修项。
 - 真机验证入口：`tools/diag_fernet_node.mjs`（跨语言 Fernet 一致性）、
   `tests/test_accounts.py::test_fernet_roundtrip` / `test_fernet_unique_ciphertexts`（同明文产生不同密文）。

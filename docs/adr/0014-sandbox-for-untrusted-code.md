@@ -154,7 +154,7 @@ Codex 之所以必须提供 `unelevated` 回退，正是因为**提权路径常�
 | 参照对象 | 它的做法 | 关系 |
 |---|---|---|
 | **Microsoft Agent Framework** 的 `SubprocessScriptRunner` | 官方**自标为"仅供演示"**，并要求生产环境自行补上：沙箱（容器/seccomp/jail）+ 资源限制（CPU/内存/墙钟）+ 输入校验与脚本白名单 + 结构化日志与审计 | **一致（且我们更完整）**：本 ADR 的 E1–E4 正是那份"待补清单"，而**我们已经补上了**——`script_runner.py` 已接沙箱、策略、审计 |
-| 同一框架的 archive 准入参数 | `ArchiveMaxFileCount`(20) / `ArchiveMaxSizeBytes`(1 MB) / `ArchiveMaxUncompressedSizeBytes`(1 MB) / 扩展名白名单 / `digest`（`sha256:` 解压前校验） | **参考，我们缺两项**：本仓 `skills/security.py` 有可疑模式扫描（领先多数生态），但**没有 sha256 摘要校验**，**也没有解压后大小上限**（zip bomb 防护）。已记入 [OPENSOURCE-LANDSCAPE.md](../OPENSOURCE-LANDSCAPE.md) §6.6 |
+| 同一框架的 archive 准入参数 | `ArchiveMaxFileCount`(20) / `ArchiveMaxSizeBytes`(1 MB) / `ArchiveMaxUncompressedSizeBytes`(1 MB) / 扩展名白名单 / `digest`（`sha256:` 解压前校验） | **参考，我们缺两项**：本仓 `skills/security.py` 有可疑模式扫描（领先多数生态），但**没有 sha256 摘要校验**，**也没有解压后大小上限**（zip bomb 防护）。已记入 `../OPENSOURCE-LANDSCAPE.md`（**该文件已于 2026-09-29 删除**） §6.6 |
 
 ### 6.3 一个值得保留的判断：不把安全建立在未验证的行为上
 

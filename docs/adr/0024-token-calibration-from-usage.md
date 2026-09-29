@@ -7,7 +7,7 @@
   `workbench/harness/trace.py`（新增 `recent_token_pairs`）、`workbench/cache.py`
   （`_over_budget` / `plan_prefix` 各多一个缺省 `factor=1.0`）、
   `workbench/harness/loop.py`（一次运行开头算一次）。**无 DB 迁移**（复用已有的 `agent_span.attrs_json`）。
-- **取代**：[`CORE-AGENT-PLAN.md`](../CORE-AGENT-PLAN.md) §7.1(b) 的
+- **取代**：`../CORE-AGENT-PLAN.md`（**该文件已于 2026-09-29 删除**） §7.1(b) 的
   「**`tiktoken cl100k_base` 精确计数 + 1.1 系数**」。★ 推翻了它的**前提**，不只是结论 ——
   详见 §1。
 

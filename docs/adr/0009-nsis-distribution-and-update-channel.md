@@ -2,7 +2,7 @@
 
 - **状态**：已采纳（0.3.1 首个可安装版本；Inno Setup 链路已删除）
 - **相关**：[ADR-0003](0003-electron-desktop-shell.md)、[ADR-0008](0008-update-channel-and-proxy.md)、
-  [CONTRIBUTING.md](../../CONTRIBUTING.md)、[docs/EXTENSION-INSTALL.md](../EXTENSION-INSTALL.md)
+  [CONTRIBUTING.md](../../CONTRIBUTING.md)、`../EXTENSION-INSTALL.md`（**该文件已于 2026-09-29 删除**）
 
 ## 背景
 
@@ -44,7 +44,7 @@
 - **chromium 随包**：`browser_pool` 的工作线程在 `sync_playwright()` **之前**把
   `PLAYWRIGHT_BROWSERS_PATH` 指向 `_MEIPASS/ms-playwright`（顺序错了就找不到）。
   ⚠️ `server.spec` 只有在 `%LOCALAPPDATA%\ms-playwright\chromium*` **存在时**才收集它——
-  构建机没装 chromium 会打出没有浏览器的包（见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 风险台账中的待修项）。
+  构建机没装 chromium 会打出没有浏览器的包（见 `../CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 风险台账中的待修项）。
 
 ### 3. 扩展：随包 + 应用内引导（不追求「静默一键」）
 
@@ -67,7 +67,7 @@
 ```
 
 升级后的同一套能力复用于 `mode="reload"`（引导点一次「重新加载」），见
-[EXTENSION-PLANE.md](../EXTENSION-PLANE.md) §4.4。
+`../EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**） §4.4。
 
 ### 4. 版本：与扩展同号发布，真源唯一
 

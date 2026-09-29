@@ -1,10 +1,10 @@
 # ADR-0019：上下文窗口的**轮内**治理 —— 折叠永不吞 system、预算每次调用前复检、未执行的工具调用必须回填
 
 > ⚠️ **编号是 0019 而不是 0018**：`0017` / `0018` 曾被已删除的配置工厂 ADR 占用，
-> 而 [PLATFORM-OPERATIONS-LEARNED.md](../PLATFORM-OPERATIONS-LEARNED.md) 与
+> 而 `../PLATFORM-OPERATIONS-LEARNED.md`（**该文件已于 2026-09-29 删除**） 与
 > `factory-tuning/reports/2026-09-22-会话复盘-测试09-04创建被拒.md` **至今仍在引用那个
 > 已不存在的 ADR-0018**（且指的是另一件事）。复用编号会让那些引用悄悄指向错误的文档。
-> 详见 [CORE-AGENT-PLAN.md](../CORE-AGENT-PLAN.md) 文档头的冲突③。
+> 详见 `../CORE-AGENT-PLAN.md`（**该文件已于 2026-09-29 删除**） 文档头的冲突③。
 
 - **状态**：已采纳
 - **日期**：2026-09-24

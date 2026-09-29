@@ -87,9 +87,9 @@ Monitor（`services/egmp/monitor/`）**录制**用户在平台上的操作，产
 - **`DANGEROUS` 分类的正确性是安全关键路径**，但**目前没有自动化测试守住它**：
   `tests/test_native.py` 覆盖了 `monitor_classify_and_query` 与 `monitor_interpret_segment`，
   但它们验的是分类/解读的基本行为，**不是「危险操作不会被误放进可执行步骤」这一断言**。
-  这是已知的测试缺口（见 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 的风险台账）。
+  这是已知的测试缺口（见 `../CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账）。
 - **监听的生命周期与托管会话耦合**：录制产物落 `runtime/monitor/<account_id8>-<stamp>/`；
-  但关闭会话**不会自动停监听**（见 [API.md](../API.md) §13 与 [CODEBASE_OVERVIEW.md](../CODEBASE_OVERVIEW.md) 的风险台账）。
+  但关闭会话**不会自动停监听**（见 [API.md](../API.md) §13 与 `../CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账）。
 - **另有一套同名但无关的东西**：上游扩展曾有 `page-monitor.ts`（Page Monitor，最近页面）。
   它已于 0.2.22 整块撤销，**与本文档的 Monitor 无关**——即使名字里都有 Monitor。
   `services/browser_pool.monitor_start/stop` + `runtime/monitor/` 才是本文档指的那套。
