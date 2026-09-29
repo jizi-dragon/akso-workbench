@@ -1,6 +1,6 @@
 {
   "name": "workbench-extension",
-  "version": "0.3.13",
+  "version": "0.4.1",
   "private": true,
   "description": "Workbench 浏览器扩展（执行面）：六平面隔离 + 账号轮盘 + 自动填表",
   "type": "module",
