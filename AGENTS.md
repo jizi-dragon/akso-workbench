@@ -21,16 +21,22 @@
 >
 > | 想了解 | 去哪 |
 > |---|---|
-> | 代码地图 / 红线 / 风险台账 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
+> | ★ **核心 Agent 架构与分层契约 ＋ 不变量 I1–I18（地基）** | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
 > | 真机环境坑（**120 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 不再变的决策（**22 篇** ADR ＋ `0000-template.md` 模板 = 23 个文件） | [docs/adr/](docs/adr/) |
-> | **★ 平台事实台账（端点 / 真机线格式 / 样本量 n / 平台约束，逐条带证据）** | [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md) |
-> | **★ 平台配置面整体认知（Gaia V3.8 手册语义与配置分层）** | [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) |
-> | **★ 用户传图片/文件给 agent（方案 + 判据 + 已知限制）** | [docs/AGENT-FILE-INPUT-PLAN.md](docs/AGENT-FILE-INPUT-PLAN.md) |
-> | 平台取证报告存档（真机报告 + 手册笔记；**不属于产品，工具链已移除**） | [factory-tuning/reports/](factory-tuning/README.md) |
-> | 核心 Agent 架构与分层契约 | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
 > | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
+> | 数据库与迁移账（改必更的事实源） | [docs/SCHEMA.md](docs/SCHEMA.md) |
+> | HTTP 端点契约 / 配置项 | [docs/API.md](docs/API.md) · [docs/CONFIG.md](docs/CONFIG.md) |
+> | 版本与发版机制 | [docs/VERSIONING.md](docs/VERSIONING.md) |
+> | 用户手册（给使用者的） | [docs/USER-MANUAL.md](docs/USER-MANUAL.md) |
+> | 平台取证的方法论与脱敏口径（**报告已删，只剩口径**） | [factory-tuning/README.md](factory-tuning/README.md) |
 > | 人的协作规范 | [CONTRIBUTING.md](CONTRIBUTING.md) |
+>
+> **2026-09-29 文档清理**：上表中原先指向 `CODEBASE_OVERVIEW` / `PLATFORM-OPERATIONS-LEARNED` /
+> `FACTORY-PLATFORM-COGNITION` / `AGENT-FILE-INPUT-PLAN` 的四行**已删除**（用户下达的文档瘦身）。
+> 那四份的内容没有搬走 —— 要看它们只能 `git show <删除前提交>:docs/<文件名>`。
+> ★ **`docs/CORE-ARCHITECTURE.md` 已上移到第一行**：它是 §5 不变量的载体，
+> 而 `tests/test_invariant_coverage.py` **按这个路径读它** —— 删了它，18 条不变量的覆盖率对账当场失效。
 
 ---
 
@@ -167,7 +173,7 @@
 | 你改了什么 | 必须额外跑 |
 |---|---|
 | `workbench/plugins/**` | `tools\gen_tools_doc.py --write`（重生成 [docs/TOOLS.md](docs/TOOLS.md) 清单块）**+** 确认 `server.spec` 的 `hiddenimports` 有该模块 **+** `REQUIRED_TOOLS`。<br>★ **新增/删除插件时三处必须同时改**，否则 `load_all` 会把 ImportError **吞成一条 failure**（它的隔离设计），表现为 `selfcheck` 静默变红而启动照常——2026-09-22 删配置工厂时正是这三处（`_MODULES`、`server.spec`、`REQUIRED_TOOLS`）一处都不能漏 |
-| **附件链路**：`services/attachments.py`、`services/parsing.py`、`api/routes_attachments.py`、`api/routes_chat.py` 的扼流点与**写给模型的附件提示**、`plugins/builtins.py` 的 `attachment_*` | `pytest tests/test_attachments.py -o addopts=""`（**26 条**：落盘/拒收/解析坐标/展开成 parts/按坐标取/会话隔离/**提示措辞**）**+** `python tools\verify_attachments.py`（**24 项**端到端：真起生产入口、真发 multipart、**字节级**读回、三条拒收、扼流点展开、删除是真删）**+** `python tools\verify_attachments_live.py`（**真机联调 · 要花 token**：颜色 / 形状 / 表格 / **不撤回自己** / 负样本，五问全绿才算过）<br>★ **这条链路上"函数对"与"链路通"是两件事**：2026-09-22 真机联调抓到两个单测看不见的缺陷（`_pending` 未绑定 / **这一轮的消息绕过扼流点**）——见 [AGENT-FILE-INPUT-PLAN](docs/AGENT-FILE-INPUT-PLAN.md) §6.1。**改这条链路后必须另跑一次真机联调**。<br>★ **写给模型的那句话也是链路的一部分**（[PITFALLS #89](docs/PITFALLS.md)）：旧轮图片的引用话术一处措辞不当，模型就会**撤回自己刚答对的内容**（"前面是瞎猜的"）；内联提示里提起"能不能读"会让它**拒绝看图**。改任何 `[附件 …]` 提示文案后，措辞判据在 `tests/test_attachments.py`，端到端那条是 `verify_attachments_live.py` 的 2b |
+| **附件链路**：`services/attachments.py`、`services/parsing.py`、`api/routes_attachments.py`、`api/routes_chat.py` 的扼流点与**写给模型的附件提示**、`plugins/builtins.py` 的 `attachment_*` | `pytest tests/test_attachments.py -o addopts=""`（**26 条**：落盘/拒收/解析坐标/展开成 parts/按坐标取/会话隔离/**提示措辞**）**+** `python tools\verify_attachments.py`（**24 项**端到端：真起生产入口、真发 multipart、**字节级**读回、三条拒收、扼流点展开、删除是真删）**+** `python tools\verify_attachments_live.py`（**真机联调 · 要花 token**：颜色 / 形状 / 表格 / **不撤回自己** / 负样本，五问全绿才算过）<br>★ **这条链路上"函数对"与"链路通"是两件事**：2026-09-22 真机联调抓到两个单测看不见的缺陷（`_pending` 未绑定 / **这一轮的消息绕过扼流点**）——见 `docs/AGENT-FILE-INPUT-PLAN.md`（**该文件已于 2026-09-29 删除**） §6.1。**改这条链路后必须另跑一次真机联调**。<br>★ **写给模型的那句话也是链路的一部分**（[PITFALLS #89](docs/PITFALLS.md)）：旧轮图片的引用话术一处措辞不当，模型就会**撤回自己刚答对的内容**（"前面是瞎猜的"）；内联提示里提起"能不能读"会让它**拒绝看图**。改任何 `[附件 …]` 提示文案后，措辞判据在 `tests/test_attachments.py`，端到端那条是 `verify_attachments_live.py` 的 2b |
 | **输入区 / 附件 UI**：`static/index.html` 的输入框那一段、`static/js/chat.js` 的用量行与消息里的附件、`static/js/attachments.js`、`static/css/app.css` 的 `.usage-strip` / `.model-chip` / `.usage-ring` / `.msg-attachments` | `python tools\verify_composer_ui.py`（**32 项**：真起生产入口 + 真开 chromium，点会话、按发送，然后读**渲染后**的几何与计算样式）。<br>★ 为什么字符串断言不够（`verify_attachments.py` 的 A1–A9 只证明"源码里有这些字样"）：它抓不到这一整类**看起来完全正常**的失败——那一行还是 `hidden` / 被父元素裁掉、字号被别处一条更具体的规则压回 11px（用户上一轮的原话是「比蚂蚁还小的字」）、模型名换行掉到发送键**下面**、事件里少了 `contextTokens` 于是永远显示「上下文 —」。<br>★ **J/K 两组钉的是"三条输入入口真的能用"与"界面真的接住了服务端的事件"**：真点按钮（`expect_file_chooser`）、真派发带 `File` 的 paste/drop、发送后读**拦截下来的请求体**看 `attachmentIds`，再断言消息气泡里长出 chip；K 组还会**放开拦截**让真服务端把标记写进库（临时库那把 Key 是假的 ⇒ 401，不花 token），刷新后断言标记被画回 chip 而**没有**漏成 `[附件 att-…]` 原文（见 [PITFALLS #88](docs/PITFALLS.md)：服务端为界面发的 `attachment` 事件此前**前端没人接**）。<br>★ **凡"几何交给浏览器算"的样式（`conic-gradient` / `mask` / `clip-path`），判据必须落在像素上**：H4–H6 把那个 14px 的圆环按 4× 截图 → 自写 PNG 解码 → 逐角度判色（见 [PITFALLS #87](docs/PITFALLS.md)：修前 10 个角度全判成背景色，而当时那条"看 `backgroundImage` 里有没有 `conic-gradient`"的断言**是绿的**）。改了圆环尺寸/轨道色/填充色，`TRACK_RGB` / `TONE_WARN_RGB` 两个常量要跟着改。<br>★ 改了**用量行的数据口径**（哪一段是会话累计、哪一段是本轮真值）还要跑 `pytest tests/test_agent_loop.py -k context -o addopts=""`——键名对不上时前端**静默**显示占位，不报错 |
 | ★ 给 `services/parsing.py` **加一个新的文件类型** | 三处一起改：`SUPPORTED` 白名单 + 对应的 `_parse_*`（**必须给 locator 记 `offset`/`chars`**，否则"第 N 页"不可复算）+ `tests/test_attachments.py` 的 C 组加一条"抽到正文 **且** 坐标切得回原文" |
 | `workbench/sandbox/**` | `pytest tests/test_sandbox.py -o addopts=""`（含 slow 层：真起进程、验 Job Object 树杀） |

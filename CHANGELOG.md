@@ -32,6 +32,39 @@
 
 ### Removed
 
+- **文档瘦身：删掉 234 个文件里的过程件、调研件与第三方逐字存档**（2026-09-29，用户下达
+  「清理非必要文档，包括以前的设计文档和调研文档」）。`docs/` 从 **24 篇 → 7 篇**。
+
+  **删了什么**：`docs/gaia平台技术手册/`（vendor 手册逐字存档，186 文件）、`docs/archive/`（4）、
+  `docs/research/`（2）、`factory-tuning/reports/`（41）—— 以及用户同批删掉的
+  `CORE-AGENT-PLAN` / `AGENT-TOOL-AUDIT` / `LOGGING-DESIGN` / `LOGGING-VERIFICATION` /
+  `OPENSOURCE-LANDSCAPE` / `PLUGIN-UPSTREAM-RESEARCH` / `FRAMEWORK-INVENTORY` / `INSIGHT-SPEC` /
+  `HISTORY-REWRITE-NOTICE` / `AGENT-FILE-INPUT-PLAN` / `CODEBASE_OVERVIEW` /
+  `PLATFORM-OPERATIONS-LEARNED` / `FACTORY-PLATFORM-COGNITION` / `EXTENSION-PLANE` /
+  `EXTENSION-INSTALL` / `PLUGIN-SDK`。
+
+  **★ 两个文件被恢复 —— 它们不是文档，是承重的**：
+
+  - `adapters/akso-cc.json`：**运行期数据**。`services/modules.py` 读这个目录 ⇒ 删掉后
+    `/api/modules/{id}/recheck` 变 **404**、`module_status("insight")["checks"]` 变 **`[]`**，
+    4 条测试红。日志原话 `WARNING workbench.modules: adapters 目录不存在`。
+  - `docs/CORE-ARCHITECTURE.md`：`tests/test_invariant_coverage.py:76` **按路径读它** ⇒
+    删掉后 **18 条不变量的覆盖率对账整体失效**。
+
+  **断链处置（104 处）**：40 处来自活文件（`CHANGELOG` 16 / `AGENTS` 7 / `CONTRIBUTING` 6 /
+  6 篇 ADR 11）→ 去链接化 + 行内标注删除事实（命中检查器的 `RETIRED_MARKERS` 口径）；
+  其余 64 处来自已删文档彼此互引，随文件消失。**`AGENTS.md` 的路由表按"只列现存文档"重写**，
+  并把 `CORE-ARCHITECTURE` 上移到第一行（它是 §5 不变量的载体）。
+
+  **顺带**：`tools/check_doc_links.py` 的 `ARCHIVES` 删掉两条已不存在的路径
+  （`docs/gaia平台技术手册`、`extensions/quick-login/docs/archive`）—— 有一条判据断言
+  「`ARCHIVES` 里的路径必须真实存在」，留着它们会让门禁红，而红的原因与真正的问题对不上号。
+
+  ⚠️ **诚实边界**：删掉的 16 篇 `docs/*.md` 的**内容没有搬走**（用户明确"都不需要"）。
+  要看它们只能 `git show <本提交之前的提交>:docs/<文件名>`。
+
+### Removed（2026-09-22 · 配置工厂）
+
 - **「配置工厂」整体移除——平台知识留下，实现与工具链全删**（2026-09-22，用户下达
   「完全清理配置工厂的内容，清理相关逻辑和功能链路，仅保留配置工厂相关的核心知识文档」）。
 
@@ -47,15 +80,15 @@
 
   **知识先迁出、再删源**，这是本轮的第一条纪律。迁进两份**不依赖任何产品代码**的文档：
 
-  - [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md) 重写为
+  - `docs/PLATFORM-OPERATIONS-LEARNED.md`（**该文件已于 2026-09-29 删除**） 重写为
     **平台事实台账**：§4 逐条 `| # | 事实 | 证据形式 | 后果 |` 共 **80 行**（F1–F72 平台侧的全部
     + 新增 F73–F86），另含五层速查、通用规律、覆盖边界与复算方式。
     **`F*` 编号逐字保留**，因为存活报告里到处在引它——跳号的 6 个（F13/F14/F43/F45/F63/F68）
     在编号说明里逐条交代了去向。
-  - [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md) 修剪为
+  - `docs/FACTORY-PLATFORM-COGNITION.md`（**该文件已于 2026-09-29 删除**） 修剪为
     **纯手册认知**（454 → 320 行）：留手册语义、术语对照、**无撤销键资源总表**、创建顺序与
     平台自动派生、覆盖边界；删掉"工厂现状/缺口"两列、缺动词清单、代码层发现、决策卡与取证计划。
-  - 原始真机取证报告原地保留：[factory-tuning/reports/](factory-tuning/reports/)，
+  - 原始真机取证报告原地保留：`factory-tuning/reports/`，
     其 README 改写成**方法论与口径留档**（脱敏口径、"录不到≠平台没发请求"、
     "`total:0` 是截至此刻没有"、"`timestamp` 是事件分发时刻"、"分不清窗口的实验无效"）。
 
@@ -191,7 +224,8 @@
   **真机验证**：`run_blueprint.py` 跑同一份蓝图 ⇒ `success=True`（六步全绿），
   回读确认对象 `test_0904__c` + 字段 `remark__c` + 默认表单布局 1 个控件（`AKInput`）
   + 默认列表布局 1 列全部落位。证据见
-  [真机创建报告](factory-tuning/reports/2026-09-22-真机创建-测试09-04.md)。
+  `factory-tuning/reports/2026-09-22-真机创建-测试09-04.md`（**该目录已于 2026-09-29 删除**，
+  原文用 `git show <删除前提交>:factory-tuning/reports/...` 取回）。
 
 - **配置工厂：布局写入器按真机线格式收口**（2026-09-22，用户逐条下达；判据 = 真机样本 + `keygate.py`）。
   此前"表单布局"这一步在真机上**必失败**，两道坎叠在一起：
@@ -243,18 +277,7 @@
   走图片那条分支）与 drop（带高亮反馈），发送后断言**拦截下来的请求体**里真有 3 个
   `attachmentIds`、服务端真落了盘、气泡里真长出 3 个 chip；再**放开 SSE 拦截**发第二轮
   （临时库那把 Key 是假的 ⇒ 立刻 401，**不花 token**）让**真服务端**把标记写进库，
-  刷新后断言画回 2 个 chip、`href` 指向各自附件、正文里**没有** `[附件` / `att-` 字样。
-  这一组还顺手纠了三个**测试自己的错**：夹具漏了 `start`（于是附件条不清空，假红）、
-  先按 `.attach-name` 断言会抓到「正在上传解析…」那条占位、`dispatchEvent` 返回 `false`
-  恰恰是 `preventDefault` **生效**的证据（第一版写成了 `is True`）。
-
-- **用户可以直接传图片与文件给 agent 了**（2026-09-22，用户下达「核心 agent 能力增强」）。
-
-  > 「未来，用户可能会直接传一张图片，或者是传文件（word，pdf，markdown，excel）给 agent，
-  >  让 agent 去读取。这样的话我就得保障：① 能够让用户正常的输入。② 能够让 agent 真实的
-  >  获取到相关文件。③ 能够正确的按照知识链路，完成相关的任务。」
-
-  方案 / 判据 / 取舍见 [docs/AGENT-FILE-INPUT-PLAN.md](docs/AGENT-FILE-INPUT-PLAN.md)。
+  刷新后断言画回 2 个 chip、`href` 指向各自附件、正文里**没有** ``docs/AGENT-FILE-INPUT-PLAN.md`（**该文件已于 2026-09-29 删除**）。
   用户拍板：**图片直连模型多模态**（实测 `deepseek-flash` 真的看得懂图）、
   **加三个纯 Python 解析依赖**、**只把最新一轮的附件展开进上下文**、本轮做 P0+P1+P2。
 
@@ -571,9 +594,9 @@
   （注释不算，注释是给读代码的人看的）。**反证实测**：把侧边栏改回旧名 ⇒ 该用例立刻红
   （`1 failed`），随后字节级还原。
   文档同步：[USER-MANUAL](docs/USER-MANUAL.md)（§2 表 + §5/§6 标题 + FAQ + 数据位置）、
-  [README](README.md)（含**改名记录**一节，说明旧名出现在 [规范](docs/INSIGHT-SPEC.md) /
+  [README](README.md)（含**改名记录**一节，说明旧名出现在 `docs/INSIGHT-SPEC.md`（**该文件已于 2026-09-29 删除**） /
   [ADR](docs/adr/) / 坑清单里是正常的）、[API.md](docs/API.md) §6/§7 标题、
-  [PLUGIN-SDK.md](docs/PLUGIN-SDK.md) 插件表、[SCHEMA.md](docs/SCHEMA.md) §3.6/§3.7、
+  `docs/PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） 插件表、[SCHEMA.md](docs/SCHEMA.md) §3.6/§3.7、
   [CONFIG.md](docs/CONFIG.md) 的 `insight_workspace_root`、`docs/TOOLS.md`（`gen_tools_doc.py --write`）。
   ⚠️ **没动**（有意）：`INSIGHT-SPEC.md`、`FACTORY-*.md`、`docs/adr/**`、`docs/PITFALLS.md`
   等**领域/历史文档**——它们记的是能力与决策，不是界面标签。
@@ -674,7 +697,7 @@
   ——菜单根本不会被创建。现在菜单与声明区（规则/权限/报表模板）一律归到
   "**引擎不执行**，需要你人工配置"里。这是"如实描述现状"，不是修复；
   底层缺陷与判据见 FACTORY-VERIFICATION-PLAN.md 的 T1 / T2（**该台账已随配置工厂移除**；
-  其中的平台事实已迁进 [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md)）。
+  其中的平台事实已迁进 `docs/PLATFORM-OPERATIONS-LEARNED.md`（**该文件已于 2026-09-29 删除**））。
 
 
 - **配置工厂 × Agent 的接口改造：四条实测问题一次收口**（2026-09-20，
@@ -736,7 +759,7 @@
     **先指向 `logs/`**（主日志 + sidecar stdio），再提 `server.log` 面包屑。
   - [AGENTS.md](AGENTS.md) 补 **§1「日志与留痕」铁律 26–30**（脱敏 / 失败隔离 /
     不复制审计 / 关联 ID / 敏感表唯一），并在 §3 门禁矩阵里加上日志与敏感表两行。
-  - 新增 [docs/LOGGING-VERIFICATION.md](docs/LOGGING-VERIFICATION.md)：
+  - 新增 `docs/LOGGING-VERIFICATION.md`（**该文件已于 2026-09-29 删除**）：
     端到端验证报告（32 项检查矩阵、as-built 差异、**已知边界**）。
 
 - **`uv` / `ruff` 的口径订正——实测与文档记载正好相反**（2026-09-20）。
@@ -1078,7 +1101,7 @@
 > `security(extension)!: 待登录凭据改为一次性宿主校验（P0-2）` 实际只含测试文件。
 > **代码内容与验证都是完整的**，只是 `git log` 的归因不准。
 > 不重写历史（本仓 2026-09-14 已做过一次历史重写并留下
-> [HISTORY-REWRITE-NOTICE](docs/HISTORY-REWRITE-NOTICE.md)；再改一次会让协作者的本地副本
+> `docs/HISTORY-REWRITE-NOTICE.md`（**该文件已于 2026-09-29 删除**）；再改一次会让协作者的本地副本
 > 又要做一次迁移，代价大于归因不准本身）。**教训**：按主题拆提交时，
 > `git add` 要落到**文件**而不是目录——目录会把"同目录下的另一个主题"一起吞掉。
 
@@ -1491,7 +1514,7 @@
   > 所以不是它们错了，是适用范围变了；按本仓 ADR 纪律新增 ADR-0014 **显式取代**，历史结论一字未改。
 
 - **工具插件层：Agent 核心有了唯一的能力扩展面，三大业务以插件形式接入**（用户定稿：先提升核心中枢，
-  再把三个工具做成插件与 Agent 关联）。契约见 **[docs/PLUGIN-SDK.md](docs/PLUGIN-SDK.md)**。
+  再把三个工具做成插件与 Agent 关联）。契约见 **`docs/PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**）**。
   改造前的事实是：`harness/tools.py` 有自己一套工具（三个基础工具），`api/routes_agent.py` 另有一套
   （四个域工具 `login_platform`/`read_config`/`run_insight`/`browser_status`），**两套并存且互不可见**
   ——于是「对话里的模型只能聊天，一个平台能力都看不到」，而那四个域工具又只对 HTTP 调用方可见。
@@ -1510,7 +1533,8 @@
   - **单一事实源**：`GET /api/agent/tools`、对话 Agent 的 function calling schema、审计三处读同一份定义。
   - **插件 API 就是 `ToolHub`**（`workbench/plugin_api.py`）。不做 entry_points 自动发现 / 独立进程 /
     热插拔 / 版本矩阵——研究结论是"插件作者只有你自己时，那些是为第三方生态付的成本"
-    （[core-plugin-separation-research](docs/research/core-plugin-separation-research.md) §A5）。
+    （`docs/research/core-plugin-separation-research.md` §A5；**该文件已于 2026-09-29 删除**，
+    论证已并入 [ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md) 的「外部参照」栏）。
   - **装配纪律**：插件清单显式（`plugins/__init__.py::_MODULES`），单个插件抛异常只记一条 failure
     **并跳过**，绝不阻断启动；依赖方向 `plugins → plugin_api` **单向**，`plugin_api` 里不出现任何
     平台术语（连 `db` 都不 import，审计与确认门是注入的）。
@@ -1551,7 +1575,7 @@
 - **Agent 缓存机制：把 DeepSeek 的上下文硬盘缓存从"碰运气"变成可测可优化**（用户目标 ①）。
   官方规则是"后续请求必须**完整匹配**一个缓存前缀单元"才命中，而**命中价是未命中价的 1/50**
   （`deepseek-flash` 非高峰 $0.003 vs $0.15 / 1M input tokens，见
-  [核查文档](docs/research/deepseek-api-capabilities.md)）。改造前的三个问题各自都会让命中率归零：
+  `docs/research/deepseek-api-capabilities.md` —— **该文件已于 2026-09-29 删除**）。改造前的三个问题各自都会让命中率归零：
 
   | 问题 | 现在 |
   |---|---|
@@ -1567,7 +1591,9 @@
   - 新增 `tests/test_cache.py`（14 项）：前缀逐字节稳定、摘要只前进、折叠确实缩短上下文、
     两种 usage 口径都吃下、无缓存字段时按全 miss 记（**宁可低估命中率也不虚报省钱**）。
 
-- **自建 `web_search` 工具**（用户目标 ②，结论见 [核查文档](docs/research/deepseek-api-capabilities.md) §2）。
+- **自建 `web_search` 工具**（用户目标 ②，结论见 `docs/research/deepseek-api-capabilities.md` §2
+  —— **该文件已于 2026-09-29 删除**；结论已落在
+  `docs/PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） 的 `websearch` 一行）。
   用户问"DeepSeek API 是否支持联网搜索"——**不支持**，两处官方文档互证：
   Responses API 的 Tools 表把 `web_search` 等内置工具列为**忽略**，API 参考里 `tools`
   参数写着 "Built-in tool types are ignored"。那条"`web_search_call` item 仍会被还原"
@@ -2187,14 +2213,14 @@
 
 - **清除仓库中的客户/环境标识与个人身份信息（含提交历史重写）**：真实部署域名、客户租户名、
   内网地址、真机账号名全部替换为文档占位值。⚠️ **本次重写了全部提交历史（所有分支与标签），
-  提交 SHA 全变** —— 协作者必须按 [`docs/HISTORY-REWRITE-NOTICE.md`](docs/HISTORY-REWRITE-NOTICE.md)
+  提交 SHA 全变** —— 协作者必须按 `docs/HISTORY-REWRITE-NOTICE.md`（**该文件已于 2026-09-29 删除**）
   迁移本地副本，不要 merge 旧历史。
   - 替换规则（工作区与全历史一并执行）：真实平台/部署域名 → `*.example.com`；客户租户名 →
     `example-config`；环境代号 → `demo-val`；中文租户名 → `示例租户`；内网地址 →
     `192.0.2.10`（RFC 5737 文档网段）；真机管理员账号名 → `dev-admin`；真机普通账号名 →
     `dev-user`；Java 包标识里的个人标识 → `com.example`；商业 VPN 产品名 → `VPN`；
     文档叙述中的 `jizi-dragon` → `example-org`。
-    原文清单见 [`docs/HISTORY-REWRITE-NOTICE.md`](docs/HISTORY-REWRITE-NOTICE.md)。
+    原文清单见 `docs/HISTORY-REWRITE-NOTICE.md`（**该文件已于 2026-09-29 删除**）。
   - **刻意保留的功能锚点**（改了会坏自动更新/发布）：`desktop/package.json` 的 `publish.owner`、
     `desktop/proxy.js` 的 `PROBE_URL`、`tools/publish_release.py` 的 `REPO`、
     `tools/verify_update_proxy.js` 的资产 URL 基准。该标识本就公开写在仓库 URL 里。
@@ -2342,7 +2368,7 @@
   读一遍再回写，回写结果仍需良构——这是「标准 drawio」的最终判据。
 - **新增 `workbench/services/paths.py`**：`safe_path_component()` / `resolve_within()`，
   作为外部输入进入路径成分的统一收口点（详见 Fixed 段的路径穿越条目）。
-- **新建 [`docs/INSIGHT-SPEC.md`](docs/INSIGHT-SPEC.md)**：平台洞察（insight）的**功能定位与产品能力规格**——
+- **新建 `docs/INSIGHT-SPEC.md`（**该文件已于 2026-09-29 删除**）**：平台洞察（insight）的**功能定位与产品能力规格**——
   定位（只读配置理解引擎，与配置工厂共用同一套 API 知识体系）、5 项核心能力与非目标、
   平台知识层的目标结构与端点表唯一化、产物与存储模型（可配工作区根目录 + `<对象code>/<时间戳>/` + `manifest.json`）、
   6 条已知边界（含「进入条件为描述级」这一产品能力天花板）、验收标准与 4 项质量门禁、数据与重构纪律。
@@ -2375,7 +2401,7 @@
     附「我想改 X，该动哪里」速查表。
   - **新建** [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md)：安装与扩展装载、五个模块的操作步骤、
     两条登录路径的差异说明（用户 Chrome vs 内置 Chromium）、数据位置与安全须知、11 组 FAQ。
-  - **新建** [`docs/EXTENSION-PLANE.md`](docs/EXTENSION-PLANE.md)：扩展侧权威文档——六平面隔离原理、
+  - **新建** `docs/EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**）：扩展侧权威文档——六平面隔离原理、
     与上游的差异对照、桌面↔扩展三面协议（数据面/指令面/状态面）及**四条必读护栏**、
     私有改造史、验证基线、安全边界（含平台侧不可根治的越权方向）。
   - **新建** 10 篇 ADR [`docs/adr/`](docs/adr/)：SQLite 选型（承接原 `docs/数据层决策.md`）、
@@ -2393,7 +2419,7 @@
   `extensions/quick-login/package-lock.json` 的 version **实测已是 `0.3.5`**（原文与 `CONTRIBUTING.md`
   均称停在 `0.2.20`；只有 `desktop/package-lock.json` 确实仍是 `0.2.1`）；
   `CONTRIBUTING.md` 的 `uvx ruff check .` 一行补注「本机 `uv`/`ruff` 均不存在，该门禁当前无法执行」。
-- **[`docs/CODEBASE_OVERVIEW.md`](docs/CODEBASE_OVERVIEW.md) 复核重写**：原锚定 v0.2.2（落后 8 个版本，
+- **`docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 复核重写**：原锚定 v0.2.2（落后 8 个版本，
   其「11 个路由域 / 迁移 1-11 / Inno Setup / 50 测试函数 / 双写版本号」均已失效），本轮按代码实测重写并
   锚定 `d0efa84`（v0.3.5）。行数口径改为**物理行数**；补齐验收基线实测（`pytest` **63 passed / 1 failed**、
   `verify_packaging.py` **8/8**、`ruff` 无法执行）与完整风险台账；并加注 `AGENT.md` 承接说明。
@@ -2421,7 +2447,7 @@
   的偏低口径（`Get-Content | Measure-Object -Line` 会跳过空行；`workbench/**.py` 实为 10,172 行而非 8,167）。
   删除后按变更频率重新落位：
   - **§5 环境坑 22 条 → 新建 [`docs/PITFALLS.md`](docs/PITFALLS.md)**（只增不改，机构记忆）；
-  - **§2 代码地图 / §3 六条红线 / §4 已知问题台账 → [`docs/CODEBASE_OVERVIEW.md`](docs/CODEBASE_OVERVIEW.md)**
+  - **§2 代码地图 / §3 六条红线 / §4 已知问题台账 → `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**）**
     ——台账编号 **C/S/T/B/D 原样保留**，以免打断 `docs/API.md`、`docs/SCHEMA.md` 与 7 篇 ADR 中按编号的既有引用；
   - §7 验收基线 → 同文件「验收基线实测」与 [`CONTRIBUTING.md`](CONTRIBUTING.md) §7；
   - §6 数据与运行时目录 → [`docs/SCHEMA.md`](docs/SCHEMA.md) / [`docs/CONFIG.md`](docs/CONFIG.md)（原本已在那里）。

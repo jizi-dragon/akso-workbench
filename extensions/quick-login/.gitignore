@@ -3,9 +3,6 @@ dist/
 *.log
 probe/
 tmp/
-packages/engine/dist/
-packages/engine/data/
-packages/engine/profiles/
 
-# ·Ö·¢°ü²»Èë¿â£¨¼û docs ´ò°üËµÃ÷£©
+# æ‰“åŒ…äº§ç‰©ä¸å…¥åº“ï¼ˆè§ docs/EXTENSION-INSTALL.md çš„æ‰“åŒ…è¯´æ˜ï¼‰
 quicklogin-chrome-*.zip

@@ -7,7 +7,7 @@
 > **表达不了** SSE 事件序列、长轮询挂起语义、`seq` 游标与产物下载路径守卫——这三类恰是最易踩坑处，见 §12。
 >
 > 相关文档：[SCHEMA.md](SCHEMA.md)（表与跨进程数据契约）、[CONFIG.md](CONFIG.md)（端口与环境变量）、
-> [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md)（风险台账）、[EXTENSION-PLANE.md](EXTENSION-PLANE.md)（扩展侧机制）。
+> `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**）（风险台账）、`EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**）（扩展侧机制）。
 
 ## 0. 拓扑与约定
 
@@ -78,7 +78,7 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 > （`usage` 事件只在收尾发一次，刷新就没了）。
 
 - `adoptRate`：`feedback==1 的比例 × 100` 取整；无任何评分时为 `null`。
-- `apiKey` 明文回传（本机信任边界内的既有契约）——**这是 web 版能力的遗留形态**，见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账。
+- `apiKey` 明文回传（本机信任边界内的既有契约）——**这是 web 版能力的遗留形态**，见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账。
 - 设置读写唯一入口是 `services/settings.py`；DB 键固定为 `apiKey` / `model` / `temperature`。
 
 ### 2.1 模型名归一（`deepseek-v4-flash` → `deepseek-flash`）
@@ -87,7 +87,8 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 （原文 "temporarily routed"，见 [DeepSeek 更新日志](https://api-docs.deepseek.com/zh-cn/updates)）。
 本工作台在**读与写两处**都做归一，所以接口回给你的一律是现行名；**行为不变**（同模型同价格）。
 完整核查（含**联网搜索到底支不支持**的结论）见
-[research/deepseek-api-capabilities.md](research/deepseek-api-capabilities.md)。
+`docs/research/deepseek-api-capabilities.md`（**该文件已于 2026-09-29 删除**；
+可用 `git show <删除前提交>:docs/research/deepseek-api-capabilities.md` 取回）。
 
 ### 2.2 系统提示词
 
@@ -124,7 +125,7 @@ POST /api/chat/stream   Content-Type: application/json
 ## 3.1 附件（用户交给 agent 的文件/图片）`/api/attachments`（`routes_attachments.py`）
 
 > 2026-09-22 用户下达的核心能力：用户会直接传图片或文件（word / excel / pdf / markdown）给 agent。
-> 方案与判据见 [AGENT-FILE-INPUT-PLAN.md](AGENT-FILE-INPUT-PLAN.md)。
+> 方案与判据见 `AGENT-FILE-INPUT-PLAN.md`（**该文件已于 2026-09-29 删除**）。
 
 | 方法 | 路径 | 请求 | 响应 |
 |---|---|---|---|
@@ -180,7 +181,7 @@ POST /api/chat/stream   Content-Type: application/json
   `adapters/akso-cc.json`（文件名是「这份存档对应哪个来源项目」的引用真源，
   `repoPathEnv=AKSO_CC_REPO` 指向它）。2026-09-14 由上游项目名 `akso-cc` 改名为 `insight`——
   能力已是本工作台自己的，接口与界面上都不该再出现上游项目名。
-- ⚠️ `status` 映射可读性存疑：`全过 → "ok"`、`全挂 → "degraded"`、`部分挂 → "missing"`（见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账）。
+- ⚠️ `status` 映射可读性存疑：`全过 → "ok"`、`全挂 → "degraded"`、`部分挂 → "missing"`（见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账）。
 
 ## 6. 对象分析 `/api/insight`（`routes_insight.py`）
 
@@ -244,9 +245,9 @@ POST /api/chat/stream   Content-Type: application/json
 >
 > 本节**刻意保留 §7 这个编号**（不重排 §8 起的编号）：仓库里多处交叉引用按号指向
 > §10–§19（含[只增不改的 ADR](adr/)），重排编号会让它们静默指错节。
-> 平台侧的知识没有随代码消失：[PLATFORM-OPERATIONS-LEARNED.md](PLATFORM-OPERATIONS-LEARNED.md)（平台事实台账）、
-> [FACTORY-PLATFORM-COGNITION.md](FACTORY-PLATFORM-COGNITION.md)（平台配置面认知）、
-> [factory-tuning/reports/](../factory-tuning/reports/)（真机取证报告存档）。
+> 平台侧的知识没有随代码消失：`PLATFORM-OPERATIONS-LEARNED.md`（**该文件已于 2026-09-29 删除**）（平台事实台账）、
+> `FACTORY-PLATFORM-COGNITION.md`（**该文件已于 2026-09-29 删除**）（平台配置面认知）。
+> 原始真机取证报告（`factory-tuning/reports/`）**已于 2026-09-29 删除** —— 结论已全部并进上面两份。
 
 ## 8. 账号库 `/api/accounts`（`routes_accounts.py`）
 
@@ -319,7 +320,7 @@ autologin, has_token, monitoring, monitor_log}`；
 
 > **单一事实源**：工具清单来自**工具插件中枢** `plugin_api.ToolHub`（`workbench/plugins/`
 > 四个插件装配，共 18 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
-> schema、审计三处读的是同一份定义。插件 SDK 契约见 [PLUGIN-SDK.md](PLUGIN-SDK.md)。
+> schema、审计三处读的是同一份定义。插件 SDK 契约见 `PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**）。
 
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
@@ -345,7 +346,7 @@ autologin, has_token, monitoring, monitor_log}`；
 | 409 | `needs_confirmation`——模型自己发起实时确认（`request_user_confirmation`）。HTTP 面**不等待答复**，答复走 `/pending/*` | `{detail:{pendingId,confirm:{question,details,timeoutS,target},message}}` |
 | 502 | 执行期失败（平台侧/超时） | `{detail:{tool,status,error,...}}` |
 
-**风险分级与确认门**（详见 [PLUGIN-SDK.md](PLUGIN-SDK.md) §4）：
+**风险分级与确认门**（详见 `PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） §4）：
 
 - `risk=read` 直接执行；`risk=write|dangerous` **没有单次令牌绝不执行**。
 - 令牌兑换链：`invoke` 得 409+`pendingId` → `approve` 得 `approvalToken` → 原样重投 `invoke`。
@@ -487,7 +488,8 @@ autologin, has_token, monitoring, monitor_log}`；
 - **`usage` 在 final/error 之后单独发**：命中量要等所有模型调用（工具轮次 + 历史摘要重算）
   都结束才是完整答案，提前发会给出一个偏低的数字。字段：
   `{calls, promptTokens, cacheHitTokens, cacheMissTokens, completionTokens, reasoningTokens,
-  hitRate, summaryCalls}`（见 §2.3 与 [research/deepseek-api-capabilities.md](research/deepseek-api-capabilities.md)）
+  hitRate, summaryCalls}`（见 §2.3 与 `docs/research/deepseek-api-capabilities.md`
+  —— **该文件已于 2026-09-29 删除**）
   **加上上下文用量**（2026-09-22，输入框下方那行常驻指标用）：
   `{contextTokens, contextWindow, contextThreshold, contextRatio}` ——
   `contextTokens` 取**平台回的 `prompt_tokens`**（最近一次调用），**不是估算**：
@@ -535,7 +537,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - **路径守卫**：`artifact_dir` 与 `name` 都 `.resolve()`，再断言
   `str(target).startswith(str(artifact_dir))`。
   ⚠️ **这是纯字符串前缀比较，未补路径分隔符**——`.../insight/abc` 会「包含」`.../insight/abc_evil`。
-  本地单人场景风险低，但**新增类似端点时应改用 `Path.is_relative_to()`**。见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账。
+  本地单人场景风险低，但**新增类似端点时应改用 `Path.is_relative_to()`**。见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账。
 
 ### 12.5 浏览器操作串行化（`/api/browser/*`、`/api/monitor/*`）
 
@@ -544,7 +546,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - **事件回调内禁止连接调用**（`response.text()` / `page.evaluate` 重入 = worker 死锁）——
   Monitor 的事件只入队，在 worker 作业间隙统一 `drain()`。
 - 超时：`monitor_start` 为 90s（可能触发开户），其余多数作业**无超时**——
-  页面操作卡住时 HTTP 请求会一直挂着（见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账）。
+  页面操作卡住时 HTTP 请求会一直挂着（见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账）。
 - CDP 模式三律：`remote-debugging-port` 必须 app ready 前设置（**故端口在 `app.whenReady` 里协商完立即设**）；**先到壳控制服务 `/windows` 开户再 connect**；
   Playwright 实例由 `_CdpState` 单一持有（同线程第二个 sync 实例会死锁）。
 
@@ -559,7 +561,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - `monitor_start` 会**确保托管会话在线**（不存在则自动开户），因此耗时较长（`_submit(timeout=90)`）。
 - 产物落 `runtime/monitor/<account_id8>-<YYYYmmdd-HHMMSS>/`。录制引擎三级降噪：
   `dropped` / `trimmed` / `full`（真机验收：248 请求捕获 → 238/2/8）。
-- 会话关闭**不会自动停监听**（`_close_entry` 未清理 `entry.monitor`）——见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账。
+- 会话关闭**不会自动停监听**（`_close_entry` 未清理 `entry.monitor`）——见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账。
 
 ## 14. 更新面 `/api/update`（`routes_update.py`）
 
@@ -702,7 +704,7 @@ autologin, has_token, monitoring, monitor_log}`；
 | 脚本式 | `script: scripts/x.py` | 在**沙箱子进程**里跑包内 Python 脚本 | **≥ `write`**（只升不降，故每次调用都要过确认门） |
 
 脚本式的入口约定（stdin 收 JSON 入参 → stdout 出 `{"ok":…}` → stderr 只进日志 →
-**退出码优先于 stdout**）与沙箱策略口径见 [PLUGIN-SDK.md](PLUGIN-SDK.md) §1。
+**退出码优先于 stdout**）与沙箱策略口径见 `PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） §1。
 
 **三条硬性质**（都有回归断言）：
 
@@ -749,4 +751,4 @@ curl.exe -s "http://127.0.0.1:18765/api/logs/tail?level=ERROR&n=50"
 `413` = 当天日志超过导出上限（32 MB，请直接取文件）。
 
 > 配置项（`WORKBENCH_LOG_*`）与日志文件清单见 [CONFIG.md](CONFIG.md) §2.1 / §6；
-> 设计与分期见 [LOGGING-DESIGN.md](LOGGING-DESIGN.md)。
+> 设计与分期见 `LOGGING-DESIGN.md`（**该文件已于 2026-09-29 删除**）。

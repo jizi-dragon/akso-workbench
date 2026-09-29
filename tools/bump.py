@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 INIT_PY = ROOT / "workbench" / "__init__.py"
 DESKTOP_PKG = ROOT / "desktop" / "package.json"
-EXT_MANIFEST = ROOT / "extensions" / "quick-login" / "packages" / "extension" / "manifest.json"
+EXT_MANIFEST = ROOT / "extensions" / "quick-login" / "manifest.json"
 EXT_PACKAGE = ROOT / "extensions" / "quick-login" / "package.json"
 VERSION_CACHE = ROOT / ".version.json"
 

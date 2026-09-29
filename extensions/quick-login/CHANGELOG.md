@@ -1,19 +1,37 @@
-﻿# Changelog · 扩展执行面（本项目私有改造）
+# Changelog · 浏览器扩展（执行面）
 
-> 本文件只记录**本项目对上游 quick-login 的改造**，不含上游自身的功能演进史。
-> 上游完整发布史（v2.5 → v3.13.2，490 行，含每次缺陷的根因定位与取证结论）见
-> [`docs/archive/UPSTREAM-CHANGELOG.md`](docs/archive/UPSTREAM-CHANGELOG.md)。
+> **性质**：本文件记录**本项目对扩展的改造**。它曾经只记"对上游 quick-login 的私有改造"，
+> 并另存一份上游发布史——**那段协作已于 2026-09-29 终止**：
+> 上游文档存档（7 份 + 490 行上游 CHANGELOG）已删除，本项目**不再同步上游**。
+> 想看更早的上游发布史，只能 `git show <2026-09-29 之前的提交>:extensions/quick-login/docs/archive/`。
 >
-> **为什么拆两份**：扩展的版本号已与本项目统一（`tools/bump.py` 五写同步，当前 `0.3.4`），
-> 而上游是独立递增（最后 `3.13.2`）。混在一份里会导致读者无法判断某条记录属于谁，
-> 也无法在上游发布新版时做差异比对。**同步上游新版本时，请先读本文件确认要重新摘除哪些改造。**
->
-> 格式：本项目扩展相关变更按根 `CHANGELOG.md` 的版本号组织；凡「上游同步会带回来」的条目
-> 标注 ⚠️，表示下次同步上游时必须重新执行一次摘除。
+> 格式：扩展相关变更按根 `CHANGELOG.md` 的版本号组织。
+> 凡 ⚠️ 标注的条目是**"删掉过、别误加回来"**的清单——上游协作期内它表示"下次同步上游要再摘一次"，
+> 现在它的含义只剩**"这是刻意移除的，不要恢复"**。
 
 ## 未发布
 
-（无）
+- **模块化收口**（2026-09-29，用户下达「将 quick-login 当做正常模块进行开发」）：
+  - 目录：`packages/extension/{src,manifest.json}` → 模块根（`src/` + `manifest.json`）；
+    `tools/e2e/probe-page.mjs` → `scripts/probe-page.mjs`。`packages/` 与 `tools/` 两层消失。
+  - `package.json` 去掉 `workspaces`（只剩一个包，这层是 fork 期的考古层）；
+    包名 `quick-login` → `workbench-extension`。
+  - `.gitignore` **重写**：它此前**不是合法 UTF-8**（168 字节含 17 个 U+FFFD，中文注释是 GBK），
+    并含三行指向**不存在**目录的 `packages/engine/*`（上游 v3.9.2 就删了本地引擎）。
+  - `package-lock.json` 版本 **0.3.5 → 0.3.13**（漂了 8 个版本；
+    `bump.py check` 的同步清单**不含它**，所以没人发现）。
+  - 上游文档存档 `docs/`（7 份 `UPSTREAM-*` + README）**删除**；
+    本 README 与 CHANGELOG 去掉 fork/同步叙述。
+  - 路径同步：`scripts/build.mjs`、`tsconfig.json`、`tools/bump.py`、`tools/build.ps1`、
+    `tools/verify_host_logic.mjs`。判据：`npm run typecheck` + `npm run build` +
+    `verify_host_logic.mjs` 22/22 + `verify_packaging.py` 13/13。
+  - **修一个坏掉的脚本**：`scripts/probe-page.mjs` 第 15 行 `import { chromium } from 'playwright-core'`
+    **一直解析不到**（`playwright-core` 既不在本模块 `node_modules`、也不在全局），
+    实测 `ERR_MODULE_NOT_FOUND` —— 也就是说这个探针**当时是跑不起来的**。
+    现补进 `devDependencies`，并**钉在 `1.62.0`**（不是 `^` 范围）：它不装自己的浏览器，
+    而是用 Python 侧 `playwright` 装的那份 Chromium（`executablePath` 覆盖 ⇒
+    Playwright 的版本注册表在这里不起作用），所以对齐 Python 侧的 `1.62.0` 才能让
+    `npm install` + `uv sync` 在任何机器上复现同一配对。理由与判据写在 README。
 
 ## 0.3.4（2026-09-11）
 
@@ -110,7 +128,12 @@
 | 0.2.1 | 上游同步：**版本真源改为 manifest**；六平面隔离开启 |
 | 0.1.2 | 混合架构落地：桌面写扩展指令（`par.open` + `launch-chrome`），扩展执行面做会话切换与自动填表 |
 
-## 同步上游的操作清单
+## 同步上游的操作清单（**2026-09-29 作废**）
+
+> ⚠️ 上游协作已终止，**本节不再执行**。保留它是为了说明一件事：
+> 下面这份清单当年是"每次同步都要重跑一遍"的活流程，而**它依赖上游文档存档存在**——
+> 存档既已删除，这条流程整体失效。历史原文见
+> `git show <2026-09-29 之前的提交>:extensions/quick-login/CHANGELOG.md`。
 
 同步上游新版本时，按顺序执行：
 
@@ -120,3 +143,6 @@
 3. `npm run typecheck && npm run build`，再跑 `tools/verify_extension_boot.py`、
    `tools/verify_extension_isolation.py`、`tools/verify_host_logic.mjs`（三者全绿才算通过）。
 4. 更新根侧 `docs/EXTENSION-PLANE.md` 的「与上游差异」与「私有改造史」两节。
+
+> ★ 第 2 步那份"别误加回来"的清单**今天仍然有效**——它已上移到本节之外的 ⚠️ 条目里，
+> 与"要不要同步上游"无关。

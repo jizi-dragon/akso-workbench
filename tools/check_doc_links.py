@@ -21,7 +21,7 @@ F73/F78 两条的**证据格**引用一个**已删除的 ADR-0018**，而那个�
 | 类别 | 例子 | 断链算不算缺陷 |
 |---|---|---|
 | **活文档** | `AGENTS.md` / `docs/CORE-*.md` / `docs/adr/**` / `README` / 各 `docs/*.md` | ✅ 算。它们描述的是**今天**，链接必须今天就能点开 |
-| **存档** | vendor 手册、上游 README 副本、**带日期的真机取证报告** | ❌ 不算。链接反映的是**当时**的状态；改它 = **篡改记录** |
+| **存档** | 上游 README 副本、**带日期的真机取证报告** | ❌ 不算。链接反映的是**当时**的状态；改它 = **篡改记录** |
 
 ★ 第二类不是"懒得修"：那些是**带日期的历史证据**（`factory-tuning/reports/**`
 记录的是 2026-09-21/22 真机上发生了什么），而报告里指向 `docs/FACTORY-VERIFICATION-PLAN.md`
@@ -30,6 +30,12 @@ F73/F78 两条的**证据格**引用一个**已删除的 ADR-0018**，而那个�
 
 ⇒ 存档的处置是：**在存档自己的 README 里写明"里面的链接可能指向已移除的文件"**，
 而不是去改那些报告。
+
+> **⚠️ 2026-09-29：`factory-tuning/reports/**` 本身已被删除。**
+> 那个目录的原文件不再存在，本条规则现在只对 `factory-tuning/README.md`
+> 与 `extensions/quick-login/docs/archive/` 生效；`ARCHIVES` 里保留 `factory-tuning`
+> 是因为它的**父目录仍在**（判据只断言 ARCHIVES 路径存在，不是断言里面还非得有报告）。
+> 取回那些报告：`git show <删除前提交>:factory-tuning/reports/...`。
 
 ## 用法
 
@@ -51,11 +57,16 @@ SKIP_DIRS = {".git", ".venv", "node_modules", "dist", "build", "__pycache__",
              "tmp", ".pytest_cache", ".ruff_cache"}
 
 ARCHIVES = (
-    "docs/gaia平台技术手册",                 # vendor 的 Gaia V3.8 产品手册（逐字存档）
-    "extensions/quick-login/docs/archive",  # 上游 README 的副本
     "factory-tuning",                       # 带日期的真机取证报告（历史证据）
 )
-"""**存档**：链接反映当时状态，不参与判定。每一处都要说得出理由（见模块文档串）。"""
+"""**存档**：链接反映当时状态，不参与判定。每一处都要说得出理由（见模块文档串）。
+
+> **2026-09-29 移除一条**：`docs/gaia平台技术手册`（vendor 的 Gaia V3.8 产品手册，186 文件）
+> 已从仓库删除 —— 平台语义已由 [FACTORY-PLATFORM-COGNITION.md](../docs/FACTORY-PLATFORM-COGNITION.md)
+> 承接。★ 删目录**必须同时删这里的条目**：有一条判据断言「`ARCHIVES` 里的路径必须真实存在」，
+> 留着它会让门禁红，而红的原因（"存档路径不存在"）与真正的问题（"手册已删"）对不上号。
+> 取回原文：`git show <删除前提交>:docs/gaia平台技术手册/...`。
+"""
 
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 ADR_REF = re.compile(r"ADR[- ]?(\d{4})")

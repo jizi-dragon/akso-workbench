@@ -1,12 +1,9 @@
-﻿{
-  "name": "quick-login",
+{
+  "name": "workbench-extension",
   "version": "0.3.13",
   "private": true,
-  "description": "QuickLogin：纯浏览器多账号并行（六平面隔离 + 账号轮盘）",
+  "description": "Workbench 浏览器扩展（执行面）：六平面隔离 + 账号轮盘 + 自动填表",
   "type": "module",
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
@@ -16,6 +13,7 @@
     "@types/chrome": "^0.0.280",
     "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
+    "playwright-core": "1.62.0",
     "typescript": "^5.6.0"
   },
   "allowScripts": {

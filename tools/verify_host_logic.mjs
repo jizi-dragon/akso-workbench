@@ -16,7 +16,7 @@ import { pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 const EXT_PKG = path.join(ROOT, 'extensions', 'quick-login', 'package.json');
-const HOST_TS = path.join(ROOT, 'extensions', 'quick-login', 'packages', 'extension', 'src', 'background', 'core', 'host.ts');
+const HOST_TS = path.join(ROOT, 'extensions', 'quick-login', 'src', 'background', 'core', 'host.ts');
 
 // esbuild 只装在扩展工作区里：用 createRequire 从该 package 解析
 const require = createRequire(EXT_PKG);

@@ -108,7 +108,7 @@
 >
 > ℹ️ `adapters/*.json` 的 `$schema` 字段原指向已删除的 `docs/模块契约.md#adapters`，
 > 已于本轮文档重构改为 `docs/SCHEMA.md`（只动这一个字段）。除此之外这些文件属于
-> 「原项目只读引用」区，改动需谨慎（见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的「原四仓库只读」约定）。
+> 「原项目只读引用」区，改动需谨慎（见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的「原四仓库只读」约定）。
 
 ### 2.1 运行日志（`workbench/logging_setup.py`，2026-09-20 引入）
 
@@ -191,7 +191,7 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | 平台异步鉴权复核 | `2.5` s | `online` 后稍候复核，避免 online → 自愈 的状态抖动 |
 | `page.goto` 超时 | `30000` ms | |
 | `monitor_start` 作业超时 | `90` s | **唯一**显式设超时的公共 API（因为可能触发开户） |
-| 其余作业超时 | **无** | 页面卡住时 HTTP 请求会一直挂着——见 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) 的风险台账 |
+| 其余作业超时 | **无** | 页面卡住时 HTTP 请求会一直挂着——见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账 |
 | 事件 drain 时机 | 每个作业结束后 | Monitor 的 `monitor.drain()`（[ADR-0006](adr/0006-browser-pool-single-thread.md)） |
 
 ### 4.3 `routes_extension`（执行面）
@@ -230,7 +230,7 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | 轮盘窗尺寸 | `desktop/main.js` | `560 × 640`，无边框透明置顶，失焦自动关（400ms 启动宽限） | |
 | 主窗尺寸 | `desktop/main.js` | `1440 × 920`（最小 1100×700） | |
 | 会话窗尺寸 | `desktop/main.js` | `1440 × 900` | |
-| 全局热键 | `desktop/main.js` | `Alt+Q`（轮盘单例 toggle） | **桌面独占**：扩展已不注册任何快捷键（2026-09-14 删 manifest `commands`），桌面未运行时不会弹出浏览器版轮盘（见 [EXTENSION-PLANE.md](EXTENSION-PLANE.md) §8） |
+| 全局热键 | `desktop/main.js` | `Alt+Q`（轮盘单例 toggle） | **桌面独占**：扩展已不注册任何快捷键（2026-09-14 删 manifest `commands`），桌面未运行时不会弹出浏览器版轮盘（见 `EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**） §8） |
 | 服务就绪等待 | `desktop/main.js` `waitReady` | 40 s，每 300ms 探一次 `/` | 超时则主窗加载 `blank.html?error=timeout` |
 | 更新检查节拍 | `desktop/updater.js` | 启动后 **20s** 首查，之后每 **6h** | |
 | 壳状态心跳 | `desktop/updater.js` | 15 s 写一次 `shell-state.json` | 服务侧 TTL 60s |

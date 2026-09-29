@@ -17,5 +17,5 @@
     "isolatedModules": true,
     "noEmit": true
   },
-  "include": ["packages/extension/src"]
+  "include": ["src"]
 }

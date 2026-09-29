@@ -103,7 +103,7 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | 5 | `docs/TOOLS.md` 清单块 | 跑 `gen_tools_doc.py --write`，别手写 |
 
 写一个新插件的契约细节（`Plugin` / `ToolContext` / `audit_extra` / 依赖方向）见
-**[PLUGIN-SDK.md](PLUGIN-SDK.md)**。三条硬纪律先记住：
+**`PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**）**。三条硬纪律先记住：
 
 1. **依赖方向单向**：`plugins → plugin_api`，`plugin_api.py` 里不许出现平台术语、不许 import 插件、连 `db` 都不 import；
 2. **同步阻塞调用必须挪线程**：handler 是 `async`，而 `egmp.client` / `browser_pool` / `proc` 都是同步的——一律 `asyncio.to_thread`，否则整个服务卡住（不是报错）；
@@ -123,7 +123,7 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 > ⚠️ **`/api/agent/*` 只承诺产品自带的工具**。用户从共享库装的 Skill 也会出现在
 > `hub.specs()` 里、也走同一套确认门与审计，但它们**不进 §2 的生成清单**——
 > 否则每台装过 Skill 的机器都会让 §1 的门禁变红（`gen_tools_doc.py` 只数 `hub.core_specs()`）。
-> 两者的分工见 [PLUGIN-SDK.md](PLUGIN-SDK.md) §1 的两层表。
+> 两者的分工见 `PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） §1 的两层表。
 
 ### 5.1 Skill 装上来的工具，算不算"工具"？
 

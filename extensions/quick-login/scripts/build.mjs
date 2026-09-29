@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist');
-const extDir = path.join(root, 'packages', 'extension');
+const extDir = root;
 const watch = process.argv.includes('--watch');
 
 rmSync(dist, { recursive: true, force: true });

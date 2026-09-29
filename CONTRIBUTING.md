@@ -4,7 +4,7 @@
 > 原则先于工具——**先契约后实现，先复现后修复**。
 >
 > 使用者请看 [README.md](README.md) 与 [docs/USER-MANUAL.md](docs/USER-MANUAL.md)；
-> 接手维护请先读 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md)（代码地图 / 红线 / 风险台账）
+> 接手维护请先读 `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**）（代码地图 / 红线 / 风险台账）
 > 与 [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑 / 排障速查）。
 >
 > **用 AI 助手改这个仓库时**：把 **[AGENTS.md](AGENTS.md)** 交给它（多数工具会自动读取根目录的该文件）。
@@ -146,7 +146,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 - 真源 = `pyproject.toml` 的 `version`；**只走 `tools/bump.py`**，勿手改单一文件。
 - `bump.py push` = PATCH+1；`bump.py build` = MINOR+1 且 PATCH 重置 1（`0.0.2 → 0.1.1 → 0.2.1`）。
 - **五写同步**：`pyproject.toml` + `workbench/__init__.py` + `desktop/package.json`
-  + 扩展 `packages/extension/manifest.json` + 扩展工作区 `package.json`（+ `.version.json` 缓存）。
+  + 扩展 `manifest.json` + 扩展模块 `package.json`（+ `.version.json` 缓存）。
 - 桌面端与扩展**同号发布**：`extStale` 判定（「扩展是否需要重新加载」）建立在此约定上。
 - ⚠️ **`desktop/package-lock.json` 的 version 字段是陈旧的**（实测 `0.2.1`，而 `package.json` 已是
   `0.3.5`），`bump.py` 不写它。**已知问题**——`npm install` 会静默改写它，让发布 commit 后工作区立刻变脏。
@@ -157,7 +157,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 `build.ps1` 用 `--publish never` 只出产物。发布走 `tools/publish_release.py`（推荐，带三道自查：
 `latest.yml` 版本号 == 发布版本、其 `sha512` == 安装包实际 sha512、指向本次安装包），
 或网页手工上传 `setup.exe + latest.yml`（+ blockmap）。完整步骤与 `GH_TOKEN` 获取路径见
-[docs/EXTENSION-INSTALL.md](docs/EXTENSION-INSTALL.md) 第四节。
+`docs/EXTENSION-INSTALL.md`（**该文件已于 2026-09-29 删除**） 第四节。
 
 > ⚠️ 更新器**匿名**读 Release ⇒ 仓库必须公开。
 > ⚠️ 发布错清单会让**所有客户端**更新失败——所以那三道自查不要跳过。
@@ -237,7 +237,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 
 ## 5. 开发流程与分工边界
 
-1. **动代码前**先读 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md)（红线与约定）与
+1. **动代码前**先读 `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**）（红线与约定）与
    [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑）、[docs/SCHEMA.md](docs/SCHEMA.md)（数据契约）；
 2. 新路由挂到 `workbench/api/__init__.py::_optional_routers`（可选路由）或同级注册；
 3. 新增/修改端点 → 同步 [docs/API.md](docs/API.md)；新增配置项 → 同步 [docs/CONFIG.md](docs/CONFIG.md)；
@@ -275,7 +275,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
   [ADR-0004](docs/adr/0004-extension-as-execution-plane.md) 末尾的写法）。
   **标注后补不是免责**，是让读者分清"决策当时的认知"与"后来的认知"。
 - **本仓已有的对照成果**：外部项目的系统梳理在
-  [docs/OPENSOURCE-LANDSCAPE.md](docs/OPENSOURCE-LANDSCAPE.md)（含 star 实测数据与许可红线）。
+  `docs/OPENSOURCE-LANDSCAPE.md`（**该文件已于 2026-09-29 删除**）（含 star 实测数据与许可红线）。
   **写新 ADR 前先翻一遍它**——很可能那个问题已经调研过了。
 
 ## 6. 已知状态（诚实记录，勿当绿灯）
@@ -291,7 +291,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 | ⚠️ **仓库可见性** | **2026-09-17 匿名探测：`api.github.com/repos/jizi-dragon/akso-mogul` → 404**（同一 owner 的 `quick-login` / `akso-cc` / `mogul_simulator` 均 200 = 公开）。而 §3.3 与 `publish_release.py` 都要求**仓库公开** | **一旦开启自动更新（`WORKBENCH_AUTO_UPDATE=1`）并指向 GitHub，更新链路会失效**（更新器匿名读 Release）。详见 [docs/VERSIONING.md](docs/VERSIONING.md) §3 |
 | `adapters/*.json` 的 `$schema` | 原指向已删除的 `docs/模块契约.md#adapters` | ✅ 本轮已改为 `docs/SCHEMA.md`（仅此字段） |
 
-> 完整清单（含代码级缺陷与安全风险）见 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) 的风险台账。
+> 完整清单（含代码级缺陷与安全风险）见 `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账。
 
 ## 7. 验收纪律
 
@@ -319,7 +319,7 @@ node tools\verify_host_logic.mjs                                 # host/端口�
 改动**端口 / 壳启动链路 / 扩展的桌面地址**后必跑 `node tools\verify_port_broker.mjs`（离线 27 项，不需要 Electron；**先退出工作台**，否则固定端口被占，脚本的前置检查会拦下并提示）。**端口是固定常量、不顺延**（[ADR-0012](docs/adr/0012-fixed-ports.md)）——改端口号属于破坏性变更，必须同步壳侧 `desktop/ports.js::PORTS`、Python 侧 `workbench/config.py` 与 `tests/test_ports_contract.py`。
 改动**洞察页产物预览（`static/js/artifact-preview.js` / markdown 渲染 / drawio 画布）**后必跑
 `.\.venv\Scripts\python.exe tools\verify_insight_preview.py`（14 项，真浏览器断言渲染结果：表格列口径、引用块、drawio 节点与连线计数、多页切页、零 JS 错误）。它自起服务、用临时数据目录与专用端口（18791），**不需要先退出工作台**。
-完整验收基线（含真机项与 E2E）见本文 §7 与 [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) 的「验收基线实测」。
+完整验收基线（含真机项与 E2E）见本文 §7 与 `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的「验收基线实测」。
 
 - 阶段验收以 `tests/` 机器验收为准，不靠肉眼；
 - 真机验收（真实 eGMP 平台）只在测试环境账号上做；

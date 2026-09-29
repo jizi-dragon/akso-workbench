@@ -201,7 +201,7 @@ if (-not $SkipPush) {
     }
 
     git add pyproject.toml workbench\__init__.py desktop\package.json .version.json uv.lock `
-        extensions\quick-login\package.json extensions\quick-login\packages\extension\manifest.json
+        extensions\quick-login\package.json extensions\quick-login\manifest.json
     # ⚠ commit 的 stderr **不再吞掉**：旧实现的 `2>$null` 会把"git 身份没配"这类
     # 硬错误伪装成"无改动可提交"，于是后面静默跳过打 tag。
     $commitOut = & git commit -m "chore(release): v$version" 2>&1

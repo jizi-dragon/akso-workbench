@@ -20,7 +20,7 @@
 > **本仓最该被看见的不是功能清单，而是它的工程纪律**：能力以「工具插件」形式接入，
 > `ToolHub` 是**唯一扩展面**（不是 router、不是模块清单）；工具定义**只有一处**，
 > 对话的 function calling、HTTP 调用面、审计表三处都从它读。契约与三个真踩过的坑见
-> [docs/PLUGIN-SDK.md](docs/PLUGIN-SDK.md)。
+> `docs/PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**）。
 
 ## 四个来源项目的沉淀
 
@@ -36,7 +36,7 @@
 >
 > **改名记录（2026-09-22，用户下达）**：界面上的「平台洞察」更名为「**对象分析**」。
 > **只改显示名**——模块 id（`insight`）、工具名（`insight_*`）、接口路径（`/api/insight`）、
-> 落盘目录（`…/Workbench/洞察`）全部不变，所以更早的 [规范](docs/INSIGHT-SPEC.md)、
+> 落盘目录（`…/Workbench/洞察`）全部不变，所以更早的 `docs/INSIGHT-SPEC.md`（**该文件已于 2026-09-29 删除**）、
 > [ADR](docs/adr/) 与坑清单里出现旧名是**正常的**。
 
 > ## ⚠️ 2026-09-22：「配置工厂」整体移除，平台知识留下
@@ -48,11 +48,11 @@
 > 目前只剩测试在走，这是一个**已知的、刻意的**状态。
 >
 > **平台知识没有跟着丢**，它被迁进了两份不依赖任何产品代码的文档：
-> [docs/PLATFORM-OPERATIONS-LEARNED.md](docs/PLATFORM-OPERATIONS-LEARNED.md)（平台事实台账：
+> `docs/PLATFORM-OPERATIONS-LEARNED.md`（**该文件已于 2026-09-29 删除**）（平台事实台账：
 > 端点、真机线格式、样本量 `n`、平台约束）与
-> [docs/FACTORY-PLATFORM-COGNITION.md](docs/FACTORY-PLATFORM-COGNITION.md)（手册语义与配置分层认知），
-> 原始真机取证报告在 [factory-tuning/reports/](factory-tuning/reports/)。
-> 采集与分析工具链（`factory-tuning/tools`、`analyze`、`data`）随之下线——**报告留着，工具删了**。
+> `docs/FACTORY-PLATFORM-COGNITION.md`（**该文件已于 2026-09-29 删除**）（手册语义与配置分层认知），
+> 原始真机取证报告（`factory-tuning/reports/`）**已于 2026-09-29 删除**——结论先并进上面两份台账，再删的原文。
+> 采集与分析工具链（`factory-tuning/tools`、`analyze`、`data`）随之下线——**工具先删，报告后删**。
 
 ## 走向"可复用工作台"：能力都在插件与工具层
 
@@ -63,7 +63,7 @@
 | 想知道什么 | 去哪看 |
 |---|---|
 | **现在到底有哪些工具、谁在管、怎么加一个** | **[docs/TOOLS.md](docs/TOOLS.md)**（工具注册表 + 变更纪律 + 机检） |
-| 怎么写一个工具插件、风险分级与确认门语义 | [docs/PLUGIN-SDK.md](docs/PLUGIN-SDK.md) |
+| 怎么写一个工具插件、风险分级与确认门语义 | `docs/PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） |
 | **不受信代码（上传的 Skill）在哪跑、拦得住什么** | **[ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md)** + 工作台「沙箱」页（策略/状态/执行审计） |
 | **怎么上传 / 安装 / 卸载 Skill** | 工作台「Skill 管理」页 + `docs/TOOLS.md`（工具治理纪律） |
 | 为什么平台相关代码集中在 `services/egmp/` | [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md)、[ADR-0013](docs/adr/0013-brand-neutralization-workbench.md) |
@@ -79,7 +79,7 @@
 3. **装载浏览器扩展**（一次性，为了「多账号快捷登录」）：
    托盘右键「安装浏览器扩展…」或账号中心右上角的提示条 → 按弹窗四步操作
    （打开开发者模式 → 加载已解压的扩展程序 → 选中已自动打开的目录）。
-   详细图文步骤见 [docs/EXTENSION-INSTALL.md](docs/EXTENSION-INSTALL.md)。
+   详细图文步骤见 `docs/EXTENSION-INSTALL.md`（**该文件已于 2026-09-29 删除**）。
 4. 之后：账号由桌面端自动下发到扩展，桌面端升级时会提示你点一次扩展卡片上的「重新加载」。
 
 > 升级：**应用默认不自动更新**（2026-09-15 定稿：不再自己替换自己，避免"跑的到底是哪个副本"难以判断）。
@@ -100,7 +100,7 @@
 
 > ⚠️ **协作者注意**：2026-09-14 做过一次**提交历史重写**（清除客户/环境标识与个人身份信息），
 > 提交 SHA 已全部改变。若你的本地副本早于该时间点，请先读
-> [`docs/HISTORY-REWRITE-NOTICE.md`](docs/HISTORY-REWRITE-NOTICE.md) 再拉取——**不要 merge 旧历史**。
+> `docs/HISTORY-REWRITE-NOTICE.md`（**该文件已于 2026-09-29 删除**） 再拉取——**不要 merge 旧历史**。
 
 | 文档 | 给谁看 | 内容 |
 |---|---|---|
@@ -109,22 +109,19 @@
 | [docs/CONFIG.md](docs/CONFIG.md) | 现场排障、要调行为的人 | 五层配置全覆盖（环境变量 / settings 键 / 代码参数 / 数据目录文件 / 前端常量） |
 | [docs/SCHEMA.md](docs/SCHEMA.md) | 要改数据层的人 | DB 迁移 1–24、表结构、跨进程数据契约、改表清单 |
 | [docs/adr/](docs/adr/) | 想知道「为什么这么设计」的人 | **16 篇**架构决策记录 ＋ `0000-template.md`（含被放弃的方案与重新评估的触发器） |
-| [docs/EXTENSION-PLANE.md](docs/EXTENSION-PLANE.md) | 要改浏览器扩展的人 | 六平面隔离原理、桌面↔扩展协议、私有改造史、安全边界 |
-| [docs/EXTENSION-INSTALL.md](docs/EXTENSION-INSTALL.md) | 首次装载扩展的人 | 逐步图文 + **为什么不能静默一键装**的实证 |
-| [docs/INSIGHT-SPEC.md](docs/INSIGHT-SPEC.md) | 要发展/扩展平台洞察的人 | **洞察的功能定位与产品能力契约**：能力范围与非目标、平台知识层、产物与存储、已知边界、验收标准 |
+| `docs/EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**） | 要改浏览器扩展的人 | 六平面隔离原理、桌面↔扩展协议、私有改造史、安全边界 |
+| `docs/EXTENSION-INSTALL.md`（**该文件已于 2026-09-29 删除**） | 首次装载扩展的人 | 逐步图文 + **为什么不能静默一键装**的实证 |
+| `docs/INSIGHT-SPEC.md`（**该文件已于 2026-09-29 删除**） | 要发展/扩展平台洞察的人 | **洞察的功能定位与产品能力契约**：能力范围与非目标、平台知识层、产物与存储、已知边界、验收标准 |
 | **[docs/TOOLS.md](docs/TOOLS.md)** | **要给 Agent 加工具 / 想知道有哪些工具的人** | **工具注册表与治理**：全量清单（插件 × 风险 × 确认门）、加一个工具要动的文件、机检命令、历史漂移教训 |
-| **[docs/PLUGIN-SDK.md](docs/PLUGIN-SDK.md)** | **要给 Agent 加工具的人** | **插件 SDK 契约**：`ToolHub` 唯一公开面、怎么写一个工具插件、风险分级与危险操作确认门、审计、启动自检、三个真踩过的坑 |
-| [docs/FRAMEWORK-INVENTORY.md](docs/FRAMEWORK-INVENTORY.md) | 要复用本仓、或要把业务与框架切开的人 | **框架清单与判据**：换一个目标平台后哪些文件不需要改、业务耦合点在哪几处、特征词扫描门禁 |
-| [docs/PLUGIN-UPSTREAM-RESEARCH.md](docs/PLUGIN-UPSTREAM-RESEARCH.md) | 要动宿主/插件边界的人 | 宿主与插件分离的先例、可行性判断、POC 验证与陷阱清单（`FRAMEWORK-INVENTORY` 的姊妹篇） |
-| [docs/research/core-plugin-separation-research.md](docs/research/core-plugin-separation-research.md) | 想知道「插件 API 为什么长这样」的人 | 插件扩展面的可行性研究与**权利边界**论证（`plugin_api.py` 文件头的依据） |
-| [docs/research/deepseek-api-capabilities.md](docs/research/deepseek-api-capabilities.md) | 要调模型/算成本的人 | **DeepSeek API 能力核查**：现行模型名（V4.1-Flash）、**联网搜索到底有没有**（没有）、上下文缓存的命中规则与 50 倍价差 |
-| [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) | 接手维护的人（含 AI 助手） | 代码地图、架构与数据流、红线与约定、风险台账、验收基线实测 |
+| **`docs/PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**）** | **要给 Agent 加工具的人** | **插件 SDK 契约**：`ToolHub` 唯一公开面、怎么写一个工具插件、风险分级与危险操作确认门、审计、启动自检、三个真踩过的坑 |
+| `docs/FRAMEWORK-INVENTORY.md`（**该文件已于 2026-09-29 删除**） | 要复用本仓、或要把业务与框架切开的人 | **框架清单与判据**：换一个目标平台后哪些文件不需要改、业务耦合点在哪几处、特征词扫描门禁 |
+| `docs/PLUGIN-UPSTREAM-RESEARCH.md`（**该文件已于 2026-09-29 删除**） | 要动宿主/插件边界的人 | 宿主与插件分离的先例、可行性判断、POC 验证与陷阱清单（`FRAMEWORK-INVENTORY` 的姊妹篇） |
+| `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） | 接手维护的人（含 AI 助手） | 代码地图、架构与数据流、红线与约定、风险台账、验收基线实测 |
 | **[docs/VERSIONING.md](docs/VERSIONING.md)** | **管版本 / 发版 / 想接 GitHub 自动化的人** | **版本管理机制**（三层拆解）、现状实测（tag 缺口、更新链路的公开仓库前提）、GitHub 能帮哪一段、三个方案选型、可直接照抄的 CI 与打 tag 做法 |
-| [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **89 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改；其中一批的主体已随配置工厂移除，文件头有对照表） |
+| [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **120 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改；其中一批的主体已随配置工厂移除，文件头有对照表） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发者 | 环境搭建、依赖变更、构建发布、代码规约、验收纪律 |
 | [CHANGELOG.md](CHANGELOG.md) | 所有人 | 版本变更明细（含每次事故的根因） |
-| [docs/HISTORY-REWRITE-NOTICE.md](docs/HISTORY-REWRITE-NOTICE.md) | 协作者（受影响者） | 历史重写说明 + 本地副本迁移步骤（勿 merge 旧历史） |
-| [docs/archive/](docs/archive/) | 追溯用 | 已失效的历史文档（勿作现状依据） |
+| `docs/HISTORY-REWRITE-NOTICE.md`（**该文件已于 2026-09-29 删除**） | 协作者（受影响者） | 历史重写说明 + 本地副本迁移步骤（勿 merge 旧历史） |
 
 ## 环境要求
 
