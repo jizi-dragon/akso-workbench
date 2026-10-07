@@ -11,6 +11,13 @@ import { CONTENT_MESSAGE } from '../shared/constants';
  */
 let credentials: { username: string; password: string } | null = null;
 
+/** 索取「待取凭据」的重试节奏（见 `requestCredentials`）。
+ *
+ * 8 × 400ms ≈ 3.2s，远小于凭据条目 60s 的 TTL —— 只用来盖住
+ * 「`par.open` 写完条目」与「页面 document_idle」之间那几十毫秒的窗口。 */
+const AUTO_LOGIN_CLAIM_RETRIES = 8;
+const AUTO_LOGIN_CLAIM_RETRY_MS = 400;
+
 function isTopFrame(): boolean {
   return window === window.top;
 }
@@ -98,6 +105,28 @@ function checkAgreement(): void {
   if (box && !box.checked) {
     box.click();
   }
+}
+
+/** 页面里有没有口令框（顶层或同源 iframe）—— 这是"这是凭据表单"的硬特征。
+ *
+ * ★ 为什么它比"按钮文案"更适合当门槛：按钮文案是**任意**的（登录/提交/确定/Continue…），
+ *   而"有一个 `input[type=password]`"是凭据表单的结构特征。
+ *   `findSubmit()` 仍然是**点击**的前提（识别不出就不点），但不再是**填写**的前提。
+ */
+function hasPasswordField(): boolean {
+  if (document.querySelector('input[type="password"]')) {
+    return true;
+  }
+  for (const frame of Array.from(document.querySelectorAll('iframe'))) {
+    try {
+      if (frame.contentDocument?.querySelector('input[type="password"]')) {
+        return true;
+      }
+    } catch {
+      // 跨域 iframe：读不到是正常的
+    }
+  }
+  return false;
 }
 
 function findSubmit(): HTMLButtonElement | null {
@@ -223,8 +252,14 @@ function runTopFrameFlow(): void {
       return;
     }
     const submit = findSubmit();
-    if (!submit) {
-      // 登录成功跳转后按钮消失；点击过至少一次即认为流程已交付
+    if (!submit && !hasPasswordField()) {
+      // ★★ 这里以前是 `if (!submit)` —— 而 `findSubmit()` 只认「登录 / login / submit」
+      //   这类字样的按钮，于是**按钮文案不在词表里的登录页一个字都不填**，而且**不报任何错**
+      //   （实测：把按钮写成「提交」的改密码页，用户名与口令全空）。
+      //   ⇒ 现在的口径：**只要页面有口令框就照填**（那是凭据表单的硬特征）；
+      //     识别不出按钮就走不到点击那一步（下面 `if (!submit …)` 已兜住）⇒
+      //     **填但不自动提交**，把最后一下留给用户。
+      //   登录成功跳转后按钮消失；点击过至少一次即认为流程已交付
       if (attempts > 0 && ++absentStreak >= 2) {
         report('submit-gone', { attempts });
         stop('submit-gone');
@@ -260,7 +295,10 @@ function runTopFrameFlow(): void {
       }
       errorFlagged = false; // 观察期结束
     }
-    if ((submit as HTMLButtonElement).disabled) {
+    // ★★ `submit` 现在**允许为 null**（见上面那道门槛：有口令框就往下走），
+    //   所以这里必须先判空 —— 否则 `(null as HTMLButtonElement).disabled` **抛 TypeError**，
+    //   而它抛在 `setInterval(attempt)` 里 ⇒ 每 800ms 抛一次、永远不填、也不报错。
+    if (submit && (submit as HTMLButtonElement).disabled) {
       return; // 表单校验未过（按钮禁用），等待
     }
     // 齐备门槛：任一字段未就绪（iframe 未挂载等）绝不点击——空密码提交即「密码错误」
@@ -352,9 +390,19 @@ async function requestCredentials(attempt = 0): Promise<void> {
       start();
     }
   } catch {
-    if (attempt < 3) {
-      window.setTimeout(() => void requestCredentials(attempt + 1), 500);
-    }
+    // SW 未就绪 / 消息通道抖动：落到下面统一重试
+  }
+  // ★★ **响应为 `null` 也必须重试**（旧实现只在**抛异常**时重试 ⇒ 这一页永远不填表）。
+  //
+  // 背景：`par.open` 把「待取凭据」写进 `storage.session` 是在 `chrome.tabs.create`
+  // **之后**，中间还隔着一次 PBKDF2 十万轮的解密；而**本机/内网的登录页几毫秒就到
+  // `document_idle`** ⇒ 索取时条目还没写出来，得到 `null`。
+  // 旧实现拿到 `null` 就静默结束 ⇒ 用户看到的是"点了登录没反应"，排查会一路去怀疑站点。
+  //
+  // ⚠️ 重试是安全的：`claimPendingAutoLogin` **先删后判**，条目不存在时那次删除是空操作，
+  // 所以"这次没拿到"不会把后面那次的机会用掉。次数上限远小于条目 60s 的 TTL。
+  if (attempt < AUTO_LOGIN_CLAIM_RETRIES) {
+    window.setTimeout(() => void requestCredentials(attempt + 1), AUTO_LOGIN_CLAIM_RETRY_MS);
   }
 }
 
