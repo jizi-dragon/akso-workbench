@@ -1163,3 +1163,155 @@ async function boot() {
 boot().catch((e) => alert(`加载失败：${e.message}`));
 setInterval(() => refresh().catch(() => {}), 3000);
 updateBatchBar();
+
+
+/* ==================== 云端账号库：登录与身份 ====================
+ *
+ * 设备流（RFC 8628）：点登录 -> 开系统浏览器 -> 服务端那边登录即自动批准
+ * -> 这里按 interval 轮询取会话。**用户一个字都不用抄。**
+ *
+ * ★ `deviceCode` 只活在这个闭包里：它是换令牌的凭据，**不写进 DOM、不落存储**。
+ *   页面能看到的只有给人看的批准页 URL。
+ * ★ 取消必须**立刻叫醒等待中的那一拍**（见 wake()）—— 否则用户点了取消
+ *   还要傻等一个 interval 才看到反应，那和没反应一样。
+ */
+(function vaultLogin() {
+  const POLL_FALLBACK_MS = 3000;
+  const chip = document.getElementById('vault-chip');
+  if (!chip) return;
+  const av = document.getElementById('vault-avatar');
+  const nm = document.getElementById('vault-name');
+  const panel = document.getElementById('vault-panel');
+  const body = document.getElementById('vault-body');
+  const btnCancel = document.getElementById('vault-cancel');
+  const btnReopen = document.getElementById('vault-reopen');
+  const btnLogout = document.getElementById('vault-logout');
+
+  let deviceCode = null;      // 只在内存里
+  let verifyUrl = '';
+  let timer = null;
+  let cancelled = false;
+
+  const paint = (st) => {
+    if (st.loggedIn) {
+      const name = st.displayName || st.email || '已登录';
+      nm.textContent = name;
+      chip.title = `云端账号库 · ${st.email}`;
+      if (st.avatar) av.innerHTML = `<img src="${st.avatar}" alt="">`;
+      else av.textContent = name.slice(0, 1).toUpperCase();
+      btnLogout.classList.remove('hidden');
+    } else {
+      nm.textContent = '登录云端账号库';
+      chip.title = '云端账号库';
+      av.textContent = '';
+      av.innerHTML = '';
+      btnLogout.classList.add('hidden');
+    }
+  };
+
+  const say = (text, isErr) => {
+    body.innerHTML = `<p class="${isErr ? 'vault-err' : 'vault-hint'}"></p>`;
+    body.firstChild.textContent = text;
+  };
+
+  /* 取消/重试要能**立刻**打断正在等的那一拍 */
+  let wake = null;
+  const sleep = (ms) => new Promise((res) => {
+    timer = setTimeout(() => { timer = null; wake = null; res(); }, ms);
+    wake = () => { clearTimeout(timer); timer = null; wake = null; res(); };
+  });
+
+  async function status() {
+    try {
+      const st = await api('/api/vault/status');
+      paint(st);
+      return st;
+    } catch { return { loggedIn: false }; }
+  }
+
+  async function start() {
+    panel.classList.remove('hidden');
+    cancelled = false;
+    say('正在向云端申请授权…');
+    let info;
+    try {
+      info = await api('/api/vault/login/start', { method: 'POST', body: { clientName: '桌面工作台' } });
+    } catch (e) {
+      say(`申请失败：${e.message}`, true);
+      return;
+    }
+    deviceCode = info.deviceCode;
+    verifyUrl = info.verificationUrl || '';
+    // 打开系统浏览器。桌面壳的 setWindowOpenHandler 会把 http(s) 交给系统浏览器。
+    window.open(verifyUrl, '_blank', 'noopener');
+    say('已在浏览器打开授权页。请在那边登录 —— 登录后这里会自动完成，不必抄任何码。');
+    poll(Math.max(1, Math.round((info.interval || 3))) * 1000, (info.expiresIn || 600) * 1000);
+  }
+
+  async function poll(intervalMs, leftMs) {
+    const startedAt = Date.now();
+    while (!cancelled && deviceCode) {
+      if (Date.now() - startedAt > leftMs) {
+        await cancel(true);
+        say('授权超时了。请重新点一次「登录云端账号库」。', true);
+        return;
+      }
+      await sleep(intervalMs);
+      if (cancelled || !deviceCode) return;
+      let res;
+      try {
+        res = await api('/api/vault/login/poll', { method: 'POST', body: { deviceCode } });
+      } catch (e) {
+        await cancel(true);
+        say(`云端不可用：${e.message}`, true);
+        return;
+      }
+      if (res.status === 'pending') continue;
+      deviceCode = null;
+      if (res.status === 'approved') {
+        say('已登录。');
+        await status();
+        setTimeout(() => panel.classList.add('hidden'), 900);
+        return;
+      }
+      const why = {
+        denied: '你在网页上拒绝了这个设备。',
+        expired: '授权码已过期，请重新发起。',
+        consumed: '这次授权已经被用掉了，请重新发起。',
+        unknown: '这次授权已失效，请重新发起。',
+      }[res.status] || '授权未完成。';
+      say(why, true);
+      return;
+    }
+  }
+
+  async function cancel(silent) {
+    cancelled = true;
+    if (wake) wake();
+    if (timer) { clearTimeout(timer); timer = null; }
+    deviceCode = null;
+    if (!silent) panel.classList.add('hidden');
+    /* ★ 这里**只停本地轮询，不调服务端**。
+       设备流里设备**无法自行吊销**自己的码（`device-deny` 是网页端的动作，
+       要用户已登录才能调）。所以正确做法是让它自然过期（10 分钟）。
+       曾经这里写成再调一次 `login/start` —— 那是**新建**一条授权记录，
+       后果是：用户随后在浏览器批准了旧的码，服务端就凭空多出一个
+       **没人领取的会话**，要躺满 7 天才失效。 */
+  }
+
+  chip.addEventListener('click', async () => {
+    const st = await status();
+    if (st.loggedIn) { panel.classList.toggle('hidden'); if (!panel.classList.contains('hidden')) say('已登录云端账号库。'); return; }
+    start();
+  });
+  btnReopen.addEventListener('click', () => { if (verifyUrl) window.open(verifyUrl, '_blank', 'noopener'); });
+  btnCancel.addEventListener('click', () => cancel(false));
+  btnLogout.addEventListener('click', async () => {
+    try { await api('/api/vault/logout', { method: 'POST' }); } catch {}
+    await status();
+    say('已退出云端。');
+  });
+  window.addEventListener('beforeunload', () => { cancelled = true; if (wake) wake(); });
+
+  status();
+})();

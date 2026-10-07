@@ -1090,3 +1090,46 @@
 .rt-cache { font-size: 11px; color: var(--lime); }
 .rt-cache-miss { color: var(--red); }
 .rt-error { font-size: 11px; color: var(--red); }
+
+/* ==================== 云端账号库：身份胶囊与登录面板 ====================
+   胶囊的形态与网站在线端保持一致（头像 + 名字），这样同一件事在两个界面上
+   长得一样。未登录时不显示空圆 —— 空圆看起来像"加载失败"。 */
+.vault-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 3px 11px 3px 3px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent;
+  color: var(--text-2); font: inherit; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; transition: border-color .14s ease, background .14s ease, color .14s ease;
+}
+.vault-chip:hover { border-color: var(--teal); background: var(--teal-dim); color: var(--teal); }
+.vault-avatar {
+  width: 22px; height: 22px; border-radius: 50%; flex: none;
+  display: inline-grid; place-items: center; font-size: 11px; font-weight: 700;
+  background: var(--teal-dim); color: var(--teal); overflow: hidden;
+}
+.vault-avatar:empty { display: none; }
+.vault-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.vault-panel {
+  position: absolute; top: calc(100% + 8px); right: 14px; z-index: 40;
+  width: min(380px, 92vw); background: var(--ink-2);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-l);
+  box-shadow: var(--shadow-panel); overflow: hidden;
+}
+.vault-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 14px; border-bottom: 1px solid var(--line);
+  font-size: 13px; font-weight: 600;
+}
+.vault-x {
+  border: none; background: transparent; cursor: pointer;
+  font-size: 18px; line-height: 1; color: var(--text-3); padding: 0 2px;
+}
+.vault-x:hover { color: var(--text-1); }
+.vault-body { padding: 14px; }
+.vault-hint { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--text-2); }
+.vault-err { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--red); }
+.vault-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+  padding: 10px 14px; border-top: 1px solid var(--line);
+}
