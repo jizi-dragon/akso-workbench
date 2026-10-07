@@ -353,13 +353,3 @@ def _run(req: ExecRequest) -> ExecResult:
         cwd=str(cwd),
         notes=notes,
     )
-
-
-async def run_async(req: ExecRequest) -> ExecResult:
-    """异步包装：同步阻塞调用必须挪线程，否则阻塞事件循环。
-
-    这是本仓的既有纪律（见 `docs/TOOLS.md` §4 第 2 条），沙箱执行同样适用。
-    """
-    import asyncio
-
-    return await asyncio.to_thread(run, req)

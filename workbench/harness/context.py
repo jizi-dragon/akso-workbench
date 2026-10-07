@@ -176,16 +176,3 @@ def split_turns(messages: list[dict]) -> list[list[dict]]:
     if current:
         turns.append(current)
     return turns
-
-
-def build_context(messages: list[dict], window_tokens: int, threshold: float, keep_recent_turns: int):
-    """返回 (kept_turns, truncated_messages)。未超阈值时 truncated 为空。"""
-    limit = int(window_tokens * threshold)
-    if estimate_messages_tokens(messages) <= limit:
-        return messages, []
-    turns = split_turns(messages)
-    if len(turns) <= keep_recent_turns:
-        return messages, []
-    kept = [m for turn in turns[-keep_recent_turns:] for m in turn]
-    truncated = [m for turn in turns[:-keep_recent_turns] for m in turn]
-    return kept, truncated

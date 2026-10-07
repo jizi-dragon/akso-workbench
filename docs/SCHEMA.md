@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
   逐列适配并对未知 `NOT NULL` 无默认值列填中性值，避免接管旧库时 IntegrityError。
 - `checksum` 按 sqlx 语义取迁移 SQL 的 SHA-384 摘要。
 
-### 迁移账（1–24，全部已应用）
+### 迁移账（1–25，全部已应用）
 
 | # | 名称 | 内容 | 血统 |
 |---|---|---|---|
@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | 22 | `summary_boundary_excludes_system` | 数据行改写：`conversation_context.summarized_upto` 整体减 1 —— 摘要边界改为**不含首条 system**计数（I15：折叠永不吞 system） | [ADR-0019](adr/0019-in-turn-context-and-budget-governance.md) |
 | 23 | `messages_kind` | `messages` 增 `kind`（`message` / `error` / `tool`）；并把历史里 `role='assistant' AND content LIKE '错误：%'` 的行标成 `error`（**启发式**，边界写在迁移注释里） | [ADR-0019](adr/0019-in-turn-context-and-budget-governance.md) §5.4b |
 | 24 | `agent_run_and_span` | 新建 `agent_run`（一次用户回合：状态/步数/用量/耗时）与 `agent_span`（该回合每一步：model/tool/sandbox/confirm + 耗时/状态/attrs）+ 索引 | [ADR-0021](adr/0021-agent-run-and-otel-export.md) |
+| 25 | `transcript_columns` | `messages` 增 `tool_calls` / `tool_call_id` / `seq`（**工具轨迹落库 + 定序**）；`seq` 由 `rowid` 回填；建 `idx_messages_conv_seq(conversation_id, seq)` | 核心 Agent 计划 §7.3 |
 
 > **迁移 1–6 为 fork 历史，按不可变纪律保留**。其中 `documents` / `doc_chunks` / `qa_metrics`
 > 的知识库相关功能**源码已删**（表仅留存、不再读写）；`knowledge_nodes` / `knowledge_edges` /
@@ -91,7 +92,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | `created_at` | INTEGER | NOT NULL | 毫秒时间戳 |
 | `updated_at` | INTEGER | NOT NULL | 毫秒时间戳 |
 
-### 3.2 `messages` — 对话消息（迁移 1；`kind` 由**迁移 23** 加）
+### 3.2 `messages` — 对话消息（迁移 1；`kind` 由**迁移 23** 加，工具轨迹三列由**迁移 25** 加）
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
@@ -100,7 +101,17 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | `role` | TEXT | NOT NULL | `user` / `assistant` / `system` / `tool`（还有 `note`：**界面事件**，见 `approvals.NOTE_ROLE`） |
 | `content` | TEXT | NOT NULL | |
 | `kind` | TEXT | NOT NULL DEFAULT `'message'` | **与 `role` 正交**：`message`（真实对话）/ `error`（系统记录）/ `tool`（预留）。**`error` 绝不进模型上下文** |
-| `created_at` | INTEGER | NOT NULL | |
+| `tool_calls` | TEXT | NULL（迁移 25） | `assistant` 那一条上的工具调用数组（JSON 串）。与 `tool_call_id` **必须成对**（不变量 I16） |
+| `tool_call_id` | TEXT | NULL（迁移 25） | `role='tool'` 那一条回填的是哪次调用 |
+| `seq` | INTEGER | NULL（迁移 25） | **会话内单调递增的排序键**。★ 排序**必须用它**、不能用毫秒时间戳——一个回合里 `assistant` 与它的 `tool` 结果背靠背写入，并列是常态，而没有决胜列的 `ORDER BY` 在 SQL 语义上**未定义** |
+| `created_at` | INTEGER | NOT NULL | 毫秒时间戳（**只用于显示，不用于排序**） |
+
+索引：`idx_messages_conv_seq(conversation_id, seq)`（迁移 25）。
+
+> **为什么 `seq` 要单独一列（迁移 25）**：`created_at` 是**毫秒**，并列无法避免；
+> 旧实现按 `created_at` 排序，顺序**随索引扫描路径变化**——而顺序错了会让整段历史
+> **非法**（API 报 `tool_call_id not found`）。判据见
+> `pytest tests/test_transcript_roundtrip.py -o addopts=""`（**7 条**）。
 
 > **`kind='error'` 的语义（迁移 23）**：一轮失败时落的那条「错误：…」。
 > 它带着 `role='assistant'` **只是为了界面能照常渲染成气泡**，而模型那侧由

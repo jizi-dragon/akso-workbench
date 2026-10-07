@@ -551,7 +551,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 | 文档数字与代码一致 | 靠人记，必然漂移 | **`gen_tools_doc.py` 机检**：文档清单 == 运行期中枢，且校验各文档里的"N 个工具" |
 | 启动自检 | 少见 | `verify_required_tools()` + `GET /api/agent/selfcheck`，把"打包漏收插件"提前到启动日志 |
 | 失败可见性 | 静默降级常见 | 插件装配失败进 `hub.failures` 并在两个端点暴露；沙箱拒绝也带完整审计信息 |
-| 决策留痕 | 散在 PR 描述里 | **16 份 ADR**，含"为什么不做"（D-3 / D-7 这类"诚实边界"条目） |
+| 决策留痕 | 散在 PR 描述里 | **22 份 ADR**，含"为什么不做"（D-3 / D-7 这类"诚实边界"条目） |
 | 坑的机构记忆 | 少见 | `PITFALLS.md` 只增不改，记真机环境坑与实测证据 |
 | CI | 常规 | 12 步，含解释器版本契约、工具清单门禁、打包静态检查 13 项 |
 
@@ -749,7 +749,7 @@ Codex 之所以必须提供 `unelevated` 回退，正是因为企业策略常常
 | 模型接入（L1） | `deepseek.py` **255 行** | — |
 | 工具规模 | **4 插件 / 18 core 工具**（**16 read · 2 write · 0 dangerous**） | `python tools/gen_tools_doc.py` |
 | HTTP 端点 | **99** | `@router.` 计数 |
-| 数据库迁移 | **1–24** | `workbench/db.py::MIGRATIONS` |
+| 数据库迁移 | **1–25** | `workbench/db.py::MIGRATIONS` |
 | **仓库全量** | `workbench/**.py` **85 文件 20,201 行**；前端 `static` js+css **25 文件 10,039 行**；扩展 TS **25 文件 5,917 行**；测试 **35 文件 10,216 行**；`tools/` **36 文件 6,846 行**（`.py`/`.mjs`/`.ps1`/`.js`）；Electron 壳 `desktop/*.js` **5 文件 1,697 行** | 同上 |
 | 测试 | **516 passed / 11 deselected**（默认跳过 slow 层）——**2026-09-18 记录，未重跑** | `pytest -o addopts="" -q -m "not slow"` |
 | 打包静态检查 | **13/13** | `tools/verify_packaging.py` |

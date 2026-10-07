@@ -19,7 +19,7 @@
 uv sync --extra dev --extra build   # 严格按 uv.lock 拉齐依赖（含国内镜像，无需自己配源）
 uv run playwright install chromium  # 托管浏览器内核（账号库/自动登录/监听需要）
 powershell -ExecutionPolicy Bypass -File tools\setup.ps1   # 环境自检（兼容 PS 5.1/7）
-uv run pytest                       # 382 项全绿即环境就绪
+uv run pytest                       # 1011 项全绿即环境就绪（2026-10-07 实测）
 cd desktop; npm install; cd ..       # 桌面壳（Electron）依赖
 cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建产物 dist/
 ```
@@ -111,8 +111,8 @@ cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建
 
 >
 > **ruff 现已全绿**（`uvx ruff check .` → All checks passed；`tools/*.py` 的 E402 是刻意豁免的引导式导入，
-> 见 `pyproject.toml` 的 `per-file-ignores`）。**验收基线是 493 项 pytest**（默认跳过 slow 层）+ **8 项 slow**
-> = **501 项**（`-o addopts=""` 一次跑全；2026-09-17 实测）——不是下面模板里的旧数字。
+> 见 `pyproject.toml` 的 `per-file-ignores`）。**验收基线是 1011 项 pytest / 1 skipped**（`-o addopts=""` 一次跑全，**含 slow 层**）
+> （2026-10-07 实测）——不是下面模板里的旧数字。
 > ⚠️ **`uv tool run ruff` 要联网取 ruff**：PyPI 直连 TLS 失败时（本机实测过
 > `tls handshake eof`）改用清华镜像——`uv tool run --index https://pypi.tuna.tsinghua.edu.cn/simple ruff check .`
 > （`pyproject.toml` 里那条镜像只对**项目依赖**生效，`uv tool run` 取的是工具，不吃它）。
@@ -182,8 +182,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 ### 3.4 构建前的秒级体检（必跑）
 
 ```powershell
-.\.venv\Scripts\python.exe tools\verify_packaging.py   # 9 项静态核对，当前 9/9 PASS
-.\.venv\Scripts\python.exe tools\verify_packaging.py   # 9 项静态核对，当前 9/9 PASS
+.\.venv\Scripts\python.exe tools\verify_packaging.py   # 13 项静态核对，当前 13/13 PASS
 .\.venv\Scripts\python.exe tools\gen_tools_doc.py      # 工具清单/数字门禁，当前 PASS
 ```
 
@@ -282,7 +281,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 
 | 项 | 现状 | 影响 |
 |---|---|---|
-| `tools/verify_packaging.py` | **9/9 PASS**（2026-09-16 新增 P7 插件登记对账）；**2026-09-17 起由 CI 自动调用**（`.github/workflows/ci.yml`），但 `build.ps1` 仍**不**调用它 | 构建链路上的断点已由 CI 兜住；**本机裸跑 `build.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑） |
+| `tools/verify_packaging.py` | **13/13 PASS**（2026-09-16 新增 P7 插件登记对账）；**2026-09-17 起由 CI 自动调用**（`.github/workflows/ci.yml`），但 `build.ps1` 仍**不**调用它 | 构建链路上的断点已由 CI 兜住；**本机裸跑 `build.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑） |
 | 文档里的工具/插件数字 | **已上机检**：`tools/gen_tools_doc.py` + `tests/test_tools_doc.py` 核对 `docs/TOOLS.md` 与运行期中枢，并扫活跃文档里的"N 个工具/插件" | 2026-09-15 曾四处文档同时写旧数字且由用户先发现（[docs/TOOLS.md](docs/TOOLS.md) §7） |
 | `desktop/package-lock.json` | version `0.2.1`（`package.json` 已 `0.3.12`）——`bump.py` 五写不含它 | `npm install` 会改写它，发布后工作区变脏；安装包命名不受影响（electron-builder 读 `package.json`） |
 | ~~`extensions/quick-login/package-lock.json`~~ | ~~version `0.2.20`~~ → **2026-09-13 实测已是 `0.3.5`，本条已失效** | 同上 |
@@ -296,11 +295,11 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 ## 7. 验收纪律
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest          # 382 项（2026-09-17 合并后实测全绿；含 test_plugin_api/test_cache/test_agent_loop/test_tools_doc）
-.\.venv\Scripts\python.exe tools\gen_tools_doc.py   # 工具清单与数字门禁（PASS：5 插件 / 20 工具）
+.\.venv\Scripts\python.exe -m pytest          # 1011 项（2026-10-07 实测全绿；含 test_plugin_api/test_cache/test_agent_loop/test_tools_doc）
+.\.venv\Scripts\python.exe tools\gen_tools_doc.py   # 工具清单与数字门禁（PASS：4 插件 / 18 工具）
 node tools\verify_port_broker.mjs             # 固定端口 + 占用判定（离线，不需要 Electron；**须先退出工作台**——它靠真占固定端口验判定）
 .\.venv\Scripts\ruff.exe check .               # All checks passed（★ 先探一次，见 §1；PITFALLS #50）
-.\.venv\Scripts\python.exe tools\verify_packaging.py   # 9/9
+.\.venv\Scripts\python.exe tools\verify_packaging.py   # 13/13
 ```
 
 > **`git pull` 之后先重建扩展再跑体检**：`extensions/quick-login/dist/` 是构建产物，
@@ -389,7 +388,7 @@ cd desktop; npm ci; cd ..
 cd extensions\quick-login; npm install; npm run build; cd ..\..
 
 # ② 每次开工前：确认基线是绿的（约 40 秒）
-.\.venv\Scripts\python.exe -m pytest -o addopts=""      # 596 passed
+.\.venv\Scripts\python.exe -m pytest -o addopts=""      # 1011 passed, 1 skipped
 .\.venv\Scripts\ruff.exe check .                        # ★ 先探一次，见 §1
 
 # ②b 改了生命周期/壳的启动链路时，补跑慢层（真起进程，约 10–30 秒）

@@ -172,7 +172,7 @@ def _attachment_parts(att_id: str, name: str, *, inline: bool) -> list[dict]:
 
     把图片或整份文档**每一轮都重发**会造成三件事同时发生：token 账单线性膨胀、
     上下文被同一份文件挤满、**前缀缓存失效**（每轮前缀都在变 ⇒ 命中率归零，成本 ×50，
-    `cache.py:143` 有明确警告）。所以历史轮只留一句"引用过它"，
+    `cache.py:191` 有明确警告）。所以历史轮只留一句"引用过它"，
     细节由模型用 `attachment_list` / `attachment_read` 回去取。
 
     ## 形状（`inline=True`）

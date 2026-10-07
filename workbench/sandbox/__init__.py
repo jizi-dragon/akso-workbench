@@ -35,7 +35,7 @@ from .policy import (
     is_sensitive_path,
     within_root,
 )
-from .runner import ALLOWED_EXECUTABLES, ExecRequest, ExecResult, run, run_async
+from .runner import ALLOWED_EXECUTABLES, ExecRequest, ExecResult, run
 
 __all__ = [
     "ALLOWED_EXECUTABLES",
@@ -54,6 +54,5 @@ __all__ = [
     "is_sensitive_path",
     "job_stats",
     "run",
-    "run_async",
     "within_root",
 ]

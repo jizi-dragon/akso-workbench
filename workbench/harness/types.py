@@ -8,9 +8,9 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 DEFAULT_MAX_STEPS = 40
 """一次用户消息里允许的**工具调用**次数上限（默认值）。
@@ -105,28 +105,12 @@ class AgentConfig(BaseModel):
         }
 
 
-class ToolCall(BaseModel):
-    """模型发起的一次工具调用（OpenAI function calling 增量聚合后的最终形态）。"""
-
-    id: str = ""
-    name: str = ""
-    arguments: str = "{}"
-
-
-class ToolResult(BaseModel):
-    """工具执行结果（is_error 时 content 为错误信息，作为观测回传给模型）。"""
-
-    tool_call_id: str = ""
-    content: str = ""
-    is_error: bool = False
-
-
 # ———— Agent 循环事件（与前端 SSE 协议一一对应） ————
 
 EventType = Literal[
     "token",      # 流式正文增量 {text}
     "thought",    # 工具调用轮次里模型的叙述 {text}
-    "action",     # 发起工具调用 {call: ToolCall, tool: {name,risk,plugin}, auditId}
+    "action",     # 发起工具调用 {call: {id,name,arguments}, tool: {name,risk,plugin}, auditId}
     "observation",# 工具结果 {result: {ok,summary,status}, invocation: {…}}
     "approval_required",  # 风险工具被确认门拦下 {pendingId, tool, risk, summary}
     "confirm_required",   # 模型主动请求实时确认 {pendingId, question, details, target, timeoutS}
@@ -136,8 +120,6 @@ EventType = Literal[
     "usage",      # 本轮用量汇总 {usage: {...}}（收尾时发一条，见 loop）
     "cancelled",  # ★ 用户请求停止，本轮在**两次动作之间**收尾 {message}（计划 §5.6）
 ]
-
-TokenEvent = Annotated[dict, Field]  # 占位说明；实际事件用 make_event 构造
 
 
 def make_event(event_type: EventType, **payload: Any) -> dict:
