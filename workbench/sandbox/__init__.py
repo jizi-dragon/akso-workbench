@@ -1,6 +1,6 @@
 """沙箱：不受信代码的**唯一执行底座**。
 
-决策依据见 [ADR-0014](../../docs/adr/0014-sandbox-for-untrusted-code.md)。
+决策依据见 [ADR-0014](../../docs/adr/0007-credentials-sandbox-and-trust.md)。
 
 ## 模块分工（依赖方向单向，不允许反向）
 

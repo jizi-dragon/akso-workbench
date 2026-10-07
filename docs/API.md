@@ -7,7 +7,7 @@
 > **表达不了** SSE 事件序列、长轮询挂起语义、`seq` 游标与产物下载路径守卫——这三类恰是最易踩坑处，见 §12。
 >
 > 相关文档：[SCHEMA.md](SCHEMA.md)（表与跨进程数据契约）、[CONFIG.md](CONFIG.md)（端口与环境变量）、
-> `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**）（风险台账）、`EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**）（扩展侧机制）。
+> `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**）（风险台账）、`EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**）（扩展侧机制）。
 
 ## 0. 拓扑与约定
 
@@ -21,8 +21,8 @@ FastAPI 服务（本文档主体）          18765
 Electron 内置 Chromium CDP          18766     ←── playwright connect_over_cdp
 ```
 
-> **端口是固定常量，不再协商、不顺延**（[ADR-0012](adr/0012-fixed-ports.md) 取代
-> [ADR-0011](adr/0011-port-and-session-negotiation.md) §D-1）。唯一真相来源是壳侧
+> **端口是固定常量，不再协商、不顺延**（[ADR-0012](adr/0011-port-governance.md) 取代
+> [ADR-0011](adr/0011-port-governance.md) §D-1）。唯一真相来源是壳侧
 > `desktop/ports.js` 的 `PORTS` 与 Python 侧 `workbench/config.py` 的默认值（两者一致性由
 > `tests/test_ports_contract.py` 钉住）。
 > **端口被占时应用报错退出**（说清占用者是谁），而不是换个号继续跑。
@@ -33,7 +33,7 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 
 | 项 | 约定 |
 |---|---|
-| 绑定 | `127.0.0.1` 回环。**`/extension/*` 需要访问令牌**（[ADR-0015](adr/0015-extension-access-token.md)，见 §11）；其余 `/api/*` 无认证、无 CSRF、无 CORS 配置——信任边界 = 本机（该取舍的理由见 ADR-0015 D-7） |
+| 绑定 | `127.0.0.1` 回环。**`/extension/*` 需要访问令牌**（[ADR-0015](adr/0002-browser-allocation-policy.md)，见 §11）；其余 `/api/*` 无认证、无 CSRF、无 CORS 配置——信任边界 = 本机（该取舍的理由见 ADR-0015 D-7） |
 | 时间戳 | 毫秒整数（`storage.now_ms()`） |
 | 字段命名 | 请求/响应默认 **camelCase**（`routes_settings` 用 pydantic alias 转换）；`account`/`env` 行**原样返回 snake_case 表列** + JOIN 出的 `env_name` / `env_base_url`，仅 `password_enc` 被剔除 |
 | 路径前缀 | `/api/*` 为业务面（`/api/shell/*` = 壳协作面，见 §11.2）；`/extension/*` 为执行面（**需令牌**） |
@@ -78,7 +78,7 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 > （`usage` 事件只在收尾发一次，刷新就没了）。
 
 - `adoptRate`：`feedback==1 的比例 × 100` 取整；无任何评分时为 `null`。
-- `apiKey` 明文回传（本机信任边界内的既有契约）——**这是 web 版能力的遗留形态**，见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账。
+- `apiKey` 明文回传（本机信任边界内的既有契约）——**这是 web 版能力的遗留形态**，见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账。
 - 设置读写唯一入口是 `services/settings.py`；DB 键固定为 `apiKey` / `model` / `temperature`。
 
 ### 2.1 模型名归一（`deepseek-v4-flash` → `deepseek-flash`）
@@ -181,7 +181,7 @@ POST /api/chat/stream   Content-Type: application/json
   `adapters/akso-cc.json`（文件名是「这份存档对应哪个来源项目」的引用真源，
   `repoPathEnv=AKSO_CC_REPO` 指向它）。2026-09-14 由上游项目名 `akso-cc` 改名为 `insight`——
   能力已是本工作台自己的，接口与界面上都不该再出现上游项目名。
-- ⚠️ `status` 映射可读性存疑：`全过 → "ok"`、`全挂 → "degraded"`、`部分挂 → "missing"`（见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账）。
+- ⚠️ `status` 映射可读性存疑：`全过 → "ok"`、`全挂 → "degraded"`、`部分挂 → "missing"`（见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账）。
 
 ## 6. 对象分析 `/api/insight`（`routes_insight.py`）
 
@@ -400,7 +400,7 @@ autologin, has_token, monitoring, monitor_log}`；
 
 ## 11. 执行面 `/extension`（`routes_extension.py`）
 
-> 🔐 **整段前缀需要访问令牌**（[ADR-0015](adr/0015-extension-access-token.md)，2026-09-17）。
+> 🔐 **整段前缀需要访问令牌**（[ADR-0015](adr/0002-browser-allocation-policy.md)，2026-09-17）。
 > 每个请求带 `X-Workbench-Token: <token>`；缺失/错误 → **401**，响应体带机器可读的
 > `code: "extension_auth_required"`（扩展端据此重新握手并重试一次）。
 > 令牌经 `POST /extension/hello` 自举领取，落 `settings.extension_access_token`（跨重启稳定）。
@@ -444,7 +444,7 @@ autologin, has_token, monitoring, monitor_log}`；
 
 > **迁移留痕**：这三条原先挂在 `/extension/*`（`launch-chrome` / `update-state` / `setup-helper`）。
 > 加令牌后它们与"UI 拿不到令牌"冲突，只能靠开豁免——而豁免一开，
-> "整个前缀需要令牌"就退化成人工维护的清单（[ADR-0015](adr/0015-extension-access-token.md) D-6）。
+> "整个前缀需要令牌"就退化成人工维护的清单（[ADR-0015](adr/0002-browser-allocation-policy.md) D-6）。
 > 旧路径**已不存在**（该前缀现在被中间件统一守备，访问旧路径会得到 401 而非 404）。
 
 
@@ -537,7 +537,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - **路径守卫**：`artifact_dir` 与 `name` 都 `.resolve()`，再断言
   `str(target).startswith(str(artifact_dir))`。
   ⚠️ **这是纯字符串前缀比较，未补路径分隔符**——`.../insight/abc` 会「包含」`.../insight/abc_evil`。
-  本地单人场景风险低，但**新增类似端点时应改用 `Path.is_relative_to()`**。见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账。
+  本地单人场景风险低，但**新增类似端点时应改用 `Path.is_relative_to()`**。见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账。
 
 ### 12.5 浏览器操作串行化（`/api/browser/*`、`/api/monitor/*`）
 
@@ -546,7 +546,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - **事件回调内禁止连接调用**（`response.text()` / `page.evaluate` 重入 = worker 死锁）——
   Monitor 的事件只入队，在 worker 作业间隙统一 `drain()`。
 - 超时：`monitor_start` 为 90s（可能触发开户），其余多数作业**无超时**——
-  页面操作卡住时 HTTP 请求会一直挂着（见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账）。
+  页面操作卡住时 HTTP 请求会一直挂着（见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账）。
 - CDP 模式三律：`remote-debugging-port` 必须 app ready 前设置（**故端口在 `app.whenReady` 里协商完立即设**）；**先到壳控制服务 `/windows` 开户再 connect**；
   Playwright 实例由 `_CdpState` 单一持有（同线程第二个 sync 实例会死锁）。
 
@@ -561,7 +561,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - `monitor_start` 会**确保托管会话在线**（不存在则自动开户），因此耗时较长（`_submit(timeout=90)`）。
 - 产物落 `runtime/monitor/<account_id8>-<YYYYmmdd-HHMMSS>/`。录制引擎三级降噪：
   `dropped` / `trimmed` / `full`（真机验收：248 请求捕获 → 238/2/8）。
-- 会话关闭**不会自动停监听**（`_close_entry` 未清理 `entry.monitor`）——见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账。
+- 会话关闭**不会自动停监听**（`_close_entry` 未清理 `entry.monitor`）——见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账。
 
 ## 14. 更新面 `/api/update`（`routes_update.py`）
 
@@ -602,7 +602,7 @@ autologin, has_token, monitoring, monitor_log}`；
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
 | GET | `/health` | — | `{ok:true}` |
-| GET | `/whoami` | — | **端口发现**（[ADR-0011](adr/0011-port-and-session-negotiation.md) §D-5）：`{app, service:"workbench-shell", controlPort, serverPort, cdpPort, pid, version, startedAt, base, drifted}`。浏览器扩展靠它拿到**服务端实际端口**，而不是猜 18765；控制服务是壳自己的，所以它的回答天然比"18765 上是谁"可信。带 `Access-Control-Allow-Origin: *`（无凭据、只读） |
+| GET | `/whoami` | — | **端口发现**（[ADR-0011](adr/0011-port-governance.md) §D-5）：`{app, service:"workbench-shell", controlPort, serverPort, cdpPort, pid, version, startedAt, base, drifted}`。浏览器扩展靠它拿到**服务端实际端口**，而不是猜 18765；控制服务是壳自己的，所以它的回答天然比"18765 上是谁"可信。带 `Access-Control-Allow-Origin: *`（无凭据、只读） |
 | POST | `/windows` | `{windowId}` | 开户（`partition: persist:<windowId>` 独立持久分区）；已存在且未销毁 → `{ok:true, reused:true}`；缺 windowId → 400 |
 | POST | `/windows/focus` | `{windowId}` | 还原 + 显示 + 聚焦；不存在 → 404 |
 | POST | `/windows/close` | `{windowId}` | 关窗（幂等） |
@@ -630,7 +630,7 @@ autologin, has_token, monitoring, monitor_log}`；
 
 **为什么存在**：壳的 `waitReady()` 改造前只看"18765 上有人回 200"，于是**旧实例占着端口**时
 新壳会认为自己的服务已就绪、主窗打开别人的页面——一次表现成"代码改了但 UI 没变"的事故
-（[ADR-0011](adr/0011-port-and-session-negotiation.md) §1）。现在探测打本端点并核对 `app`。
+（[ADR-0011](adr/0011-port-governance.md) §1）。现在探测打本端点并核对 `app`。
 
 **与 `/extension/health` 的分工（重要）**：
 
@@ -691,7 +691,7 @@ autologin, has_token, monitoring, monitor_log}`；
 
 1. **扫描到高危模式不会"点一下上传就入库"**：第一次返回 `verdict:"warn"` + `findings`，
    **不落库**；调用方看过之后带 `allow_warn=true` 重投才收（`reject` 的东西永远进不来）。
-   理由：准入扫描是**闸门**，不是安全边界（见 [ADR-0014](adr/0014-sandbox-for-untrusted-code.md) §D-1），
+   理由：准入扫描是**闸门**，不是安全边界（见 [ADR-0014](adr/0007-credentials-sandbox-and-trust.md) §D-1），
    而闸门要生效就必须卡在"人点确认"这一步上。
 2. **读库文件只开白名单三个名字**，不做通用文件读取——那会变成"用 URL 探数据目录"的洞
    （服务端无认证；这条与 §12.4 的产物路径守卫同源）。

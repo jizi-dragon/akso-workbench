@@ -340,7 +340,7 @@ async def run_agent_loop(
     # 而它不在 messages 里 —— 所以折叠判定要单独把它算进去（计划 §7.1）。
     # 在这里算一次就够：`plugins` 在整个回合里不变，schema 也就不变。
     _tools_tokens = estimate_tools_tokens(registry.list_api_for(plugins))
-    # ★ 校准系数（计划 §7.1(b)，[ADR-0024](../docs/adr/0024-token-calibration-from-usage.md)）：
+    # ★ 校准系数（计划 §7.1(b)，[ADR-0024](../docs/adr/0019-in-turn-context-and-budget-governance.md)）：
     # 拿**API 自报的 `prompt_tokens`** 反过来校准字数估算。
     #
     # ★ 为什么不是计划原文的 `tiktoken cl100k_base`：那是 **OpenAI 的分词器**，

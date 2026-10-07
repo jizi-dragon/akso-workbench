@@ -38,7 +38,9 @@ END = "<!-- TOOLS-TABLE:END -->"
 #
 # ⚠️ 这里的每一项都**必须存在** —— `_claim_problems` 会把"清单里有但文件不在"
 # 报成一条 problem，不再静默跳过（2026-09-29 修，见该函数的注释）。
-# 2026-09-29 文档瘦身移除了两项：`docs/PLUGIN-SDK.md`、`docs/CODEBASE_OVERVIEW.md`。
+# 2026-09-29 文档瘦身移除了两项：`docs/PLUGIN-SDK.md`（已删除）、
+# `docs/CODEBASE_OVERVIEW.md`（该文件 2026-10-07 已重新生成，但**仍未回到本清单** ——
+# 它是一份快照式总览，不承担"随代码走的数字"这一职责，重新纳入只会让它再次漂）。
 CLAIM_DOCS = (
     ROOT / "README.md",
     ROOT / "docs" / "TOOLS.md",

@@ -1,6 +1,6 @@
 """受控执行器：**不受信代码唯一被允许的入口**。
 
-对照 [ADR-0014](../../docs/adr/0014-sandbox-for-untrusted-code.md) 的四层强制：
+对照 [ADR-0014](../../docs/adr/0007-credentials-sandbox-and-trust.md) 的四层强制：
 
 | 层 | 本模块怎么强制 |
 |---|---|

@@ -8,12 +8,12 @@
 > ⑤ 前端硬编码常量。
 >
 > 相关文档：[API.md](API.md)（端口与端点）、[SCHEMA.md](SCHEMA.md)（表结构）、
-> [ADR-0008](adr/0008-update-channel-and-proxy.md)（代理与更新）、[PITFALLS.md](PITFALLS.md)（环境坑清单）。
+> [ADR-0008](adr/0003-electron-desktop-shell.md)（代理与更新）、[PITFALLS.md](PITFALLS.md)（环境坑清单）。
 
 ## 1. 端口与进程（先看这张表）
 
-**端口是固定常量**（决策见 [ADR-0012](adr/0012-fixed-ports.md)；它取代了
-[ADR-0011](adr/0011-port-and-session-negotiation.md) §D-1 的"被占则顺延"）：壳启动时**只认下面这三个号**，
+**端口是固定常量**（决策见 [ADR-0012](adr/0011-port-governance.md)；它取代了
+[ADR-0011](adr/0011-port-governance.md) §D-1 的"被占则顺延"）：壳启动时**只认下面这三个号**，
 被占就报错退出并说清是谁占的，**不会换号继续跑**。壳把它们
 ①经环境变量下发给服务端、②公布到 `<数据目录>/runtime/desktop-ports.json`、③由控制服务的
 `GET /whoami` 答给浏览器扩展。**别处不要再写这些数字**——`tests/test_ports_contract.py` 会扫描源码钉住这点，
@@ -28,7 +28,7 @@
 > **端口被占 = 应用打不开，这是刻意的**：不换号是为了让"打开工作台"永远是同一个地址
 > （扩展、书签、运维脚本都指向它们）。报错对话框会区分两种情况：占用者是**我们自己的另一个实例**
 > （给 PID/版本，让你去托盘退出它）还是**无关程序**（给 `Get-NetTCPConnection -LocalPort <port>`
-> 的排查命令）。见 [ADR-0012](adr/0012-fixed-ports.md) §D-2。
+> 的排查命令）。见 [ADR-0012](adr/0011-port-governance.md) §D-2。
 >
 > 判"端口上是不是我们的服务"必须核对身份，不能只看"有人应答"：
 > 读 `desktop-ports.json`，或打 `GET /api/health` 看 `app` 字段（`Workbench` 才是我们）。
@@ -51,7 +51,7 @@
 
 | 变量 | 默认 | 改了会怎样 |
 |---|---|---|
-| `WORKBENCH_DATA` | `%APPDATA%\Workbench`（Win）/ `~/.workbench` | 整个数据目录（DB、runtime、storage_state、token 缓存、`shell-state.json` 读取路径）一起迁移。**旧数据不会自动搬**——空目录意味着账号全空。⚠️ 例外：2026-09-16 更名前的 `%APPDATA%\AksoWorkbench` 会在首次启动时被**自动接管**（复制、不覆盖现有库；见 [ADR-0013](adr/0013-brand-neutralization-workbench.md) §D-2） |
+| `WORKBENCH_DATA` | `%APPDATA%\Workbench`（Win）/ `~/.workbench` | 整个数据目录（DB、runtime、storage_state、token 缓存、`shell-state.json` 读取路径）一起迁移。**旧数据不会自动搬**——空目录意味着账号全空。⚠️ 例外：2026-09-16 更名前的 `%APPDATA%\AksoWorkbench` 会在首次启动时被**自动接管**（复制、不覆盖现有库；见 [ADR-0013](adr/0003-electron-desktop-shell.md) §D-2） |
 | `MOGUL_DATA` | — | `WORKBENCH_DATA` 的兼容别名（**仅当 `WORKBENCH_DATA` 未设时生效**） |
 | `WORKBENCH_DB` | `<数据目录>/workbench.db` | 单文件指向。测试用（`conftest.py` 指向临时目录）。**指向不存在的路径会新建空库**，表现为「账号全没了」 |
 | `MOGUL_DB` | — | `WORKBENCH_DB` 的兼容别名 |
@@ -71,12 +71,12 @@
 
 | 变量 | 默认 | 改了会怎样 |
 |---|---|---|
-| `WORKBENCH_PROXY` | — | **强制**使用该代理串（最高优先级）。用于「本机代理坏了但环境变量还在」的排查。**更名前的 `AKSO_PROXY` 仍然认**（用户手写的启动脚本不该因为改名失效，见 [ADR-0013](adr/0013-brand-neutralization-workbench.md) §D-3） |
+| `WORKBENCH_PROXY` | — | **强制**使用该代理串（最高优先级）。用于「本机代理坏了但环境变量还在」的排查。**更名前的 `AKSO_PROXY` 仍然认**（用户手写的启动脚本不该因为改名失效，见 [ADR-0013](adr/0003-electron-desktop-shell.md) §D-3） |
 | `HTTPS_PROXY` / `HTTP_PROXY` | — | 同上（`WORKBENCH_PROXY` 优先）。⚠️ 这两个是**通用变量名**，很多工具会设——壳会因此走代理 |
 | `WORKBENCH_UPDATE_OVERRIDE` | — | 把 `electron-updater` 的 feed 换成 `generic` provider 指向的 URL（本地静态目录）。**只影响更新源，不改判定逻辑**；用于离线跑通整条更新链（`tools/verify_update_flow.py`）。更名前的 `AKSO_UPDATE_OVERRIDE` 仍然认 |
 | `WORKBENCH_NO_PROXY` | — | 发布脚本（`tools/publish_release.py`）的**强制直连**开关。更名前的 `AKSO_NO_PROXY` 仍然认；同族的 `AKSO_HTTPS_PROXY` 亦然 |
 | `WORKBENCH_AUTO_UPDATE` | **未设 = 关闭** | **应用会不会自己替换自己**（用户定稿 2026-09-15）。只认 `1`/`true`/`yes`/`on`；未设时不启动定时检查、不静默下载、不在退出时安装，托盘里的手动检查也只回一句「已关闭」。刻意做成**环境变量而非设置项**——它是部署期决定，放运行时设置里迟早被误点。开启方式：设 `WORKBENCH_AUTO_UPDATE=1` 后重启应用 |
-| `WORKBENCH_EXTENSION_AUTH_GRACE` | `86400`（24h） | `/extension/*` 访问令牌的**宽限期**（秒），[ADR-0015](adr/0015-extension-access-token.md) D-5。令牌是新协议要求，已装的**旧扩展不会带它**；窗口内无令牌照常放行并留 warning，窗口过后 401（且 `/extension/health` 的 `authBlocked` 会让账号中心提示"重新加载扩展"）。**`0` = 严格模式**：现场排障时用来分诊"扩展连不上"是不是令牌问题。⚠ 非整数时回落默认值并留 warning |
+| `WORKBENCH_EXTENSION_AUTH_GRACE` | `86400`（24h） | `/extension/*` 访问令牌的**宽限期**（秒），[ADR-0015](adr/0002-browser-allocation-policy.md) D-5。令牌是新协议要求，已装的**旧扩展不会带它**；窗口内无令牌照常放行并留 warning，窗口过后 401（且 `/extension/health` 的 `authBlocked` 会让账号中心提示"重新加载扩展"）。**`0` = 严格模式**：现场排障时用来分诊"扩展连不上"是不是令牌问题。⚠ 非整数时回落默认值并留 warning |
 | `WORKBENCH_EXTENSION_ORIGIN` | 空（= 不做来源校验） | 逗号分隔的 `Origin` 允许清单，**配了就强制校验**（ADR-0015 D-7 的可选加固层）。留空的理由：桌面壳目前不声明扩展 id（用户手装的扩展 id 由 manifest 公钥决定、跨机一致，但不在本仓配置里）。**主防线是令牌，不是它**——本机进程可以任意伪造 `Origin` 头 |
 | `ELECTRON_MIRROR` | `https://npmmirror.com/mirrors/electron/`（`build.ps1` 设） | 只影响 electron 二进制下载源 |
 | `GH_TOKEN` | — | 发布到 GitHub Releases 时注入（`--publish always`）；不设则只能手工上传 |
@@ -108,7 +108,7 @@
 >
 > ℹ️ `adapters/*.json` 的 `$schema` 字段原指向已删除的 `docs/模块契约.md#adapters`，
 > 已于本轮文档重构改为 `docs/SCHEMA.md`（只动这一个字段）。除此之外这些文件属于
-> 「原项目只读引用」区，改动需谨慎（见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的「原四仓库只读」约定）。
+> 「原项目只读引用」区，改动需谨慎（见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的「原四仓库只读」约定）。
 
 ### 2.1 运行日志（`workbench/logging_setup.py`，2026-09-20 引入）
 
@@ -141,7 +141,7 @@
 | `apiKey` | DeepSeek API Key 明文 | 空 → `ready=false`，对话直接回「请先在设置中配置」 | 换 Key 即换计费账号；**明文存库**是本机信任边界内的既有契约 |
 | `model` | 模型 id 字符串 | `deepseek-v4-flash`（`deepseek.DEFAULT_MODEL`） | 见 §5 模型清单；**写错模型名会让对话整体 502/报错** |
 | `temperature` | 十进制字符串 | `0.7` | 解析失败回落 0.7 |
-| `account_fernet_key` | urlsafe base64 32 字节 | **首次使用时生成** | ⚠️ **改它 = 全部已存口令不可解密**（接口能读、扩展静默丢弃全部账号）。见 [ADR-0007](adr/0007-credentials-never-plaintext.md) |
+| `account_fernet_key` | urlsafe base64 32 字节 | **首次使用时生成** | ⚠️ **改它 = 全部已存口令不可解密**（接口能读、扩展静默丢弃全部账号）。见 [ADR-0007](adr/0007-credentials-sandbox-and-trust.md) |
 | `disabled_boxes` | JSON 数组字符串 | `[]` | 禁用盒在**轮盘**中被跳过（账号中心与管理不受影响） |
 | `rememberedBoxes` | JSON 数组字符串 | `[]` | 记忆盒子清单（含空盒）。**重命名走原位替换**，手工追加会让盒名顺序错乱 |
 | `defaultBoxName` | 字符串 | 空 → 显示「默认盒子」 | 只改默认盒的**显示名**（`box=''` 是存储值，不变） |
@@ -191,8 +191,8 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | 平台异步鉴权复核 | `2.5` s | `online` 后稍候复核，避免 online → 自愈 的状态抖动 |
 | `page.goto` 超时 | `30000` ms | |
 | `monitor_start` 作业超时 | `90` s | **唯一**显式设超时的公共 API（因为可能触发开户） |
-| 其余作业超时 | **无** | 页面卡住时 HTTP 请求会一直挂着——见 `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账 |
-| 事件 drain 时机 | 每个作业结束后 | Monitor 的 `monitor.drain()`（[ADR-0006](adr/0006-browser-pool-single-thread.md)） |
+| 其余作业超时 | **无** | 页面卡住时 HTTP 请求会一直挂着——见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账 |
+| 事件 drain 时机 | 每个作业结束后 | Monitor 的 `monitor.drain()`（[ADR-0006](adr/0002-browser-allocation-policy.md)） |
 
 ### 4.3 `routes_extension`（执行面）
 
@@ -247,7 +247,7 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 |---|---|---|---|
 | `workbench.db` (+ `-wal` / `-shm`) | 服务端 | 服务端 | ⚠️ 手改需关闭应用；WAL 模式下直接拷 `.db` 可能不含最新事务 |
 | `shell-state.json` | **壳**（每 15s 原子写） | 服务端 `GET /api/update` | 只读更好：手改会污染 UI 判定；删除 → UI 显示「桌面壳未运行」 |
-| `runtime/desktop-ports.json` | **壳**（启动时原子写，退出时删） | 服务端 `/api/health`、人排障、工具 | 只读。**这是「当前端口是多少」的权威答案**（[ADR-0011](adr/0011-port-and-session-negotiation.md)）；手改会让排障信息失真。壳异常退出时可能残留，下次启动会按其中的 `pid` 判断它是否还有效 |
+| `runtime/desktop-ports.json` | **壳**（启动时原子写，退出时删） | 服务端 `/api/health`、人排障、工具 | 只读。**这是「当前端口是多少」的权威答案**（[ADR-0011](adr/0011-port-governance.md)）；手改会让排障信息失真。壳异常退出时可能残留，下次启动会按其中的 `pid` 判断它是否还有效 |
 | **`proxy.txt`** | **用户** | 壳（`proxy.apply`） | ✅ **这是给用户的开关**：一行代理串 = 强制代理；**存在但为空 = 强制直连**（终极兜底） |
 | `logs/workbench-<日期>.jsonl` | 服务端（**全部运行日志**） | 人 + 工具 | 只读。**主日志**：启动横幅 / 路由注册 / 工具自检 / 工具调用（带 `auditId`）/ 请求行 / 异常栈。按天 + 按体积双滚动，保留 14 份。读口是 `GET /api/logs/tail`（[API.md](API.md) §13） |
 | `logs/sidecar-stdio-<日期>.log` | **壳**（sidecar 的原始 stdout/stderr） | 人 | 只读。**兜底通道**：Python 日志系统**装配之前**的失败（解释器引导、`import` 期异常）只走 stderr，只有这里抓得到 |

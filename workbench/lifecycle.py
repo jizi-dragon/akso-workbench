@@ -10,7 +10,7 @@
 
       对父进程执行 taskkill /F（不带 /T）→ 3 秒后 sidecar 仍在、端口仍在 LISTEN
 
-- 后果在**固定端口**设计（[ADR-0012](../../docs/adr/0012-fixed-ports.md)）下被放大：
+- 后果在**固定端口**设计（[ADR-0012](../../docs/adr/0011-port-governance.md)）下被放大：
   孤儿占着 18765 → 下次启动 `portPreflight` 立刻失败 → 用户必须**手工**清理才能再用。
   更糟的是 `portBroker.clearStale()` 只清 `desktop-ports.json` 这个**文件**，清不了**活着的
   进程**；文件一清 `prev` 变 null，弹窗只能说"占用者不是 Workbench 实例"——

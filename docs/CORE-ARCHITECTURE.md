@@ -9,7 +9,7 @@ _2026-09-18 撰写。锚定 `15b847e`（main，v0.3.12 + 3）。本文是**新�
 > | 文档 | 回答什么 | 性质 |
 > |---|---|---|
 > | 本文 | **核心 Agent 长什么样、为什么这样分层、离行业标准差在哪** | 结构说明 + 评估，随架构变 |
-> | `CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） | 整个代码库的模块地图、风险台账、验收基线 | 全仓视角，随代码变 |
+> | `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） | 整个代码库的模块地图、风险台账、验收基线 | 全仓视角，随代码变 |
 > | [TOOLS.md](TOOLS.md) | **现在到底有哪些工具**、加一个工具要同步哪五处 | **清单由脚本生成**，机检守着 |
 > | `PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） | 怎么写一个插件（契约细节） | 面向插件作者 |
 > | [adr/](adr/) | **不再变的决策**及其后果 | 只增不改 |
@@ -39,7 +39,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 
 这些不是"还没做"，是"判断过不做"。写下来是为了避免每次评审都重新讨论一遍：
 
-- **不是安全边界**：沙箱是**限损层**（[ADR-0014](adr/0014-sandbox-for-untrusted-code.md) §D-3）。跑起来的代码仍能读它有权读的一切。
+- **不是安全边界**：沙箱是**限损层**（[ADR-0014](adr/0007-credentials-sandbox-and-trust.md) §D-3）。跑起来的代码仍能读它有权读的一切。
 - **不做自动发现**：插件装配是 `plugins/__init__.py::_MODULES` 显式清单。研究结论是"发现机制的收益接近零"（`docs/research/core-plugin-separation-research.md` §0）。
 - **不做热插拔（核心层）**：core 插件导入期一次装配、之后只读；只有 `installed` 层（Skill）运行期可变。
 - **不做多 Agent 编排**：无 planner/worker 分工、无子 Agent 派生。理由见 §7.3。
@@ -231,7 +231,7 @@ Agent 循环里工具异常必须是**可自我纠正的观测**，而不是终�
 
 ### 3.4 L4 沙箱执行层（`sandbox/`，6 文件 1,171 行）
 
-**唯一被允许执行不受信代码的入口**。对照 [ADR-0014](adr/0014-sandbox-for-untrusted-code.md) 的四层：
+**唯一被允许执行不受信代码的入口**。对照 [ADR-0014](adr/0007-credentials-sandbox-and-trust.md) 的四层：
 
 | 层 | 强制手段 |
 |---|---|
@@ -455,7 +455,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 > `tests/test_cache.py` 与 `tests/test_agent_contract.py`，前两条的 PITFALLS 是 #90 / #93 / #94）。
 > 三条上下文类的合并记录在 **[ADR-0019](adr/0019-in-turn-context-and-budget-governance.md)**
 > （上下文窗口的**轮内**治理：折叠永不吞 system ＋ 预算每次调用前复检 ＋ 未执行的调用必须回填）。
-> **I18 单独成篇：[ADR-0022](adr/0022-trust-labels-and-taint.md)** —— 它管的不是上下文**大小**
+> **I18 单独成篇：[ADR-0022](adr/0007-credentials-sandbox-and-trust.md)** —— 它管的不是上下文**大小**
 > 而是上下文**来源**：`ToolSpec.trust` 装配期必填（`LOCAL` / `UNTRUSTED`）、外部结果带机器可读前缀、
 > 读过外部内容后过确认门时**给用户**带提示。判据 `tests/test_trust_labels.py`（**12 条**）。
 > ⚠️ **编号是 0019 不是 0018** —— 0017/0018 曾被已删除的配置工厂 ADR 占用，而本仓
@@ -538,7 +538,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 > 本项目站在这条主流之外（这是主动选择，但应当被记录为**主动放弃生态位**，而不是"还没做"）。
 >
 > 如果希望未来互通，最低成本的一步是**兼容读取规范字段**（`name` 已同名；
-> `capabilities` 可同时接受规范的 `compatibility` 作为别名），与 [ADR-0013](adr/0013-brand-neutralization-workbench.md)
+> `capabilities` 可同时接受规范的 `compatibility` 作为别名），与 [ADR-0013](adr/0003-electron-desktop-shell.md)
 > 处理品牌字符串时"写出端发新名 + 读取端两个都收"的手法一致。
 > **建议列入 §7，但不紧急**——当前没有跨生态分发的需求。详见 §7.8。
 
@@ -638,7 +638,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 把 `agent_audit` + `deepseek_usage` + `sandbox_run` 的字段映射到
 `gen_ai.*` 语义约定。这样既保住审计，又能接入通用工具。
 
-**落地状态（2026-09-24）**：✅ 已实现，见 [ADR-0021](adr/0021-agent-run-and-otel-export.md)。
+**落地状态（2026-09-24）**：✅ 已实现，见 [ADR-0021](adr/0019-in-turn-context-and-budget-governance.md)。
 - **粒度选择与本节原建议不同**：没有映射 `agent_audit`，而是新增了
   `agent_run` / `agent_span`（**迁移 24**）—— 理由是"一次用户回合"此前在数据里
   **不是一个实体**，而 span 需要那个父子结构（详见该 ADR §2 D-1）。
@@ -664,7 +664,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 
 ### 7.7 【需决策】`/api/*` 认证（R1b）
 
-已在 [ADR-0015](adr/0015-extension-access-token.md) §D-7 记录为**有意保留**：
+已在 [ADR-0015](adr/0002-browser-allocation-policy.md) §D-7 记录为**有意保留**：
 桌面 UI 就是本服务加载的页面，加令牌要么在页面里放令牌（等于没加），要么改引导流程。
 **不是遗漏，是权衡**。重新评估的触发器已写在该 ADR §7。
 
@@ -796,7 +796,7 @@ Codex 之所以必须提供 `unelevated` 回退，正是因为企业策略常常
   ⇒ 本项目把 `Risk` 做进执行器（无令牌不调 handler）**在安全语义上强于 MCP 的提示层**。
   ⚠️ 本节结论来自子代理对 MCP 规范页（2025-06-18 与 draft）的实读回报，**主代理未逐字复核规范全文**。
 - **OTel GenAI 语义约定**：用于 span/trace 的 `gen_ai.*` 属性约定存在并被生态工具（Traceloop、Splunk 等）采用；本文 §7.5 的建议基于此。**具体属性名未逐条核实**，落地前需查 OpenTelemetry 官方语义约定文档。
-  > **2026-09-24 更新（仍未核实，但已变成一条可执行的检查）**：[ADR-0021](adr/0021-agent-run-and-otel-export.md)
+  > **2026-09-24 更新（仍未核实，但已变成一条可执行的检查）**：[ADR-0021](adr/0019-in-turn-context-and-budget-governance.md)
   > 落地了导出层，映射**集中在一张表**里 —— `tools/export_otel.py` 的 `OTEL_ATTRS`，
   > 每条带一个核实状态（`ok` / `verify`）。核对只需一条命令：
   > `python tools\export_otel.py --list-attributes`。

@@ -83,6 +83,7 @@
   （9 个符号在打包产物里 0 命中）」。判据本身成立，但**结论错了** ——
   [ADR-0004](docs/adr/0004-extension-as-execution-plane.md) 与
   `extensions/quick-login/CHANGELOG.md` 都写着它是 **0.2.21 定稿保留的「休眠源码」**，
+  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0004 **已退役**，内容并入 [ADR-0002](docs/adr/0002-browser-allocation-policy.md)（取回原文：`git show 9b97ef0:docs/adr/0004-extension-as-execution-plane.md`）。
   且 `parallel-session.ts` 确实在 `import type { Scheme } from './site-auth'`。
   ⇒ "打包后 0 命中"是**保留决策的预期结果，不是缺陷证据**。
   这正是本仓「零调用方的扩展点是刻意保留」那条纪律要防的误报。
@@ -399,6 +400,7 @@
 
 - **模型可以主动"先问再做"：新工具 `request_user_confirmation`（请求用户确认）**
   （2026-09-20，[ADR-0016](docs/adr/0016-model-initiated-confirmation.md)）。
+  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0016 **已退役**，内容并入 [ADR-0007](docs/adr/0007-credentials-sandbox-and-trust.md)（取回原文：`git show 9b97ef0:docs/adr/0016-model-initiated-confirmation.md`）。
 
   用户的原话是"当 Agent 准备执行修改权限、提交表单等敏感、高风险或不可逆操作前，
   调用该工具向用户弹出确认框"。落地形态经过两个决策点：**工具形态选 B**
@@ -844,6 +846,7 @@
   [ADR-0006](docs/adr/0006-browser-pool-single-thread.md)（浏览器池单线程）、
   [ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md)（沙箱）、
   [ADR-0015](docs/adr/0015-extension-access-token.md)（访问令牌）。
+  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0004 **已退役**，内容并入 [ADR-0002](docs/adr/0002-browser-allocation-policy.md)（取回原文：`git show 9b97ef0:docs/adr/0004-extension-as-execution-plane.md`）；ADR-0006 **已退役**，内容并入 [ADR-0002](docs/adr/0002-browser-allocation-policy.md)（取回原文：`git show 9b97ef0:docs/adr/0006-browser-pool-single-thread.md`）；ADR-0014 **已退役**，内容并入 [ADR-0007](docs/adr/0007-credentials-sandbox-and-trust.md)（取回原文：`git show 9b97ef0:docs/adr/0014-sandbox-for-untrusted-code.md`）；ADR-0015 **已退役**，内容并入 [ADR-0002](docs/adr/0002-browser-allocation-policy.md)（取回原文：`git show 9b97ef0:docs/adr/0015-extension-access-token.md`）。
   均**显式标注"本栏为后补"**，正文一字未改（遵循本仓 ADR 纪律：改已采纳的决策 = 新增一篇取代它）。
 
   其中两条对照推出了**可执行的认知**，不只是记录：
@@ -1164,6 +1167,7 @@
 
 - **`/extension/*` 无鉴权：本机任意进程一次 GET 拿到全部账号明文（P0-1 / R1）**
   （2026-09-17，[ADR-0015](docs/adr/0015-extension-access-token.md)）。
+  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0015 **已退役**，内容并入 [ADR-0002](docs/adr/0002-browser-allocation-policy.md)（取回原文：`git show 9b97ef0:docs/adr/0015-extension-access-token.md`）。
 
   `GET /extension/snapshot` 会**同时**下发 `fernetKey`（密钥本体）与每个账号的 `passwordEnc`——
   密钥与密文一起给出去，**等于明文口令**。而整条 `/extension/*` 此前**没有任何鉴权**，
@@ -1391,6 +1395,7 @@
 > ⚠️ **本节的端口协商/顺延条目已于同日被撤回**——见下方 `### Changed` 的
 > [ADR-0012](docs/adr/0012-fixed-ports.md) 条目。保留原文是为了留痕；
 > **现行行为是端口固定、不顺延**，读本条时勿把"顺延"当成现状。
+> ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0012 **已退役**，内容并入 [ADR-0011](docs/adr/0011-port-governance.md)（取回原文：`git show 9b97ef0:docs/adr/0012-fixed-ports.md`）。
 
 - **脚本式 Skill：上传的脚本在沙箱里跑起来**（2026-09-17，同日接在"共享库 + 声明式工具"之后）。
 
@@ -1522,6 +1527,7 @@
   而非字符串，于是报错是"缺少字段 version"而不是"格式不对"。不是 bug，是类型推断。
 
 - **沙箱：不受信代码的唯一执行底座**（2026-09-17，决策见 **[ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md)**）。
+  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0014 **已退役**，内容并入 [ADR-0007](docs/adr/0007-credentials-sandbox-and-trust.md)（取回原文：`git show 9b97ef0:docs/adr/0014-sandbox-for-untrusted-code.md`）。
   用户定的路线是「**先构建沙箱，优先补充整个项目的沙箱管理，再考虑接入 skill**」——所以本期只做底座，
   Skill 与 MCP 是它的下一期消费方（MCP 用户明确暂缓）。
 
@@ -1592,6 +1598,7 @@
     热插拔 / 版本矩阵——研究结论是"插件作者只有你自己时，那些是为第三方生态付的成本"
     （`docs/research/core-plugin-separation-research.md` §A5；**该文件已于 2026-09-29 删除**，
     论证已并入 [ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md) 的「外部参照」栏）。
+  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0014 **已退役**，内容并入 [ADR-0007](docs/adr/0007-credentials-sandbox-and-trust.md)（取回原文：`git show 9b97ef0:docs/adr/0014-sandbox-for-untrusted-code.md`）。
   - **装配纪律**：插件清单显式（`plugins/__init__.py::_MODULES`），单个插件抛异常只记一条 failure
     **并跳过**，绝不阻断启动；依赖方向 `plugins → plugin_api` **单向**，`plugin_api` 里不出现任何
     平台术语（连 `db` 都不 import，审计与确认门是注入的）。
@@ -1806,6 +1813,7 @@
 - **品牌中立化：`AksoWorkbench` → `Workbench`**（用户定稿 2026-09-16：「更名，剥离 akso 的信息，
   按照 workbench 进行后续发展（逐渐将项目转变成可复用的工作台，核心差距就在于插件/tools 功能）」）。
   完整决策、改动面与"刻意不改"清单见 **[ADR-0013](docs/adr/0013-brand-neutralization-workbench.md)**。
+  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0013 **已退役**，内容并入 [ADR-0003](docs/adr/0003-electron-desktop-shell.md)（取回原文：`git show 9b97ef0:docs/adr/0013-brand-neutralization-workbench.md`）。
   - **改动面**：58 个文件 / 200 处。包名 `akso-workbench`→`workbench`、产品名与 appId
     （`AksoWorkbench`/`com.akso.workbench`→`Workbench`/`com.workbench.app`）、安装包
     `Workbench-<版本>-setup.exe`、sidecar 产物 `dist/WorkbenchServer/`、
@@ -1928,6 +1936,7 @@
     再验它的产物——否则只能证明"渲染器能渲染我以为的形状"。
 
 - **端口协商与公布（[ADR-0011](docs/adr/0011-port-and-session-negotiation.md)，用户提出的"端口好几个，是不是该控制平衡一下"）**。
+  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0011 **已退役**，内容并入 [ADR-0011](docs/adr/0011-port-governance.md)（该篇即本编号的合订本，**文件已改名**）（取回原文：`git show 9b97ef0:docs/adr/0011-port-and-session-negotiation.md`）。
   改造前 18765/18766/18767 被**壳、Python 服务端、浏览器扩展三方各自硬编码**，且没有任何一方
   负责裁决"谁在用这个口"。**壳现在是唯一仲裁者**：优先取基准端口，被占则顺延（每端口最多 +8，
   不做全局随机——固定端口对书签/扩展更友好），然后把实际值
@@ -2127,6 +2136,7 @@
 
 - **端口改为固定：撤回"壳当仲裁者、被占则顺延"（[ADR-0012](docs/adr/0012-fixed-ports.md) 取代
   [ADR-0011](docs/adr/0011-port-and-session-negotiation.md) §D-1）**。用户定稿原话：
+  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0012 **已退役**，内容并入 [ADR-0011](docs/adr/0011-port-governance.md)（取回原文：`git show 9b97ef0:docs/adr/0012-fixed-ports.md`）；ADR-0011 **已退役**，内容并入 [ADR-0011](docs/adr/0011-port-governance.md)（该篇即本编号的合订本，**文件已改名**）（取回原文：`git show 9b97ef0:docs/adr/0011-port-and-session-negotiation.md`）。
   「我建议还是固定端口号吧，别拿所谓的桌面壳引导去调整，就固定端口号」。
   - **为什么推翻**：ADR-0011 要治的病（旧实例占端口 → 新壳认错服务）是真的，但**解法选错了**——
     它把"端口漂移"当成常规能力，于是引入协商窗口、实际端口公布、扩展按窗口探测、书签失效

@@ -5,7 +5,7 @@
 > 运行时零依赖原项目、零依赖 Node、零联网（首次装载浏览器扩展除外）。
 > 首个适配平台是阿克索 eGMP；**平台能力走插件与适配层，换平台不必改产品名与数据目录**（见下）。
 >
-> 仓库地址：`jizi-dragon/akso-mogul`（**仓库名本次未改**，见 [ADR-0013](docs/adr/0013-brand-neutralization-workbench.md) D-4）。
+> 仓库地址：`jizi-dragon/akso-mogul`（**仓库名本次未改**，见 [ADR-0013](docs/adr/0003-electron-desktop-shell.md) D-4）。
 
 ## 它解决什么问题
 
@@ -64,9 +64,9 @@
 |---|---|
 | **现在到底有哪些工具、谁在管、怎么加一个** | **[docs/TOOLS.md](docs/TOOLS.md)**（工具注册表 + 变更纪律 + 机检） |
 | 怎么写一个工具插件、风险分级与确认门语义 | `docs/PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） |
-| **不受信代码（上传的 Skill）在哪跑、拦得住什么** | **[ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md)** + 工作台「沙箱」页（策略/状态/执行审计） |
+| **不受信代码（上传的 Skill）在哪跑、拦得住什么** | **[ADR-0014](docs/adr/0007-credentials-sandbox-and-trust.md)** + 工作台「沙箱」页（策略/状态/执行审计） |
 | **怎么上传 / 安装 / 卸载 Skill** | 工作台「Skill 管理」页 + `docs/TOOLS.md`（工具治理纪律） |
-| 为什么平台相关代码集中在 `services/egmp/` | [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md)、[ADR-0013](docs/adr/0013-brand-neutralization-workbench.md) |
+| 为什么平台相关代码集中在 `services/egmp/` | [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md)、[ADR-0013](docs/adr/0003-electron-desktop-shell.md) |
 
 > 工具清单**不靠人记**：`docs/TOOLS.md` 的清单由 `tools/gen_tools_doc.py` 从运行中的工具中枢生成，
 > `python tools/gen_tools_doc.py --check` 会对不上就报红——防止再出现"我不知道多了几个工具"。
@@ -116,7 +116,7 @@
 | **`docs/PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**）** | **要给 Agent 加工具的人** | **插件 SDK 契约**：`ToolHub` 唯一公开面、怎么写一个工具插件、风险分级与危险操作确认门、审计、启动自检、三个真踩过的坑 |
 | `docs/FRAMEWORK-INVENTORY.md`（**该文件已于 2026-09-29 删除**） | 要复用本仓、或要把业务与框架切开的人 | **框架清单与判据**：换一个目标平台后哪些文件不需要改、业务耦合点在哪几处、特征词扫描门禁 |
 | `docs/PLUGIN-UPSTREAM-RESEARCH.md`（**该文件已于 2026-09-29 删除**） | 要动宿主/插件边界的人 | 宿主与插件分离的先例、可行性判断、POC 验证与陷阱清单（`FRAMEWORK-INVENTORY` 的姊妹篇） |
-| `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） | 接手维护的人（含 AI 助手） | 代码地图、架构与数据流、红线与约定、风险台账、验收基线实测 |
+| `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） | 接手维护的人（含 AI 助手） | 代码地图、架构与数据流、红线与约定、风险台账、验收基线实测 |
 | **[docs/VERSIONING.md](docs/VERSIONING.md)** | **管版本 / 发版 / 想接 GitHub 自动化的人** | **版本管理机制**（三层拆解）、现状实测（tag 缺口、更新链路的公开仓库前提）、GitHub 能帮哪一段、三个方案选型、可直接照抄的 CI 与打 tag 做法 |
 | [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **120 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改；其中一批的主体已随配置工厂移除，文件头有对照表） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发者 | 环境搭建、依赖变更、构建发布、代码规约、验收纪律 |

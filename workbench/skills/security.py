@@ -3,7 +3,7 @@
 ## 定位：这是**准入闸门**，不是安全边界
 
 本仓真正的强制层是 `workbench/sandbox/`（凭据不注入、目录不越界、进程树可终止，
-见 [ADR-0014](../../../docs/adr/0014-sandbox-for-untrusted-code.md)）。
+见 [ADR-0014](../../../docs/adr/0007-credentials-sandbox-and-trust.md)）。
 本模块做的是**上传期**的三件事：
 
 1. **结构合规**（ZIP 形状、根目录有 `SKILL.md`、禁二进制）——挡住"包本身是坏的"；

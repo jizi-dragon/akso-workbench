@@ -109,7 +109,7 @@ def main() -> int:
     # 此前没有这一道：`uvicorn` 绑不上端口时只是**退出**（报错被丢进 DEVNULL），
     # 而下面的就绪探测会**连上那个正在运行的应用** —— 于是这套验收打在
     # **真实实例**上，且**没有任何一步会报错**。
-    # 这正是 [ADR-0012](../docs/adr/0012-fixed-ports.md) 记的那个危险。
+    # 这正是 [ADR-0012](../docs/adr/0011-port-governance.md) 记的那个危险。
     if _port_free(PORT):
         pass
     else:

@@ -1,6 +1,6 @@
 """沙箱管理面：策略清单 / 运行期状态 / 执行审计。
 
-决策见 [ADR-0014](../../docs/adr/0014-sandbox-for-untrusted-code.md) §D-5：
+决策见 [ADR-0014](../../docs/adr/0007-credentials-sandbox-and-trust.md) §D-5：
 "沙箱策略是**声明**，运行期必须能看能停"——本模块就是那个"能看"。
 
 ## 本模块**不提供**"执行一段任意代码"的端点

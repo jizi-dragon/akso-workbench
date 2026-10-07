@@ -4,7 +4,7 @@
 > 原则先于工具——**先契约后实现，先复现后修复**。
 >
 > 使用者请看 [README.md](README.md) 与 [docs/USER-MANUAL.md](docs/USER-MANUAL.md)；
-> 接手维护请先读 `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**）（代码地图 / 红线 / 风险台账）
+> 接手维护请先读 `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**）（代码地图 / 红线 / 风险台账）
 > 与 [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑 / 排障速查）。
 >
 > **用 AI 助手改这个仓库时**：把 **[AGENTS.md](AGENTS.md)** 交给它（多数工具会自动读取根目录的该文件）。
@@ -236,7 +236,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 
 ## 5. 开发流程与分工边界
 
-1. **动代码前**先读 `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**）（红线与约定）与
+1. **动代码前**先读 `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**）（红线与约定）与
    [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑）、[docs/SCHEMA.md](docs/SCHEMA.md)（数据契约）；
 2. 新路由挂到 `workbench/api/__init__.py::_optional_routers`（可选路由）或同级注册；
 3. 新增/修改端点 → 同步 [docs/API.md](docs/API.md)；新增配置项 → 同步 [docs/CONFIG.md](docs/CONFIG.md)；
@@ -270,8 +270,8 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
   **不要凭印象写**，那会变成一条没人敢质疑的假共识。
 - **不要求逐条穷尽**：3–5 个真实对照胜过 20 个凑数的。
 - **历史 ADR 的该栏可以后补**，但**必须显式标注"本栏为后补"**
-  （参考 [ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md) §6 与
-  [ADR-0004](docs/adr/0004-extension-as-execution-plane.md) 末尾的写法）。
+  （参考 [ADR-0014](docs/adr/0007-credentials-sandbox-and-trust.md) §6 与
+  [ADR-0004](docs/adr/0002-browser-allocation-policy.md) 末尾的写法）。
   **标注后补不是免责**，是让读者分清"决策当时的认知"与"后来的认知"。
 - **本仓已有的对照成果**：外部项目的系统梳理在
   `docs/OPENSOURCE-LANDSCAPE.md`（**该文件已于 2026-09-29 删除**）（含 star 实测数据与许可红线）。
@@ -290,7 +290,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 | ⚠️ **仓库可见性** | **2026-09-17 匿名探测：`api.github.com/repos/jizi-dragon/akso-mogul` → 404**（同一 owner 的 `quick-login` / `akso-cc` / `mogul_simulator` 均 200 = 公开）。而 §3.3 与 `publish_release.py` 都要求**仓库公开** | **一旦开启自动更新（`WORKBENCH_AUTO_UPDATE=1`）并指向 GitHub，更新链路会失效**（更新器匿名读 Release）。详见 [docs/VERSIONING.md](docs/VERSIONING.md) §3 |
 | `adapters/*.json` 的 `$schema` | 原指向已删除的 `docs/模块契约.md#adapters` | ✅ 本轮已改为 `docs/SCHEMA.md`（仅此字段） |
 
-> 完整清单（含代码级缺陷与安全风险）见 `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的风险台账。
+> 完整清单（含代码级缺陷与安全风险）见 `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账。
 
 ## 7. 验收纪律
 
@@ -315,10 +315,10 @@ node tools\verify_host_logic.mjs                                 # host/端口�
 ```
 
 改动 `/extension/*` 蓝图后必跑 `node tools\verify_extension_sync.mjs`（**该蓝图无 pytest 覆盖**）。
-改动**端口 / 壳启动链路 / 扩展的桌面地址**后必跑 `node tools\verify_port_broker.mjs`（离线 27 项，不需要 Electron；**先退出工作台**，否则固定端口被占，脚本的前置检查会拦下并提示）。**端口是固定常量、不顺延**（[ADR-0012](docs/adr/0012-fixed-ports.md)）——改端口号属于破坏性变更，必须同步壳侧 `desktop/ports.js::PORTS`、Python 侧 `workbench/config.py` 与 `tests/test_ports_contract.py`。
+改动**端口 / 壳启动链路 / 扩展的桌面地址**后必跑 `node tools\verify_port_broker.mjs`（离线 27 项，不需要 Electron；**先退出工作台**，否则固定端口被占，脚本的前置检查会拦下并提示）。**端口是固定常量、不顺延**（[ADR-0012](docs/adr/0011-port-governance.md)）——改端口号属于破坏性变更，必须同步壳侧 `desktop/ports.js::PORTS`、Python 侧 `workbench/config.py` 与 `tests/test_ports_contract.py`。
 改动**洞察页产物预览（`static/js/artifact-preview.js` / markdown 渲染 / drawio 画布）**后必跑
 `.\.venv\Scripts\python.exe tools\verify_insight_preview.py`（14 项，真浏览器断言渲染结果：表格列口径、引用块、drawio 节点与连线计数、多页切页、零 JS 错误）。它自起服务、用临时数据目录与专用端口（18791），**不需要先退出工作台**。
-完整验收基线（含真机项与 E2E）见本文 §7 与 `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） 的「验收基线实测」。
+完整验收基线（含真机项与 E2E）见本文 §7 与 `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的「验收基线实测」。
 
 - 阶段验收以 `tests/` 机器验收为准，不靠肉眼；
 - 真机验收（真实 eGMP 平台）只在测试环境账号上做；
@@ -414,7 +414,7 @@ curl.exe -s "http://127.0.0.1:18765/api/logs/trace/<traceId>"
 powershell -ExecutionPolicy Bypass -File tools\build.ps1
 ```
 
-> ⚠️ **端口是固定常量、不顺延**（[ADR-0012](docs/adr/0012-fixed-ports.md)）：
+> ⚠️ **端口是固定常量、不顺延**（[ADR-0012](docs/adr/0011-port-governance.md)）：
 > `npm start` 与已打开的打包版**不能同时跑**（都抢 18765），会直接报错退出并说清占用者是谁。
 > 起不来时先 `Get-NetTCPConnection -LocalPort 18765 -State Listen` 看是谁占着
 > （PITFALLS #20 / #25：那种情况下的典型症状是"改了代码界面没变"——**先怀疑跑的是旧进程**）。

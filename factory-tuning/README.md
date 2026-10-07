@@ -239,7 +239,7 @@ reports/
 是同一条纪律：证据的形态本身就是证据的一部分（它证明了写报告时的仓库长什么样）。
 
 ⇒ 读那些报告的取回副本时请记住：**里面的链接不代表当前仓库的结构**。
-想看当前结构去 `../docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**）。
+想看当前结构去 `../docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**）。
 
 判据（这一条有机器守卫）：`tools/check_doc_links.py` 的 `ARCHIVES` 列表把本目录排除在外，
 并**逐条写明理由**；`pytest tests/test_doc_links.py` 跑它。

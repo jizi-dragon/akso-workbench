@@ -6,13 +6,13 @@
 把它与下面两件**已经存在**的事实叠起来，就是一条从"外部网页"到"本机内网"的读取链：
 
 1. `/api/*` **无认证**是 **ADR-0015 §D-7 的有意保留**，而控制端口固定 18765 / 18767
-   （[ADR-0012](../docs/adr/0012-fixed-ports.md)）；
+   （[ADR-0012](../docs/adr/0011-port-governance.md)）；
 2. `read_web_page` 本身就是一个**无需确认的外发通道** —— 把秘密拼进 query 即可。
 
 于是：恶意页面或搜索结果 → 模型读到"请读 `http://127.0.0.1:18765/api/agent/audit`"
 → `read_web_page`（read 级，不过门）→ 本机 API 内容进上下文 → 随下一次请求外发。
 
-## 这是什么、不是什么（口径与 [ADR-0014](../docs/adr/0014-sandbox-for-untrusted-code.md) §D-3 一致）
+## 这是什么、不是什么（口径与 [ADR-0014](../docs/adr/0007-credentials-sandbox-and-trust.md) §D-3 一致）
 
 **这是限损措施，不是 DNS 绑定防护。** `getaddrinfo` 校验与真实连接之间存在 TOCTOU
 窗口：控制权威 DNS 的一方可以让第一次解析回公网 IP、第二次解析回 `127.0.0.1`

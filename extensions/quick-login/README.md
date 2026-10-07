@@ -67,4 +67,4 @@ npm run watch      # 开发态增量构建
 | **改造与踩坑史** | [`CHANGELOG.md`](CHANGELOG.md) | 本项目对扩展的改造记录（含"哪些改动别误删"清单） |
 | 桌面侧配置项 | [`docs/CONFIG.md`](../../docs/CONFIG.md) | 扩展相关端口、`proxy.txt`、`ext_*` settings 键 |
 | 桌面侧接口 | [`docs/API.md`](../../docs/API.md) | `/extension/*` 全部端点的权威契约（长轮询与 seq 游标语义） |
-| 环境坑与代码地图 | [`docs/PITFALLS.md`](../../docs/PITFALLS.md)、`../../docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**） | 环境坑、已知问题、验收基线 |
+| 环境坑与代码地图 | [`docs/PITFALLS.md`](../../docs/PITFALLS.md)、`../../docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） | 环境坑、已知问题、验收基线 |
