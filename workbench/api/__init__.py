@@ -46,6 +46,7 @@ def _optional_routers(app: FastAPI) -> None:
         routes_shell,
         routes_skills,
         routes_update,
+        routes_vault,
     )
 
     registrations = (
@@ -61,6 +62,7 @@ def _optional_routers(app: FastAPI) -> None:
         ("sandbox", routes_sandbox),
         ("skills", routes_skills),
         ("update", routes_update),
+        ("vault", routes_vault),
     )
     for name, mod in registrations:
         router = getattr(mod, "router", None)
