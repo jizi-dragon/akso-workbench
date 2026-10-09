@@ -15,13 +15,12 @@
 ## 1. 环境搭建（新同事 5 分钟）
 
 ```powershell
-# 前置：Python 3.12+、Git、Node 20+（构建桌面壳/扩展时要）；uv 没有就先装（pip install uv 或 winget install astral-sh.uv）
+# 前置：Python 3.12+、Git、Node 20+（构建桌面壳时要）；uv 没有就先装（pip install uv 或 winget install astral-sh.uv）
 uv sync --extra dev --extra build   # 严格按 uv.lock 拉齐依赖（含国内镜像，无需自己配源）
 uv run playwright install chromium  # 托管浏览器内核（账号库/自动登录/监听需要）
 powershell -ExecutionPolicy Bypass -File tools\setup.ps1   # 环境自检（兼容 PS 5.1/7）
 uv run pytest                       # 1011 项全绿即环境就绪（2026-10-07 实测）
 cd desktop; npm install; cd ..       # 桌面壳（Electron）依赖
-cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建产物 dist/
 ```
 
 日常一切 Python 命令走 `uv run <cmd>`（自动使用锁定环境），**禁止**直接 `pip install` 后不落
@@ -126,7 +125,7 @@ cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建
 3. lockfile 变更**单独成提交**，方便回溯「哪个依赖引入了什么问题」。
 
 > 容器化的取舍：本项目深绑 Windows 本机生态（`%APPDATA%` 数据目录、Electron 壳、
-> 内置 Chromium、扩展装载），容器化收益低、摩擦大。**协作以 `uv.lock` 为准**；
+> 内置 Chromium），容器化收益低、摩擦大。**协作以 `uv.lock` 为准**；
 > 若未来上 CI/Linux 部署再补 Dockerfile（`adapters` 的 `repoPath` 走环境变量注入，机制已备好）。
 
 ## 3. 构建与发布
@@ -137,27 +136,27 @@ cd extensions\quick-login; npm install; npm run build; cd ..\..   # 扩展构建
 powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none] [-SkipPush]
 ```
 
-链路（6 步）：① 版本演进 → ② **重建扩展并校验版本一致** → ③ **`uv sync`** → ④ release commit + push
-→ ⑤ PyInstaller sidecar → ⑥ electron-builder NSIS。
+链路（5 步）：① 版本演进 → ② **`uv sync`** → ③ release commit + push
+→ ④ PyInstaller sidecar → ⑤ electron-builder NSIS。
 产物：`desktop\dist\Workbench-<ver>-setup.exe` + `latest.yml`。
 
 ### 3.2 版本规则（方案 A，用户定稿）
 
 - 真源 = `pyproject.toml` 的 `version`；**只走 `tools/bump.py`**，勿手改单一文件。
 - `bump.py push` = PATCH+1；`bump.py build` = MINOR+1 且 PATCH 重置 1（`0.0.2 → 0.1.1 → 0.2.1`）。
-- **五写同步**：`pyproject.toml` + `workbench/__init__.py` + `desktop/package.json`
-  + 扩展 `manifest.json` + 扩展模块 `package.json`（+ `.version.json` 缓存）。
-- 桌面端与扩展**同号发布**：`extStale` 判定（「扩展是否需要重新加载」）建立在此约定上。
+- **四写同步**：`pyproject.toml` + `workbench/__init__.py` + `desktop/package.json`
+  + `.version.json`（缓存）。
+  > 2026-10-09：原先是**五写**，第五、六写是浏览器扩展的 `manifest.json` 与 `package.json`。
+  > 扩展移出本仓库后这两写随之删除。
 - ⚠️ **`desktop/package-lock.json` 的 version 字段是陈旧的**（实测 `0.2.1`，而 `package.json` 已是
   `0.3.5`），`bump.py` 不写它。**已知问题**——`npm install` 会静默改写它，让发布 commit 后工作区立刻变脏。
-  （扩展工作区 `package-lock.json` 曾被记为陈旧，**2026-09-13 实测已是 `0.3.5`，该说法不再成立**。）
 
 ### 3.3 发布到 GitHub Releases
 
 `build.ps1` 用 `--publish never` 只出产物。发布走 `tools/publish_release.py`（推荐，带三道自查：
 `latest.yml` 版本号 == 发布版本、其 `sha512` == 安装包实际 sha512、指向本次安装包），
 或网页手工上传 `setup.exe + latest.yml`（+ blockmap）。完整步骤与 `GH_TOKEN` 获取路径见
-`docs/EXTENSION-INSTALL.md`（**该文件已于 2026-09-29 删除**） 第四节。
+GitHub Docs: Personal access tokens（`publish_release.py` 的错误提示里有同一路径）。
 
 > ⚠️ 更新器**匿名**读 Release ⇒ 仓库必须公开。
 > ⚠️ 发布错清单会让**所有客户端**更新失败——所以那三道自查不要跳过。
@@ -173,7 +172,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
   > **为什么必须打**：实测本仓**发布过 12 个版本却只有 3 个 tag**，导致 `git checkout v0.3.11` 直接报错——
   > 回滚与"用户跑的是哪一版"都没有锚点。tag 是"版本号 ↔ commit"的唯一连接。
 - **CI 门禁**：`.github/workflows/ci.yml` 在 push/PR 上跑
-  `扩展构建 → uv sync → pytest → verify_packaging.py → ruff`（`windows-latest`）。
+  `uv sync → pytest → verify_packaging.py → ruff`（`windows-latest`）。
   **它是 `verify_packaging.py` 的第一个自动调用方**（此前该工具无人调用，见 §6）。
   > ⚠️ 改 CI 时别加 `paths-ignore`：被跳过的 workflow 在分支保护下会以 pending 卡住合并。
   > ⚠️ **改 `tools/build.ps1` 后必须补 UTF-8 BOM**（编辑会静默丢它，P5 立刻掉到 8/9）——
@@ -182,24 +181,17 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 ### 3.4 构建前的秒级体检（必跑）
 
 ```powershell
-.\.venv\Scripts\python.exe tools\verify_packaging.py   # 13 项静态核对，当前 13/13 PASS
+.\.venv\Scripts\python.exe tools\verify_packaging.py   # 9 项静态核对，当前 9/9 PASS
 .\.venv\Scripts\python.exe tools\gen_tools_doc.py      # 工具清单/数字门禁，当前 PASS
 ```
 
 它拦住的是「跑完 PyInstaller（数分钟）才暴露」的断点：spec 入口脚本缺失、入口用了相对导入、
-壳 spawn 路径与 `extraResources` 不一致、扩展产物缺失/版本不符、`build.ps1` 丢 UTF-8 BOM、
+壳 spawn 路径与 `extraResources` 不一致、`build.ps1` 丢 UTF-8 BOM、
 壳新增 `.js` 忘了进 electron-builder 的 `files` 白名单、**工具插件漏登记 `hiddenimports`（P7）**。
 
 > ⚠️ **`verify_packaging.py` 目前没有被 `build.ps1` 自动调用**（已知问题，见 §6）——请手动跑。
 > ✅ **2026-09-17 起由 CI 自动调用**（`.github/workflows/ci.yml`）：漏跑的代价从"潜伏到发版"
 > 降为"push 后 CI 报红"；**本机裸跑 `build.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑）。
-> ⚠️ **P4b 红了先看"扩展是不是没重建"**：它比对的是**构建产物** `extensions/quick-login/dist/manifest.json`
-> 与项目版本；`git pull` 之后、`npm run build` 之前必然红。2026-09-16 实测踩过；
-> 2026-09-17 在写 CI 时又确认一次——**CI 必须在 pytest 之前 `npm run build`**，
-> 否则全新 checkout 里 `dist/` 根本不存在 → P4b/P4c 必然红。
-> 这条恰好证明 §3.5 那条"扩展重建必须在 bump 之后"不是理论洁癖：**手工漏一次，门禁就是唯一防线。**
-> ⚠️ **改了扩展源码（TS）必须重建 + 重载**：`cd extensions\quick-login; npm run build`，
-> 并在 `chrome://extensions` 点一次「重新加载」（`tools/verify_extension_sync.mjs` 需要服务在 18765 上跑）。
 
 ### 3.4.1 工具清单门禁（改了 `plugins/` 必跑）
 
@@ -217,8 +209,8 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
   核对：`[System.IO.File]::ReadAllBytes(...)` 前 3 字节 == `239,187,191`。
 - **禁止 `$ErrorActionPreference='Stop'`**：PS5.1 会把 git/uv 写 stderr 的正常进度当终止错误。
 - 不支持 `??` 运算符；heredoc `<<` 不可用。
-- **顺序敏感的两处**：`uv sync` 必须在 release commit **之前**（它会写 `uv.lock` 里的项目版本，
-  反了则 commit 里的 lock 立刻过期）；扩展重建必须在 bump **之后**（否则打进安装包的扩展版本停在上一版）。
+- **顺序敏感的一处**：`uv sync` 必须在 release commit **之前**（它会写 `uv.lock` 里的项目版本，
+  反了则 commit 里的 lock 立刻过期）。
 
 ## 4. 代码规约
 
@@ -248,7 +240,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 |---|---|
 | `workbench/api/*` + `workbench/services/*` | 主战场；同一文件避免两人同时改 |
 | `workbench/harness/*` | fork 存量（对话 Agent 循环），改动最小化 |
-| `desktop/*`、`extensions/quick-login/*` | 壳与扩展；改扩展必跑 §7 的三个回归工具 |
+| `desktop/*` | 壳（Electron）；改完跑 `node --check desktop\main.js` 与 `pytest tests/test_lifecycle.py tests/test_shell_control.py -o addopts=""` |
 | `adapters/*.json` 指向的原四项目目录 | **冻结**：任何情况下不写 |
 | `docs/adr/*` | 改已采纳的决策 = 新增一篇取代它，不允许悄悄改历史 ADR。新增**必须用 [0000-template.md](docs/adr/0000-template.md)**，其中的 **§6「外部参照」与 §7「触发器」不得省略**（理由见下） |
 
@@ -281,11 +273,10 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 
 | 项 | 现状 | 影响 |
 |---|---|---|
-| `tools/verify_packaging.py` | **13/13 PASS**（2026-09-16 新增 P7 插件登记对账）；**2026-09-17 起由 CI 自动调用**（`.github/workflows/ci.yml`），但 `build.ps1` 仍**不**调用它 | 构建链路上的断点已由 CI 兜住；**本机裸跑 `build.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑） |
+| `tools/verify_packaging.py` | **9/9 PASS**（2026-09-16 新增 P7 插件登记对账；2026-10-09 随扩展移除 P4a/P4b/P4c/P10）；**2026-09-17 起由 CI 自动调用**（`.github/workflows/ci.yml`），但 `build.ps1` 仍**不**调用它 | 构建链路上的断点已由 CI 兜住；**本机裸跑 `build.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑） |
 | 文档里的工具/插件数字 | **已上机检**：`tools/gen_tools_doc.py` + `tests/test_tools_doc.py` 核对 `docs/TOOLS.md` 与运行期中枢，并扫活跃文档里的"N 个工具/插件" | 2026-09-15 曾四处文档同时写旧数字且由用户先发现（[docs/TOOLS.md](docs/TOOLS.md) §7） |
-| `desktop/package-lock.json` | version `0.2.1`（`package.json` 已 `0.3.12`）——`bump.py` 五写不含它 | `npm install` 会改写它，发布后工作区变脏；安装包命名不受影响（electron-builder 读 `package.json`） |
-| ~~`extensions/quick-login/package-lock.json`~~ | ~~version `0.2.20`~~ → **2026-09-13 实测已是 `0.3.5`，本条已失效** | 同上 |
-| ~~`tools/setup.ps1` §5~~ | ~~仍把 **Node** 当必检项并说「洞察/工厂功能不可用」~~ → **2026-09-14 已改为 `INFO` 信息项**（不计入失败），文案改为「仅影响 desktop/ 与 extensions/ 的构建（运行时不需要）」 | ✅ 口径已对齐 [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md) |
+| `desktop/package-lock.json` | version `0.2.1`（`package.json` 已 `0.3.12`）——`bump.py` 四写不含它 | `npm install` 会改写它，发布后工作区变脏；安装包命名不受影响（electron-builder 读 `package.json`） |
+| ~~`tools/setup.ps1` §5~~ | ~~仍把 **Node** 当必检项并说「洞察/工厂功能不可用」~~ → **2026-09-14 已改为 `INFO` 信息项**（不计入失败），文案改为「仅影响 desktop/ 的构建（运行时不需要）」 | ✅ 口径已对齐 [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md) |
 | `tests/test_proc.py`（7 项） | 仍在测 Node 子进程封装 | 它测的是**遗留封装本身**，不代表运行时链路 |
 | ⚠️ **仓库可见性** | **2026-09-17 匿名探测：`api.github.com/repos/jizi-dragon/akso-mogul` → 404**（同一 owner 的 `quick-login` / `akso-cc` / `mogul_simulator` 均 200 = 公开）。而 §3.3 与 `publish_release.py` 都要求**仓库公开** | **一旦开启自动更新（`WORKBENCH_AUTO_UPDATE=1`）并指向 GitHub，更新链路会失效**（更新器匿名读 Release）。详见 [docs/VERSIONING.md](docs/VERSIONING.md) §3 |
 | `adapters/*.json` 的 `$schema` | 原指向已删除的 `docs/模块契约.md#adapters` | ✅ 本轮已改为 `docs/SCHEMA.md`（仅此字段） |
@@ -299,23 +290,10 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none]
 .\.venv\Scripts\python.exe tools\gen_tools_doc.py   # 工具清单与数字门禁（PASS：4 插件 / 18 工具）
 node tools\verify_port_broker.mjs             # 固定端口 + 占用判定（离线，不需要 Electron；**须先退出工作台**——它靠真占固定端口验判定）
 .\.venv\Scripts\ruff.exe check .               # All checks passed（★ 先探一次，见 §1；PITFALLS #50）
-.\.venv\Scripts\python.exe tools\verify_packaging.py   # 13/13
+.\.venv\Scripts\python.exe tools\verify_packaging.py   # 9/9
 ```
 
-> **`git pull` 之后先重建扩展再跑体检**：`extensions/quick-login/dist/` 是构建产物，
-> 拉取只更新源码 → `verify_packaging.py` 的 P4b（扩展 manifest 版本 == 项目版本）必红，
-> 那反映的是本地构建残留，不是上游坏了。`cd extensions\quick-login; npm run build` 即消。
-
-改动扩展后**额外必跑**（扩展端无单测框架，这三个就是它的回归测试）：
-
-```powershell
-.\.venv\Scripts\python.exe tools\verify_extension_boot.py        # 启动冒烟 7/7
-.\.venv\Scripts\python.exe tools\verify_extension_isolation.py   # Cookie 隔离 + 多 iframe 填表 8/8
-node tools\verify_host_logic.mjs                                 # host/端口口径 22/22
-```
-
-改动 `/extension/*` 蓝图后必跑 `node tools\verify_extension_sync.mjs`（**该蓝图无 pytest 覆盖**）。
-改动**端口 / 壳启动链路 / 扩展的桌面地址**后必跑 `node tools\verify_port_broker.mjs`（离线 27 项，不需要 Electron；**先退出工作台**，否则固定端口被占，脚本的前置检查会拦下并提示）。**端口是固定常量、不顺延**（[ADR-0012](docs/adr/0011-port-governance.md)）——改端口号属于破坏性变更，必须同步壳侧 `desktop/ports.js::PORTS`、Python 侧 `workbench/config.py` 与 `tests/test_ports_contract.py`。
+改动**端口 / 壳启动链路**后必跑 `node tools\verify_port_broker.mjs`（离线 27 项，不需要 Electron；**先退出工作台**，否则固定端口被占，脚本的前置检查会拦下并提示）。**端口是固定常量、不顺延**（[ADR-0012](docs/adr/0011-port-governance.md)）——改端口号属于破坏性变更，必须同步壳侧 `desktop/ports.js::PORTS`、Python 侧 `workbench/config.py` 与 `tests/test_ports_contract.py`。
 改动**洞察页产物预览（`static/js/artifact-preview.js` / markdown 渲染 / drawio 画布）**后必跑
 `.\.venv\Scripts\python.exe tools\verify_insight_preview.py`（14 项，真浏览器断言渲染结果：表格列口径、引用块、drawio 节点与连线计数、多页切页、零 JS 错误）。它自起服务、用临时数据目录与专用端口（18791），**不需要先退出工作台**。
 完整验收基线（含真机项与 E2E）见本文 §7 与 `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的「验收基线实测」。
@@ -335,8 +313,8 @@ node tools\verify_host_logic.mjs                                 # host/端口�
 
 | 模式 | 命令 | 要编译吗 | 覆盖什么 | **不覆盖**什么 |
 |---|---|---|---|---|
-| **① Web 模式** | `.\.venv\Scripts\python.exe -m workbench.main` | **不要** | 全部页面与业务功能（对话/洞察/账号/沙箱/Skill）；自动开浏览器 | Electron 壳的一切（托盘/热键/单实例/更新器）；`WORKBENCH_SESSION_MODE=cdp`（壳才下发，Web 模式跑 `local` 的 Playwright chromium）；扩展的桌面地址发现（回退固定 18765，能用） |
-| **② 桌面壳开发态** | `cd desktop; npm start` | **不要** | **完整桌面应用**：真窗口 + 托盘 + 热键 + sidecar 生命周期 + CDP 会话模式 + 扩展协作面 | 打包特有行为（见 8.3） |
+| **① Web 模式** | `.\.venv\Scripts\python.exe -m workbench.main` | **不要** | 全部页面与业务功能（对话/洞察/账号/沙箱/Skill）；自动开浏览器 | Electron 壳的一切（托盘/热键/单实例/更新器）；`WORKBENCH_SESSION_MODE=cdp`（壳才下发，Web 模式跑 `local` 的 Playwright chromium） |
+| **② 桌面壳开发态** | `cd desktop; npm start` | **不要** | **完整桌面应用**：真窗口 + 托盘 + 热键 + sidecar 生命周期 + CDP 会话模式 | 打包特有行为（见 8.3） |
 | **③ 打包安装版** | `powershell -File tools\build.ps1` → 跑 NSIS 安装包 | **要**（数分钟） | 全部，含 PyInstaller 冻结态、chromium 打包、electron-builder `files` 白名单、NSIS 安装/卸载 | 调试便利性（改一行要重打） |
 
 **结论：日常测试打开应用页面，①②都不需要编译。**
@@ -344,18 +322,14 @@ node tools\verify_host_logic.mjs                                 # host/端口�
 
 ### 8.2 什么时候**必须**编译
 
-只有三件事需要"构建步骤"，且**都不是"编译应用"**：
+只有一件事需要"构建步骤"，且它**不是"编译应用"**：
 
 | 你改了什么 | 要跑的 | 说明 |
 |---|---|---|
-| `extensions/quick-login/**`（TS） | `cd extensions\quick-login; npm run build` | 产 `extensions/quick-login/dist/`。**这不是编译桌面应用**，只是把扩展打成 Chrome 能加载的产物 |
-| 要让 `verify_packaging.py` 的 P4b/P4c 转绿 | 同上 | 它们比对 `dist/manifest.json` 的版本 == 项目版本；`git pull` 之后、build 之前**必然红**（那是本地残留，不是上游坏了） |
 | 要验打包特有行为 | `tools\build.ps1` | 见 8.3 |
 
-> **开发态跑应用时，扩展 `dist/` 不是必需的**——壳只在「安装引导」里用它展示路径
-> （`main.js::extensionDir()` 开发态取 `extensions/quick-login/dist`）。
-> 要测**快捷登录执行面**才需要：先在 Chrome 装一次 `dist/`，改完重建后到
-> `chrome://extensions` 点「重新加载」（Chrome 会缓存 SW 脚本，不重载等于没改）。
+> **Python 侧没有任何构建步骤**：改 `workbench/**` 重启应用即可（§8.1 的①②）。
+> 2026-10-09 之前这里还列着"重建浏览器扩展"——扩展已移出本仓库，那一条随之消失。
 
 ### 8.3 只有**打包态**才验得到的（改完必须打一次包）
 
@@ -385,7 +359,6 @@ node tools\verify_host_logic.mjs                                 # host/端口�
 ```powershell
 # ① 一次性准备（本机已完成）
 cd desktop; npm ci; cd ..
-cd extensions\quick-login; npm install; npm run build; cd ..\..
 
 # ② 每次开工前：确认基线是绿的（约 40 秒）
 .\.venv\Scripts\python.exe -m pytest -o addopts=""      # 1011 passed, 1 skipped

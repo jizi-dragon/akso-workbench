@@ -1,6 +1,9 @@
-"""更新面测试：版本比较、壳状态读取（TTL/损坏/缺失）、更新路由与扩展版本一致性判定。
+"""更新面测试：版本比较、壳状态读取（TTL/损坏/缺失）、更新路由。
 
-覆盖的都是「静默失败会变成用户困惑」的路径：壳没跑 / 状态文件半截 / 扩展旧版判定。
+覆盖的都是「静默失败会变成用户困惑」的路径：壳没跑 / 状态文件半截。
+
+> 2026-10-09：原先还覆盖"扩展版本一致性"（`/extension/health` 的 `extStale` 判定）。
+> 浏览器扩展已整体移出本仓库，那一节与它依赖的 `/extension/state` 端点一并删除。
 """
 
 from __future__ import annotations
@@ -13,46 +16,12 @@ from fastapi.testclient import TestClient
 
 from workbench import config
 from workbench.api import app, routes_update
-from workbench.api import routes_extension as ext
 from workbench.api.routes_update import read_shell_state, version_tuple
 
 
 @pytest.fixture()
 def client() -> TestClient:
     return TestClient(app)
-
-
-@pytest.fixture(autouse=True)
-def _reset_auth_state():
-    """清访问令牌与宽限窗口起点（P0-1）。
-
-    两者都落库、而 db 是会话级共享：某个用例先跑过一次"无令牌 + 宽限开着"的请求后，
-    窗口起点就留在库里，后续用例即便把 `grace_seconds()` 设成 24h，
-    `grace_active()` 也会因"起点在很久以前"返回 False → 本该 200 的变成 401。
-    这类失败看着像鉴权坏了，其实是测试互相污染（实测踩过）。
-    """
-    from workbench import db
-    from workbench.api import extension_auth as auth
-
-    def _reset() -> None:
-        for key in (auth.GRACE_STARTED_KEY, auth.TOKEN_SETTING_KEY):
-            db.execute("DELETE FROM settings WHERE key = ?", (key,))
-
-    _reset()
-    yield
-    _reset()
-
-
-@pytest.fixture()
-def fresh_ext_meta(monkeypatch: pytest.MonkeyPatch):
-    """每个用例从空元信息开始（模块级 _ext_meta 是进程态，会跨用例串味）。"""
-
-    def reset() -> None:
-        monkeypatch.setitem(ext._ext_meta, "extVersion", "")
-        monkeypatch.setitem(ext._ext_meta, "at", 0.0)
-
-    reset()
-    return monkeypatch
 
 
 def _write_shell_state(payload: dict) -> None:
@@ -220,59 +189,3 @@ def test_update_check_without_shell_degrades(
     # 顺带钉住"降级"这句话本身：失败理由要能到达界面，不能是空串
     assert resp.json().get("error")
 
-
-# ------------------------------------------------------------------ 扩展版本一致性
-
-
-def _report(client: TestClient, ext_version: str) -> None:
-    body: dict = {"items": []}
-    if ext_version:
-        body["extVersion"] = ext_version
-    resp = client.post("/extension/state", json=body)
-    assert resp.status_code == 200
-
-
-def test_health_reports_versions(client: TestClient, fresh_ext_meta) -> None:
-    _report(client, "0.0.1")  # 故意旧版
-    data = client.get("/extension/health").json()
-    assert data["extVersion"] == "0.0.1"
-    assert data["desktopVersion"]
-    assert data["extStale"] is True
-
-
-def test_health_not_stale_when_versions_match(client: TestClient, fresh_ext_meta) -> None:
-    desktop = client.get("/extension/health").json()["desktopVersion"]
-    _report(client, desktop)
-    data = client.get("/extension/health").json()
-    assert data["extVersion"] == desktop
-    assert data["extStale"] is False
-
-
-def test_health_unknown_version_is_not_stale(client: TestClient, fresh_ext_meta) -> None:
-    """旧版扩展根本不上报版本 → 不能判定为旧版（否则每次升级都误报打扰用户）。"""
-    data = client.get("/extension/health").json()
-    assert data["extVersion"] == ""
-    assert data["extStale"] is False
-
-
-def test_state_report_without_accounts_still_reports_version(client: TestClient, fresh_ext_meta) -> None:
-    """映射为空（还没同步过账号）时也必须能上报版本——否则旧版扩展永远提示不到。"""
-    _report(client, "9.9.9")
-    assert client.get("/extension/health").json()["extVersion"] == "9.9.9"
-
-
-def test_version_only_report_counts_as_connected(client: TestClient, fresh_ext_meta) -> None:
-    """「只有版本、没有账号映射」的上报同样算已连接。
-
-    否则用户还没同步过账号时，执行面明明活着、UI 却在说「未连接」——
-    与 everConnected 闩锁（收到上报即置位）自相矛盾。
-    """
-    _report(client, "9.9.9")
-    data = client.get("/extension/health").json()
-    assert data["connected"] is True
-    assert data["reportedAccounts"] == 0
-
-
-def test_snapshot_carries_desktop_version(client: TestClient) -> None:
-    snap = client.get("/extension/snapshot").json()
-    assert snap["desktopVersion"] == client.get("/extension/health").json()["desktopVersion"]

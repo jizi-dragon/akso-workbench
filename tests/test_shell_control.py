@@ -54,7 +54,6 @@ MUST_BLOCK_CROSS_ORIGIN = (
     "/windows/close",
     "/update-check",
     "/update-install",
-    "/extension-setup",
 )
 
 #: 只读、且**必须**允许跨源的端点。

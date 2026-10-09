@@ -9,7 +9,7 @@
 > 2. 服务端声明的端口与壳侧 `desktop/ports.js` 的 `PORTS` **完全一致**（跨语言同一条事实，
 >    壳侧的离线脚本验不了这个，故由本文件兜住）；
 > 3. 环境变量优先、文件次之、**缺失时回落默认值**（不炸）；
-> 4. 控制服务端口只有 `config` 一个来源——`routes_update` / `routes_extension` 都读它。
+> 4. 控制服务端口只有 `config` 一个来源——`routes_update` 与 `services/browser_pool` 都读它。
 """
 
 from __future__ import annotations
@@ -23,8 +23,6 @@ from fastapi.testclient import TestClient
 
 from workbench import config
 from workbench.api import app
-from workbench.api import routes_extension as ext
-from workbench.api import routes_shell as sh
 from workbench.api import routes_update as upd
 
 
@@ -142,16 +140,20 @@ def test_ports_file_lives_in_runtime_dir() -> None:
 
 
 def test_health_has_no_side_effects(client: TestClient, no_ports_file) -> None:
-    """探测端点必须无副作用（不能像 /extension/health 那样写 everConnected 闩锁）。
+    """探测端点必须**无副作用**（壳每 300ms 打一次；它会读库，不该写库）。
 
-    壳会每 300ms 打一次探测；若这个端点写库，"扩展开没开过"的判定会被探测本身污染。
+    历史：`/extension/health` 会写 `everConnected` 闩锁，于是"扩展开没开过"的判定
+    会被壳自己的探测污染——那是 ADR-0011 §D-4 分开两条健康端点的原因。
+    **2026-10-09 扩展移出本仓库后 `/extension/health` 已不存在**，
+    这条断言改为直接守住"settings 表在探测前后逐字节不变"：
+    它不依赖任何扩展符号，因此比原版更结实（原版要 import 被删模块的私有键名）。
     """
     from workbench.services.storage import get_setting
 
-    before = get_setting(ext._EVER_KEY)
+    before = get_setting("ext_connected_once")
     for _ in range(3):
         client.get("/api/health")
-    assert get_setting(ext._EVER_KEY) == before
+    assert get_setting("ext_connected_once") == before
 
 
 # ---------------------------------------------------------------- 控制服务端口单点
@@ -163,9 +165,12 @@ def test_control_base_follows_config(monkeypatch: pytest.MonkeyPatch) -> None:
     2026-09-17（P0-1）：`control_base` 随 `/launch-chrome`、`/setup-helper`、`/update-state`
     一起从 `routes_extension.py` 搬到了 `routes_shell.py`（`/api/shell/*`）——
     那三条是给**桌面 UI** 用的、不碰凭据，留在需要令牌的 `/extension/*` 下只能靠开豁免。
+
+    > 2026-10-09：扩展移出本仓库后，`routes_shell.py` 只剩 `/launch-chrome` 与
+    > `/update-state`，`setup-helper` 与它用的 `control_base` 一并删除。
+    > 现在**唯一**的 `control_base` 在 `routes_update.py`（供 `/api/update/*` 代理到壳）。
     """
     monkeypatch.setattr(config, "CONTROL_PORT", 18888)
-    assert sh.control_base() == "http://127.0.0.1:18888"
     assert upd.control_base() == "http://127.0.0.1:18888"
 
 

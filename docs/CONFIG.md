@@ -16,17 +16,17 @@
 [ADR-0011](adr/0011-port-governance.md) §D-1 的"被占则顺延"）：壳启动时**只认下面这三个号**，
 被占就报错退出并说清是谁占的，**不会换号继续跑**。壳把它们
 ①经环境变量下发给服务端、②公布到 `<数据目录>/runtime/desktop-ports.json`、③由控制服务的
-`GET /whoami` 答给浏览器扩展。**别处不要再写这些数字**——`tests/test_ports_contract.py` 会扫描源码钉住这点，
+`GET /whoami` 答出来。**别处不要再写这些数字**——`tests/test_ports_contract.py` 会扫描源码钉住这点，
 并额外核对壳侧 `PORTS` 与 Python 侧默认值**完全一致**（不一致会表现为"永远等不到就绪"的白屏）。
 
 | 端口（固定） | 归属 | 用途 | 谁在监听 |
 |---|---|---|---|
-| **18765** | FastAPI 服务（uvicorn / `WorkbenchServer.exe`） | 全部业务 HTTP + 静态页 + `/extension/*` + `/api/health` | sidecar 进程 |
+| **18765** | FastAPI 服务（uvicorn / `WorkbenchServer.exe`） | 全部业务 HTTP + 静态页 + `/api/health` | sidecar 进程 |
 | **18766** | Electron 内置 Chromium | CDP 调试端口，`browser_pool` `connect_over_cdp` 用 | Electron 主进程 |
-| **18767** | Electron 控制服务（Node `http`） | 会话窗开户/聚焦/关窗、更新动作、扩展安装引导、`/whoami` | Electron 主进程 |
+| **18767** | Electron 控制服务（Node `http`） | 会话窗开户/聚焦/关窗、更新动作、`/whoami` | Electron 主进程 |
 
 > **端口被占 = 应用打不开，这是刻意的**：不换号是为了让"打开工作台"永远是同一个地址
-> （扩展、书签、运维脚本都指向它们）。报错对话框会区分两种情况：占用者是**我们自己的另一个实例**
+> （书签、运维脚本都指向它们）。报错对话框会区分两种情况：占用者是**我们自己的另一个实例**
 > （给 PID/版本，让你去托盘退出它）还是**无关程序**（给 `Get-NetTCPConnection -LocalPort <port>`
 > 的排查命令）。见 [ADR-0012](adr/0011-port-governance.md) §D-2。
 >
@@ -40,10 +40,11 @@
 | 壳 | `cd desktop && npm start` | `Workbench.exe` |
 | 数据库 | 同左（默认 `%APPDATA%`） | 同左 |
 
-> **扩展也不再是编译期常量**（2026-09-14 起）：它会先读缓存、再问壳的 `/whoami`（**核对 `app` 身份**）、
+> **服务端地址不是编译期常量**（2026-09-14 起）：客户端先读缓存、再问壳的 `/whoami`（**核对 `app` 身份**）、
 > 最后回退固定 18765。端口固定后这一步的目的不再是"跟上顺延"，而是**确认 18765 上是不是我们的服务端**——
 > 凭据（Fernet 密文 + 原始密钥）会经过这条通道，而密钥就在本机库里（[PITFALLS.md](PITFALLS.md) #23）。
 > 常见陷阱：孤儿 uvicorn 占端口，见 [PITFALLS.md](PITFALLS.md) 环境坑 #20。
+> （2026-10-09：原先"客户端"特指浏览器扩展；扩展移出后这套地址发现由桌面 UI 自己用。）
 
 ## 2. 第一层：环境变量
 
@@ -60,7 +61,7 @@
 | `MOGUL_HOST` / `MOGUL_PORT` | — | 上一对的兼容别名 |
 | `WORKBENCH_ADAPTERS` | `<项目根>/adapters` | 模块体检读取的适配器目录。测试用（指向仓库 `adapters/`，因为测试数据目录里没有） |
 | `WORKBENCH_SESSION_MODE` | `local` | `cdp` = 托管会话复用 Electron 壳的 Chromium（先壳控制服务开户再 `connect_over_cdp`）；`local` = 原生 Playwright chromium。**桌面壳运行时会下发 `cdp`**（2026-09-14 修：此前壳从不设置它，导致永远跑 `local`，与 [ADR-0002](adr/0002-browser-allocation-policy.md) 的意图相反）。开发者手起服务端时留空即 `local` |
-| `WORKBENCH_CONTROL_PORT` | `18767` | 壳控制服务端口（固定）。由壳下发；服务端侧的 `routes_update` / `routes_extension` 与 `browser_pool` 都读 `config.CONTROL_PORT`，**不得再写常量** |
+| `WORKBENCH_CONTROL_PORT` | `18767` | 壳控制服务端口（固定）。由壳下发；服务端侧的 `routes_update` 与 `browser_pool` 都读 `config.CONTROL_PORT`，**不得再写常量** |
 | `WORKBENCH_CDP_PORT` | `18766` | 同上，壳的 Chromium 调试口；与 `desktop/ports.js` 的 `PORTS.cdp` 对应 |
 | `PLAYWRIGHT_BROWSERS_PATH` | （仅打包态自动设置） | 打包态由 `browser_pool` 工作线程指向 `_MEIPASS/ms-playwright`，**必须在 `sync_playwright()` 之前**。手工覆盖会导致找不到 chromium |
 | `AKSO_CC_REPO` / `AKSO_AUTO_REPO` | 见 `adapters/akso-cc.json` 的 `repoPath` / `D:\ai_assistant\akso-auto`（写死在 `services/accounts.py`） | **只影响两件事**：模块体检的 `source-reference` 提示（只有 `AKSO_CC_REPO` 走这条，它是 `adapters/akso-cc.json` 的 `repoPathEnv`）、「原项目 env 导入」去哪里扫 `env.json`（`accounts.scan_original_env_files` 仍同时扫 akso-cc 与 akso-auto 两处，**只读**）。**不影响任何业务功能**（能力已原生化，见 [ADR-0005](adr/0005-native-internalization-of-four-projects.md)） |
@@ -76,15 +77,14 @@
 | `WORKBENCH_UPDATE_OVERRIDE` | — | 把 `electron-updater` 的 feed 换成 `generic` provider 指向的 URL（本地静态目录）。**只影响更新源，不改判定逻辑**；用于离线跑通整条更新链（`tools/verify_update_flow.py`）。更名前的 `AKSO_UPDATE_OVERRIDE` 仍然认 |
 | `WORKBENCH_NO_PROXY` | — | 发布脚本（`tools/publish_release.py`）的**强制直连**开关。更名前的 `AKSO_NO_PROXY` 仍然认；同族的 `AKSO_HTTPS_PROXY` 亦然 |
 | `WORKBENCH_AUTO_UPDATE` | **未设 = 关闭** | **应用会不会自己替换自己**（用户定稿 2026-09-15）。只认 `1`/`true`/`yes`/`on`；未设时不启动定时检查、不静默下载、不在退出时安装，托盘里的手动检查也只回一句「已关闭」。刻意做成**环境变量而非设置项**——它是部署期决定，放运行时设置里迟早被误点。开启方式：设 `WORKBENCH_AUTO_UPDATE=1` 后重启应用 |
-| `WORKBENCH_EXTENSION_AUTH_GRACE` | `86400`（24h） | `/extension/*` 访问令牌的**宽限期**（秒），[ADR-0015](adr/0002-browser-allocation-policy.md) D-5。令牌是新协议要求，已装的**旧扩展不会带它**；窗口内无令牌照常放行并留 warning，窗口过后 401（且 `/extension/health` 的 `authBlocked` 会让账号中心提示"重新加载扩展"）。**`0` = 严格模式**：现场排障时用来分诊"扩展连不上"是不是令牌问题。⚠ 非整数时回落默认值并留 warning |
-| `WORKBENCH_EXTENSION_ORIGIN` | 空（= 不做来源校验） | 逗号分隔的 `Origin` 允许清单，**配了就强制校验**（ADR-0015 D-7 的可选加固层）。留空的理由：桌面壳目前不声明扩展 id（用户手装的扩展 id 由 manifest 公钥决定、跨机一致，但不在本仓配置里）。**主防线是令牌，不是它**——本机进程可以任意伪造 `Origin` 头 |
 | `ELECTRON_MIRROR` | `https://npmmirror.com/mirrors/electron/`（`build.ps1` 设） | 只影响 electron 二进制下载源 |
 | `GH_TOKEN` | — | 发布到 GitHub Releases 时注入（`--publish always`）；不设则只能手工上传 |
 | `APPDATA` | 系统 | 壳的 `shell-state.js` / `ports.js` 用它解析数据目录，与 Python 侧 `config.DATA_DIR` 必须一致（`desktop-ports.json` 就落在这里的 `runtime/` 下） |
 
-> **令牌本身不是环境变量**：它由服务端生成并落 `settings.extension_access_token`
-> （跨重启稳定——否则每次重启都会让 Chrome 里的扩展拿旧令牌狂刷 401）。
-> 扩展经 `POST /extension/hello` 自举领取，见 [API.md](API.md) §11。
+> **2026-10-09 已删除的两个变量**：`WORKBENCH_EXTENSION_AUTH_GRACE` 与
+> `WORKBENCH_EXTENSION_ORIGIN`——它们服务的是 `/extension/*` 的访问令牌与来源校验，
+> 而浏览器扩展已整体移出本仓库（用户决策：桌面端与扩展不耦合）。
+> 令牌、中间件、自举端点同时删除。
 
 ### 2.3 适配器声明的变量（`adapters/*.json`，**现存只有 `akso-cc.json`**）
 
@@ -141,12 +141,10 @@
 | `apiKey` | DeepSeek API Key 明文 | 空 → `ready=false`，对话直接回「请先在设置中配置」 | 换 Key 即换计费账号；**明文存库**是本机信任边界内的既有契约 |
 | `model` | 模型 id 字符串 | `deepseek-v4-flash`（`deepseek.DEFAULT_MODEL`） | 见 §5 模型清单；**写错模型名会让对话整体 502/报错** |
 | `temperature` | 十进制字符串 | `0.7` | 解析失败回落 0.7 |
-| `account_fernet_key` | urlsafe base64 32 字节 | **首次使用时生成** | ⚠️ **改它 = 全部已存口令不可解密**（接口能读、扩展静默丢弃全部账号）。见 [ADR-0007](adr/0007-credentials-sandbox-and-trust.md) |
-| `disabled_boxes` | JSON 数组字符串 | `[]` | 禁用盒在**轮盘**中被跳过（账号中心与管理不受影响） |
+| `account_fernet_key` | urlsafe base64 32 字节 | **首次使用时生成** | ⚠️ **改它 = 全部已存口令不可解密**（接口仍能列出账号，但口令再也解不开）。见 [ADR-0007](adr/0007-credentials-sandbox-and-trust.md) |
+| `disabled_boxes` | JSON 数组字符串 | `[]` | 禁用盒在账号中心的默认视图里被跳过（管理不受影响） |
 | `rememberedBoxes` | JSON 数组字符串 | `[]` | 记忆盒子清单（含空盒）。**重命名走原位替换**，手工追加会让盒名顺序错乱 |
 | `defaultBoxName` | 字符串 | 空 → 显示「默认盒子」 | 只改默认盒的**显示名**（`box=''` 是存储值，不变） |
-| `ext_cmd_seq` | 整数字符串 | `0` | ⚠️ **指令序号游标**。清空/回退会让扩展持久游标把所有新指令 `seq > after` **永久吞掉**（0.2.4 实锤）。见 [API.md](API.md) §12.3 |
-| `ext_connected_once` | `"1"` | 无 | **一次性闩锁**：写入后账号中心的扩展安装提示条**永久静默**。清掉它会重新弹提示 |
 | `insight_workspace_root` | 绝对路径字符串 | 空 → `我的文档\Workbench\洞察` | **对象分析产物的落盘根**（`<root>/<对象code>/<时间戳>/`）。默认目录名仍是 `洞察`（更名没动磁盘结构）。改它只影响**后续**运行，已产出的目录不会被搬动；填相对路径/指向文件/无法创建时接口返回 400。清空即回默认 |
 
 ### 3.2 已下线功能的残留键（勿读勿写）
@@ -178,8 +176,9 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | 失败感知让位 | 观察期内 antd 错误元素新增 ≥1 记一次，**累计 2 次停手** | 防在错误口令下反复重试 |
 | 用户点击接管 | `userTouched` 永久让位 | trusted input/click 后引擎永久停止 |
 
-扩展侧（`content/auto-login.ts`）另有一套同源实现，参数独立——**两侧不对齐时表现为
-「桌面托管能登、扩展里登不上」或反之**。改一侧必须对照另一侧。
+> 2026-10-09：这曾是**两套同源实现**（桌面 Python 侧 + 浏览器扩展 `content/auto-login.ts`），
+> 两侧参数独立、不对齐时表现为「桌面托管能登、扩展里登不上」。
+> **扩展已移出本仓库**，现在只剩 Python 这一套。
 
 ### 4.2 `browser_pool`
 
@@ -193,15 +192,6 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | `monitor_start` 作业超时 | `90` s | **唯一**显式设超时的公共 API（因为可能触发开户） |
 | 其余作业超时 | **无** | 页面卡住时 HTTP 请求会一直挂着——见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账 |
 | 事件 drain 时机 | 每个作业结束后 | Monitor 的 `monitor.drain()`（[ADR-0006](adr/0002-browser-allocation-policy.md)） |
-
-### 4.3 `routes_extension`（执行面）
-
-| 参数 | 值 | 说明 |
-|---|---|---|
-| `_STATE_TTL_MS` | `60_000` | 执行面状态快照 TTL（扩展每 ~6s 上报） |
-| `_PROBE_TTL_RUNNING_MS` | `10_000` | 「Chrome 在运行」正结果缓存（Chrome 不会无声消失） |
-| `_PROBE_TTL_STOPPED_MS` | `2_000` | 负结果只信 2s（刚退出时仍要能拉起） |
-| 长轮询上限 | `25` s | `min(max(wait,0),25)`；扩展请求 `wait=15` |
 
 ### 4.4 其他
 
@@ -227,17 +217,12 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 | API 基址 | `static/js/api.js` | 同源相对路径 | 无跨域配置（[API.md](API.md) §0） |
 | 温度范围 | `settings.js` + `index.html` | `0 ~ 2`，步长 `0.1`，默认 `0.7` | |
 | 账号中心轮询 | `static/js/accounts.js` | 3 s | 更新状态角标的数据源（读 `/api/update` 的本地文件） |
-| 轮盘窗尺寸 | `desktop/main.js` | `560 × 640`，无边框透明置顶，失焦自动关（400ms 启动宽限） | |
 | 主窗尺寸 | `desktop/main.js` | `1440 × 920`（最小 1100×700） | |
 | 会话窗尺寸 | `desktop/main.js` | `1440 × 900` | |
-| 全局热键 | `desktop/main.js` | `Alt+Q`（轮盘单例 toggle） | **桌面独占**：扩展已不注册任何快捷键（2026-09-14 删 manifest `commands`），桌面未运行时不会弹出浏览器版轮盘（见 `EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**） §8） |
 | 服务就绪等待 | `desktop/main.js` `waitReady` | 40 s，每 300ms 探一次 `/` | 超时则主窗加载 `blank.html?error=timeout` |
 | 更新检查节拍 | `desktop/updater.js` | 启动后 **20s** 首查，之后每 **6h** | |
 | 壳状态心跳 | `desktop/updater.js` | 15 s 写一次 `shell-state.json` | 服务侧 TTL 60s |
 | 代理探测超时 | `desktop/proxy.js` | 6000 ms | 超时即回落系统代理 |
-| 扩展轮询节拍 | `extensions/.../sync.ts` | 数据面 **2s**；状态上报每 3 tick（≈6s）；指令走长轮询（`wait=15`） | |
-| SW 复活节拍 | `extensions/.../sync.ts` | `chrome.alarms` 0.5 min | MV3 SW 空闲约 30s 被杀，这是唯一复活通道 |
-| 扩展诊断缓冲 | `extensions/.../parallel-session.ts` | `ql:diag` 环形 **60** 条；`ql:forensics` 环形 **120** 条（**密码绝不入日志**） | |
 
 ## 6. 第四层：数据目录文件（文件级开关）
 
@@ -264,11 +249,10 @@ Python 侧（`services/autologin.py`，从 quick-login 全量迁移，参数与�
 
 | 想改 | 动哪里 | 注意 |
 |---|---|---|
-| 监听端口 | `WORKBENCH_PORT` + `main.js` 的 `SERVER_PORT` + 扩展 `sync.ts` 的 `DESKTOP` | 三处必须同步，否则扩展静默失联 |
+| 监听端口 | `WORKBENCH_PORT` + `main.js` 的 `SERVER_PORT` | 两处必须同步（端口本身固定，见 §1） |
 | 换模型 | 设置页（仅两个选项）或 DB `settings.model` | UI 无自定义输入框 |
 | 加一个新配置项 | 优先放 `settings` 表（`services/settings.py` 集中建模）；环境变量只用于**进程级**旋钮 | 加表列要新增迁移（[SCHEMA.md](SCHEMA.md) §6） |
 | 让更新走固定代理 | `%APPDATA%\Workbench\proxy.txt` 写一行代理串 | 空文件 = 强制直连 |
-| 让某盒子不出现在轮盘 | `POST /api/accounts/boxes/disable` | 只影响轮盘，不影响账号管理 |
+| 让某盒子不出现在账号中心默认视图 | `POST /api/accounts/boxes/disable` | 只影响默认视图，不影响账号管理 |
 | 清空某账号的免密登录态 | `POST /api/browser/forget/{account_id}` | 等价于删 `runtime/browser-states/<id>.json` |
-| 关掉「未检测到扩展」提示条 | 它已在首次连接后永久静默（`ext_connected_once`） | 若反复出现，说明该键未落库 → 查 DB 写权限 |
 | 调整自动登录节奏 | **不要手改参数**——五重门是实测收敛的结果 | 改前先读 §4.1 与 [ADR-0002](adr/0002-browser-allocation-policy.md) |

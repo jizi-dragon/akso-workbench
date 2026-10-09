@@ -8,15 +8,18 @@
   P1 server.spec 的入口脚本存在
   P2 该入口只用绝对导入（PyInstaller 把它当顶层脚本执行，相对导入必 ImportError）
   P3 桌面壳 spawn 的 sidecar 路径 与 electron-builder 的 extraResources 映射一致
-  P4 安装包要携带的扩展产物存在，且其 manifest 版本 == 项目版本（三写一致性）
   P5 tools/build.ps1 具备 UTF-8 BOM（PS5.1 约定；编辑后极易丢失）
   P6 桌面壳的每个源文件都在 electron-builder 的 files 白名单里
   P7 工具插件清单（`plugins/__init__.py::_MODULES`）全部进了 server.spec 的 hiddenimports
   P8 server.spec 有「缺 chromium 就失败」的守卫（**静态契约，任何环境都查**）
   P8b 本机 chromium 已安装（**环境事实**：`WORKBENCH_REQUIRE_CHROMIUM=1` 时必查 = 构建机；
       CI 不要求——runner 上没有浏览器也不打包，那条判据在 CI 里永远修不好）
-  P9 版本五写同步（复用 tools/bump.py check，不另写一份正则）
-  P10 `/extension/*` 访问令牌边界（P0-1：中间件已装 + 豁免面最小 + UI 端点已迁出该前缀）
+  P9 版本四写同步（复用 tools/bump.py check，不另写一份正则）
+
+> **2026-10-09 变更**：原先还有 P4a/P4b/P4c（安装包携带的浏览器扩展产物与版本一致性）
+> 与 P10（`/extension/*` 访问令牌边界）。浏览器扩展已整体移出本仓库
+> （用户决策：桌面端与扩展不耦合，本仓只需账号管理页承接云端数据环境），
+> 这四项随之删除——它们守的东西已经不存在了。
 
 用法：
     .venv\\Scripts\\python.exe tools\\verify_packaging.py
@@ -38,14 +41,7 @@ SPEC = ROOT / "workbench" / "server.spec"
 DESKTOP_PKG = ROOT / "desktop" / "package.json"
 MAIN_JS = ROOT / "desktop" / "main.js"
 BUILD_PS1 = ROOT / "tools" / "build.ps1"
-PYPROJECT = ROOT / "pyproject.toml"
-EXT_DIST = ROOT / "extensions" / "quick-login" / "dist"
 PLUGINS_INIT = ROOT / "workbench" / "plugins" / "__init__.py"
-
-
-def _project_version() -> str:
-    m = re.search(r'^version\s*=\s*"([^"]+)"', PYPROJECT.read_text(encoding="utf-8"), re.M)
-    return m.group(1) if m else "?"
 
 
 def _plugin_modules() -> list[str]:
@@ -103,26 +99,6 @@ def main() -> int:
         spawn_ok and to_map.get("server") == "../dist/WorkbenchServer"
     )
     details.append(f"   extraResources → {to_map or '(空)'}")
-
-    # P4 扩展产物 + 版本一致（安装包会携带 dist → resources/extension）
-    ext_manifest = EXT_DIST / "manifest.json"
-    bundled = to_map.get("extension") == "../extensions/quick-login/dist"
-    checks["P4a 扩展产物已配置进 extraResources"] = bundled
-    if ext_manifest.exists():
-        ext_ver = json.loads(ext_manifest.read_text(encoding="utf-8")).get("version")
-        ver = _project_version()
-        checks["P4b 扩展 manifest 版本 == 项目版本"] = ext_ver == ver
-        details.append(f"   项目 v{ver} / 扩展 v{ext_ver}")
-        # 扩展关键产物（缺任一，装进去也是坏的）
-        needed = ["background.js", "manifest.json", "content/shield-main.js", "ui/popup/popup.js"]
-        missing = [n for n in needed if not (EXT_DIST / n).exists()]
-        checks["P4c 扩展关键产物齐全"] = not missing
-        if missing:
-            details.append(f"   缺：{missing}")
-    else:
-        checks["P4b 扩展 manifest 版本 == 项目版本"] = False
-        checks["P4c 扩展关键产物齐全"] = False
-        details.append("   扩展产物不存在（先跑 cd extensions/quick-login && npm run build）")
 
     # P5 build.ps1 的 BOM
     head = BUILD_PS1.read_bytes()[:3]
@@ -202,43 +178,18 @@ def main() -> int:
         bool(chromium_dirs) if expect_chromium else True
     )
 
-    # P9 版本五写同步（pyproject / __init__ / desktop pkg / 扩展 manifest+package / .version.json）
+    # P9 版本四写同步（pyproject / __init__ / desktop pkg / .version.json）
     # 为什么必须查：手改单一文件是**已发生过**的事故形态——安装包命名（读 pyproject）、
-    # 壳内显示版本（读 package.json）、扩展弹窗版本（读 manifest）会各说各话；
+    # 壳内显示版本（读 package.json）会各说各话；
     # 而 build.ps1 第 1 步的 bump 自查只在构建路径上生效，拉取后直接打包就绕过了。
     # 判据复用 bump.py check 的同一套逻辑（单一真源），此处不另写一份正则。
     check_proc = subprocess.run(
         [sys.executable, str(ROOT / "tools" / "bump.py"), "check"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
-    checks["P9 版本五写同步（bump.py check）"] = check_proc.returncode == 0
+    checks["P9 版本四写同步（bump.py check）"] = check_proc.returncode == 0
     if check_proc.returncode != 0:
         details.append("   " + (check_proc.stderr or check_proc.stdout or "").strip().replace("\n", "\n   "))
-
-    # P10 `/extension/*` 的访问令牌边界（P0-1）
-    # 为什么必须查：这不是"某条路由忘了加依赖"，而是**整段前缀**的安全姿态。
-    # 它靠三件事同时成立：① 中间件真的被 create_app 装上；② 桌面 UI 用的那几条
-    # "不碰凭据"的端点**不在**受保护前缀里（否则它们只能靠开豁免，而豁免一开，
-    # "整个前缀需要令牌"就退化成人工维护的清单）；③ 自举端点仍然存在（否则扩展死锁）。
-    api_init = (ROOT / "workbench" / "api" / "__init__.py").read_text(encoding="utf-8")
-    auth_src = (ROOT / "workbench" / "api" / "extension_auth.py").read_text(encoding="utf-8")
-    shell_src = (ROOT / "workbench" / "api" / "routes_shell.py").read_text(encoding="utf-8")
-    middleware_installed = "ExtensionAuthMiddleware" in api_init and "add_middleware" in api_init
-    shell_registered = "routes_shell" in api_init
-    hello_defined = 'HELLO_PATH = "/extension/hello"' in auth_src
-    exempt_ok = 'EXEMPT_PATHS = frozenset({HELLO_PATH, "/extension/health"})' in auth_src
-    ui_routes_relocated = all(
-        f'@router.post("/{name}")' in shell_src for name in ("launch-chrome", "update-state", "setup-helper")
-    )
-    checks["P10 /extension/* 访问令牌边界（中间件+豁免面+UI 端点已迁出）"] = (
-        middleware_installed and shell_registered and hello_defined and exempt_ok and ui_routes_relocated
-    )
-    if not all((middleware_installed, shell_registered, hello_defined, exempt_ok, ui_routes_relocated)):
-        details.append(
-            f"   中间件={middleware_installed} 壳路由注册={shell_registered} 自举端点={hello_defined} "
-            f"豁免面={exempt_ok} UI 端点已迁出={ui_routes_relocated}"
-            " → /extension/* 可能又变回无鉴权（CODEBASE_OVERVIEW R1）"
-        )
 
     print("\n".join(details))
     print()

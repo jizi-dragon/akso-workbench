@@ -1,8 +1,10 @@
 """Monitor 监听路由：在托管会话（内置 Chromium）上启动/停止/查询录制。
 
 浏览器分配政策（用户定稿）：
-- 人工快捷登录/打开 → 用户自己的 Chrome（quick-login 扩展，/extension/* 指令）；
 - 监听/自动化 → 应用内置 Chromium（browser_pool，cdp 模式 = Electron 壳的 Chromium）。
+
+> 2026-10-09：原先并存的另一条"人工快捷登录 → 用户自己的 Chrome（经浏览器扩展）"
+> 已随扩展整体移除（用户决策：桌面端与扩展不耦合）。托管浏览器成为唯一路径。
 """
 
 from __future__ import annotations

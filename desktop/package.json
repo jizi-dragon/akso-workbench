@@ -5,6 +5,9 @@
   "private": true,
   "description": "Workbench 桌面壳（Electron）：窗口/热键/托盘/更新器 + Python 服务 sidecar",
   "main": "main.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win nsis --publish never",
@@ -35,10 +38,6 @@
       {
         "from": "../dist/WorkbenchServer",
         "to": "server"
-      },
-      {
-        "from": "../extensions/quick-login/dist",
-        "to": "extension"
       }
     ],
     "win": {

@@ -1,8 +1,0 @@
-node_modules/
-dist/
-*.log
-probe/
-tmp/
-
-# 打包产物不入库（见 docs/EXTENSION-INSTALL.md 的打包说明）
-quicklogin-chrome-*.zip

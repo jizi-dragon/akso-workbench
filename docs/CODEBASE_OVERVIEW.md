@@ -107,8 +107,7 @@ ADR 只增不改（22 篇）、文档里的"N 个工具"由脚本从运行期中
 |---|---|---|
 | Electron 主进程（`18767` 控制口） | **仲裁者**：决定端口、拉起 sidecar、开窗口、托盘、热键 | 固定端口**无回落**（ADR-0012），单实例判定在壳侧 |
 | Python sidecar（`18765`） | 业务与 Agent 全部在这里 | 由壳 spawn；开发态直接 spawn `uvicorn`（**不经过任何入口脚本**） |
-| Chromium CDP（`18766`） | 托管浏览器（Playwright） | 单工作线程队列 |
-| Chrome MV3 扩展 | **执行面**（用户自己的 Chrome） | 数据面在桌面端；`/extension/*` 由一次性令牌中间件守着 |
+| Chromium CDP（`18766`） | 托管浏览器（Playwright） | 单工作线程队列；**这是唯一的浏览器路径**（2026-10-09 起） |
 
 ★ 因为开发态绕过了两个入口脚本，**启动横幅与父进程监视都放在 `api.lifespan`**
 （`workbench/api/__init__.py:74-96`）——它是**所有启动路径的唯一交集**。
@@ -139,8 +138,7 @@ ADR 只增不改（22 篇）、文档里的"N 个工具"由脚本从运行期中
 | `workbench/services/egmp/` | 平台知识层 | `kernel/`（纯知识、无 I/O）· `client.py`（同步 httpx）· `insight/`（织网）· `monitor/`（录制解读） |
 | `workbench/static/` | 原生 ES module 前端 | `index.html` 是唯一入口，4 个模块页是**整页跳转** |
 | `desktop/` | Electron 壳 | 固定端口、`setWindowOpenHandler` 一律交系统浏览器 |
-| `extensions/quick-login/` | MV3 扩展，六平面隔离 | 上游 fork **已于 2026-09-29 终止**，本仓自持 |
-| `tools/` | 33 个手动端到端校验脚本 + 生成/守卫脚本 | 它们**会真的起服务/开浏览器**，因此有自足性契约 |
+| `tools/` | 手动端到端校验脚本 + 生成/守卫脚本 | 它们**会真的起服务/开浏览器**，因此有自足性契约 |
 
 ---
 
@@ -243,7 +241,7 @@ powershell -File tools\build.ps1                          # → NSIS 安装包
 | `pytest -o addopts=""`（全量，含 slow） | **1011 passed, 1 skipped**，70.4 s |
 | `ruff check .` | **All checks passed** |
 | `python tools\gen_tools_doc.py` | **PASS**（4 插件 / 18 工具 = core；installed 0） |
-| `python tools\verify_packaging.py` | **PACKAGING_CHECKS: 13/13** |
+| `python tools\verify_packaging.py` | **PACKAGING_CHECKS: 13/13**（P4a/P4b/P4c/P10 已随扩展移除，现为 **9/9**） |
 
 > 工作区里那 4 个未提交改动（见第九节）**已被这次全量跑覆盖**（含新增的
 > `tests/test_doc_encoding.py` 7 条，全绿）。**没有跑**任何需要真实浏览器/真实 Key 的
@@ -371,7 +369,7 @@ SSE 客户端中途断开 ⇒ 生成器被关闭 ⇒ `finish_job` 不执行 ⇒ 
 | `docs/CORE-ARCHITECTURE.md` §8 | 「数据库迁移 **1–24**」 | 同上 |
 | `README.md:111` | 「**16 篇**架构决策记录」 | `docs/adr/` 有 **22** 篇 ADR（+ 模板 = 23 个文件） |
 | `CONTRIBUTING.md:22 / :114 / :299 / :392` | 「**382** 项」/「**501** 项」/「**382** 项」/「**596** passed」 | 同一份文件里的四个互相矛盾的旧数字；今天实测 **1011 passed / 1 skipped** |
-| `CONTRIBUTING.md:185/186/285/303` | 「verify_packaging **9/9 PASS**」 | 今天 **13/13**（该脚本自己已经长到 13 项） |
+| `CONTRIBUTING.md:185/186/285/303` | 「verify_packaging **9/9 PASS**」 | 2026-10-07 时是 **13/13**；**2026-10-09 起回到 **9/9**（P4a/P4b/P4c/P10 随扩展移除） |
 | `CONTRIBUTING.md:300` | 「PASS：**5 插件 / 20 工具**」 | 今天 **4 插件 / 18 工具** |
 | `CHANGELOG.md` 的 `[Unreleased]` | 仍含**已删除能力**（配置工厂 / `factory_*` / ADR-0017/0018）的条目 | `tools/publish_release.py` 会把它**逐字**当发布说明抽出去，且**不报错**（文件里自己写着这条警告） |
 | 该词的陈旧标注 | 「`docs/CODEBASE_OVERVIEW.md`（该文件已于 2026-09-29 删除）」 | ✅ **2026-10-07 已全部同步**。★ **本行不再写具体处数** —— 它已经错过两次：最初写「10 处」、后来改成「24 处」，两次都**低估**（实测含该词的行共 **26 行 / 12 个文件**：`docs/adr/` 之外 25 行 + 目录内 1 行）。⇒ **一个每修一次标注就会漂的数字不值得维护**：要复核就自己跑全仓 grep；本行只记录口径与结论。其中 `CHANGELOG.md` 的 2 行是**历史记录、刻意不改** |

@@ -20,6 +20,42 @@
 
 ## [Unreleased]
 
+### Removed
+
+- **浏览器扩展整体移出本仓库（2026-10-09，用户决策：桌面端与扩展不耦合，本仓只需账号库管理页
+  来承接云端的数据环境）**。删除面：
+  - 源码树 `extensions/quick-login/`（42 文件 / 约 324 KB，含 manifest、TS 源、构建脚本）；
+  - `/extension/*` 整段蓝图（`api/routes_extension.py`）与访问令牌中间件
+    （`api/extension_auth.py`，P0-1 的 `X-Workbench-Token` + 24h grace 窗口）；
+  - 桌面壳的扩展协作：`extensionDir()` / `findOpenExtensionSetup()` / 托盘「安装浏览器扩展…」、
+    控制服务的 `/extension-setup`、透明**轮盘窗**与全局热键 `Alt+Q`；
+  - 账号中心的扩展 UI：卡片「快捷登录」按钮、四态徽标、两条提示条（未安装 / 版本过旧）、
+    以及 `pages/wheel-picker.html` 与 `static/css/wheel.css`；
+  - 打包链路：`desktop/package.json` 的 `extraResources` 第二项、`build.ps1` 的扩展重建步骤
+    （8 步 → 7 步）、`bump.py` 的第五/六写（现为**四写**）、`verify_packaging.py` 的
+    P4a/P4b/P4c/P10（**13 项 → 9 项**）、CI 的 `npm ci && npm run build` 步骤；
+  - 验证工具：`verify_extension_sync.mjs` / `_boot.py` / `_isolation.py` / `_version.py` /
+    `acceptance_extension_e2e.py` / `verify_command_latency.py` / `verify_host_logic.mjs` /
+    `diag_fernet_node.mjs` / `make_app_icon.py`，以及 `tests/test_extension_auth.py` /
+    `tests/test_extension_blueprint.py`。
+- **随之删除的能力**：在**用户自己的 Chrome** 里多账号并行（六平面隔离、账号轮盘、免密复制语义）。
+  该能力改由独立仓库 [`jizi-dragon/quick-login`](https://github.com/jizi-dragon/quick-login) 承担。
+  **托管浏览器（内置 Chromium，`browser_pool`）成为本仓唯一的浏览器路径**，
+  账号中心保留**账号库 CRUD + 盒子/环境/备份导入导出 + 云端账号库登录（设备流）**。
+
+### Changed
+
+- `routes_shell.py` 只剩 `/launch-chrome` 与 `/update-state`（`setup-helper` 与它用的
+  `control_base` 一并删除）；`workbench/api/__init__.py` 不再装 `ExtensionAuthMiddleware`。
+- `/api/health` 成为**唯一**的健康端点（原 `/extension/health` 的 `everConnected` 闩锁与
+  `extStale` 判定随之消失）。
+- `tests/test_ports_contract.py` 的"探测端点无副作用"改为直接断言 settings 表不变
+  （不再依赖被删模块的私有键名）。测试基线：**1016 → 1011 项**（删 5 条扩展专属用例）。
+
+> ⚠️ 本次同时**修正了一处自己的失误**：用脚本批量重排 `build.ps1` 时把它的 **UTF-8 BOM 吃掉了**，
+> `verify_packaging.py` 的 P5 当场报红（8/9）。已补回并复跑 9/9 —— 这正是 P5 存在的理由，
+> 判据见 `AGENTS.md` §3 的 `tools/build.ps1` 一行。
+
 > 新条目写在这里（`tools/publish_release.py` 逐字认这一行标题，说明与约束见文件顶部注释）。
 >
 > ⚠️ **发版前必须先清理本段（2026-09-24 记）**：下面的 `### Fixed` 与 `### Added` 里仍有若干

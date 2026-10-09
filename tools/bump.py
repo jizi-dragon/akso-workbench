@@ -29,9 +29,11 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 INIT_PY = ROOT / "workbench" / "__init__.py"
 DESKTOP_PKG = ROOT / "desktop" / "package.json"
-EXT_MANIFEST = ROOT / "extensions" / "quick-login" / "manifest.json"
-EXT_PACKAGE = ROOT / "extensions" / "quick-login" / "package.json"
 VERSION_CACHE = ROOT / ".version.json"
+
+# 四写 = pyproject.toml（真源）/ workbench/__init__.py / desktop/package.json / .version.json
+# > 2026-10-09：原先还有第五、第六写（浏览器扩展的 manifest.json 与 package.json）。
+#   扩展已整体移出本仓库（用户决策：桌面端与扩展不耦合），故这两写随之删除。
 
 # ⚠ **stdout 只允许出现版本号本身**（成功路径一行 `major.minor.patch`）。
 # 调用方（tools/build.ps1 第 1 步）用 `(& python tools\bump.py build).Trim()` 取版本，
@@ -70,29 +72,14 @@ def _write(major: int, minor: int, patch: int) -> None:
             raise _die("desktop/package.json 中未找到唯一的 version 字段")
         DESKTOP_PKG.write_text(pkg_text, encoding="utf-8", newline="\n")
 
-    # 扩展版本与项目同步（用户定稿）：popup/管理页可见版本随项目演进。
-    # ⚠ 这两个文件**必须存在**：旧实现是 `if ext_file.exists()` 静默跳过，
-    # 于是"扩展 manifest 没跟上项目版本"会以**成功**的姿态过去——而安装包会带着旧扩展，
-    # 用户看到的版本与桌面端不一致（build.ps1 第 2 步的版本一致性校验正是防这个）。
-    for ext_file in (EXT_MANIFEST, EXT_PACKAGE):
-        if not ext_file.exists():
-            raise _die(f"缺少 {ext_file.relative_to(ROOT)}——扩展版本无法与项目同步")
-        text = ext_file.read_text(encoding="utf-8")
-        text, n = re.subn(
-            r'("version"\s*:\s*")[^"]*(")', rf"\g<1>{version}\g<2>", text, count=1
-        )
-        if n != 1:
-            raise _die(f"{ext_file.name} 中未找到 version 字段")
-        ext_file.write_text(text, encoding="utf-8", newline="\n")
-
     VERSION_CACHE.write_text(json.dumps({"version": version}), encoding="utf-8")
 
 
 def _check() -> int:
-    """核对五写是否已同步到 `pyproject.toml` 的版本（只读，不改任何文件）。
+    """核对四写是否已同步到 `pyproject.toml` 的版本（只读，不改任何文件）。
 
     为什么不靠人记：手改单一文件是**已发生过**的事故形态（安装包命名与产物校验错位）。
-    本命令把"五写同步"变成一条可机检的断言，供发版前与 CI 调用。
+    本命令把"四写同步"变成一条可机检的断言，供发版前与 CI 调用。
     """
     major, minor, patch = _read()
     version = f"{major}.{minor}.{patch}"
@@ -104,10 +91,6 @@ def _check() -> int:
     if DESKTOP_PKG.exists():
         pk_match = re.search(r'^\s*"version"\s*:\s*"([^"]*)"', DESKTOP_PKG.read_text(encoding="utf-8"), re.M)
         checks.append(("desktop/package.json", pk_match.group(1) if pk_match else "<未找到>"))
-    for ext_file in (EXT_MANIFEST, EXT_PACKAGE):
-        if ext_file.exists():
-            m = re.search(r'"version"\s*:\s*"([^"]*)"', ext_file.read_text(encoding="utf-8"))
-            checks.append((str(ext_file.relative_to(ROOT)), m.group(1) if m else "<未找到>"))
     if VERSION_CACHE.exists():
         try:
             checks.append((".version.json", str(json.loads(VERSION_CACHE.read_text(encoding="utf-8"))["version"])))
@@ -118,7 +101,7 @@ def _check() -> int:
     for name, got in checks:
         print(f"  {'OK  ' if got == version else 'FAIL'} {name} = {got}", file=sys.stderr)
     if bad:
-        print(f"版本五写不同步：pyproject.toml = {version}，失配 {len(bad)} 处", file=sys.stderr)
+        print(f"版本四写不同步：pyproject.toml = {version}，失配 {len(bad)} 处", file=sys.stderr)
         return 1
     print(version)
     return 0

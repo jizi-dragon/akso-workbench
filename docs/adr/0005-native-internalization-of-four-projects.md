@@ -21,6 +21,18 @@
 | `akso-auto` | 配置自动化（蓝图校验 / 创建 / 编排 / Monitor） | Node CLI（`scripts/main.js` + 子命令） |
 | `quick-login` | 多账号统一库 + 自动登录节奏门控 | Chrome MV3 扩展（TS） |
 
+> ★ **2026-10-09 后补（只追加，以下原文一字未改）**：`quick-login` 那一行**只有一半留下了**。
+> 用户决策「**桌面端与扩展不耦合**」之后，浏览器扩展（`extensions/quick-login/`）
+> 整体移出本仓库，改由独立仓库 `jizi-dragon/quick-login` 承担；
+> 本仓保留的是**统一账号库 + 自动登录节奏门控**的 Python 原生实现
+> （`services/accounts.py` + `services/autologin.py`），以及**账号库管理页**
+> （`static/pages/accounts.html` + `accounts.js`）——后者正是用户说的
+> "仅仅只是需要账号管理页面而已，这是为了承接云端的数据环境"。
+>
+> 因此本篇"**能力原生化、运行时零依赖原项目**"的核心结论**不变且更强了**：
+> 现在连扩展这一份也不再随包分发。
+> 取回当时形态：`git show 34b5e94:extensions/quick-login/README.md`。
+
 融合期（阶段 1–2）的形态是**子进程聚合**：`workbench/services/proc.py` 封装 Node 子进程，
 Workbench 侧传 `--url/--user/--pass` 内联凭据调两个原仓库的 CLI。这带来三个硬问题：
 

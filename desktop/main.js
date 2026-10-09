@@ -1,5 +1,5 @@
 // Workbench 桌面壳（Electron）
-// 职责：Python 服务 sidecar 生命周期 + 主窗/透明轮盘窗 + 全局热键 Alt+Q
+// 职责：Python 服务 sidecar 生命周期 + 主窗
 //       + 托盘 + 会话控制服务(18767，供 browser_pool CDP 模式开户窗) + 自动更新
 // 架构不变量：窗口只做"壳"，业务全在 FastAPI 服务（HTTP 暴露）；
 //       托管会话复用本壳的 Chromium（CDP 18766 ← playwright connect_over_cdp）。
@@ -25,7 +25,6 @@ const DEBUG_PORT = portBroker.PORTS.cdp;
 
 let serverChild = null;
 let mainWindow = null;
-let wheelWindow = null;
 let tray = null;
 let quitting = false;
 /** 端口是固定的；这里只留壳的启动时刻，供 /whoami 与排障使用 */
@@ -179,8 +178,7 @@ function killServer() {
  * 主窗打开的是别人的页面——那次事故表现成"代码改了但 UI 没变"（ADR-0011 §1）。
  *
  * 现在改成打 `GET /api/health` 并核对 `app === 'Workbench'`：
- * 从"有人应答"升级为"是我们的服务在应答"。探测端点必须**无副作用**——
- * 别用 `/extension/health`，它会写 `everConnected` 闩锁（ADR-0011 §D-4）。
+ * 从"有人应答"升级为"是我们的服务在应答"。探测端点必须**无副作用**。
  *
  * @returns {Promise<{ok: boolean, reason: string, seen: object|null}>}
  */
@@ -262,133 +260,6 @@ function createMain() {
   });
 }
 
-function toggleWheel() {
-  if (wheelWindow && !wheelWindow.isDestroyed()) {
-    wheelWindow.close();
-    wheelWindow = null;
-    return;
-  }
-  wheelWindow = new BrowserWindow({
-    width: 560,
-    height: 640,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: false,
-    title: 'Akso 轮盘',
-    webPreferences: { backgroundThrottling: false },
-  });
-  wheelWindow.setAlwaysOnTop(true, 'screen-saver');
-  wheelWindow.loadURL(serverUrl('/static/pages/wheel-picker.html?transparent=1'));
-  // 失焦自动关闭（上游独立小窗语义）：400ms 启动宽限防误关
-  wheelWindow.once('ready-to-show', () => {
-    setTimeout(() => {
-      if (wheelWindow && !wheelWindow.isDestroyed()) {
-        wheelWindow.on('blur', () => {
-          if (wheelWindow && !wheelWindow.isDestroyed()) {
-            wheelWindow.close();
-            wheelWindow = null;
-          }
-        });
-      }
-    }, 400);
-  });
-  wheelWindow.on('closed', () => { wheelWindow = null; });
-}
-
-// ------------------------------------------------- 浏览器扩展安装助手
-// 为什么必须让用户点几下：Chrome 在 Windows 上禁止非商店扩展直接安装（拖入 .crx 被拦），
-// 而「策略强制安装」（ExtensionInstallForcelist）经查在 HKCU 下普遍不生效、自托管
-// update_url 亦常见失败，且本仓库没有签名私钥——故采用「随包携带 + 一键引导」这条
-// 零依赖、零管理员、离线可用的路径。完整取舍见 docs/EXTENSION-INSTALL.md。
-
-/** 扩展目录：打包态 = resources/extension（extraResources 带入）；开发态 = 仓库构建产物 */
-function extensionDir() {
-  const packaged = process.resourcesPath ? path.join(process.resourcesPath, 'extension') : '';
-  if (packaged && fs.existsSync(path.join(packaged, 'manifest.json'))) {
-    return packaged;
-  }
-  const dev = path.join(__dirname, '..', 'extensions', 'quick-login', 'dist');
-  return fs.existsSync(path.join(dev, 'manifest.json')) ? dev : null;
-}
-
-/** 定位 chrome.exe（用户级安装在 LOCALAPPDATA，机器级在 Program Files → 再兜注册表） */
-function findChrome() {
-  const roots = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA];
-  for (const root of roots.filter(Boolean)) {
-    const p = path.join(root, 'Google', 'Chrome', 'Application', 'chrome.exe');
-    if (fs.existsSync(p)) {
-      return p;
-    }
-  }
-  try {
-    const out = execSync(
-      'reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe" /ve',
-      { encoding: 'utf8', windowsHide: true },
-    );
-    const m = /REG_SZ\s+(.+?\.exe)/i.exec(out);
-    if (m && fs.existsSync(m[1].trim())) {
-      return m[1].trim();
-    }
-  } catch {
-    // 无注册表项（未安装/无权限）
-  }
-  return null;
-}
-
-/** 打开 chrome://extensions + 扩展目录，并给出分步说明。
- *  `mode='install'`（默认）走首次安装四步；`mode='reload'` 是桌面端升版后的
- *  一次性「重新加载」——扩展文件由安装包覆盖，Chrome 必须先重新加载才会用新版。
- *  幂等，可反复调用。 */
-async function openExtensionSetup(mode = 'install') {
-  const reload = mode === 'reload';
-  const dir = extensionDir();
-  if (dir) {
-    await shell.openPath(dir).catch(() => undefined);
-  }
-  const chrome = findChrome();
-  if (chrome) {
-    try {
-      spawn(chrome, ['chrome://extensions'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-    } catch {
-      // 打不开就让用户手动访问
-    }
-  }
-  const detail = reload
-    ? [
-        chrome
-          ? '1) 已在 Chrome 打开 chrome://extensions（没弹出请手动访问）'
-          : '1) 手动打开 Chrome，访问 chrome://extensions',
-        '2) 在扩展列表里找到 Akso 快捷登录',
-        '3) 点该扩展卡片上的「重新加载」按钮（↻）',
-        '',
-        '为什么需要这一步：扩展文件随桌面端一起更新，Chrome 只在重新加载后才会用上新版本。',
-        '数据（账号 / 登录态）不会丢——重新加载只重启扩展本身。',
-      ].join('\n')
-    : [
-        chrome
-          ? '1) 已在 Chrome 打开 chrome://extensions（没弹出请手动访问）'
-          : '1) 手动打开 Chrome，访问 chrome://extensions',
-        '2) 打开右上角「开发者模式」开关',
-        '3) 点「加载已解压的扩展程序」',
-        '4) 在文件夹选择框里选中已为你打开的目录（选到它本身，不要进子目录）：',
-        `     ${dir || '（未找到扩展目录——请重新安装桌面端）'}`,
-        '',
-        '装好后「在线」徽标与 Alt+Q 轮盘即可用；账号数据由桌面端自动下发，无需在扩展里另建。',
-        '注意：该目录随桌面端安装目录存在，卸载桌面端后扩展会失效。',
-      ].join('\n');
-  await dialog.showMessageBox({
-    type: 'info',
-    title: reload ? '重新加载浏览器扩展（一次性）' : '安装浏览器扩展（一次性）',
-    message: reload ? '扩展文件已更新：请重新加载一次' : '还差一步：把这个扩展加载进 Chrome',
-    detail,
-    buttons: ['知道了'],
-    noLink: true,
-  });
-  return { dir, chrome, mode };
-}
-
 // ------------------------------------------------- 会话控制服务（壳内 HTTP）
 
 /** 本壳的身份与端口——`/whoami` 与 desktop-ports.json 用**同一份**口径 */
@@ -412,7 +283,7 @@ function createControlServer() {
   // `/update-state` 不在内——扩展要从任意页面调 `/whoami` 做身份自证（ADR-0011 §D-5）。
   const CHANGING_PATHS = new Set([
     '/windows', '/windows/focus', '/windows/close',
-    '/update-check', '/update-install', '/extension-setup',
+    '/update-check', '/update-install',
   ]);
   const json = (res, code, body) => {
     // 扩展从任意页面发起的发现请求会带 Origin；这几个端点无凭据、只读，故允许跨源
@@ -461,14 +332,6 @@ function createControlServer() {
       // 我们的服务端"。控制服务是壳自己的，所以它的回答天然比"18765 上是谁"可信。
       // 端口已固定，故本端点不再承担"发现端口"的职责，只回答**身份**。
       if (url.pathname === '/whoami') return json(res, 200, selfDescription());
-
-      // 安装扩展引导（供桌面 UI 的「扩展未连接」提示条调用；也可由托盘菜单直接触发）
-      if (req.method === 'POST' && url.pathname === '/extension-setup') {
-        void openExtensionSetup(payload.mode === 'reload' ? 'reload' : 'install')
-          .then((r) => json(res, 200, { ok: true, ...r }))
-          .catch((e) => json(res, 500, { ok: false, error: String(e) }));
-        return;
-      }
 
       // 更新面（账号中心版本角标 → 本壳）：state 只读快照，check 走同一条静默下载路径
       if (url.pathname === '/update-state') {
@@ -568,8 +431,6 @@ function createTray() {
   }
   const menu = Menu.buildFromTemplate([
     { label: '显示主窗', click: showMainWindow },
-    { label: '账号轮盘 (Alt+Q)', click: toggleWheel },
-    { label: '安装浏览器扩展…', click: () => { void openExtensionSetup(); } },
     { type: 'separator' },
     // 自动更新默认关闭（用户定稿 2026-09-15）：菜单项保留但说清现状与开启方式，
     // 免得用户以为"检查更新坏了"。开启 = 环境变量 WORKBENCH_AUTO_UPDATE=1。
@@ -721,8 +582,6 @@ async function bootstrapPorts() {
  *   - `F5` 与 `Ctrl+R` 都绑定 `reload`（F5 是浏览器/Windows 用户的肌肉记忆）；
  *   - 另外给 `编辑器里的开发者` 留 `Ctrl+Shift+I` / `F12` 开 DevTools；
  *   - 菜单文字直说用途（"重新加载界面（改完代码后按这个）"），不让人猜。
- *
- * ⚠ 与全局热键 `Alt+Q`（账号轮盘）不冲突：那个走 `globalShortcut`，本菜单只在窗口聚焦时生效。
  */
 function createAppMenu() {
   const template = [
@@ -783,8 +642,6 @@ app.whenReady().then(async () => {
   createTray();
   createAppMenu();
 
-  globalShortcut.register('Alt+Q', toggleWheel);
-
   // 出网通道必须在任何联网动作（含 updater 检查/下载）之前定下来。
   // 默认**优先生成直连**（快），只有直连探测失败才回落到系统代理（稳但慢）——
   // 用户明确要求"能直连就别配代理"。探测带超时，最长拖 6s，不会挂死启动。
@@ -825,8 +682,8 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   if (quitting) return;
   quitting = true;
-  globalShortcut.unregisterAll();
-  // 顺序关键：先停 sidecar（释放 WorkbenchServer.exe / 扩展目录的文件句柄），
+  globalShortcut.unregisterAll(); // 已无注册项；留着是确保将来新增热键都随退出被清掉
+  // 顺序关键：先停 sidecar（释放 WorkbenchServer.exe 的文件句柄），
   // 再让 updater 拉起安装器覆盖文件；否则安装器会因文件被占用而失败。
   killServer();
   updater.installOnExit();

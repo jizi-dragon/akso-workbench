@@ -38,7 +38,6 @@ def _optional_routers(app: FastAPI) -> None:
         routes_agent,
         routes_attachments,
         routes_browser,
-        routes_extension,
         routes_insight,
         routes_modules,
         routes_monitor,
@@ -56,7 +55,6 @@ def _optional_routers(app: FastAPI) -> None:
         ("accounts", routes_accounts),
         ("browser", routes_browser),
         ("agent", routes_agent),
-        ("extension", routes_extension),
         ("shell", routes_shell),
         ("monitor", routes_monitor),
         ("sandbox", routes_sandbox),
@@ -183,15 +181,6 @@ def _tool_selfcheck() -> None:
 def create_app() -> FastAPI:
     app = FastAPI(title="Workbench", version=__version__, lifespan=lifespan)
 
-    # `/extension/*` 的访问令牌（P0-1，见 api/extension_auth.py）。
-    # ⚠ 必须**在 include_router 之前** add_middleware：Starlette 的中间件栈是"后加的在最外层"，
-    # 但这不影响路由匹配——中间件在任何路由之前运行，与路由注册顺序无关。
-    # 放在此处是为了让它离 create_app 最近，避免有人在下面插一条中间件时把它挤到内层
-    # （内层也能工作，但"谁先看到请求"会变得难以推理）。
-    from .extension_auth import ExtensionAuthMiddleware
-
-    app.add_middleware(ExtensionAuthMiddleware)
-
     @app.middleware("http")
     async def _no_store_static(request, call_next):
         """静态页与首页**禁止缓存**。
@@ -220,13 +209,14 @@ def create_app() -> FastAPI:
 
         ## 为什么刻意让它最外层
 
-        Starlette 的中间件栈是"**后加的在最外层**"。这条在 `ExtensionAuthMiddleware`
-        之后注册，因此它包在外面——**这是有意的**：令牌校验失败（401）也必须留下日志。
-        PITFALLS #49 记的正是"扩展 401 了，但用户只看到快捷登录不灵"——
+        Starlette 的中间件栈是"**后加的在最外层**"。这条**最后注册**，因此它包在所有中间件外面
+        ——**这是有意的**：任何被前置中间件拒掉的请求（401/403）也必须留下日志。
+        PITFALLS #49 记的正是"客户端 401 了，但用户只看到功能不灵"——
         那类故障的判据就是"有没有 401 被记下来"。若这条被挤到内层，401 就查不到了。
 
-        这也**不影响** `ExtensionAuthMiddleware` 的"按前缀守备"性质：
-        它守的是路由匹配前的请求，与它在栈里的位置无关。
+        > 2026-10-09：当时这里举的例子是 `ExtensionAuthMiddleware`（守 `/extension/*`），
+        > 它已随浏览器扩展一起删除。**结论不变**：**注册顺序决定谁包谁**，
+        > 将来再加任何会拒绝请求的中间件，都要重新确认这条日志中间件仍在最外层。
 
         ## 只记 `/api/*`，且跳过 `/api/logs/*` 自己
 
@@ -282,10 +272,10 @@ def create_app() -> FastAPI:
     def service_health() -> dict:
         """服务端**身份**（进程级、无副作用）——供壳的就绪探测校验。
 
-        与 `GET /extension/health` 的分工（ADR-0011 §D-4）：
-        本端点只回答"你是哪个进程、在哪个端口"，**不写任何状态**，因此可以被反复探测；
-        `/extension/health` 回答"执行面（浏览器扩展）活着吗"，它会写 `everConnected` 闩锁，
-        是给 UI 的。**不要把探测打到有副作用的端点上。**
+        本端点只回答"你是哪个进程、在哪个端口"，**不写任何状态**，因此可以被反复探测。
+        （历史上还有一个 `/extension/health` 回答"浏览器扩展活着吗"并写 `everConnected` 闩锁；
+        2026-10-09 扩展整体移除后它已不存在，ADR-0011 §D-4 的分工只剩本端点半边。）
+        **不要把探测打到有副作用的端点上。**
 
         存在理由：改造前壳的 `waitReady()` 只看"18765 上有人回了 200"，于是
         "旧实例占着端口 + 新壳起不来" 会表现成"代码改动没生效"（ADR-0011 §1）。

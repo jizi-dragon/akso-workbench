@@ -236,7 +236,7 @@ function waitReady(timeoutMs = 40000) {
 
 ### 3.5 D-4 就绪探测必须带身份（**原 ADR-0011**，**继续有效**）
 
-服务端新增 `GET /api/health`（**无副作用**，与既有 `/extension/health` 的分工见下）：
+服务端新增 `GET /api/health`（**无副作用**；它当年与 `/extension/health` 有明确分工，见下）：
 
 ```jsonc
 { "app": "Workbench", "service": "workbench-server", "version": "0.3.5",
@@ -248,6 +248,11 @@ function waitReady(timeoutMs = 40000) {
 > 分工：`GET /api/health` = **进程身份**（无副作用、供探测）；
 > `GET /extension/health` = **执行面健康**（会写 `everConnected`，有副作用，供 UI）。
 > 不要让探测去打一个会写库的端点。
+>
+> ★ **2026-10-09 后补（只追加，上文一字未改）**：`/extension/health` **已不存在**——
+> 浏览器扩展整体移出本仓库（用户决策：桌面端与扩展不耦合）。
+> 这条"不许打有副作用端点"的纪律**仍然有效**，只是今天本服务只剩 `/api/health` 这一个健康端点，
+> **分工的两半只剩前半**。取回当时形态：`git show 34b5e94:workbench/api/routes_extension.py`。
 
 ### 3.6 D-5 扩展从壳的控制服务发现服务端口（回退固定值）（**原 ADR-0011**，**部分被 §3.2.5 收窄**）
 

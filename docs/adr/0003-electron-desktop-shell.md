@@ -225,10 +225,16 @@ Python 侧 `GET /api/update` 读它，**超 60s 判 `live=false`**（壳已退�
 
 #### 2.3.2 三样东西全部随包携带（`extraResources`）
 
+> ★ **2026-10-09 后补（只追加，上文一字未改）**：下面表格的第二行**已不存在**——
+> 浏览器扩展整体移出本仓库（用户决策：桌面端与扩展不耦合，本仓只需账号管理页承接云端数据环境），
+> `extraResources` 现在**只带 sidecar 一项**。
+> 取回当时形态：`git show 34b5e94:desktop/package.json`。
+> 「三样东西全部随包携带」这个标题所指的第三样（扩展）也随之下线，**只剩 sidecar + chromium**。
+
 | 从 | 到（安装后） | 内容 |
 |---|---|---|
 | `../dist/WorkbenchServer` | `resources/server` | PyInstaller onedir sidecar（含 **chromium 本体**，即 `ms-playwright`） |
-| `../extensions/quick-login/dist` | `resources/extension` | 浏览器扩展构建产物 |
+| ~~`../extensions/quick-login/dist`~~ | ~~`resources/extension`~~ | ~~浏览器扩展构建产物~~（**2026-10-09 移除**） |
 
 - **sidecar 打包**：`workbench/server.spec` → `dist/WorkbenchServer`（onedir）。
   打包态走 `workbench/server_entry.py`：`WorkbenchServer.exe --server`，**不开浏览器**（UI 由 Electron 主窗承载），

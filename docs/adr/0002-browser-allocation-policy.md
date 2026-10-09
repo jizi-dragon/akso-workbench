@@ -35,6 +35,13 @@
 
 ### 1.2 两套账号数据并存（原 ADR-0004）
 
+> ★ **2026-10-09 后补（只追加，以下原文一字未改）**：这一节描述的是**已退役的形态**——
+> `extensions/quick-login/` 与它带来的"两套账号数据"问题都已随扩展移出本仓库。
+> **但这一节的核心结论仍然是本仓最有价值的决策之一**：**账号数据的真源只有一个（桌面端）**。
+> 今天这条纪律的形态是"云端账号库（akso-vault）与桌面本机库的关系"：
+> 桌面端登录云端后，真源的选择与切换语义需要同样明确——不要造出第二套能改账号的地方。
+> 取回当时形态：`git show 34b5e94:extensions/quick-login/README.md`。
+
 `extensions/quick-login/` 是上游 quick-login 项目的 fork。上游是**纯浏览器形态**：
 扩展自带并行管理主页 `ui/parallel/`，用户在扩展里直接增删改账号，账号档案存在扩展的 IndexedDB。
 
@@ -176,10 +183,12 @@ R1 在台账里挂了很久没修，原因是它**没有症状**：功能一切�
 
 - **数据只有一个真源**（桌面 SQLite），消除「两边都能改」的分裂。
 - 扩展的职责边界变得可验证：`sync.ts` 是唯一入口，实体是快照 + 映射表（`akso:acctMap`）。
-- ~~上游同步的冲突面缩小：本项目只需维护一份「私有改造清单」~~（见
-  [extensions/quick-login/CHANGELOG.md](../../extensions/quick-login/CHANGELOG.md)）。
+- ~~上游同步的冲突面缩小：本项目只需维护一份「私有改造清单」~~
+  （该清单原先记在 `extensions/quick-login/CHANGELOG.md`）。
   **2026-09-29 后补**：上游协作已终止，**"同步冲突面"这个收益随之消失** —— 改造清单仍然要维护，
   但它现在服务的读者是**本项目**（"哪些改动别误删"），不再是"下次同步上游要摘哪些"。
+  **2026-10-09 后补**：浏览器扩展本身也已整体移出本仓库（用户决策：桌面端与扩展不耦合），
+  连那份改造清单一起删除了。取回原文：`git show 34b5e94:extensions/quick-login/CHANGELOG.md`。
 
 #### 代价（已接受）（原 ADR-0004）
 
@@ -273,6 +282,24 @@ def _worker(self):
   `tests/test_browser_state.py`（storage_state 5 项）、`tests/test_browser_parallel.py`（双账号并行/免密/自愈 4 项）。
 
 ### 2.4 `/extension/*` 引入访问令牌（**原 ADR-0015**）
+
+> ★★ **2026-10-09 后补：整节已随扩展一起退役（只追加，以下原文一字未改）**。
+> 用户决策：**桌面端与浏览器扩展不耦合**——本仓只需账号库管理页来承接云端数据环境。
+> 随之删除的是：`/extension/*` 整段蓝图（`workbench/api/routes_extension.py`）、
+> 访问令牌中间件（`workbench/api/extension_auth.py`）、`extensions/quick-login/` 源码树、
+> 随包携带扩展的打包步骤（`extraResources`）、桌面轮盘窗与「安装浏览器扩展…」引导。
+>
+> **本节记录的问题与教训仍然有效，不要删**：
+> - **D-2 / D-6 的命名空间纪律**依然成立且更有价值——`/api/shell/*` 之所以独立成前缀，
+>   正是这一节推出的结论。`routes_shell.py` 今天还在，只是少了 `setup-helper`。
+> - **D-1 那张否决表**（为什么不信 `Origin`、不用 mTLS、不引 IPC）是**通用推理**，
+>   将来若要给 `/api/*` 加认证，先读它，别重新踩一遍。
+> - **D-5 的 grace 窗口**思路（新协议要求不能让旧客户端静默失灵）在**任何**客户端升级场景都适用。
+>
+> 取回本节所指代码的原文：
+> `git show 34b5e94:workbench/api/extension_auth.py`、
+> `git show 34b5e94:workbench/api/routes_extension.py`、
+> `git show 34b5e94:tests/test_extension_auth.py`。
 
 #### D-1 用**共享令牌**，而不是"来源校验"或"进程级 ACL"
 

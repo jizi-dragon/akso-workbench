@@ -18,7 +18,7 @@
           <span class="brand-ring" aria-hidden="true"><i></i></span>
           <div class="brand-text">
             <h1>账号中心</h1>
-            <p>快捷登录经 Chrome 扩展 · 监听自动化用内置 Chromium</p>
+            <p>账号库与平台环境 · 打开即用内置 Chromium 托管会话</p>
           </div>
         </div>
         <div class="head-right">
@@ -44,7 +44,6 @@
                   <button id="vault-logout" class="btn-ghost btn-sm hidden" type="button">退出云端</button>
                 </div>
               </div>
-            <button id="btn-wheel" class="btn-ghost btn-sm" type="button" title="Alt+Q 全局呼出（桌面壳运行时）；浏览器直开本页时页面内同样响应 Alt+Q">轮盘 Alt+Q</button>
             <button id="btn-export" class="btn-ghost btn-sm" type="button">导出备份</button>
             <button id="btn-import-backup" class="btn-ghost btn-sm" type="button">导入备份</button>
             <input type="file" id="backup-file" accept=".json" class="hidden" />
@@ -59,31 +58,7 @@
         </div>
       </header>
 
-      <!-- ============ 扩展未连接提示（一键安装引导；仅在从未连上过时出现） ============ -->
-      <section id="ext-setup" class="setup-banner hidden">
-        <div class="setup-text">
-          <b>未检测到浏览器扩展</b>
-          <span>快捷登录依赖 Chrome 扩展（当前未安装，或 Chrome 未运行）。一次性加载，之后无需再管。</span>
-        </div>
-        <div class="setup-actions">
-          <button id="btn-ext-setup" class="btn-primary btn-sm" type="button">一键安装引导</button>
-          <button id="btn-ext-dismiss" class="btn-ghost btn-sm" type="button">先不管</button>
-        </div>
-      </section>
-
-      <!-- ============ 扩展需重新加载（升级后一次性；与安装引导条同构） ============ -->
-      <section id="ext-stale" class="setup-banner banner-stale hidden">
-        <div class="setup-text">
-          <b>浏览器扩展版本过旧</b>
-          <span id="ext-stale-detail">桌面端已升级，但 Chrome 里加载的仍是旧版扩展。请在 chrome://extensions 点一次「重新加载」。</span>
-        </div>
-        <div class="setup-actions">
-          <button id="btn-ext-reload" class="btn-primary btn-sm" type="button">重新加载引导</button>
-          <button id="btn-ext-stale-dismiss" class="btn-ghost btn-sm" type="button">先不管</button>
-        </div>
-      </section>
-
-      <!-- ============ 并行账号（盒子收纳 + 批量管理 + 四态徽标） ============ -->
+      <!-- ============ 并行账号（盒子收纳 + 批量管理 + 会话徽标） ============ -->
       <section class="card block">
         <div class="block-head row">
           <div>
@@ -229,12 +204,6 @@
         <button class="mbtn" id="btn-import-run">开始导入</button>
       </div>
     </dialog>
-
-    <!-- 轮盘覆盖层：Ctrl+Shift+Q 呼出（半透明，Esc/点击空白关闭） -->
-    <div id="wheel-overlay" class="wheel-overlay" hidden>
-      <div class="wheel-svg" id="wheel-svg"></div>
-      <div class="wheel-hintbar">滚轮 / 点击 Hub 切盒 · 数字键选择 · 点击扇区启动会话 · Esc 关闭</div>
-    </div>
 
     <script type="module" src="/static/js/accounts.js"></script>
   </body>

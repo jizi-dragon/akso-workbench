@@ -7,7 +7,12 @@
 > **表达不了** SSE 事件序列、长轮询挂起语义、`seq` 游标与产物下载路径守卫——这三类恰是最易踩坑处，见 §12。
 >
 > 相关文档：[SCHEMA.md](SCHEMA.md)（表与跨进程数据契约）、[CONFIG.md](CONFIG.md)（端口与环境变量）、
-> `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**）（风险台账）、`EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**）（扩展侧机制）。
+> `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**）（风险台账）。
+>
+> ⚠ **2026-10-09：浏览器扩展已整体移出本仓库**（用户决策：桌面端与扩展不耦合，
+> 本仓只需账号管理页承接云端数据环境）。随之删除的是 `/extension/*` 整段蓝图（原 §11）、
+> 访问令牌中间件（`api/extension_auth.py`）、以及随包携带扩展的打包步骤。
+> 本文档中原「执行面」整节与 §12.3（长轮询与 `seq` 游标）一并移除；**该节之后的编号已顺移**（现为 §11 监听录制 … §18 运行日志）。
 
 ## 0. 拓扑与约定
 
@@ -16,7 +21,7 @@
 Electron 壳 控制服务（无认证）      18767
   /windows /windows/focus /windows/close  ←──  browser_pool（CDP 模式先开户后连接）
   /update-state /update-check /update-install
-  /extension-setup /health /whoami        ←──  routes_extension / routes_update 代理、扩展身份确认
+  /health /whoami                          ←──  routes_update 代理、壳身份确认
 FastAPI 服务（本文档主体）          18765
 Electron 内置 Chromium CDP          18766     ←── playwright connect_over_cdp
 ```
@@ -33,12 +38,12 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 
 | 项 | 约定 |
 |---|---|
-| 绑定 | `127.0.0.1` 回环。**`/extension/*` 需要访问令牌**（[ADR-0015](adr/0002-browser-allocation-policy.md)，见 §11）；其余 `/api/*` 无认证、无 CSRF、无 CORS 配置——信任边界 = 本机（该取舍的理由见 ADR-0015 D-7） |
+| 绑定 | `127.0.0.1` 回环。**`/api/*` 无认证、无 CSRF、无 CORS 配置**——信任边界 = 本机（该取舍的理由见 [ADR-0002](adr/0002-browser-allocation-policy.md) D-7） |
 | 时间戳 | 毫秒整数（`storage.now_ms()`） |
 | 字段命名 | 请求/响应默认 **camelCase**（`routes_settings` 用 pydantic alias 转换）；`account`/`env` 行**原样返回 snake_case 表列** + JOIN 出的 `env_name` / `env_base_url`，仅 `password_enc` 被剔除 |
-| 路径前缀 | `/api/*` 为业务面（`/api/shell/*` = 壳协作面，见 §11.2）；`/extension/*` 为执行面（**需令牌**） |
+| 路径前缀 | `/api/*` 为业务面（`/api/shell/*` = 壳协作面，见 §10.3） |
 | pydantic 陷阱 | `BaseModel` **默认忽略多余字段**——请求体必须显式建模，否则字段静默丢失（`AccountPatch` 漏 `box` 的事故） |
-| 错误体 | 业务错误为 `{"detail": "<中文说明>"}`（FastAPI `HTTPException` 默认形态）；**401 与之不同**：`{"detail", "code", "hello", "action"}`，`code` 是机器可读的 `extension_auth_required` |
+| 错误体 | 业务错误为 `{"detail": "<中文说明>"}`（FastAPI `HTTPException` 默认形态） |
 | 内容协商 | 无；产物接口用 `?download=true` 或后缀判断 |
 
 **错误码语义**
@@ -46,11 +51,10 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 | 码 | 用途 |
 |---|---|
 | 400 | 参数/业务规则错误（`AccountError`、空字段、未知命令、缺少必填项） |
-| 401 | **`/extension/*` 缺/错访问令牌**（`code: "extension_auth_required"`）——见 §11 |
 | 404 | 资源不存在（账号/环境/任务/产物/会话） |
 | 405 | 路由存在但方法不符 |
 | 409 | 状态冲突（受管会话不可用、环境未确认、监听未启动、**风险工具待确认**——见 §10） |
-| 413 | 上传超限（附件 > 20 MB、Skill 包 > 10 MB、日志导出 > 32 MB——见 §3.1 / §18.2 / §19） |
+| 413 | 上传超限（附件 > 20 MB、Skill 包 > 10 MB、日志导出 > 32 MB——见 §3.1 / §17.2 / §18） |
 | 502 | 上游失败（egmp 平台/工具执行） |
 | 503 | 依赖不可用（`BrowserError` 且非「账号不存在」） |
 
@@ -244,7 +248,10 @@ POST /api/chat/stream   Content-Type: application/json
 > 本仓不再有任何"蓝图 → 创建"的接口，也不再有暂存目录 `runtime/factory/`。
 >
 > 本节**刻意保留 §7 这个编号**（不重排 §8 起的编号）：仓库里多处交叉引用按号指向
-> §10–§19（含[只增不改的 ADR](adr/)），重排编号会让它们静默指错节。
+> §10–§18（含[只增不改的 ADR](adr/)），重排编号会让它们静默指错节。
+> （**2026-10-09 例外**：删除 `/extension/*` 那一节时确实重排了 §11 起的编号——
+> 因为被删的那一节**自身就是编号源**，不重排会留下一个空洞；本文档内所有交叉引用
+> 已同步更新，见文首的变更说明。）
 > 平台侧的知识没有随代码消失：`PLATFORM-OPERATIONS-LEARNED.md`（**该文件已于 2026-09-29 删除**）（平台事实台账）、
 > `FACTORY-PLATFORM-COGNITION.md`（**该文件已于 2026-09-29 删除**）（平台配置面认知）。
 > 原始真机取证报告（`factory-tuning/reports/`）**已于 2026-09-29 删除** —— 结论已全部并进上面两份。
@@ -296,7 +303,7 @@ POST /api/chat/stream   Content-Type: application/json
 
 ## 9. 托管浏览器 `/api/browser`（`routes_browser.py`）
 
-> 特殊通道——**所有浏览器操作走 `browser_pool` 专职线程队列**（Playwright sync 单线程约束）。见 §12.5。
+> 特殊通道——**所有浏览器操作走 `browser_pool` 专职线程队列**（Playwright sync 单线程约束）。见 §12.4。
 
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
@@ -396,57 +403,38 @@ autologin, has_token, monitoring, monitor_log}`；
 
 > **本表只列 core（产品自带）**。用户从共享库安装的 Skill 会出现在同一个
 > `GET /api/agent/tools` 响应里（带 `origin:"installed"`），但**不进本表**——
-> 文档承诺的是"产品自带多少工具"，与用户装了什么无关。两者的分层见 §18。
+> 文档承诺的是"产品自带多少工具"，与用户装了什么无关。两者的分层见 §17。
 
-## 11. 执行面 `/extension`（`routes_extension.py`）
+### 10.1 壳协作面 `/api/shell`（`routes_shell.py`）
 
-> 🔐 **整段前缀需要访问令牌**（[ADR-0015](adr/0002-browser-allocation-policy.md)，2026-09-17）。
-> 每个请求带 `X-Workbench-Token: <token>`；缺失/错误 → **401**，响应体带机器可读的
-> `code: "extension_auth_required"`（扩展端据此重新握手并重试一次）。
-> 令牌经 `POST /extension/hello` 自举领取，落 `settings.extension_access_token`（跨重启稳定）。
-> **桌面 UI 不要调这些端点**——它拿不到令牌；请壳干活的端点已迁到 §11.2 的 `/api/shell/*`。
-
-| 方法 | 路径 | 请求 | 说明 |
-|---|---|---|---|
-| POST | `/extension/hello` | —（无请求体） | **免令牌**。自举：`{format, version, token, desktopVersion, header}`。**只回令牌与版本号，不含任何账号数据** |
-| GET | `/extension/snapshot` | — | 数据面快照（含 `fernetKey` + `passwordEnc`，见 [SCHEMA.md](SCHEMA.md) §5.1）；`snapshotId` 为内容哈希 |
-| GET | `/extension/commands?after=N&wait=S` | — | 拉指令（**长轮询**，见 §12.3）；`cursor` + `longPoll` 标志 |
-| POST | `/extension/commands` | `{type:"par.open"\|"wheel.toggle", payload?}` | 入队 → `{seq, accepted:true}`；未知 type → 400 |
-| POST | `/extension/ack` | `{seqs:[int]}` | `{acked, watermark, pending}`；按**水位线** `max(acked)` 回收 `seq <= watermark` |
-| POST | `/extension/state` | `{items:[{desktopId,tabs,hasToken}], extVersion, desktopVersion}` | `{accepted:n}`；`_STATE` TTL 60s |
-| GET | `/extension/health` | — | **免令牌**（只读徽标判据）。`{connected, reportedAccounts, everConnected, desktopVersion, extVersion, extStale, authBlocked, tokenlessRequests}` |
-
-**`/extension/health` 判定链**（账号中心提示条数据源）：
-`connected` = 60s 内收到过状态上报；`everConnected` = `settings.ext_connected_once` 闩锁
-（**一次即永久静默**——用户定稿：连上过一次就不再提示）；
-`extStale` = 上报的 `extVersion` < `desktopVersion`；
-`authBlocked` = 有人在**不带令牌**访问受保护端点（= Chrome 里那份扩展还没重新加载，
-新扩展会自动自举令牌）——它是"防静默故障"的一环：扩展侧对失败是静默吞掉的，
-不显式暴露的话用户只会看到"快捷登录不灵了"、没有任何线索；
-提示条在 `!connected && !everConnected`、`extStale`、或 `authBlocked` 时出现。
-（⚠ `authBlocked` **不统计** `/extension/health` 自身——UI 每 3s 打一次它，
-算进去会让提示条永远关不掉。）
-
-**兼容窗口**：令牌是新协议要求，已装的旧扩展不会带它。故服务端有 **grace 宽限期**
-（默认 24h，`WORKBENCH_EXTENSION_AUTH_GRACE=0` 可切严格模式）——窗口内无令牌照常放行并留 warning。
-窗口起点落 `settings.extension_auth_grace_started_at`、**只记一次**（放内存态会被每次重启重置 = 永久开窗）。
-
-### 11.2 壳协作面 `/api/shell`（`routes_shell.py`）
-
-> 这三条**不碰凭据**，是"桌面 UI 请桌面壳干活"，因此**不在**需要令牌的 `/extension/*` 下。
+> 这两条**不碰凭据**，是"桌面 UI 请桌面壳干活"。
 > 边界判据见 `routes_shell.py` 模块文档串：**新增端点前先问「它碰凭据吗？」**
 
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
 | POST | `/api/shell/launch-chrome` | — | 确保用户 Chrome 在运行（未运行则拉起）；`{launched, running, path?}`。探测带缓存（正 10s / 负 2s） |
 | POST | `/api/shell/update-state` | —（无请求体） | `{version, shell:{...}}`；与 `GET /api/update` **同源同结构**（`read_shell_state()`） |
-| POST | `/api/shell/setup-helper` | `{mode:"install"\|"reload"}` | 代理到壳控制服务 `/extension-setup`（基准 `:18767`，实际端口读 `config.CONTROL_PORT`；打开扩展目录 + `chrome://extensions` + 步骤弹窗） |
 
-> **迁移留痕**：这三条原先挂在 `/extension/*`（`launch-chrome` / `update-state` / `setup-helper`）。
-> 加令牌后它们与"UI 拿不到令牌"冲突，只能靠开豁免——而豁免一开，
-> "整个前缀需要令牌"就退化成人工维护的清单（[ADR-0015](adr/0002-browser-allocation-policy.md) D-6）。
-> 旧路径**已不存在**（该前缀现在被中间件统一守备，访问旧路径会得到 401 而非 404）。
+> **迁移与退役留痕**：这两条（连同已删除的 `setup-helper`）原先挂在 `/extension/*`。
+> 2026-09-17 加访问令牌后它们与"UI 拿不到令牌"冲突，只能靠开豁免——而豁免一开，
+> "整个前缀需要令牌"就退化成人工维护的清单（[ADR-0002](adr/0002-browser-allocation-policy.md) D-6），
+> 故迁来 `/api/shell/*`。
+> **2026-10-09**：`setup-helper` 随浏览器扩展一起删除（它代理壳的 `/extension-setup`，
+> 用途是把扩展目录交给用户装载）；`/extension/*` 整段前缀也已不存在。
 
+
+## 11. 监听录制 `/api/monitor`（`routes_monitor.py`）
+
+| 方法 | 路径 | 请求 | 响应 |
+|---|---|---|---|
+| POST | `/api/monitor/start` | `{account_id}` | `{monitoring:true, log, stats, ...会话快照}`；`BrowserError` → 409 |
+| POST | `/api/monitor/stop` | `{account_id}` | `{stopped:true, stats, log}`；无进行中监听 → 409 |
+| GET | `/api/monitor/status/{account_id}` | — | `{monitoring, log, session_status}`；无会话时 `{monitoring:false}` |
+
+- `monitor_start` 会**确保托管会话在线**（不存在则自动开户），因此耗时较长（`_submit(timeout=90)`）。
+- 产物落 `runtime/monitor/<account_id8>-<YYYYmmdd-HHMMSS>/`。录制引擎三级降噪：
+  `dropped` / `trimmed` / `full`（真机验收：248 请求捕获 → 238/2/8）。
+- 会话关闭**不会自动停监听**（`_close_entry` 未清理 `entry.monitor`）——见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账。
 
 ## 12. 特殊通道专章
 
@@ -515,22 +503,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - 用 `loop.run_in_executor` 跑同步 `_run_job`；`on_log` 线程安全投递。
 - 循环条件 `while not task.done() or not queue.empty()`：**任务结束后仍会排空遗留日志**，不会丢最后几行。
 
-### 12.3 长轮询与 `seq` 游标（`GET /extension/commands`）
-
-| 参数 | 语义 |
-|---|---|
-| `after` | 扩展已消费的最大 seq；只返回 `seq > after` 的指令 |
-| `wait` | 无指令时的挂起秒数；`wait=0`（默认，向后兼容）立即返回。**服务端上限 25s**（`min(max(wait,0),25)`，防连接堆积）；期间每有指令入队即被 `notify_all()` 唤醒 |
-
-- 服务端用 `threading.Condition`（与队列同一把锁）；入队时 `notify_all()` 唤醒等待者。
-- 响应 `longPoll` 字段 = 本次是否真的挂起过。**扩展用它判断服务端是否支持长轮询**：
-  旧版服务端不认 `wait` 会立即返回且 `longPoll=false` → 扩展退避 1.5s 轮询，
-  **否则会以 HTTP 往返速度热循环打满 CPU**。
-- `seq` 跨**服务端重启**单调递增（持久在 `settings.ext_cmd_seq`）。若重置，扩展持久游标会让
-  所有新指令被 `seq > after` **永久吞掉**（0.2.4 实锤断点）。
-- 实测收益：指令下发平均 **964ms → 20ms**（约 50 倍）。
-
-### 12.4 产物读取与路径守卫（`GET /api/insight/artifacts/{job_id}/file`）
+### 12.3 产物读取与路径守卫（`GET /api/insight/artifacts/{job_id}/file`）
 
 - 两种 I/O 形态：`?download=true` 或后缀 ∉ `{.md,.json,.txt,.log,.csv}` → `FileResponse`（附件下载）；
   否则读文本返回 `PlainTextResponse`（超 200 万字符截断）。
@@ -539,7 +512,7 @@ autologin, has_token, monitoring, monitor_log}`；
   ⚠️ **这是纯字符串前缀比较，未补路径分隔符**——`.../insight/abc` 会「包含」`.../insight/abc_evil`。
   本地单人场景风险低，但**新增类似端点时应改用 `Path.is_relative_to()`**。见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账。
 
-### 12.5 浏览器操作串行化（`/api/browser/*`、`/api/monitor/*`）
+### 12.4 浏览器操作串行化（`/api/browser/*`、`/api/monitor/*`）
 
 - Playwright sync API 绑定创建它的线程且非线程安全，而 FastAPI 会把并发请求派到不同线程 →
   `browser_pool` 持有**专职工作线程**，所有操作以 `Future` 提交串行执行。
@@ -550,20 +523,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - CDP 模式三律：`remote-debugging-port` 必须 app ready 前设置（**故端口在 `app.whenReady` 里协商完立即设**）；**先到壳控制服务 `/windows` 开户再 connect**；
   Playwright 实例由 `_CdpState` 单一持有（同线程第二个 sync 实例会死锁）。
 
-## 13. 监听录制 `/api/monitor`（`routes_monitor.py`）
-
-| 方法 | 路径 | 请求 | 响应 |
-|---|---|---|---|
-| POST | `/api/monitor/start` | `{account_id}` | `{monitoring:true, log, stats, ...会话快照}`；`BrowserError` → 409 |
-| POST | `/api/monitor/stop` | `{account_id}` | `{stopped:true, stats, log}`；无进行中监听 → 409 |
-| GET | `/api/monitor/status/{account_id}` | — | `{monitoring, log, session_status}`；无会话时 `{monitoring:false}` |
-
-- `monitor_start` 会**确保托管会话在线**（不存在则自动开户），因此耗时较长（`_submit(timeout=90)`）。
-- 产物落 `runtime/monitor/<account_id8>-<YYYYmmdd-HHMMSS>/`。录制引擎三级降噪：
-  `dropped` / `trimmed` / `full`（真机验收：248 请求捕获 → 238/2/8）。
-- 会话关闭**不会自动停监听**（`_close_entry` 未清理 `entry.monitor`）——见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账。
-
-## 14. 更新面 `/api/update`（`routes_update.py`）
+## 13. 更新面 `/api/update`（`routes_update.py`）
 
 | 方法 | 路径 | 请求 | 响应 |
 |---|---|---|---|
@@ -579,7 +539,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - 未知 action 返回 `{ok:false, error:"未知动作：..."}`——**HTTP 200，不是 4xx**（前端据此判 `ok`）。
 - `updateAvailable` 用 `version_tuple()` 比较（非数字段按 0 处理）。
 
-## 15. 静态资源
+## 14. 静态资源
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -589,31 +549,31 @@ autologin, has_token, monitoring, monitor_log}`；
 页面：`index.html`（对话 + 设置）、`pages/insight.html`、
 `pages/accounts.html`、`pages/sandbox.html`（沙箱：策略 / 状态 / 执行审计 / 自检）、
 `pages/skills.html`（Skill 共享库：上传 / 安装 / 卸载 / 停用）、
-`pages/wheel-picker.html`（轮盘，`?transparent=1` 供壳的透明窗加载）、
 `blank.html`（壳的会话窗标记页，`?w=<windowId>`）。
 
 后两页在导航的「**Agent 能力**」分组下（`sandbox.html` / `skills.html`），
-对应下面的 §18。
+对应下面的 §17。
 
-## 16. 壳控制服务（Electron 主进程内，非 FastAPI；基准端口 `18767`，可顺延）
+## 15. 壳控制服务（Electron 主进程内，非 FastAPI；基准端口 `18767`，可顺延）
 
 > 下表里的 `:18767` 全按**基准端口**理解；实际端口见 §0 的说明与 `GET /whoami`。
 
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
 | GET | `/health` | — | `{ok:true}` |
-| GET | `/whoami` | — | **端口发现**（[ADR-0011](adr/0011-port-governance.md) §D-5）：`{app, service:"workbench-shell", controlPort, serverPort, cdpPort, pid, version, startedAt, base, drifted}`。浏览器扩展靠它拿到**服务端实际端口**，而不是猜 18765；控制服务是壳自己的，所以它的回答天然比"18765 上是谁"可信。带 `Access-Control-Allow-Origin: *`（无凭据、只读） |
+| GET | `/whoami` | — | **身份自证**（[ADR-0011](adr/0011-port-governance.md) §D-5）：`{app, service:"workbench-shell", controlPort, serverPort, cdpPort, pid, version, startedAt, ports, fixed}`。控制服务是壳自己的，所以它的回答天然比"18765 上是谁"可信。带 `Access-Control-Allow-Origin: *`（无凭据、只读） |
 | POST | `/windows` | `{windowId}` | 开户（`partition: persist:<windowId>` 独立持久分区）；已存在且未销毁 → `{ok:true, reused:true}`；缺 windowId → 400 |
 | POST | `/windows/focus` | `{windowId}` | 还原 + 显示 + 聚焦；不存在 → 404 |
 | POST | `/windows/close` | `{windowId}` | 关窗（幂等） |
 | GET | `/update-state` | — | `{ok, shell:true, ...updater.state()}` |
 | POST | `/update-check` | `{}` | 触发手动检查（结论弹窗） |
 | POST | `/update-install` | `{}` | `{ok: installOnExit()}` |
-| POST | `/extension-setup` | `{mode}` | 打开扩展目录 + `chrome://extensions` + 步骤弹窗 |
+
+> **2026-10-09**：`POST /extension-setup` 已随浏览器扩展一起删除。
 
 无认证；仅监听 `127.0.0.1`。`browser_pool` 的 CDP 模式依赖它「先开户后连接」。
 
-## 17. 服务端身份 `GET /api/health`（`api/__init__.py`）
+## 16. 服务端身份 `GET /api/health`（`api/__init__.py`）
 
 ```jsonc
 {
@@ -632,18 +592,14 @@ autologin, has_token, monitoring, monitor_log}`；
 新壳会认为自己的服务已就绪、主窗打开别人的页面——一次表现成"代码改了但 UI 没变"的事故
 （[ADR-0011](adr/0011-port-governance.md) §1）。现在探测打本端点并核对 `app`。
 
-**与 `/extension/health` 的分工（重要）**：
+**本端点是唯一的健康端点**：它只回答**进程身份**（我是谁、在哪个口），**无副作用**，可反复探测。
+> **2026-10-09**：原先还有一个 `GET /extension/health` 回答"执行面（浏览器扩展）活着吗"，
+> 它会写 `everConnected` 闩锁，是账号中心四态徽标的数据源。
+> 它随扩展一起删除（[ADR-0011](adr/0011-port-governance.md) §D-4 记录的那条分工
+> 现在只剩本端点半边）。**不要把探测打到有副作用的端点上**——壳每 300ms 探一次，
+> 若写库会把"扩展开没开过"的判定污染掉（`tests/test_ports_contract.py` 有一条专门断言本端点无副作用）。
 
-| | `GET /api/health` | `GET /extension/health` |
-|---|---|---|
-| 回答 | **进程身份**（我是谁、在哪个口） | **执行面健康**（扩展活着吗、版本是否过期） |
-| 副作用 | **无**（可反复探测） | **有**：会写 `everConnected` 闩锁 |
-| 消费者 | 壳的就绪探测 | 账号中心 UI |
-
-> 不要把探测打到有副作用的端点上——壳每 300ms 探一次，若写库会把"扩展开没开过"的判定污染掉
-> （`tests/test_ports_contract.py` 有一条专门断言本端点无副作用）。
-
-## 18. Agent 能力面：沙箱与 Skill 共享库（`routes_sandbox.py` / `routes_skills.py`）
+## 17. Agent 能力面：沙箱与 Skill 共享库（`routes_sandbox.py` / `routes_skills.py`）
 
 这两族端点对应导航里的「**Agent 能力**」分组，回答的是**"我的 Agent 现在能做什么、
 它做过的（上传来的）代码跑成什么样"**——与 §10 的"产品自带工具"互补：
@@ -658,7 +614,7 @@ autologin, has_token, monitoring, monitor_log}`；
 分开的理由是硬的：`tools/gen_tools_doc.py` 断言"文档里的 N 个工具 == 运行期中枢 core"，
 而"用户装了什么"不可能写进文档。
 
-### 18.1 沙箱 `/api/sandbox`（`routes_sandbox.py`）
+### 17.1 沙箱 `/api/sandbox`（`routes_sandbox.py`）
 
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
@@ -669,12 +625,12 @@ autologin, has_token, monitoring, monitor_log}`；
 
 - **刻意没有"通用执行"端点**：`POST /api/sandbox/exec` 这类接口等于给本机开一个
   "用 HTTP 跑任意命令"的洞（本仓服务端**无认证**，仅靠 127.0.0.1 收敛，见 §0）。
-  要跑代码请走 Skill（§18.2）——那里有准入扫描、固定策略与确认门三道。
+  要跑代码请走 Skill（§17.2）——那里有准入扫描、固定策略与确认门三道。
 - 策略是**具名白名单**，请求里传策略名而不是参数；未知策略名一律拒，不做"就近取默认"。
-- 执行审计与 §10 的工具审计、§18.2 的 Skill 审计是**三条独立的流水**：
+- 执行审计与 §10 的工具审计、§17.2 的 Skill 审计是**三条独立的流水**：
   这条记"进程怎么跑的"，不记"谁批准了什么"。
 
-### 18.2 Skill 共享库 `/api/skills`（`routes_skills.py`）
+### 17.2 Skill 共享库 `/api/skills`（`routes_skills.py`）
 
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
@@ -713,7 +669,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - **卸载 ≠ 删除**：卸载只断 `current` 指针并摘插件，**共享库里的版本一个都不删**；
 - **核心插件只能禁用、不能卸载**（`capability_id` 为空串的插件会被守卫直接拒）。
 
-## 19. 运行日志 `/api/logs`（`routes_logs.py`，2026-09-20 引入）
+## 18. 运行日志 `/api/logs`（`routes_logs.py`，2026-09-20 引入）
 
 **定位**：这是**运维面**，不是业务域。它回答"刚才发生了什么"。
 装配点在 `create_app()` 里**显式注册**（不进 `_optional_routers`）——查不到日志比少一个业务路由更严重，

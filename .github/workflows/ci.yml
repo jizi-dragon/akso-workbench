@@ -2,10 +2,12 @@ name: CI
 
 # 门禁的目标只有一个：**把"靠人记得跑"变成"不能不跑"**。
 #
-# 为什么需要它（2026-09-17 立）：本仓的 382 项测试与 9 项打包静态核对此前**全靠手工执行**，
+# 为什么需要它（2026-09-17 立）：本仓的测试与打包静态核对此前**全靠手工执行**，
 # 而 `tools/verify_packaging.py` **根本没有被 `tools/build.ps1` 调用**（CONTRIBUTING §6 记的已知问题）。
 # 后果是：一条"源码已 bump、扩展 dist 未重建"的不一致（P4b）能在仓库里潜伏到发版才暴露——
 # 2026-09-17 就实测抓到过一次（详见 CHANGELOG「未发布 · Fixed」）。CI 是这条断点的唯一自动防线。
+# （2026-10-09：浏览器扩展已移出本仓库，P4b/P4c 与"Build browser extension"步骤随之删除；
+#   本节引用的那次事故保留为历史记录——它说明了 CI 为什么存在。）
 #
 # 设计取舍（四条，都有理由，别顺手改）：
 #   1. **Windows runner**：交付物是 Windows 安装包，P5 检查 `.ps1` 的 UTF-8 BOM。
@@ -52,22 +54,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-
-      # 必须在依赖同步**之前**：P4b/P4c 读的是扩展**构建产物** extensions/quick-login/dist/，
-      # 而 dist/ 被 .gitignore 忽略（不进 git）——全新 checkout 里它根本不存在，
-      # 不先构建的话 verify_packaging.py 的 P4b/P4c 必然 FAIL，且会误导成"版本不一致"。
-      - name: Build browser extension
-        working-directory: extensions/quick-login
-        run: |
-          npm ci
-          npm run build
-          node -e "const v=require('./dist/manifest.json').version; console.log('extension dist version =', v)"
 
       - name: Sync python dependencies
         run: uv sync --extra dev --extra build
@@ -105,10 +93,10 @@ jobs:
       # 本步骤的 P8b 是"本机装没装 chromium"这条**环境事实**，只在构建机上才有意义
       # （`tools/build.ps1` 会设该变量）。runner 上没有浏览器、也不负责打包，
       # 那条判据在这里**永远修不好**，只会把整条门禁变成噪声——
-      # 2026-09-18 首次把 CI 判红的就是它（run #17：P8 FAIL，11/12）。
+      # 2026-09-18 首次把 CI 判红的就是它（run #17：P8 FAIL）。
       # 现在 P8 查**静态契约**（`server.spec` 里有没有那道守卫），任何环境都能判定；
       # P8b 只在这台机器**被要求**有浏览器时才参与断言（不要求 = 恒 PASS），
-      # 所以两种环境下项数都是稳定的 13/13。
+      # 所以两种环境下项数都是稳定的 9/9。
       - name: Packaging static checks
         run: .venv\Scripts\python.exe tools\verify_packaging.py
 
