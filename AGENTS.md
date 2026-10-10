@@ -168,6 +168,10 @@
 
 ```powershell
 # 基线（动手前 + 改完后各跑一次）
+#   ★ 2026-10-11：执行层已是 pwsh 7.6.6（`Console.OutputEncoding` = utf-8）。
+#     下面若有 `python -c` 且要打印非 ASCII，**加 `-X utf8`**（或设 `PYTHONUTF8=1`）——
+#     否则报的是 **Python 自己的 GBK stdout 错**（`'gbk' codec can't encode character`），
+#     与 shell 无关。见 §4「中文乱码」与 PITFALLS #38 的复核注。
 .\.venv\Scripts\python.exe -m pytest -o addopts=""        # 全量；默认 addopts 跳过 slow 层
 .\.venv\Scripts\uv.exe tool run ruff check .              # ★ lint —— 先探一次，见 §4（这条会漂；2026-09-24 实测走这条）
 .\.venv\Scripts\python.exe tools\gen_tools_doc.py         # 工具清单/数字 == 运行期中枢
@@ -224,8 +228,8 @@
 | pytest 汇总行 | `addopts` 已有 `-q -m 'not slow'`；**再加 `-q` 会进 ultra-quiet，连 `=== N passed ===` 都不打印**。要看汇总行用 `-o addopts=""` |
 | slow 层 | 默认跳过。全量：`-o addopts=""`；只跑慢层：`-m slow`（无慢层用例时 pytest 以 **exit 5** 退出，这是刻意的守卫，不是故障） |
 | 解释器口径 | `.python-version`（= 3.12）是**唯一真源**，`tests/test_python_version_contract.py` 断言它与 CI 逐字一致。**2026-09-24 实测**：项目 `.venv` 已经是 **uv 管理的 3.12.14**（`pyvenv.cfg` 的 `home` 指向 `…\uv\python\cpython-3.12-…`）—— **不再是** conda 3.14 ⇒ 当年"本机 3.14 vs CI 3.12"那条差集**只剩 chromium 那一半**（CI runner 不装 chromium）。**"本地全绿"仍然推不出"CI 全绿"** |
-| 写文本文件 | 用 Python 或编辑器，**不要用 PowerShell `>`**——它按 UTF-16LE 落盘（PITFALLS #38） |
-| 中文乱码 | **先跑判据再动手**：`python -c "import pathlib;t=pathlib.Path('F').read_text(encoding='utf-8');print('U+FFFD=',t.count('\ufffd'))"`。`U+FFFD=0` 就是好的，**不要改文件**（控制台渲染 ≠ 文件内容） |
+| 写文本文件 | 用 Python 或编辑器（PITFALLS #38）。★ **2026-10-11 复核**：原文"不要用 PowerShell `>` —— 它按 UTF-16LE 落盘"**是 PS 5.1 的行为**；执行层升到 **`pwsh` 7.6.6** 后逐字节实测 `>`／`Set-Content`／`Out-File` **三条路径全部落 UTF-8 无 BOM** ⇒ **该禁令不再成立**。但**推荐做法不变**（Python/编辑器仍更可控），**判据也不变**（看字节，不看渲染） |
+| 中文乱码 | **先跑判据再动手**：`python -c "import pathlib;t=pathlib.Path('F').read_text(encoding='utf-8');print('U+FFFD=',t.count('\ufffd'))"`。`U+FFFD=0` 就是好的，**不要改文件**（控制台渲染 ≠ 文件内容）。★ **2026-10-11 复核**：`chcp` 仍是 **936**，所以**屏幕照样会乱码** ⇒ 这条判据**完全有效**。但**新增了一条根因不同的乱码**：Python 子进程自己的 stdout 默认 GBK（`'gbk' codec can't encode character '\u2713'`），处置是 **`PYTHONUTF8=1`** 或 **`python -X utf8`**，与 shell 无关 |
 | GitHub 通道 | **哪个通道通是随时刻变化的**，不是常量。推送前先探测（PITFALLS #9 / #45），别把上次的成功当依据 |
 
 ---
