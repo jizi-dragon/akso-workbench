@@ -22,7 +22,7 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | ★ **核心 Agent 架构与分层契约 ＋ 不变量 I1–I18（地基）** | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
-> | 真机环境坑（**120 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 真机环境坑（**121 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 不再变的决策（**8 篇** ADR ＋ `0000-template.md` 模板 = 9 个文件） | [docs/adr/](docs/adr/) |
 > | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
 > | 数据库与迁移账（改必更的事实源） | [docs/SCHEMA.md](docs/SCHEMA.md) |

@@ -128,7 +128,7 @@
 | `docs/PLUGIN-UPSTREAM-RESEARCH.md`（**该文件已于 2026-09-29 删除**） | 要动宿主/插件边界的人 | 宿主与插件分离的先例、可行性判断、POC 验证与陷阱清单（`FRAMEWORK-INVENTORY` 的姊妹篇） |
 | `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） | 接手维护的人（含 AI 助手） | 代码地图、架构与数据流、红线与约定、风险台账、验收基线实测 |
 | **[docs/VERSIONING.md](docs/VERSIONING.md)** | **管版本 / 发版 / 想接 GitHub 自动化的人** | **版本管理机制**（三层拆解）、现状实测（tag 缺口、更新链路的公开仓库前提）、GitHub 能帮哪一段、三个方案选型、可直接照抄的 CI 与打 tag 做法 |
-| [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **120 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改；其中一批的主体已随配置工厂移除，文件头有对照表） |
+| [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **121 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改；其中一批的主体已随配置工厂移除，文件头有对照表） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发者 | 环境搭建、依赖变更、构建发布、代码规约、验收纪律 |
 | [CHANGELOG.md](CHANGELOG.md) | 所有人 | 版本变更明细（含每次事故的根因） |
 | `docs/HISTORY-REWRITE-NOTICE.md`（**该文件已于 2026-09-29 删除**） | 协作者（受影响者） | 历史重写说明 + 本地副本迁移步骤（勿 merge 旧历史） |
