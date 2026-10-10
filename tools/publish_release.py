@@ -59,7 +59,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "desktop" / "dist"
 CHANGELOG = ROOT / "CHANGELOG.md"
-REPO = "jizi-dragon/akso-mogul"
+REPO = "jizi-dragon/akso-workbench"
 API = "https://api.github.com"
 
 
@@ -78,7 +78,7 @@ def token() -> str:
         raise SystemExit(
             "未设置 GH_TOKEN。获取路径见 docs/EXTENSION-INSTALL.md 第四节：\n"
             "  GitHub 头像 → Settings → Developer settings → Personal access tokens →\n"
-            "  fine-grained（Contents: Read and write，选 jizi-dragon/akso-mogul）或 classic（勾 repo）"
+            "  fine-grained（Contents: Read and write，选 jizi-dragon/akso-workbench）或 classic（勾 repo）"
         )
     return tok
 

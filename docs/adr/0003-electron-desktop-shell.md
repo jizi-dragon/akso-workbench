@@ -366,6 +366,32 @@ P6 壳全部 `.js` 都在 electron-builder `files` 白名单里 / … / **P10** 
 - **仓库名**：仍为 `jizi-dragon/akso-mogul`（用户 2026-09-16 决定「暂不改」）。
   **这是一处刻意保留的不一致**：`desktop/package.json` 的 `publish.repo`、`README`、发布脚本继续指向它。
 
+> ★ **2026-10-11 后补（只追加，本节上文一字未改）**：用户 **2026-10-11** 决定改名 ⇒
+> `jizi-dragon/akso-mogul` **已更名为 `jizi-dragon/akso-workbench`**。
+> 上面 D-4 的「仓库名：仍为 `jizi-dragon/akso-mogul`（用户 2026-09-16 决定『暂不改』）」
+> 记录的是**决策当时的认知**，原样保留 —— 据此，本节的 D-4、后果表的「仓库名未改」行、
+> §3 的「~~改仓库名~~」、§5.1 第二条「仓库名仍未改」与 §7.1 第 1 条
+> 「用户决定改仓库名 → 同步 `publish.repo`、remote URL」**这些触发器均已触发**。
+>
+> 本次随更名同步改动的位置（★ **产品展示名与全部产物名一个字都没动**：
+> `Workbench-x.y.z-setup.exe` / `dist/WorkbenchServer` / `%APPDATA%\Workbench` / `Workbench/` 数据目录
+> 本来就已经是新形态）：
+
+| 位置 | 改动 |
+|---|---|
+| `desktop/package.json` | `build.publish.repo` → `akso-workbench`（`owner` 仍 `jizi-dragon`） |
+| `desktop/proxy.js` | 直连探测端点 `PROBE_URL` → `…/akso-workbench/releases.atom` |
+| `tools/verify_update_proxy.js` | 端到端探测的资产 URL → `…/akso-workbench/releases/latest/download/latest.yml` |
+| `tools/publish_release.py` | `REPO` 常量与 `GH_TOKEN` 提示文案 |
+| `README.md` | 「仓库地址」一行改为新名并标注本次决策 |
+| `docs/VERSIONING.md` / `CONTRIBUTING.md` | 可见性 / 规则集实测记录里的仓库 URL（探测结论 404 / 403 不变） |
+| `CHANGELOG.md` | `## [Unreleased]` 追加一条更名说明（历史条目一字未改） |
+
+> ★ **仓库名与 2026-09-16 退役的旧包名同串，别据此"顺手统一"**：本次取的
+> `akso-workbench` 恰好与 §2.4 表格左列那个**已退役的旧 Python 包名** `akso-workbench` 同串。
+> 它今天只是 **GitHub 仓库标识** —— 包名仍是 `workbench`、产品名仍是 `Workbench`，
+> D-3 的 `akso-workbench-backup` / `akso-workbench-snapshot` 兼容分支是**另一件事**。
+
 #### D-5 身份握手必须四处同步改（改名最容易踩的坑）
 
 `/api/health` 与 `/whoami` 答的 `app` 字段是**壳的存活判据**与**扩展的身份判据**，改一处不改另一处

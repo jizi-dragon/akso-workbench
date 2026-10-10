@@ -16,7 +16,7 @@
 
 const { app, net, session } = require('electron');
 const ASSET =
-  'https://github.com/jizi-dragon/akso-mogul/releases/latest/download/latest.yml';
+  'https://github.com/jizi-dragon/akso-workbench/releases/latest/download/latest.yml';
 
 function log(o) {
   process.stdout.write(`WORKBENCH_PROBE ${JSON.stringify(o)}\n`);

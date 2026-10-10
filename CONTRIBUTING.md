@@ -160,10 +160,12 @@ GitHub Docs: Personal access tokens（`publish_release.py` 的错误提示里有
 
 > ⚠️ 更新器**匿名**读 Release ⇒ 仓库必须公开。
 > ⚠️ 发布错清单会让**所有客户端**更新失败——所以那三道自查不要跳过。
-> ⚠️ **2026-09-17 实测该前提当前不成立**：匿名探测 `api.github.com/repos/jizi-dragon/akso-mogul` 返回 **404**
+> ⚠️ **2026-09-17 实测该前提当前不成立**：匿名探测 `api.github.com/repos/jizi-dragon/akso-workbench` 返回 **404**
 > （同 owner 的 `quick-login` / `akso-cc` / `mogul_simulator` 均 200 = 公开）。
 > 即：**开启自动更新（`WORKBENCH_AUTO_UPDATE=1`）并指向 GitHub 时，更新链路会静默失效**。
 > 三个可选处置见 [docs/VERSIONING.md](docs/VERSIONING.md) §3.1。
+> ★ **2026-10-11 后补**：仓库已更名为 `jizi-dragon/akso-workbench`（原 `akso-mogul`），
+> 本条与 §6 的实测记录已同步为新名 —— 但**那次探测发生在更名之前，结论（404）没变**。
 
 ### 3.3.1 tag 与 CI（2026-09-17 起）
 
@@ -278,7 +280,7 @@ GitHub Docs: Personal access tokens（`publish_release.py` 的错误提示里有
 | `desktop/package-lock.json` | version `0.2.1`（`package.json` 已 `0.3.12`）——`bump.py` 四写不含它 | `npm install` 会改写它，发布后工作区变脏；安装包命名不受影响（electron-builder 读 `package.json`） |
 | ~~`tools/setup.ps1` §5~~ | ~~仍把 **Node** 当必检项并说「洞察/工厂功能不可用」~~ → **2026-09-14 已改为 `INFO` 信息项**（不计入失败），文案改为「仅影响 desktop/ 的构建（运行时不需要）」 | ✅ 口径已对齐 [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md) |
 | `tests/test_proc.py`（7 项） | 仍在测 Node 子进程封装 | 它测的是**遗留封装本身**，不代表运行时链路 |
-| ⚠️ **仓库可见性** | **2026-09-17 匿名探测：`api.github.com/repos/jizi-dragon/akso-mogul` → 404**（同一 owner 的 `quick-login` / `akso-cc` / `mogul_simulator` 均 200 = 公开）。而 §3.3 与 `publish_release.py` 都要求**仓库公开** | **一旦开启自动更新（`WORKBENCH_AUTO_UPDATE=1`）并指向 GitHub，更新链路会失效**（更新器匿名读 Release）。详见 [docs/VERSIONING.md](docs/VERSIONING.md) §3 |
+| ⚠️ **仓库可见性** | **2026-09-17 匿名探测：`api.github.com/repos/jizi-dragon/akso-workbench` → 404**（同一 owner 的 `quick-login` / `akso-cc` / `mogul_simulator` 均 200 = 公开）。而 §3.3 与 `publish_release.py` 都要求**仓库公开** | **一旦开启自动更新（`WORKBENCH_AUTO_UPDATE=1`）并指向 GitHub，更新链路会失效**（更新器匿名读 Release）。详见 [docs/VERSIONING.md](docs/VERSIONING.md) §3 |
 | `adapters/*.json` 的 `$schema` | 原指向已删除的 `docs/模块契约.md#adapters` | ✅ 本轮已改为 `docs/SCHEMA.md`（仅此字段） |
 
 > 完整清单（含代码级缺陷与安全风险）见 `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账。

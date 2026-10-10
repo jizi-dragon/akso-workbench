@@ -60,7 +60,7 @@
     "publish": {
       "provider": "github",
       "owner": "jizi-dragon",
-      "repo": "akso-mogul"
+      "repo": "akso-workbench"
     }
   },
   "allowScripts": {

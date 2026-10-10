@@ -106,8 +106,13 @@ const AUTO_UPDATE_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.WORKBEN
 | `api.github.com/repos/jizi-dragon/quick-login` | **200 OK**（公开） |
 | `api.github.com/repos/jizi-dragon/akso-cc` | **200 OK**（公开） |
 | `api.github.com/repos/jizi-dragon/mogul_simulator` | **200 OK**（公开） |
-| **`api.github.com/repos/jizi-dragon/akso-mogul`** | **HTTP 404** → 私有（或该名字下无公开仓库） |
-| `api.github.com/users/jizi-dragon` | 200 OK，`public_repos=6`，**列表里没有 `akso-mogul`** |
+| **`api.github.com/repos/jizi-dragon/akso-workbench`** | **HTTP 404** → 私有（或该名字下无公开仓库） |
+| `api.github.com/users/jizi-dragon` | 200 OK，`public_repos=6`，**列表里没有 `akso-workbench`** |
+
+> ★ **2026-10-11 后补**：仓库已更名为 `jizi-dragon/akso-workbench`（用户决策，
+> 见 [ADR-0003](adr/0003-electron-desktop-shell.md) §2.4 D-4 的「2026-10-11 后补」）。
+> 上表与本文其余实测记录里的仓库名已同步为新名，但**那些探测发生在更名之前**
+> （当时仓库名是 `akso-mogul`）—— **结论（`404` / `403`）一句没变：可见性这件事本身还没解决。**
 
 而 CHANGELOG 里曾写着「**本仓库即公开**」——**该记录与现状不符**。
 
@@ -324,7 +329,7 @@ jobs:
 
 ### 5.2 第二步：保护 main 与 tag —— ❌ **当前做不了**（免费版 + 私有仓库）
 
-**实测 `GET /repos/jizi-dragon/akso-mogul/rulesets` 返回 403**：
+**实测 `GET /repos/jizi-dragon/akso-workbench/rulesets` 返回 403**：
 
 > `Upgrade to GitHub Pro or make this repository public to enable this feature.`
 
@@ -457,7 +462,7 @@ GitHub 仓库 → **Settings → Rules → Rulesets → New ruleset**：
 
 #### ③ Rulesets 保护：★ **当前账号/可见性下做不了**
 
-实测 `GET /repos/jizi-dragon/akso-mogul/rulesets` → **403**：
+实测 `GET /repos/jizi-dragon/akso-workbench/rulesets` → **403**：
 
 > `Upgrade to GitHub Pro or make this repository public to enable this feature.`
 

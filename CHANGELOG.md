@@ -51,6 +51,21 @@
   `extStale` 判定随之消失）。
 - `tests/test_ports_contract.py` 的"探测端点无副作用"改为直接断言 settings 表不变
   （不再依赖被删模块的私有键名）。测试基线：**1016 → 1011 项**（删 5 条扩展专属用例）。
+- **仓库更名为 `akso-workbench`（2026-10-11，用户决策）**：`jizi-dragon/akso-mogul` →
+  `jizi-dragon/akso-workbench`。随更名同步的**外部标识**：`desktop/package.json` 的
+  `build.publish.repo`（`owner` 仍 `jizi-dragon`）、`desktop/proxy.js` 的直连探测 `PROBE_URL`、
+  `tools/verify_update_proxy.js` 的 Release 资产 URL、`tools/publish_release.py` 的 `REPO`
+  常量与 `GH_TOKEN` 提示文案、`README.md` 的「仓库地址」行、`docs/VERSIONING.md` 与
+  `CONTRIBUTING.md` 里可见性/规则集的实测 URL。
+  ★ **产品展示名与全部产物名一个字未动**（`Workbench-x.y.z-setup.exe` / `dist/WorkbenchServer` /
+  `%APPDATA%\Workbench` / `Workbench/` 数据目录本来已是新形态）。
+  ★ **保护清单一字未改**：`docs/adr/**` 的决策文字（ADR-0003 §2.4 D-4 只**追加**了一段
+  「2026-10-11 后补」说明）、本文件的历史条目、`docs/PITFALLS.md` 既有条目、
+  `adapters/*.json` 指向的四个上游项目目录。
+  ★ `git remote` **未改**：GitHub 侧改名后再执行 `git remote set-url`（见本条的更名说明）。
+
+> 仓库更名的**决策留痕**在 [ADR-0003](docs/adr/0003-electron-desktop-shell.md) §2.4 D-4 的
+> 「2026-10-11 后补」—— 原「暂不改」的决策文字**原样保留**，两段认知都能看见。
 
 > ⚠️ 本次同时**修正了一处自己的失误**：用脚本批量重排 `build.ps1` 时把它的 **UTF-8 BOM 吃掉了**，
 > `verify_packaging.py` 的 P5 当场报红（8/9）。已补回并复跑 9/9 —— 这正是 P5 存在的理由，

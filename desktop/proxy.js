@@ -26,7 +26,7 @@ const OVERRIDE_FILE = 'proxy.txt'; // 放在壳状态同目录（%APPDATA%\Workb
 const BYPASS = '<local>;127.0.0.1;localhost;[::1]';
 
 /** 探测用的端点：更新器"查版本"走的就是这里（Atom feed），通不通直接决定更新能否开始 */
-const PROBE_URL = 'https://github.com/jizi-dragon/akso-mogul/releases.atom';
+const PROBE_URL = 'https://github.com/jizi-dragon/akso-workbench/releases.atom';
 
 /** 直连探测预算：短于用户对"启动要等多久"的容忍；失败时马上回落代理，不拖启动 */
 const PROBE_TIMEOUT_MS = 6000;
