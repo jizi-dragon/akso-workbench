@@ -4,7 +4,7 @@
 > 原则先于工具——**先契约后实现，先复现后修复**。
 >
 > 使用者请看 [README.md](README.md) 与 [docs/USER-MANUAL.md](docs/USER-MANUAL.md)；
-> 接手维护请先读 `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**）（代码地图 / 红线 / 风险台账）
+> 接手维护请先读 `docs/CODEBASE_OVERVIEW.md`（2026-10-19 精简重写：代码地图 / 模块职责 / 风险索引）
 > 与 [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑 / 排障速查）。
 >
 > **用 AI 助手改这个仓库时**：把 **[AGENTS.md](AGENTS.md)** 交给它（多数工具会自动读取根目录的该文件）。
@@ -15,19 +15,19 @@
 ## 1. 环境搭建（新同事 5 分钟）
 
 ```powershell
-# 前置：Python 3.12+、Git、Node 20+（构建桌面壳时要）；uv 没有就先装（pip install uv 或 winget install astral-sh.uv）
+# 前置：Python 3.12+、Git、Rust 1.90+、Node 20+（Tauri CLI 与 Web UI E2E 需要）
 uv sync --extra dev --extra build   # 严格按 uv.lock 拉齐依赖（含国内镜像，无需自己配源）
-uv run playwright install chromium  # 托管浏览器内核（账号库/自动登录/监听需要）
+# 仅当要跑 Web UI E2E 验收脚本（tools/verify_*_ui.py）时才需要浏览器内核：
+# uv run playwright install chromium
 powershell -ExecutionPolicy Bypass -File tools\setup.ps1   # 环境自检（兼容 PS 5.1/7）
-uv run pytest                       # 1011 项全绿即环境就绪（2026-10-07 实测）
-cd desktop; npm install; cd ..       # 桌面壳（Electron）依赖
+uv run pytest                       # 快层全绿即环境就绪（约 35 秒；慢层见 §3.6）
 ```
 
 日常一切 Python 命令走 `uv run <cmd>`（自动使用锁定环境），**禁止**直接 `pip install` 后不落
 `pyproject.toml`。
 
 > **`--extra build` 不能省**：`uv sync` 不带它会把 PyInstaller 移出环境，
-> 之后 `tools/build.ps1` 的第 5 步（PyInstaller）直接失败。`build.ps1` 内部已带这两个 extra。
+> 之后 `tools/build_tauri.ps1` 的 sidecar 步骤直接失败。该脚本内部已带这两个 extra。
 >
 > **⚠️ `uv` / `ruff` 的口径在本仓已翻转过三次，别再背命令——先探一次**（[PITFALLS #50](docs/PITFALLS.md)）：
 >
@@ -72,9 +72,9 @@ cd desktop; npm install; cd ..       # 桌面壳（Electron）依赖
 > 这类错误不会在运行时暴露（`routes_insight.py` 的 `Any` 就是这么潜藏的）。ruff 的 F821 是唯一防线。
 >
 > ⚠️ **但这不只是"注解求值"一件事（P0-5，2026-09-17 补）**：本机 3.14 与 CI 的 3.12
-> **跑出来的结论可以不同**——CI 的 runner 没有 chromium，`tests/test_browser_parallel.py`
-> 的 4 项 P0 浏览器验收在那里是 **skip**，本机是 **pass**。CHANGELOG 里"CI 从建立那天起
-> 就没绿过"那起事故，就是被这个差集掩盖了**九次运行**。
+> **跑出来的结论可以不同**。当时的具体差集是 CI runner 没有 chromium、浏览器验收在那里
+> skip 而本机 pass；**2026-10-19 内置浏览器下线、相关测试删除后，这个差集已消失**，
+> 但"解释器口径必须一致"这条纪律仍有效。
 > 所以本仓现在有一个明确的解释器口径：**`.python-version`（= `3.12`）是唯一真源**，
 > `tests/test_python_version_contract.py` 会断言它与 `.github/workflows/ci.yml` 的
 > `python-version` **逐字一致**（两处分居文本与 YAML，没有别的机制保证同步）。
@@ -89,28 +89,19 @@ cd desktop; npm install; cd ..       # 桌面壳（Electron）依赖
 > ```
 >
 > **2026-09-17 实测**这套口径：`.venv312`（3.12.14）→ **493 passed, 8 skipped**；
-> 主力 `.venv`（3.14.6，加 `-o addopts=""` 含 slow 层）→ **501 passed, 0 skipped**。
+> 历史记录（2026-09 的 conda 3.14 环境）→ **501 passed, 0 skipped**；现役 `.venv` 是 3.12.14，基线见下方。
 > 差的正是那 8 项浏览器验收（slow 层由 CI 单独一步显式跑）。
 >
-> ⚠️ **那 8 项跳过的根因是 Playwright 版本，不是解释器版本**——`.venv312` 里 `uv pip install -e .`
-> 会解出**更新的 playwright**（实测它找 `chromium-1243`），而本机 `%LOCALAPPDATA%\ms-playwright`
-> 里只有主力环境那版（`chromium-1234`）→ 体检如实报"chromium 未安装"、8 项 skip。
-> 这也**恰好复刻了 CI runner**（那里一份浏览器都没有，同样 8 项 skip）。
-> **要在这套环境里也真跑浏览器那 8 项**，补一句即可（下载约 150MB）：
->
-> ```powershell
-> .\.venv312\Scripts\python.exe -m playwright install chromium
-> ```
->
-> 结果与主力环境一致（`0 skipped`）就说明**没有环境相关的差异**；若两边都是绿但 skip 数不同，
-> 请把 skip 行当结论的一部分读——**这才是 `-rs` 的意义**。
+> ⚠️ **2026-10-19 内置浏览器下线**：`test_browser_parallel.py` / `test_autologin.py` /
+> `test_browser_state.py` 已删除；上述"8 项浏览器 skip"不再存在。Playwright 只留在 dev
+> 依赖里供 Web UI E2E 脚本使用，不再影响 pytest 的解释器口径结论。
 >
 > `.venv312/` 已在 `.gitignore` 中忽略。**3.14 是合法的开发环境**（`requires-python` 允许），
 > 本仓不禁止它；被禁止的是"两边版本不同步却以为结论一样"。
 
 >
 > **ruff 现已全绿**（`uvx ruff check .` → All checks passed；`tools/*.py` 的 E402 是刻意豁免的引导式导入，
-> 见 `pyproject.toml` 的 `per-file-ignores`）。**验收基线是 1011 项 pytest / 1 skipped**（`-o addopts=""` 一次跑全，**含 slow 层**）
+> 见 `pyproject.toml` 的 `per-file-ignores`）。**验收基线是 1004 passed / 1 skipped**（`-o addopts=""` 一次跑全，**含 slow 层**；数字随判据增长，以当日实测为准）
 > （2026-10-07 实测）——不是下面模板里的旧数字。
 > ⚠️ **`uv tool run ruff` 要联网取 ruff**：PyPI 直连 TLS 失败时（本机实测过
 > `tls handshake eof`）改用清华镜像——`uv tool run --index https://pypi.tuna.tsinghua.edu.cn/simple ruff check .`
@@ -124,8 +115,8 @@ cd desktop; npm install; cd ..       # 桌面壳（Electron）依赖
 2. `uv lock && uv sync --extra dev --extra build`；
 3. lockfile 变更**单独成提交**，方便回溯「哪个依赖引入了什么问题」。
 
-> 容器化的取舍：本项目深绑 Windows 本机生态（`%APPDATA%` 数据目录、Electron 壳、
-> 内置 Chromium），容器化收益低、摩擦大。**协作以 `uv.lock` 为准**；
+> 容器化的取舍：本项目深绑 Windows 本机生态（`%APPDATA%` 数据目录、桌面壳），
+> 但 2026-10-19 起已不再内置 Chromium；容器化收益低、摩擦大。**协作以 `uv.lock` 为准**；
 > 若未来上 CI/Linux 部署再补 Dockerfile（`adapters` 的 `repoPath` 走环境变量注入，机制已备好）。
 
 ## 3. 构建与发布
@@ -133,67 +124,77 @@ cd desktop; npm install; cd ..       # 桌面壳（Electron）依赖
 ### 3.1 一键构建
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\build.ps1 [-Bump build|push|none] [-SkipPush]
+powershell -ExecutionPolicy Bypass -File tools\build_tauri.ps1 `
+  [-Bump build|push|none] `
+  [-UpdateBaseUrl https://updates.example.com/workbench/<版本>] `
+  [-Notes "更新说明"] `
+  [-SkipSidecar]
 ```
 
-链路（5 步）：① 版本演进 → ② **`uv sync`** → ③ release commit + push
-→ ④ PyInstaller sidecar → ⑤ electron-builder NSIS。
-产物：`desktop\dist\Workbench-<ver>-setup.exe` + `latest.yml`。
+链路：① 版本检查/演进 → ② PyInstaller sidecar → ③ Tauri build（NSIS per-user + updater 签名）
+→ ④ 可选生成 `latest.json`。
+产物：
 
-### 3.2 版本规则（方案 A，用户定稿）
+```text
+src-tauri\target\release\bundle\nsis\Workbench_<ver>_x64-setup.exe
+src-tauri\target\release\bundle\nsis\Workbench_<ver>_x64-setup.exe.sig
+src-tauri\target\release\bundle\nsis\latest.json   # 传了 -UpdateBaseUrl 才有
+```
 
-- 真源 = `pyproject.toml` 的 `version`；**只走 `tools/bump.py`**，勿手改单一文件。
-- `bump.py push` = PATCH+1；`bump.py build` = MINOR+1 且 PATCH 重置 1（`0.0.2 → 0.1.1 → 0.2.1`）。
-- **四写同步**：`pyproject.toml` + `workbench/__init__.py` + `desktop/package.json`
-  + `.version.json`（缓存）。
-  > 2026-10-09：原先是**五写**，第五、六写是浏览器扩展的 `manifest.json` 与 `package.json`。
-  > 扩展移出本仓库后这两写随之删除。
-- ⚠️ **`desktop/package-lock.json` 的 version 字段是陈旧的**（实测 `0.2.1`，而 `package.json` 已是
-  `0.3.5`），`bump.py` 不写它。**已知问题**——`npm install` 会静默改写它，让发布 commit 后工作区立刻变脏。
+### 3.2 版本规则（用户 2026-10-21 定稿）
 
-### 3.3 发布到 GitHub Releases
+- **唯一真源 = 仓库根目录的 `VERSION`**（单行 `major.minor.patch`）；**只走 `tools/bump.py`**，勿手改单一副本。
+- **正式版本**（用户明确说"发布正式版本"）：`bump.py build` → **MINOR+1、PATCH 归零**
+  （`0.4.1 → 0.5.0`），然后才构建安装包、tag、发布。
+- **优化版本**（用户没有说正式版本）：`bump.py push` → **PATCH+1**
+  （`0.4.1 → 0.4.2`）；只提交源码/构建，**不构建安装包、不发布**。
+- **派生副本**（`bump.py check` 全部核对）：
+  `pyproject.toml` + `workbench/__init__.py` + `uv.lock`（本项目条目）+
+  `.version.json`（缓存）+ `src-tauri/tauri.conf.json` + `src-tauri/Cargo.toml`。
+  > 2026-10-09：浏览器扩展的 `manifest.json` 与 `package.json` 副本已删除。
+  > **2026-10-19**：Electron 退役，`desktop/package*.json` 不再是副本。
+  > **2026-10-19（后续）**：真源从 `pyproject.toml` 改为 `VERSION`；所有副本由
+  > `bump.py` 写入，CI 在 `uv sync` **之前**跑 `uv lock --check` 与 `bump.py check`。
+- **锁文件顺序**：`uv lock`（或 `uv sync`）必须在 release commit **之前**；
+  CI 在 `uv sync` **之前**跑 `uv lock --check`（放在后面会被 sync 静默修好，永远通过）。
 
-`build.ps1` 用 `--publish never` 只出产物。发布走 `tools/publish_release.py`（推荐，带三道自查：
-`latest.yml` 版本号 == 发布版本、其 `sha512` == 安装包实际 sha512、指向本次安装包），
-或网页手工上传 `setup.exe + latest.yml`（+ blockmap）。完整步骤与 `GH_TOKEN` 获取路径见
-GitHub Docs: Personal access tokens（`publish_release.py` 的错误提示里有同一路径）。
+### 3.3 发布到内部 HTTPS 静态源
 
-> ⚠️ 更新器**匿名**读 Release ⇒ 仓库必须公开。
-> ⚠️ 发布错清单会让**所有客户端**更新失败——所以那三道自查不要跳过。
-> ⚠️ **2026-09-17 实测该前提当前不成立**：匿名探测 `api.github.com/repos/jizi-dragon/akso-workbench` 返回 **404**
-> （同 owner 的 `quick-login` / `akso-cc` / `mogul_simulator` 均 200 = 公开）。
-> 即：**开启自动更新（`WORKBENCH_AUTO_UPDATE=1`）并指向 GitHub 时，更新链路会静默失效**。
-> 三个可选处置见 [docs/VERSIONING.md](docs/VERSIONING.md) §3.1。
-> ★ **2026-10-11 后补**：仓库已更名为 `jizi-dragon/akso-workbench`（原 `akso-mogul`），
-> 本条与 §6 的实测记录已同步为新名 —— 但**那次探测发生在更名之前，结论（404）没变**。
+Tauri updater 不再读 GitHub Releases。发布步骤：
+
+1. 构建时带 `-UpdateBaseUrl https://<内部源>/workbench/<版本>` 生成 `latest.json`；
+2. 先上传安装包与 `.sig`（路径不可变），最后原子替换 `latest.json`；
+3. `latest.json` 的 `signature` 是 `.sig` **文件内容**，`url` 是安装包完整 HTTPS 地址；
+4. 私钥只在 CI Secret / 本机 `%USERPROFILE%\.tauri\workbench.key`，**绝不入库**。
+
+> ⚠️ 发布错清单会让所有客户端更新失败；先用 `tools/tauri_update_manifest.py` 做机械校验。
+> ⚠️ Tauri 更新器签名与 Windows Authenticode 是两套，后者未配置时 SmartScreen 仍可能提示。
 
 ### 3.3.1 tag 与 CI（2026-09-17 起）
 
-- **tag 由 `build.ps1` 自动打**：release commit 推送成功后执行 `git tag -a v<版本>` 并推送。
-  四条守卫（`-Bump none` / commit 未产生 / commit 未推上去 / tag 已存在）都不会打 tag。
+- **tag 在 release commit 推送后手工打**：`git tag -a v<版本> && git push origin v<版本>`。
+  构建脚本不再自动提交/推送/tag；版本决策仍由 `bump.py` 负责。
   > **为什么必须打**：实测本仓**发布过 12 个版本却只有 3 个 tag**，导致 `git checkout v0.3.11` 直接报错——
   > 回滚与"用户跑的是哪一版"都没有锚点。tag 是"版本号 ↔ commit"的唯一连接。
 - **CI 门禁**：`.github/workflows/ci.yml` 在 push/PR 上跑
   `uv sync → pytest → verify_packaging.py → ruff`（`windows-latest`）。
-  **它是 `verify_packaging.py` 的第一个自动调用方**（此前该工具无人调用，见 §6）。
   > ⚠️ 改 CI 时别加 `paths-ignore`：被跳过的 workflow 在分支保护下会以 pending 卡住合并。
-  > ⚠️ **改 `tools/build.ps1` 后必须补 UTF-8 BOM**（编辑会静默丢它，P5 立刻掉到 8/9）——
+  > ⚠️ **改 `tools/build_tauri.ps1` 后必须补 UTF-8 BOM**（编辑会静默丢它，P5 立刻红）——
   > 处置命令见 [PITFALLS.md](docs/PITFALLS.md) 环境坑 #37。
 
 ### 3.4 构建前的秒级体检（必跑）
 
 ```powershell
-.\.venv\Scripts\python.exe tools\verify_packaging.py   # 9 项静态核对，当前 9/9 PASS
+.\.venv\Scripts\python.exe tools\verify_packaging.py   # 7 项静态核对，当前 7/7 PASS
 .\.venv\Scripts\python.exe tools\gen_tools_doc.py      # 工具清单/数字门禁，当前 PASS
 ```
 
 它拦住的是「跑完 PyInstaller（数分钟）才暴露」的断点：spec 入口脚本缺失、入口用了相对导入、
-壳 spawn 路径与 `extraResources` 不一致、`build.ps1` 丢 UTF-8 BOM、
-壳新增 `.js` 忘了进 electron-builder 的 `files` 白名单、**工具插件漏登记 `hiddenimports`（P7）**。
+Tauri 资源映射与 `dist/WorkbenchServer` 不一致、`build_tauri.ps1` 丢 UTF-8 BOM、
+Tauri UI/图标缺失、**工具插件漏登记 `hiddenimports`（P7）**。
 
-> ⚠️ **`verify_packaging.py` 目前没有被 `build.ps1` 自动调用**（已知问题，见 §6）——请手动跑。
-> ✅ **2026-09-17 起由 CI 自动调用**（`.github/workflows/ci.yml`）：漏跑的代价从"潜伏到发版"
-> 降为"push 后 CI 报红"；**本机裸跑 `build.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑）。
+> ✅ **2026-09-17 起由 CI 自动调用**（`.github/workflows/ci.yml`）；
+> **本机裸跑 `build_tauri.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑）。
 
 ### 3.4.1 工具清单门禁（改了 `plugins/` 必跑）
 
@@ -214,6 +215,48 @@ GitHub Docs: Personal access tokens（`publish_release.py` 的错误提示里有
 - **顺序敏感的一处**：`uv sync` 必须在 release commit **之前**（它会写 `uv.lock` 里的项目版本，
   反了则 commit 里的 lock 立刻过期）。
 
+### 3.6 版本管理的三层（2026-10-19 合并自 `docs/VERSIONING.md`）
+
+> 原 `docs/VERSIONING.md` 的 534 行已合并到这里；文件保留为指针（历史链接仍要能点开）。
+> 下面只写**今天仍然成立**的规则，不再抄旧文里的 tag/Release 实测数字（它们已过期）。
+
+| 层 | 是什么 | 现在怎么做 |
+|---|---|---|
+| **L1 版本号** | `0.4.1` 从哪来、写到哪 | `VERSION` 是唯一真源；`bump.py` 同步派生副本；`bump.py check` 机检 |
+| **L2 发布事实** | 哪一版发过、tag 与产物是否对应 | release commit 推送后**手工打 tag**；`build_tauri.ps1` 只出产物，发布是另一步上传内部 HTTPS 静态源 |
+| **L3 用户可见** | 用户能不能知道该升级 | 当前手动覆盖安装；Tauri updater 的检查/安装 UI 尚未接入 |
+
+**L2 的两条纪律**
+
+1. **tag = "我构建并标注了这一版"**：release commit 推送后手工 `git tag -a v<版本>`。
+   它**不等于**"已对外发布"——安装包与 `latest.json` 由发布流程单独上传。
+   → **不要**给没构建过的版本补 tag（那是假历史）。
+2. **CI 不发布**：`.github/workflows/ci.yml` 只读不写、无 secret，避免"CI 误发一版"。
+
+**L3 的当前口径**
+
+更新源是**公司内部 HTTPS 静态源**，不要求仓库公开；安装包与 `.sig` 先上传，`latest.json`
+最后原子替换。自动更新 UI 未接入前，用户按 [USER-MANUAL.md](docs/USER-MANUAL.md) §8 手动覆盖安装。
+
+> ★ **不要在没有公开仓库时打开自动更新**：失败方式是**静默**的（更新器 404，界面不报错），
+> 用户只会觉得"怎么一直没更新"。
+
+**CHANGELOG 是机器接口**
+
+`CHANGELOG.md` 顶部必须有且只有一行 `## [Unreleased]`；发布前把它改成 `## [<版本>] - <日期>`，
+并在顶部补一行新的 `## [Unreleased]`。当前没有自动抽取脚本，发布说明由 `build_tauri.ps1 -Notes`
+传给 `latest.json`。
+
+**发版前的最小检查**
+
+```powershell
+.\.venv\Scripts\python.exe tools\bump.py check      # VERSION 与派生副本同步
+.\.venv\Scripts\uv.exe lock --check                 # 锁文件与 pyproject 同步
+.\.venv\Scripts\python.exe tools\verify_packaging.py
+.\.venv\Scripts\python.exe tools\gen_tools_doc.py
+.\.venv\Scripts\python.exe -m pytest -o addopts=""  # 含 slow 层
+```
+
 ## 4. 代码规约
 
 - **Lint 门禁**：`uvx ruff check .` 应全绿（E4/E7/E9/F/I/B，配置在 `pyproject.toml`）。
@@ -221,7 +264,7 @@ GitHub Docs: Personal access tokens（`publish_release.py` 的错误提示里有
 - **类型注解**：新代码必须带完整注解 + `from __future__ import annotations`。
 - **校验**：API 入参用 pydantic `BaseModel`；⚠️ `BaseModel` **默认忽略多余字段**——
   请求体必须**显式建模**每一个字段，否则字段静默丢失（`AccountPatch` 漏 `box` 的事故）。
-- **异常**：服务层抛领域错误（`ApiError` / `AccountError` / `BrowserError`），路由层翻译为
+- **异常**：服务层抛领域错误（`ApiError` / `AccountError`），路由层翻译为
   `HTTPException` + `raise ... from exc` 保留因果链。
 - **文档字符串**：每个模块头部说明职责 + **知识来源**（fork 自谁 / 迁移自谁 / 实证出处）——
   这是本仓库最重要的可读性投资，新代码沿用。
@@ -230,7 +273,7 @@ GitHub Docs: Personal access tokens（`publish_release.py` 的错误提示里有
 
 ## 5. 开发流程与分工边界
 
-1. **动代码前**先读 `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**）（红线与约定）与
+1. **动代码前**先读 `docs/CODEBASE_OVERVIEW.md`（2026-10-19 精简重写：代码地图 / 约定 / 风险索引）与
    [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑）、[docs/SCHEMA.md](docs/SCHEMA.md)（数据契约）；
 2. 新路由挂到 `workbench/api/__init__.py::_optional_routers`（可选路由）或同级注册；
 3. 新增/修改端点 → 同步 [docs/API.md](docs/API.md)；新增配置项 → 同步 [docs/CONFIG.md](docs/CONFIG.md)；
@@ -242,7 +285,7 @@ GitHub Docs: Personal access tokens（`publish_release.py` 的错误提示里有
 |---|---|
 | `workbench/api/*` + `workbench/services/*` | 主战场；同一文件避免两人同时改 |
 | `workbench/harness/*` | fork 存量（对话 Agent 循环），改动最小化 |
-| `desktop/*` | 壳（Electron）；改完跑 `node --check desktop\main.js` 与 `pytest tests/test_lifecycle.py tests/test_shell_control.py -o addopts=""` |
+| `src-tauri/*` | 桌面壳（Tauri 2 / Rust）；改完跑 `cargo check --manifest-path src-tauri\Cargo.toml` + `pytest tests/test_tauri_config.py -o addopts=""` |
 | `adapters/*.json` 指向的原四项目目录 | **冻结**：任何情况下不写 |
 | `docs/adr/*` | 改已采纳的决策 = 新增一篇取代它，不允许悄悄改历史 ADR。新增**必须用 [0000-template.md](docs/adr/0000-template.md)**，其中的 **§6「外部参照」与 §7「触发器」不得省略**（理由见下） |
 
@@ -275,30 +318,35 @@ GitHub Docs: Personal access tokens（`publish_release.py` 的错误提示里有
 
 | 项 | 现状 | 影响 |
 |---|---|---|
-| `tools/verify_packaging.py` | **9/9 PASS**（2026-09-16 新增 P7 插件登记对账；2026-10-09 随扩展移除 P4a/P4b/P4c/P10）；**2026-09-17 起由 CI 自动调用**（`.github/workflows/ci.yml`），但 `build.ps1` 仍**不**调用它 | 构建链路上的断点已由 CI 兜住；**本机裸跑 `build.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑） |
+| `tools/verify_packaging.py` | **7/7 PASS**（P1/P2/P5/P7/P9/P10/P11；Electron 时代的 P3/P6 已删）；**CI 自动调用** | 构建链路上的断点已由 CI 兜住；**本机裸跑 `build_tauri.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑） |
 | 文档里的工具/插件数字 | **已上机检**：`tools/gen_tools_doc.py` + `tests/test_tools_doc.py` 核对 `docs/TOOLS.md` 与运行期中枢，并扫活跃文档里的"N 个工具/插件" | 2026-09-15 曾四处文档同时写旧数字且由用户先发现（[docs/TOOLS.md](docs/TOOLS.md) §7） |
-| `desktop/package-lock.json` | version `0.2.1`（`package.json` 已 `0.3.12`）——`bump.py` 四写不含它 | `npm install` 会改写它，发布后工作区变脏；安装包命名不受影响（electron-builder 读 `package.json`） |
-| ~~`tools/setup.ps1` §5~~ | ~~仍把 **Node** 当必检项并说「洞察/工厂功能不可用」~~ → **2026-09-14 已改为 `INFO` 信息项**（不计入失败），文案改为「仅影响 desktop/ 的构建（运行时不需要）」 | ✅ 口径已对齐 [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md) |
+| ~~`desktop/package-lock.json` 版本陈旧~~ | ✅ **2026-10-19 Electron 退役**：该文件与整个 `desktop/` 已删除 | 版本副本只剩 `VERSION` / pyproject / `__init__` / `uv.lock` / `.version.json` / Tauri 两处 |
+| `tools/setup.ps1` §5 | Node 是 **INFO 信息项**（不计入失败），文案已改为「仅影响 Tauri CLI 构建与 Web UI E2E」 | ✅ 与当前 Tauri 交付形态一致 |
 | `tests/test_proc.py`（7 项） | 仍在测 Node 子进程封装 | 它测的是**遗留封装本身**，不代表运行时链路 |
-| ⚠️ **仓库可见性** | **2026-09-17 匿名探测：`api.github.com/repos/jizi-dragon/akso-workbench` → 404**（同一 owner 的 `quick-login` / `akso-cc` / `mogul_simulator` 均 200 = 公开）。而 §3.3 与 `publish_release.py` 都要求**仓库公开** | **一旦开启自动更新（`WORKBENCH_AUTO_UPDATE=1`）并指向 GitHub，更新链路会失效**（更新器匿名读 Release）。详见 [docs/VERSIONING.md](docs/VERSIONING.md) §3 |
+| ⚠️ **Tauri 自动更新 UI** | 签名/清单/构建链路已就绪，但“检查→提示→下载→安装”尚未接入 | 用户当前只能手动覆盖安装；详见 [TAURI-MIGRATION.md](docs/TAURI-MIGRATION.md) §4 |
 | `adapters/*.json` 的 `$schema` | 原指向已删除的 `docs/模块契约.md#adapters` | ✅ 本轮已改为 `docs/SCHEMA.md`（仅此字段） |
 
-> 完整清单（含代码级缺陷与安全风险）见 `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账。
+> 完整清单（含代码级缺陷与安全风险）见 `docs/CODEBASE_OVERVIEW.md` 的风险索引与\n> `docs/AGENT-BENCHMARK.md` §3。
 
 ## 7. 验收纪律
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest          # 1011 项（2026-10-07 实测全绿；含 test_plugin_api/test_cache/test_agent_loop/test_tools_doc）
-.\.venv\Scripts\python.exe tools\gen_tools_doc.py   # 工具清单与数字门禁（PASS：4 插件 / 18 工具）
-node tools\verify_port_broker.mjs             # 固定端口 + 占用判定（离线，不需要 Electron；**须先退出工作台**——它靠真占固定端口验判定）
-.\.venv\Scripts\ruff.exe check .               # All checks passed（★ 先探一次，见 §1；PITFALLS #50）
-.\.venv\Scripts\python.exe tools\verify_packaging.py   # 9/9
+.\.venv\Scripts\python.exe -m pytest          # 快层（约 35 秒；默认跳过 slow）
+.\.venv\Scripts\python.exe tools\gen_tools_doc.py   # 工具清单与数字门禁（PASS：4 插件 / 15 工具）
+.\.venv\Scripts\uv.exe tool run ruff check .  # All checks passed（★ 先探一次，见 §1；PITFALLS #50）
+.\.venv\Scripts\python.exe tools\verify_packaging.py   # 7/7
 ```
 
-改动**端口 / 壳启动链路**后必跑 `node tools\verify_port_broker.mjs`（离线 27 项，不需要 Electron；**先退出工作台**，否则固定端口被占，脚本的前置检查会拦下并提示）。**端口是固定常量、不顺延**（[ADR-0012](docs/adr/0011-port-governance.md)）——改端口号属于破坏性变更，必须同步壳侧 `desktop/ports.js::PORTS`、Python 侧 `workbench/config.py` 与 `tests/test_ports_contract.py`。
+Tauri 壳的端口是**动态的**（Rust `free_port()` 绑 0）；不再有固定 18765/18767 契约，
+也没有 `verify_port_broker.mjs`。改壳启动/端口链路时跑：
+
+```powershell
+cargo check --manifest-path src-tauri\Cargo.toml
+.\.venv\Scripts\python.exe -m pytest tests\test_tauri_config.py -o addopts="" -q
+```
 改动**洞察页产物预览（`static/js/artifact-preview.js` / markdown 渲染 / drawio 画布）**后必跑
 `.\.venv\Scripts\python.exe tools\verify_insight_preview.py`（14 项，真浏览器断言渲染结果：表格列口径、引用块、drawio 节点与连线计数、多页切页、零 JS 错误）。它自起服务、用临时数据目录与专用端口（18791），**不需要先退出工作台**。
-完整验收基线（含真机项与 E2E）见本文 §7 与 `docs/CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的「验收基线实测」。
+完整验收基线（含真机项与 E2E）见本文 §7；代码地图与当前风险索引见 `docs/CODEBASE_OVERVIEW.md`。
 
 - 阶段验收以 `tests/` 机器验收为准，不靠肉眼；
 - 真机验收（真实 eGMP 平台）只在测试环境账号上做；
@@ -315,81 +363,82 @@ node tools\verify_port_broker.mjs             # 固定端口 + 占用判定（�
 
 | 模式 | 命令 | 要编译吗 | 覆盖什么 | **不覆盖**什么 |
 |---|---|---|---|---|
-| **① Web 模式** | `.\.venv\Scripts\python.exe -m workbench.main` | **不要** | 全部页面与业务功能（对话/洞察/账号/沙箱/Skill）；自动开浏览器 | Electron 壳的一切（托盘/热键/单实例/更新器）；`WORKBENCH_SESSION_MODE=cdp`（壳才下发，Web 模式跑 `local` 的 Playwright chromium） |
-| **② 桌面壳开发态** | `cd desktop; npm start` | **不要** | **完整桌面应用**：真窗口 + 托盘 + 热键 + sidecar 生命周期 + CDP 会话模式 | 打包特有行为（见 8.3） |
-| **③ 打包安装版** | `powershell -File tools\build.ps1` → 跑 NSIS 安装包 | **要**（数分钟） | 全部，含 PyInstaller 冻结态、chromium 打包、electron-builder `files` 白名单、NSIS 安装/卸载 | 调试便利性（改一行要重打） |
+| **① Web 模式** | `.\.venv\Scripts\python.exe -m workbench.main` | **不要** | 全部页面与业务功能（对话/洞察/账号/沙箱/Skill）；自动开系统浏览器 | Tauri 壳（窗口/单实例/外链/进程清理/更新器） |
+| **② Tauri 开发态** | `npx --yes @tauri-apps/cli@2 dev` | **第一次要**（Rust 编译；之后增量） | **完整桌面应用**：真窗口 + 单实例 + sidecar 生命周期 + 外链 | 打包特有行为（见 8.3） |
+| **③ 打包安装版** | `tools\build_tauri.ps1` → 跑 NSIS 安装包 | **要**（数分钟） | 全部，含 PyInstaller 冻结态、Tauri 资源映射、NSIS 安装/卸载 | 调试便利性（改一行要重打） |
 
-**结论：日常测试打开应用页面，①②都不需要编译。**
-`desktop/node_modules` 与 `.venv` 就绪即可（本机已就绪）。
+**结论：日常业务开发用 ①；验桌面壳用 ②。**
+`.venv` 与 `src-tauri\target` 就绪即可；Tauri 开发态会自己拉起 `.venv` 里的 sidecar。
 
 ### 8.2 什么时候**必须**编译
 
-只有一件事需要"构建步骤"，且它**不是"编译应用"**：
-
 | 你改了什么 | 要跑的 | 说明 |
 |---|---|---|
-| 要验打包特有行为 | `tools\build.ps1` | 见 8.3 |
-
-> **Python 侧没有任何构建步骤**：改 `workbench/**` 重启应用即可（§8.1 的①②）。
-> 2026-10-09 之前这里还列着"重建浏览器扩展"——扩展已移出本仓库，那一条随之消失。
+| 只改 Python / 静态 UI | 重启应用 | Python 无构建步骤；`static/**` 刷新窗口即可 |
+| 改 Rust / `tauri.conf.json` / 打包 | `tools\build_tauri.ps1` | 见 8.3 |
+| 只验 Rust 类型 | `cargo check --manifest-path src-tauri\Cargo.toml` | 不生成安装包 |
 
 ### 8.3 只有**打包态**才验得到的（改完必须打一次包）
-
-这些是"开发态永远绿、装出来才炸"的类别，改动相关代码后要真打一次包：
 
 | 项 | 为什么开发态验不到 |
 |---|---|
 | **PyInstaller 漏收插件**（PITFALLS #32） | 动态导入 `importlib.import_module` 静态分析看不见——开发态导入得到，装完**静默少功能** |
-| **`sidecar-stdio-*.log`**（壳抓的进程原始输出） | 由 Electron 主进程写，开发态/测试脚本都不起壳 |
+| **`tauri-sidecar.log`** | 由 Tauri 壳重定向写入；开发态/测试脚本都不起壳 |
 | **冻结态的日志落盘** | `config.FROZEN` 只影响默认格式（JSONL）；`DATA_DIR` 可写性在安装目录环境下才见真章 |
-| **托盘图标 / `desktop/package.json` 的 `files` 白名单**（B-g） | P6 只 glob `*.js`，`icon.ico` 这类资源无人守 |
-| **chromium 是否真打进包** | `server.spec` 的守卫只在打包时触发（P8 / P8b） |
-| **NSIS 安装/升级/卸载**、`latest.yml` | 只有产物才有 |
+| **Tauri 资源映射 / sidecar 路径** | 只有 NSIS 安装后才验证得到；P10 只做静态核对 |
+| **NSIS 安装/升级/卸载**、`latest.json` / `.sig` | 只有产物才有 |
 | **壳的异常生命周期**（强杀 / 崩溃 → sidecar 是否成孤儿） | 需要真实进程树；但**已有自动化**：`pytest tests/test_lifecycle.py -o addopts="" -m slow` 真起父子进程、对父 `taskkill /F`（不带 `/T`）、断言 sidecar 自退 |
 
-> **窗口/进程行为速查**（用户定稿 2026-09-20，PITFALLS #55）：
+> **窗口/进程行为速查**：
 >
 > | 动作 | 应用 | sidecar |
 > |---|---|---|
-> | 最小化 | 继续运行（托盘「显示主窗」可捞回，已补 `restore()`） | 继续运行 |
-> | **关闭窗口（X / 菜单）** | **退出** | **一并被杀**（`taskkill /T`） |
-> | 托盘/应用菜单「退出」 | 退出 | 一并被杀 |
-> | 强杀 / 崩溃 | 进程消失 | **自行退出**（`workbench/lifecycle.py` 等父句柄，2026-09-20 起） |
+> | 最小化 | 继续运行 | 继续运行 |
+> | **关闭窗口（X）** | **退出** | **一并被杀**（`taskkill /T` + Python 父监视） |
+> | 强杀 / 崩溃 | 进程消失 | **自行退出**（`workbench/lifecycle.py` 等父句柄） |
 
 ### 8.4 日常配方（建议照抄）
 
 ```powershell
 # ① 一次性准备（本机已完成）
-cd desktop; npm ci; cd ..
+uv sync --extra dev --extra build
+# Tauri CLI 由 npx 按需拉取；第一次 dev/build 会编译 Rust
 
-# ② 每次开工前：确认基线是绿的（约 40 秒）
-.\.venv\Scripts\python.exe -m pytest -o addopts=""      # 1011 passed, 1 skipped
-.\.venv\Scripts\ruff.exe check .                        # ★ 先探一次，见 §1
+# ② 每次开工前：确认基线是绿的（约 35 秒）
+.\.venv\Scripts\python.exe -m pytest -o addopts=""      # 全量（含 slow，约 48 秒）
+.\.venv\Scripts\uv.exe tool run ruff check .            # ★ 先探一次，见 §1
 
-# ②b 改了生命周期/壳的启动链路时，补跑慢层（真起进程，约 10–30 秒）
+# ②b 改了生命周期/壳的启动链路时，补跑慢层（真起进程，约 14 秒）
 .\.venv\Scripts\python.exe -m pytest -o addopts="" -m slow
 
-# ③ 打开完整应用来测（零编译）
-cd desktop; npm start
-#    只想快速看页面、不想开 Electron 时：
+# ③ 打开完整应用来测（Tauri；首次会编译 Rust）
+npx --yes @tauri-apps/cli@2 dev
+#    只想快速看页面、不想开桌面壳时：
 #    .\.venv\Scripts\python.exe -m workbench.main
 
 # ④ 测试期间排障：日志是完整可查的
 #    %APPDATA%\Workbench\logs\workbench-<日期>.jsonl
+#    Tauri 打包态还多一份 %APPDATA%\Workbench\logs\tauri-sidecar.log
+#    Web 模式（固定 18765）：
 curl.exe -s "http://127.0.0.1:18765/api/logs/tail?level=WARNING&n=50"
 #    界面响应头里的 X-Trace-Id → 还原整条链路
 curl.exe -s "http://127.0.0.1:18765/api/logs/trace/<traceId>"
 
-# ⑤ 改完代码：重跑 ②；动了日志/确认门/敏感表再跑这三条
+# ⑤ 改完代码：重跑 ②；动了日志/确认门/敏感表再跑这几条
 .\.venv\Scripts\python.exe tools\verify_logging.py           # 36/36（自起服务，不必退出工作台）
-.\.venv\Scripts\python.exe tools\verify_confirmation.py      # 40/40（同上，端口 18795；2026-09-22 实测 40/40）
+# 确认门：2026-10-19 起产品暂无 WRITE 工具，端到端 verify_confirmation.py 已退役；
+# 机制由下面两条（合成 WRITE 探针）覆盖，不依赖真实浏览器工具。
+.\.venv\Scripts\python.exe -m pytest tests\test_user_confirmation.py tests\test_agent_approval.py -o addopts="" -q
 .\.venv\Scripts\python.exe tools\verify_regression_tests.py  # 14/14 反证
 
 # ⑥ 发版前：打一次包，走 §8.3 清单
-powershell -ExecutionPolicy Bypass -File tools\build.ps1
+powershell -ExecutionPolicy Bypass -File tools\build_tauri.ps1 `
+  -UpdateBaseUrl https://updates.example.com/workbench/<版本>
 ```
 
-> ⚠️ **端口是固定常量、不顺延**（[ADR-0012](docs/adr/0011-port-governance.md)）：
-> `npm start` 与已打开的打包版**不能同时跑**（都抢 18765），会直接报错退出并说清占用者是谁。
-> 起不来时先 `Get-NetTCPConnection -LocalPort 18765 -State Listen` 看是谁占着
-> （PITFALLS #20 / #25：那种情况下的典型症状是"改了代码界面没变"——**先怀疑跑的是旧进程**）。
+> ⚠️ **端口策略已分叉**：
+> - Web 模式仍用 `127.0.0.1:18765`；
+> - Tauri 壳用**动态端口**（Rust `free_port()` 绑 0），不抢 18765/18767。
+> 两种模式不要同时指向同一个 `WORKBENCH_DATA`（SQLite 会互相干扰）；
+> 起不来时先看 `Get-NetTCPConnection` 与 `%APPDATA%\Workbench\logs\tauri-sidecar.log`。
+> 典型症状仍是"改了代码界面没变"——**先怀疑跑的是旧进程**（PITFALLS #20 / #25）。
