@@ -19,7 +19,7 @@
 | PRAGMA | `journal_mode = WAL`、`foreign_keys = ON`（收拢在 `db._PRAGMAS`） |
 | 旧库接管 | `config.bootstrap_database()`：仅当 `workbench.db` **不存在**时，按序尝试 `%APPDATA%\AksoWorkbench\workbench.db`（**2026-09-16 更名前的数据目录**，优先级最高）→ `%APPDATA%\MogulWorkbench\mogul.db` → `com.example.mogulsimulator`。**复制不移动、不覆盖**，连 `-wal`/`-shm` 一起（见 [ADR-0013](adr/0003-electron-desktop-shell.md) §D-2） |
 
-**为什么是单连接**：交付形态是单机单人（Electron 壳 + 本机 sidecar，`uvicorn workers=1`），
+**为什么是单连接**：交付形态是单机单人（Tauri 壳 + 本机 sidecar，`uvicorn workers=1`），
 单写入进程下 MySQL 相对 SQLite WAL 没有优势。完整论证（含 Redis/MySQL 排除理由与换库触发器）见
 [ADR-0001](adr/0001-data-layer.md)。
 
@@ -242,7 +242,7 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | TEXT | PK | `uuid4().hex[:12]`；**= SSE 事件的 `auditId`**，前端卡片与审计行靠它对齐 |
-| `tool` | TEXT | NOT NULL | 工具名，如 `insight_run` / `accounts_browser_open`（清单见 [API.md](API.md) §10）；**历史行里可能有已删除的 `factory_*`** |
+| `tool` | TEXT | NOT NULL | 工具名，如 `insight_run` / `accounts_login`（清单见 [API.md](API.md) §10）；**历史行里可能有已删除的 `factory_*` / `accounts_browser_*`** |
 | `args` | TEXT | NOT NULL DEFAULT `'{}'` | 审计维度 JSON（`audit_extra` 抽取），截断 2,000 字符；**凭据键被打码** |
 | `status` | TEXT | NOT NULL DEFAULT `'ok'` | `ok` / `error` / `needs_approval` / `rejected` / `timeout` / `unknown_tool` / `bad_args` |
 | `result_summary` | TEXT | NOT NULL DEFAULT `''` | 截断 1,000 字符 |

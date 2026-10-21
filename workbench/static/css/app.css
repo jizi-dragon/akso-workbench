@@ -30,8 +30,8 @@
 
 /* ————— 侧边栏 ————— */
 .sidebar {
-  width: 268px;
-  min-width: 268px;
+  width: 180px;
+  min-width: 180px;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--line);
@@ -1133,3 +1133,163 @@
   display: flex; gap: 8px; justify-content: flex-end;
   padding: 10px 14px; border-top: 1px solid var(--line);
 }
+
+/* ————— 侧边栏 v2：可折叠 + 更清晰的层级 ————— */
+.sidebar {
+  position: relative;
+  box-shadow: 8px 0 24px rgba(22, 50, 79, 0.035);
+  transition: width 0.22s var(--ease-out), min-width 0.22s var(--ease-out),
+    box-shadow 0.22s var(--ease-out);
+}
+
+.sidebar-brand {
+  position: relative;
+  gap: 9px;
+  padding: 16px 12px 15px;
+}
+
+.sidebar-toggle,
+.sidebar-floating-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.sidebar-toggle:hover,
+.sidebar-floating-toggle:hover {
+  color: var(--teal);
+  background: var(--teal-dim);
+  border-color: rgba(7, 108, 224, 0.22);
+}
+
+.sidebar-toggle svg,
+.sidebar-floating-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.sidebar-brand .brand-emblem {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.sidebar-brand .brand-name b {
+  font-size: 14px;
+}
+
+.sidebar-brand .brand-name small {
+  font-size: 10px;
+}
+
+.nav-item {
+  position: relative;
+}
+
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--teal);
+}
+
+.sidebar-section-title {
+  padding-top: 16px;
+  letter-spacing: 0.16em;
+}
+
+.shell.sidebar-hidden .sidebar {
+  width: 0;
+  min-width: 0;
+  border-right: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.shell.sidebar-hidden .sidebar > * {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.shell.sidebar-hidden .main {
+  margin-left: 0;
+}
+
+.sidebar-floating-toggle {
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 60;
+  width: 36px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.94);
+  border-color: var(--line-strong);
+  box-shadow: 0 4px 14px rgba(22, 50, 79, 0.12);
+  backdrop-filter: blur(8px);
+}
+
+.shell.sidebar-hidden .sidebar-floating-toggle {
+  display: grid;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    width: 244px;
+    min-width: 244px;
+  }
+  .sidebar-brand {
+    padding-left: 9px;
+  }
+}
+
+.shell.sidebar-hidden .chat-header {
+  padding-left: 54px;
+  transition: padding-left 0.22s var(--ease-out);
+}
+
+/* 让“隐藏侧栏”按钮在静止态也看得见（不是只在 hover 时才出现） */
+.sidebar-toggle,
+.app-sidebar .sidebar-toggle {
+  background: var(--teal-dim);
+  border-color: rgba(7, 108, 224, 0.2);
+  color: var(--teal);
+}
+
+/* 180px 紧凑侧栏：留出品牌/图标/文字的呼吸，而不是简单截断 */
+.sidebar-brand,
+.app-sidebar .sidebar-brand {
+  gap: 7px;
+  padding: 13px 8px 12px;
+}
+.sidebar-brand .brand-emblem,
+.app-sidebar .brand-emblem {
+  width: 31px;
+  height: 31px;
+  border-radius: 8px;
+  font-size: 15px;
+}
+.sidebar-brand .brand-name b,
+.app-sidebar .brand-name b { font-size: 13px; }
+.sidebar-brand .brand-name small,
+.app-sidebar .brand-name small { font-size: 9.5px; letter-spacing: 0.04em; }
+.sidebar-nav,
+.app-sidebar .sidebar-nav { padding: 10px 6px; }
+.nav-item,
+.app-sidebar .nav-item { padding: 8px 9px; gap: 8px; font-size: 12.5px; }
+.sidebar-section-title,
+.app-sidebar .sidebar-section-title { padding: 13px 11px 6px; }
+.sidebar-footer,
+.app-sidebar .sidebar-footer { padding: 11px 11px; }

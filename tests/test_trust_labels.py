@@ -211,7 +211,7 @@ def test_every_real_tool_declares_trust() -> None:
     missing = [s.name for s in hub.specs()
                if not isinstance(s.trust, pa.Trust)]
     assert not missing, f"这些工具没有声明 trust：{missing}"
-    assert len(hub.specs()) == 18, "工具数变了 —— 新工具要顺手声明 trust"
+    assert len(hub.specs()) == 15, "工具数变了 —— 新工具要顺手声明 trust"
 
 
 # ---------------------------------------------------------------- ③ taint 传播

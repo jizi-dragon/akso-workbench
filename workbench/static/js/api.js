@@ -1,9 +1,22 @@
 /** 后端 API 封装 + SSE 流解析 */
 
 async function jsonFetch(url, options) {
+  // ★ 对象 body 必须在这里统一序列化（2026-10-19 修）。
+  //
+  // 原实现只加 Content-Type、原样把 options 交给 fetch。fetch 对**普通对象** body
+  // 会走 `String(obj)` ⇒ 实发 `"[object Object]"`。`/api/chat/stop` 因此长期 422，
+  // 而调用方 catch 后把按钮退回"停止"，用户看到的是"点了没反应"（PITFALLS #122）。
+  //
+  // 放在**唯一入口**而不是逐个调用点补 `JSON.stringify`：后者是"每个新调用点都要记得"
+  // 的约定，而漏一处不会报错、只会静默发错 body。字符串 body（调用点已序列化的）
+  // 保持原样，避免二次编码。
+  const opts = options ? { ...options } : {};
+  if (opts.body != null && typeof opts.body !== "string") {
+    opts.body = JSON.stringify(opts.body);
+  }
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json" },
-    ...options,
+    ...opts,
   });
   if (!res.ok) {
     let message = `请求失败（${res.status}）`;
@@ -65,6 +78,23 @@ export const api = {
    *  （只活在 SSE 流里的东西，刷新一下就没人管了——而那是一个真实写入的闸门） */
   listPending: (status = "pending") =>
     jsonFetch(`/api/agent/pending?status=${encodeURIComponent(status)}`),
+  /** MCP 服务器状态（纯内存，不打网络、不启动进程） */
+  getMcpServers: () => jsonFetch("/api/mcp/servers"),
+  /** 重读 mcp.json 并重建 MCP 连接（可能要几秒：启动 server 是真的起子进程） */
+  reloadMcp: () => jsonFetch("/api/mcp/reload", { method: "POST" }),
+  /** 只重连某一个 server（手动，不走退避） */
+  reconnectMcp: (name) => jsonFetch(`/api/mcp/servers/${encodeURIComponent(name)}/reconnect`, { method: "POST" }),
+
+  /** 云端账号库：登录状态 / 设备流 / 只读数据视图 */
+  getVaultStatus: () => jsonFetch("/api/vault/status"),
+  vaultLoginStart: (clientName = "桌面工作台") =>
+    jsonFetch("/api/vault/login/start", { method: "POST", body: { clientName } }),
+  vaultLoginPoll: (deviceCode) =>
+    jsonFetch("/api/vault/login/poll", { method: "POST", body: { deviceCode } }),
+  vaultLogout: () => jsonFetch("/api/vault/logout", { method: "POST" }),
+  vaultPush: () => jsonFetch("/api/vault/push", { method: "POST" }),
+  getVaultLibrary: (refresh = false) =>
+    jsonFetch(`/api/vault/library${refresh ? "?refresh=1" : ""}`),
   /** 这个会话当前选中的账号 / 环境（刷新后把右下角那张卡片画回来） */
   getSelection: (conversationId) =>
     jsonFetch(`/api/agent/selection?conversationId=${encodeURIComponent(conversationId || "")}`),

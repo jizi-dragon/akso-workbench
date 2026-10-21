@@ -13,10 +13,44 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+@pytest.fixture()
+def probe_write():
+    """临时注册一个 WRITE 工具，专测确认门。
+
+    2026-10-19 内置浏览器下线后，产品里**没有 WRITE 工具**了；确认门仍必须测，
+    但它测的是 `ToolHub` 的机制，不是某个账号工具。用 installed 层注册、结束后卸载，
+    不污染 `/api/agent/selfcheck` 的核心工具口径。
+    """
+    from workbench import plugin_api as pa
+    from workbench.hub import get_hub
+
+    async def handler(_args, _ctx):
+        return "probe-ok"
+
+    hub = get_hub()
+    hub.register_installed(pa.Plugin(
+        id="probe-write-test",
+        title="确认门探针",
+        description="仅测试用；不写平台、不碰文件",
+        tools=[pa.ToolSpec(
+            name="probe_write",
+            description="测试确认门的写工具（无副作用）",
+            args_model=pa.ZERO_ARGS,
+            handler=handler,
+            risk=pa.Risk.WRITE,
+            trust=pa.Trust.LOCAL,
+            reversibility=pa.Reversibility.IRREVERSIBLE,
+            timeout_s=5,
+        )],
+        capability_id="probe-write-test",
+    ))
+    yield "probe_write"
+    hub.deregister_capability("probe-write-test")
+
+
 EXPECTED_PREFIXES = (
     "/api/conversations", "/api/settings", "/api/chat",
-    "/api/modules", "/api/insight", "/api/accounts", "/api/browser", "/api/agent",
-    "/api/update",
+    "/api/modules", "/api/insight", "/api/accounts", "/api/agent",
 )
 
 
@@ -159,7 +193,8 @@ def test_agent_selfcheck(client: TestClient) -> None:
         "出现了 DANGEROUS 级工具：请确认它真的不可逆，并更新本断言的注释"
     )
     assert data["riskCounts"]["read"] > 0
-    assert data["riskCounts"]["write"] > 0
+    # 内置浏览器下线后产品没有 WRITE 工具；风险门机制由 probe_write 单独覆盖。
+    assert data["riskCounts"]["write"] == 0
 
 
 def test_agent_unknown_tool_404(client: TestClient) -> None:
@@ -170,7 +205,7 @@ def test_agent_unknown_tool_404(client: TestClient) -> None:
 # ---------------------------------------------------------------- 确认门（HTTP 面）
 
 
-def test_write_tool_via_http_needs_approval(client: TestClient) -> None:
+def test_write_tool_via_http_needs_approval(client: TestClient, probe_write: str) -> None:
     """风险工具走 HTTP 也必须先确认：409 + pendingId，**不是**直接执行。
 
     这条是"分级是安全属性"的端到端判据——页面的勾选框不算数，执行侧才算数。
@@ -179,7 +214,7 @@ def test_write_tool_via_http_needs_approval(client: TestClient) -> None:
 
     approvals.reset_store()
     resp = client.post("/api/agent/invoke", json={
-        "tool": "accounts_browser_close", "args": {"account_id": "ghost"},
+        "tool": probe_write, "args": {},
     })
     assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]
@@ -190,43 +225,43 @@ def test_write_tool_via_http_needs_approval(client: TestClient) -> None:
     # 待确认清单里能查到它（界面靠这个端点渲染确认卡片）
     listed = client.get("/api/agent/pending").json()["pending"]
     assert [p["id"] for p in listed] == [detail["pendingId"]]
-    assert listed[0]["tool"] == "accounts_browser_close"
+    assert listed[0]["tool"] == probe_write
 
 
-def test_approved_token_passes_the_gate_once(client: TestClient) -> None:
-    """换令牌 → 重投 → 过门（失败在"账号不存在"这一步，而不是"需要确认"）。"""
+def test_approved_token_passes_the_gate_once(client: TestClient, probe_write: str) -> None:
+    """换令牌 → 重投 → 过门（失败在探针自己的返回，而不是"需要确认"）。"""
     from workbench import approvals
 
     approvals.reset_store()
     first = client.post("/api/agent/invoke", json={
-        "tool": "accounts_browser_close", "args": {"account_id": "ghost"},
+        "tool": probe_write, "args": {},
     }).json()["detail"]
     token = client.post(f"/api/agent/pending/{first['pendingId']}/approve").json()["approvalToken"]
 
     retried = client.post("/api/agent/invoke", json={
-        "tool": "accounts_browser_close", "args": {"account_id": "ghost"},
+        "tool": probe_write, "args": {},
         "approvalToken": token,
     })
     assert retried.status_code != 409, "带有效令牌不该再被确认门拦下"
 
     # 令牌一次性：重放同一次调用必须重新申请确认
     replay = client.post("/api/agent/invoke", json={
-        "tool": "accounts_browser_close", "args": {"account_id": "ghost"},
+        "tool": probe_write, "args": {},
         "approvalToken": token,
     })
     assert replay.status_code == 409
 
 
-def test_reject_flow_marks_pending(client: TestClient) -> None:
+def test_reject_flow_marks_pending(client: TestClient, probe_write: str) -> None:
     from workbench import approvals
 
     approvals.reset_store()
     pending_id = client.post("/api/agent/invoke", json={
-        "tool": "accounts_browser_open", "args": {"account_id": "ghost"},
+        "tool": probe_write, "args": {},
     }).json()["detail"]["pendingId"]
 
     rejected = client.post(f"/api/agent/pending/{pending_id}/reject",
-                           json={"reason": "现在不要开窗口"})
+                           json={"reason": "现在不要执行写操作"})
     assert rejected.status_code == 200
     assert rejected.json()["status"] == "rejected"
     assert client.post(f"/api/agent/pending/{pending_id}/approve").status_code == 409
@@ -235,7 +270,9 @@ def test_reject_flow_marks_pending(client: TestClient) -> None:
 # ---------------------------------------------------------------- 模型主动确认（HTTP 面）
 
 
-def test_model_confirmation_via_http_returns_409_without_waiting(client: TestClient) -> None:
+def test_model_confirmation_via_http_returns_409_without_waiting(
+    client: TestClient, probe_write: str,
+) -> None:
     """模型发起的实时确认走 HTTP：**409 + 确认内容，且本端点不替用户等**。
 
     对话链路里这个工具由 `harness/loop.py` 就地等答复；HTTP 面没有"就地等"这回事，
@@ -250,8 +287,8 @@ def test_model_confirmation_via_http_returns_409_without_waiting(client: TestCli
         "args": {
             "question": "把 3 个对象提交到生产，是否继续？",
             "details": "可回滚",
-            "target_tool": "accounts_browser_close",
-            "target_args": {"account_id": "ghost"},
+            "target_tool": probe_write,
+            "target_args": {},
         },
     })
     assert resp.status_code == 409, resp.text
@@ -260,19 +297,19 @@ def test_model_confirmation_via_http_returns_409_without_waiting(client: TestCli
     assert detail["pendingId"]
     assert detail["confirm"]["question"].startswith("把 3 个对象提交到生产")
     assert detail["confirm"]["target"] == {
-        "tool": "accounts_browser_close", "risk": "write", "args": {"account_id": "ghost"},
+        "tool": probe_write, "risk": "write", "args": {},
     }
 
     # 待确认清单里能查到，且**挂在目标工具头上**（不是确认工具自己）——
     # 这条是"用户同意的是那一次具体调用"的可查证据
     listed = client.get("/api/agent/pending").json()["pending"]
     assert [p["id"] for p in listed] == [detail["pendingId"]]
-    assert listed[0]["tool"] == "accounts_browser_close"
+    assert listed[0]["tool"] == probe_write
 
-    # 同意之后再调目标工具，参数一致 → 直接执行（这里失败在"账号不存在"，不是"需要确认"）
+    # 同意之后再调目标工具，参数一致 → 直接执行（探针无副作用）
     client.post(f"/api/agent/pending/{detail['pendingId']}/approve")
     retried = client.post("/api/agent/invoke", json={
-        "tool": "accounts_browser_close", "args": {"account_id": "ghost"},
+        "tool": probe_write, "args": {},
     })
     assert retried.status_code != 409, "预先批准没有生效——指纹或认领通道断了"
 

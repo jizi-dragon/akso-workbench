@@ -427,7 +427,6 @@ REQUIRED_TOOLS = (
     "insight_run",
     "insight_artifacts",
     "accounts_login",
-    "accounts_browser_open",
 )
 
 #: 模型主动请求确认的那个工具（声明在 `plugins/builtins.py`）。

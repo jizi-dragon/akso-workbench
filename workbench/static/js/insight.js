@@ -1,13 +1,194 @@
 import { api, el, postSSE, fmtBytes, badgeFor } from './modules-common.js';
 import { bindPreview, previewArtifact } from './artifact-preview.js';
 
-/** 能在应用内预览的后缀（其余只能下载）。drawio 与 markdown 都可就地预览。 */
-const PREVIEWABLE = ['.md', '.drawio', '.json', '.txt', '.log', '.csv'];
+/** 能在应用内预览的后缀（其余只能下载）。图片也走弹窗预览。 */
+const PREVIEWABLE = [
+  '.md', '.markdown', '.drawio', '.json', '.txt', '.log', '.csv',
+  '.png', '.jpg', '.jpeg', '.webp', '.gif',
+];
+
+const KIND_META = {
+  report: { label: '报告', icon: 'MD' },
+  graph: { label: '图', icon: 'DIO' },
+  data: { label: '数据', icon: 'JSON' },
+  log: { label: '日志', icon: 'LOG' },
+  image: { label: '图片', icon: 'IMG' },
+  other: { label: '其他', icon: 'FILE' },
+};
+
+let artifactJob = '';
+let artifactFiles = [];
+let artifactFilter = 'all';
+
+function kindOf(suffix) {
+  if (['.md', '.markdown'].includes(suffix)) return 'report';
+  if (suffix === '.drawio') return 'graph';
+  if (['.json', '.csv'].includes(suffix)) return 'data';
+  if (['.log', '.txt'].includes(suffix)) return 'log';
+  if (['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(suffix)) return 'image';
+  return 'other';
+}
+
+function shortName(name) {
+  return name.length > 34 ? `${name.slice(0, 31)}…` : name;
+}
+
+function paintArtifactFilters() {
+  const box = el('ins-artifact-filters');
+  if (!box) return;
+  const counts = { all: artifactFiles.length };
+  for (const file of artifactFiles) {
+    const kind = kindOf(file.suffix);
+    counts[kind] = (counts[kind] || 0) + 1;
+  }
+  const items = [['all', '全部'], ...Object.entries(KIND_META).map(([key, meta]) => [key, meta.label])];
+  box.innerHTML = '';
+  for (const [key, label] of items) {
+    const count = counts[key] || 0;
+    if (!count && key !== 'all') continue;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `artifact-chip${artifactFilter === key ? ' active' : ''}`;
+    button.textContent = label;
+    const badge = document.createElement('b');
+    badge.textContent = String(count);
+    button.appendChild(badge);
+    button.addEventListener('click', () => {
+      artifactFilter = key;
+      paintArtifactFilters();
+      paintArtifactGrid();
+    });
+    box.appendChild(button);
+  }
+  const countEl = el('ins-artifact-count');
+  if (countEl) {
+    const total = artifactFiles.reduce((sum, file) => sum + (Number(file.size) || 0), 0);
+    countEl.textContent = `任务 ${artifactJob} · ${artifactFiles.length} 个文件 · ${fmtBytes(total)}`;
+  }
+}
+
+function paintArtifactGrid() {
+  const box = el('ins-artifacts');
+  if (!box) return;
+  const files = artifactFilter === 'all'
+    ? artifactFiles
+    : artifactFiles.filter((file) => kindOf(file.suffix) === artifactFilter);
+  box.className = 'artifact-grid';
+  box.innerHTML = '';
+  if (!files.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.style.gridColumn = '1/-1';
+    empty.textContent = artifactFilter === 'all'
+      ? '任务完成但无产物文件（读失败会写进 manifest.failures）'
+      : '这个分类下没有文件。';
+    box.appendChild(empty);
+    return;
+  }
+  for (const file of files) {
+    const kind = kindOf(file.suffix);
+    const meta = KIND_META[kind];
+    const card = document.createElement('div');
+    card.className = 'artifact-card';
+    card.dataset.kind = kind;
+    card.dataset.name = file.name;
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `${file.name} 产物`);
+
+    const icon = document.createElement('span');
+    icon.className = 'artifact-icon';
+    icon.textContent = meta.icon;
+
+    const main = document.createElement('div');
+    main.className = 'artifact-main';
+    const name = document.createElement('div');
+    name.className = 'artifact-name';
+    name.title = file.name;
+    name.textContent = shortName(file.name);
+    const detail = document.createElement('div');
+    detail.className = 'artifact-meta';
+    detail.textContent = `${String(file.suffix || 'file').replace('.', '').toUpperCase()} · ${fmtBytes(file.size)}`;
+    main.append(name, detail);
+
+    const actions = document.createElement('div');
+    actions.className = 'artifact-actions';
+    const download = document.createElement('a');
+    download.href = `/api/insight/artifacts/${artifactJob}/file?name=${encodeURIComponent(file.name)}&download=1`;
+    download.download = file.name;
+    download.title = '下载';
+    download.textContent = '↓';
+    download.addEventListener('click', (event) => event.stopPropagation());
+    actions.appendChild(download);
+    if (PREVIEWABLE.includes(file.suffix)) {
+      const preview = document.createElement('button');
+      preview.type = 'button';
+      preview.title = '预览';
+      preview.textContent = '◉';
+      preview.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openArtifact(file, card);
+      });
+      actions.appendChild(preview);
+    }
+
+    card.append(icon, main, actions);
+    card.addEventListener('click', () => openArtifact(file, card));
+    card.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openArtifact(file, card);
+      }
+    });
+    box.appendChild(card);
+  }
+}
+
+function openArtifact(file, card) {
+  if (!PREVIEWABLE.includes(file.suffix)) return;
+  for (const node of document.querySelectorAll('.artifact-card.selected')) {
+    node.classList.remove('selected');
+  }
+  card?.classList.add('selected');
+  void previewArtifact({ jobId: artifactJob, name: file.name, size: file.size });
+}
+
+async function loadArtifacts(jobId, autoPreview = '') {
+  const box = el('ins-artifacts');
+  artifactJob = jobId;
+  try {
+    const data = await api(`/api/insight/artifacts/${jobId}`);
+    artifactFiles = data.files || [];
+    artifactFilter = 'all';
+    if (!artifactFiles.length) {
+      box.className = 'empty';
+      box.style.gridColumn = '1/-1';
+      box.textContent = '任务完成但无产物文件（读失败会写进 manifest.failures）';
+      paintArtifactFilters();
+      return;
+    }
+    box.style.gridColumn = '';
+    paintArtifactFilters();
+    paintArtifactGrid();
+
+    if (autoPreview) {
+      const target = artifactFiles.find((f) => f.name === autoPreview)
+        || artifactFiles.find((f) => f.suffix === '.log');
+      if (target) {
+        openArtifact(target, box.querySelector(`[data-name="${CSS.escape(target.name)}"]`));
+      } else {
+        setStatus('该任务没有日志文件（login/spider 都会写 proc.log）');
+      }
+    }
+  } catch (e) {
+    box.className = 'empty';
+    box.textContent = `产物读取失败：${e.message}`;
+  }
+}
 
 const PAGE_SIZE = 10;   // 用户定稿：一页 10 条 + 翻页
 let runPage = 0;
 let runTotal = 0;
-let currentJob = '';
 
 /** 单行运行反馈（用户定稿：删掉常驻日志区，但保留日志能力——每行任务的「日志」看 proc.log）。 */
 function setStatus(text) {
@@ -101,55 +282,6 @@ async function run() {
     });
   } finally {
     setRunning(false);
-  }
-}
-
-async function loadArtifacts(jobId, autoPreview = '') {
-  const box = el('ins-artifacts');
-  currentJob = jobId;
-  try {
-    const data = await api(`/api/insight/artifacts/${jobId}`);
-    if (!data.files.length) {
-      box.className = 'empty';
-      box.textContent = '任务完成但无产物文件（读失败会写进 manifest.failures）';
-      return;
-    }
-    box.className = '';
-    box.innerHTML = '';
-    const table = document.createElement('table');
-    table.className = 'mtable';
-    table.innerHTML = '<thead><tr><th>文件</th><th>大小</th><th>操作</th></tr></thead>';
-    const tbody = document.createElement('tbody');
-    for (const f of data.files) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${f.name}</td><td>${fmtBytes(f.size)}</td><td></td>`;
-      const td = tr.children[2];
-      if (PREVIEWABLE.includes(f.suffix)) {
-        td.appendChild(link('预览', () => previewArtifact({ jobId, name: f.name, size: f.size })));
-        td.appendChild(document.createTextNode(' · '));
-      }
-      const download = document.createElement('a');
-      download.textContent = '下载';
-      download.href = `/api/insight/artifacts/${jobId}/file?name=${encodeURIComponent(f.name)}&download=1`;
-      download.style.color = '#4d7cfe';
-      td.appendChild(download);
-      tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    box.appendChild(table);
-
-    if (autoPreview) {
-      const target = data.files.find((f) => f.name === autoPreview)
-        || data.files.find((f) => f.suffix === '.log');
-      if (target) {
-        previewArtifact({ jobId, name: target.name, size: target.size });
-      } else {
-        setStatus('该任务没有日志文件（login/spider 都会写 proc.log）');
-      }
-    }
-  } catch (e) {
-    box.className = 'empty';
-    box.textContent = `产物读取失败：${e.message}`;
   }
 }
 

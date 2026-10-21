@@ -19,8 +19,8 @@ r"""输入区的**真渲染**验证：模型名在发送键旁、下方那行用
 钉住）——**不花 token、不碰用户的数据目录**。
 
 > 为什么允许在这里自己起 chromium：本脚本是**对静态资源本身的渲染检查**，
-> 不是平台自动化，也不碰 `browser_pool`（规则 23/25 管的是产品代码里的浏览器操作；
-> `tools/verify_wheel_page.py` / `verify_accounts_ui.py` 是同一形态的先例）。
+> 不是平台自动化。产品代码里的浏览器能力已于 2026-10-19 下线（规则 23/25 随之退役）；
+> 本脚本仍用 **dev 依赖里的 Playwright** 起 headless 浏览器做 UI 验收。
 
 用法：`python tools\verify_composer_ui.py`
 """

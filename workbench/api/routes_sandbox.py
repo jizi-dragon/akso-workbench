@@ -16,12 +16,22 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from .. import db
 from ..sandbox import IS_WINDOWS, describe_policies, job_stats, layout
 from ..sandbox.runner import ALLOWED_EXECUTABLES
 
 router = APIRouter(prefix="/api/sandbox", tags=["sandbox"])
+
+
+class WorkspaceIn(BaseModel):
+    """工作区与权限更新。**逐字段显式建模**（规则 21：漏字段会静默失效）。"""
+
+    root: str | None = Field(default=None, max_length=1024)
+    mode: str | None = Field(default=None, max_length=16)
+    allowNetwork: bool | None = None
+    allowSubprocess: bool | None = None
 
 
 @router.get("/policies")
@@ -48,8 +58,40 @@ def status() -> dict:
         "platform": "windows" if IS_WINDOWS else "posix",
         "job": job_stats(),
         "layout": layout.describe(),
+        "workspace": layout.describe_workspace(),
         "executables_allowed": sorted(ALLOWED_EXECUTABLES),
     }
+
+
+@router.get("/workspace")
+def get_workspace() -> dict:
+    """工作区根与权限（只读/读写、联网、派生进程）。"""
+    return layout.describe_workspace()
+
+
+@router.put("/workspace")
+def set_workspace(body: WorkspaceIn) -> dict:
+    """改工作区根 / 权限。**校验失败返回 400**（不静默回落）。"""
+    try:
+        layout.save_workspace(
+            root=body.root,
+            mode=body.mode,
+            allow_network=body.allowNetwork,
+            allow_subprocess=body.allowSubprocess,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return layout.describe_workspace()
+
+
+@router.post("/workspace/reset")
+def reset_workspace() -> dict:
+    """恢复默认工作区与保守权限。"""
+    try:
+        layout.reset_workspace()
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return layout.describe_workspace()
 
 
 @router.get("/runs")
@@ -100,8 +142,12 @@ def selfcheck() -> dict:
     try:
         layout.ensure_dirs()
         desc = layout.describe()
+        workspace = layout.describe_workspace()
+        if not workspace.get("writable"):
+            problems.append(f"工作区不可写：{workspace.get('root')}")
     except Exception as exc:  # noqa: BLE001
         desc = {}
+        workspace = {}
         problems.append(f"沙箱目录不可建：{type(exc).__name__}: {exc}")
 
     jobs = job_stats()
@@ -114,5 +160,6 @@ def selfcheck() -> dict:
         "platform": "windows" if IS_WINDOWS else "posix",
         "job_api": jobs.get("job_api"),
         "layout": desc,
+        "workspace": workspace,
         "problems": problems,
     }

@@ -5,9 +5,9 @@
   "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
   "interactions": [
     {
-      "key": "4fe1de013475e96df72a7f224b0e0d84eb28225b8006a0eaf885bda1bdb2df26",
+      "key": "b47be8c43a9e19736e796c5c417609557aaafee881db11b7dbb2806ce742308a",
       "kind": "stream",
-      "label": "stream |  2 msgs | 18 tools | 先看时间，再看有哪些账号",
+      "label": "stream |  2 msgs | 15 tools | 先看时间，再看有哪些账号",
       "event": {
         "ok": true,
         "content": "",
@@ -28,9 +28,9 @@
       }
     },
     {
-      "key": "ec52012b2617286fd5aaa123380048b339efdcc6afef30e9671e3d8994ae6633",
+      "key": "294f8188a3e26bb44d9a6ec2bb8468818031a451f62a2f07bfad10bca35d4a3c",
       "kind": "stream",
-      "label": "stream |  4 msgs | 18 tools | 先看时间，再看有哪些账号",
+      "label": "stream |  4 msgs | 15 tools | 先看时间，再看有哪些账号",
       "event": {
         "ok": true,
         "content": "",
@@ -51,9 +51,9 @@
       }
     },
     {
-      "key": "6ba1d07582c1008f7c1bf8eb572fc405172814f4f4d070e9987d5f8f48f02f8f",
+      "key": "6fe81acba4659290b350b6dc1dc9b39a713f99c43796e0cdab8d41cf40d97ca2",
       "kind": "stream",
-      "label": "stream |  6 msgs | 18 tools | 先看时间，再看有哪些账号",
+      "label": "stream |  6 msgs | 15 tools | 先看时间，再看有哪些账号",
       "event": {
         "ok": true,
         "content": "两件都做完了。",

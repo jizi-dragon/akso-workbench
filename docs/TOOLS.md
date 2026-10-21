@@ -33,22 +33,19 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 > 手改会在下一次 `--check` 时被判为不一致——这正是设计意图（清单只能来自代码）。
 
 <!-- TOOLS-TABLE:BEGIN —— 由 tools/gen_tools_doc.py 生成，勿手改；改插件后跑 --write -->
-> 实测（由运行期工具中枢生成）：**4 个插件 / 18 个工具**。风险分布：16 read · 2 write · 0 dangerous；装配失败：无。
+> 实测（由运行期工具中枢生成）：**4 个插件 / 15 个工具**。风险分布：15 read · 0 write · 0 dangerous；装配失败：无。
 
 | 插件 | 标题 | 版本 | 工具数 | 负责什么 |
 |---|---|---|---|---|
 | `builtin` | 内置工具 | 1.2.0 | 6 | 与业务无关的通用能力：时间、读本地文件、读网页正文、读用户交的附件、请求用户确认 |
 | `websearch` | 联网检索 | 1.1.0 | 1 | 自建联网检索（DeepSeek API 不支持内置 web_search，故由本工作台实现） |
 | `insight` | 对象分析 | 1.0.0 | 6 | 读平台对象元数据、跑五步织网洞察、取回产物（akso-cc 能力原生化） |
-| `accounts` | 快捷登录 | 1.0.0 | 5 | 账号库清单、平台登录验证、托管浏览器会话（quick-login 能力内化） |
+| `accounts` | 快捷登录 | 1.0.0 | 2 | 账号库清单与平台登录验证（quick-login 能力内化 |
 
 | 工具 | 插件 | 风险 | 需确认门 | 超时 | 干什么 | 参数 |
 |---|---|---|---|---|---|---|
-| `accounts_browser_sessions` | accounts | read | — | 20s | 托管浏览器会话状态墙（单账号或全部在线会话） | `account_id` |
 | `accounts_list` | accounts | read | — | 15s | 列出工作台账号库里的账号（id/用户名/环境/分配池） | — |
 | `accounts_login` | accounts | read | — | 90s | 用账号库的账号验证平台登录连通并预热 token（httpx 直连，不开浏览器） | `account_id` |
-| `accounts_browser_close` | accounts | **write** | ✅ 宿主拦下 | 30s | 关闭某账号的托管浏览器窗口（登录态保留）。注意：用户手动开的窗口也会被关掉 | `account_id` |
-| `accounts_browser_open` | accounts | **write** | ✅ 宿主拦下 | 180s | 在内置 Chromium 里以该账号身份打开平台（自动登录 + 会话持久化） | `account_id`、`headful` |
 | `attachment_list` | builtin | read | — | 15s | **用户在对话里交给你的文件/图片**有哪些（id、名字、类型、规模、解析状态、坐标目录） | — |
 | `attachment_read` | builtin | read | — | 30s | 按坐标读附件正文：`unit=page/sheet/table/line/chars`。**长文件必须用它按需取**（内联在上下文里的只有开头一段） | `attachment_id`、`unit`、`index`、`name`、`start`、`max_chars` |
 | `get_current_time` | builtin | read | — | 5s | 获取当前日期与时间（本地时区） | — |
@@ -63,6 +60,23 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `insight_runs` | insight | read | — | 15s | 最近的洞察任务列表（状态/覆盖度/工作区），用于确认上次是否跑成 | `limit` |
 | `web_search` | websearch | read | — | 120s | 联网检索网页（返回标题/链接/摘要）。适合查法规更新、官方公告、报错与版本信息这类训练数据里没有或已过时的内容 | `query`、`count`、`freshness` |
 <!-- TOOLS-TABLE:END -->
+
+### 2.1 运行期工具（installed 层）
+
+上表只承诺**产品自带**的 15 个工具（`core_specs()`）。运行期还会有两类工具进入同一个
+`ToolHub`，它们**不计入**上面的数字，也**不写入**生成块：
+
+| 来源 | 谁注册 | 命名 | 默认风险 |
+|---|---|---|---|
+| 用户 Skill | `skills.library.install()` → `register_installed` | Skill 自己声明 | 脚本式 ≥ write |
+| MCP server | `mcp_registry.McpRegistry.reload()` → `register_installed` | `mcp_<server>_<tool>`（≤64） | **write**（`Trust.UNTRUSTED`、`IRREVERSIBLE`） |
+
+- 看当前实际工具面：`GET /api/agent/tools`（含 installed）与 `GET /api/agent/selfcheck`
+  （`plugins` / `tools` / `riskCounts` / `failures`）。
+- 看 MCP 工具从哪来：`GET /api/mcp/servers`（每个 server 的 `toolCount`）。
+- 总数超过 `MAX_TOTAL_TOOLS = 40` 时，`selfcheck.failures` 里会有一条 `tool_budget`；
+  **工具照常可用**，它是警报线不是容量线。
+- MCP 的配置、安全默认与排障见 [MCP.md](MCP.md)。
 
 ## 3. 风险分级与确认门（决定一个工具"能不能自己动手"）
 
@@ -106,7 +120,7 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 **`PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**）**。三条硬纪律先记住：
 
 1. **依赖方向单向**：`plugins → plugin_api`，`plugin_api.py` 里不许出现平台术语、不许 import 插件、连 `db` 都不 import；
-2. **同步阻塞调用必须挪线程**：handler 是 `async`，而 `egmp.client` / `browser_pool` / `proc` 都是同步的——一律 `asyncio.to_thread`，否则整个服务卡住（不是报错）；
+2. **同步阻塞调用必须挪线程**：handler 是 `async`，而 `egmp.client` / `proc` / `sandbox.run` 都是同步的——一律 `asyncio.to_thread`，否则整个服务卡住（不是报错）；
 3. **审计维度不许含凭据**：`audit_extra` 只抽环境/对象/账号，`redact_args` 会再过一遍但别指望它兜底。
 
 ## 5. 运行时怎么自己看

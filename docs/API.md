@@ -7,32 +7,31 @@
 > **表达不了** SSE 事件序列、长轮询挂起语义、`seq` 游标与产物下载路径守卫——这三类恰是最易踩坑处，见 §12。
 >
 > 相关文档：[SCHEMA.md](SCHEMA.md)（表与跨进程数据契约）、[CONFIG.md](CONFIG.md)（端口与环境变量）、
-> `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**）（风险台账）。
+> [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md)（代码地图与风险索引）、
+> [MCP.md](MCP.md)（MCP 配置与安全模型）。
 >
 > ⚠ **2026-10-09：浏览器扩展已整体移出本仓库**（用户决策：桌面端与扩展不耦合，
 > 本仓只需账号管理页承接云端数据环境）。随之删除的是 `/extension/*` 整段蓝图（原 §11）、
 > 访问令牌中间件（`api/extension_auth.py`）、以及随包携带扩展的打包步骤。
 > 本文档中原「执行面」整节与 §12.3（长轮询与 `seq` 游标）一并移除；**该节之后的编号已顺移**（现为 §11 监听录制 … §18 运行日志）。
 
+> **2026-10-19：内置浏览器 / Monitor 整体下线**（用户确认不再需要 UI 自动登录 / 页面抓取 / 截图）。
+> `routes_browser` / `routes_monitor` / `browser_pool` / `autologin` / CDP 18766 一并删除；
+> `/api/shell/launch-chrome` 也不再存在。Playwright 仅保留为 dev 依赖供 Web UI E2E 使用。
+
 ## 0. 拓扑与约定
 
 ```
-                                固定端口（ADR-0012：不顺延）
-Electron 壳 控制服务（无认证）      18767
-  /windows /windows/focus /windows/close  ←──  browser_pool（CDP 模式先开户后连接）
-  /update-state /update-check /update-install
-  /health /whoami                          ←──  routes_update 代理、壳身份确认
-FastAPI 服务（本文档主体）          18765
-Electron 内置 Chromium CDP          18766     ←── playwright connect_over_cdp
+Tauri 2 壳（Rust）                 动态端口（free_port，不固定）
+  │  拉起 Python sidecar，下发 WORKBENCH_PORT
+  ▼
+FastAPI 服务（本文档主体）          127.0.0.1:<动态端口>
 ```
 
-> **端口是固定常量，不再协商、不顺延**（[ADR-0012](adr/0011-port-governance.md) 取代
-> [ADR-0011](adr/0011-port-governance.md) §D-1）。唯一真相来源是壳侧
-> `desktop/ports.js` 的 `PORTS` 与 Python 侧 `workbench/config.py` 的默认值（两者一致性由
-> `tests/test_ports_contract.py` 钉住）。
-> **端口被占时应用报错退出**（说清占用者是谁），而不是换个号继续跑。
-> 想知道当前是谁在服务：打 `GET /api/health` 看 `app` 字段（`Workbench` 才是我们），
-> 或读 `<数据目录>/runtime/desktop-ports.json`（它记录当前实例的 pid/版本/固定端口）。
+> **Tauri 壳使用动态端口**：`src-tauri/src/main.rs` 绑定 `127.0.0.1:0` 选空闲端口，
+> 经 `WORKBENCH_PORT` 下发给 Python；不再有固定 18765/18767 契约，也没有 Electron 控制服务。
+> 想知道当前是谁在服务：打 `GET /api/health` 看 `app` 字段（`Workbench` 才是我们）。
+> Web 模式（`python -m workbench.main`）仍默认 `127.0.0.1:18765`，仅用于开发调试。
 
 **全局约定**
 
@@ -41,7 +40,7 @@ Electron 内置 Chromium CDP          18766     ←── playwright connect_ove
 | 绑定 | `127.0.0.1` 回环。**`/api/*` 无认证、无 CSRF、无 CORS 配置**——信任边界 = 本机（该取舍的理由见 [ADR-0002](adr/0002-browser-allocation-policy.md) D-7） |
 | 时间戳 | 毫秒整数（`storage.now_ms()`） |
 | 字段命名 | 请求/响应默认 **camelCase**（`routes_settings` 用 pydantic alias 转换）；`account`/`env` 行**原样返回 snake_case 表列** + JOIN 出的 `env_name` / `env_base_url`，仅 `password_enc` 被剔除 |
-| 路径前缀 | `/api/*` 为业务面（`/api/shell/*` = 壳协作面，见 §10.3） |
+| 路径前缀 | `/api/*` 为业务面；`/api/shell/*` 与 `/api/update` 已随 Electron 控制服务删除 |
 | pydantic 陷阱 | `BaseModel` **默认忽略多余字段**——请求体必须显式建模，否则字段静默丢失（`AccountPatch` 漏 `box` 的事故） |
 | 错误体 | 业务错误为 `{"detail": "<中文说明>"}`（FastAPI `HTTPException` 默认形态） |
 | 内容协商 | 无；产物接口用 `?download=true` 或后缀判断 |
@@ -171,7 +170,7 @@ POST /api/chat/stream   Content-Type: application/json
 `checks[]` 项为 `{name, ok, detail}`。
 
 - **内置模块**（`services/modules.py`）：`workbench`（Python 依赖体检）、
-  `accounts`（Python 依赖 + `playwright:chromium` 可执行文件存在性）。
+  `accounts`（Python 依赖；2026-10-19 起不再检查 Playwright / chromium）。
 - **适配器模块**：读 `adapters/*.json`（**现存只有 `insight` 一个**；
   文件名仍是来源项目名 `akso-cc.json`，那是"对应哪个原仓库"的引用真源，
   见 [CONFIG.md](CONFIG.md) §2.3）。
@@ -207,7 +206,7 @@ POST /api/chat/stream   Content-Type: application/json
 | POST | `/api/insight/run-sse` | **SSE** 进度流（见 §12.2） |
 | GET | `/api/insight/runs?limit=10&offset=0` | 任务列表（**分页**：默认一页 10 条，上限 200）→ `{runs, total, limit, offset}` |
 | GET | `/api/insight/artifacts/{job_id}` | `{job_id, status, coverageStatus, workspaces[], files:[{name,size,suffix,workspace}]}`（递归列产物） |
-| GET | `/api/insight/artifacts/{job_id}/file?name=&download=` | 读产物（见 §12.4 路径守卫）。**内联可读**后缀与 media type：`.md`=`text/markdown`、`.json`=`application/json`、`.drawio`=`application/xml`、`.txt`/`.log`=`text/plain`、`.csv`=`text/csv`——前端取文本后自己渲染（markdown 排版、drawio 画成 SVG，均**离线自足**）；其余后缀与 `download=1` 走附件下载 |
+| GET | `/api/insight/artifacts/{job_id}/file?name=&download=` | 读产物（见 §12.4 路径守卫）。**内联可读**后缀与 media type：`.md`=`text/markdown`、`.json`=`application/json`、`.drawio`=`application/xml`、`.txt`/`.log`=`text/plain`、`.csv`=`text/csv`——前端取文本后自己渲染（markdown 排版、drawio 画成 SVG，均**离线自足**）；**图片**（`.png`/`.jpg`/`.jpeg`/`.webp`/`.gif`）走 `FileResponse` + inline（二进制，不能按文本读；**不含 `.svg`**——同源内联 SVG 可执行脚本）；其余后缀与 `download=1` 走附件下载 |
 | GET | `/api/insight/workspace` | `{root, default, custom, exists}` —— 产物工作区根（用户可配） |
 | PUT | `/api/insight/workspace` | `{path}`：设置工作区根；**空串 = 恢复默认**；非绝对路径 / 是文件 / 无法创建 → 400 |
 
@@ -301,32 +300,10 @@ POST /api/chat/stream   Content-Type: application/json
 > ⚠️ 路由顺序注意：`{account_id}` 是**兜底路径**，因此 `/boxes/*`、`/export`、`/import*` 等固定段
 > 必须在它之前注册（现顺序已正确）。新增固定段端点时**不要插到 `GET /{account_id}` 之后**。
 
-## 9. 托管浏览器 `/api/browser`（`routes_browser.py`）
-
-> 特殊通道——**所有浏览器操作走 `browser_pool` 专职线程队列**（Playwright sync 单线程约束）。见 §12.4。
-
-| 方法 | 路径 | 请求 | 说明 |
-|---|---|---|---|
-| POST | `/api/browser/open` | `{account_id, headful?:true}` | 建 context → 挂自动登录引擎 → 返回会话快照；已在线会话 = 聚焦其窗口（`reused:true`）。`BrowserError` 含「账号不存在」→ 404，否则 503 |
-| POST | `/api/browser/focus/{account_id}` | — | 会话快照 / 404（无活动会话） |
-| POST | `/api/browser/close/{account_id}` | — | `{closed:bool, detail}`；关窗前在线会话会落盘登录态 |
-| POST | `/api/browser/navigate/{account_id}` | `{url}` | `url` 必须 `http(s)://`（否则 400）；**会话不存在会自动开户**；`BrowserError` → 409 |
-| POST | `/api/browser/forget/{account_id}` | — | 清除持久登录态（`storage_state` 文件）；活动中的 context 不受影响 |
-| GET | `/api/browser/sessions` | — | `{sessions:[快照]}`（会顺带刷新每个会话状态：标题、自动登录相位、自愈） |
-| GET | `/api/browser/sessions/{account_id}` | — | 单个快照 / 404 |
-| GET | `/api/browser/sessions/{account_id}/token` | — | `{account_id, has_token, token_head}`（**只回前 16 字符**） |
-| GET | `/api/browser/saved/{account_id}` | — | `{account_id, saved}`（是否有持久登录态文件） |
-| GET | `/api/browser/check` | — | chromium 可执行文件体检 `{ok, detail}` |
-
-**会话快照字段**：`{account_id, status, title, detail, started_at, restored, headful, heal_count,
-autologin, has_token, monitoring, monitor_log}`；
-`status` ∈ `launching` / `logging_in` / `online` / `stopped` / `error`；
-`autologin` 为引擎相位快照 `{phase, reason, attempts, errors, userTouched, ...}`。
-
 ## 10. Agent 工具层 `/api/agent`（`routes_agent.py`）
 
 > **单一事实源**：工具清单来自**工具插件中枢** `plugin_api.ToolHub`（`workbench/plugins/`
-> 四个插件装配，共 18 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
+> 四个插件装配，共 15 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
 > schema、审计三处读的是同一份定义。插件 SDK 契约见 `PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**）。
 
 | 方法 | 路径 | 请求 | 说明 |
@@ -375,7 +352,7 @@ autologin, has_token, monitoring, monitor_log}`；
 - HTTP 链路（`POST /invoke`）：本端点**不等待**，直接 409 + `confirm` 内容；
   调用方自己看 `GET /pending` 决定何时 `approve`（同意同样会预先批准那次目标调用）。
 
-**工具清单（18 个工具，按插件）**：
+**工具清单（15 个工具，按插件）**：
 
 | 插件 | 工具 | 风险 |
 |---|---|---|
@@ -383,58 +360,36 @@ autologin, has_token, monitoring, monitor_log}`；
 | `builtin` | `request_user_confirmation`（模型主动请求确认；会暂停对话等答复） | read |
 | `websearch` | `web_search` | read |
 | `insight` | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
-| `accounts` | `accounts_list` / `accounts_login` / `accounts_browser_sessions` | read |
-| `accounts` | `accounts_browser_open` / `accounts_browser_close` | **write** |
+| `accounts` | `accounts_list` / `accounts_login` | read |
 
-> **风险分布：16 read / 2 write / 0 dangerous**（2026-09-22 装配 `ToolHub` 实测）。
-> `Risk.DANGEROUS` 枚举与确认门里那一条分支**都还在**——风险模型仍是 `read` / `write` / `dangerous`
-> 三级，不是两级；只是产品里现在没有工具用它（`factory_create` 曾是**唯一**一个 dangerous 工具，
-> 随配置工厂一并删除）。**"归零"这件事本身是断言**：`tests/test_app.py::test_agent_selfcheck`
-> 断言 `riskCounts.dangerous == 0`（将来接入不可逆写工具时它会红）。那一条分支与
-> `ToolSpec.summary_fn`（确认摘要扩展点，产品侧同样暂时没有使用者）的回归，
-> 由 `tests/test_plugin_api.py` 的合成用例守着。
+> **风险分布：15 read / 0 write / 0 dangerous**（2026-10-19 装配 `ToolHub` 实测）。
+> 内置浏览器 / 托管会话下线后，产品里暂时没有 WRITE 工具；风险模型与确认门
+> 仍是 `read` / `write` / `dangerous` 三级，机制由 `tests/test_plugin_api.py` 的合成用例守着。
+> `Risk.DANGEROUS` 枚举与确认门里那一条分支**都还在**——只是产品里现在没有工具用它
+> （`factory_create` 曾是**唯一**一个 dangerous 工具，随配置工厂一并删除）。
+> **"归零"这件事本身是断言**：`tests/test_app.py::test_agent_selfcheck`
+> 断言 `riskCounts.dangerous == 0` 且 `riskCounts.write == 0`。
 
 > ⚠️ **2026-09-15 收口**：本模块此前有**第二套工具表**（`login_platform` / `read_config` /
 > `run_insight` / `browser_status`），与前端对话用的 `harness/tools.py`（三个基础工具）
 > 并存且互不可见——后果是"对话里的模型只能聊天、一个平台能力都看不到"。两者已合并为
 > `ToolHub`，旧工具名不再存在（`read_config` → `insight_read_config`，
-> `run_insight` → `insight_run`，`login_platform` → `accounts_login`，
-> `browser_status` → `accounts_browser_sessions`）。
+> `run_insight` → `insight_run`，`login_platform` → `accounts_login`）。
+> 2026-10-19：`browser_status` / `accounts_browser_*` 随内置浏览器整体删除。
 
 > **本表只列 core（产品自带）**。用户从共享库安装的 Skill 会出现在同一个
 > `GET /api/agent/tools` 响应里（带 `origin:"installed"`），但**不进本表**——
 > 文档承诺的是"产品自带多少工具"，与用户装了什么无关。两者的分层见 §17。
 
-### 10.1 壳协作面 `/api/shell`（`routes_shell.py`）
+### 10.1 壳协作面（已下线）
 
-> 这两条**不碰凭据**，是"桌面 UI 请桌面壳干活"。
-> 边界判据见 `routes_shell.py` 模块文档串：**新增端点前先问「它碰凭据吗？」**
-
-| 方法 | 路径 | 请求 | 说明 |
-|---|---|---|---|
-| POST | `/api/shell/launch-chrome` | — | 确保用户 Chrome 在运行（未运行则拉起）；`{launched, running, path?}`。探测带缓存（正 10s / 负 2s） |
-| POST | `/api/shell/update-state` | —（无请求体） | `{version, shell:{...}}`；与 `GET /api/update` **同源同结构**（`read_shell_state()`） |
-
-> **迁移与退役留痕**：这两条（连同已删除的 `setup-helper`）原先挂在 `/extension/*`。
-> 2026-09-17 加访问令牌后它们与"UI 拿不到令牌"冲突，只能靠开豁免——而豁免一开，
-> "整个前缀需要令牌"就退化成人工维护的清单（[ADR-0002](adr/0002-browser-allocation-policy.md) D-6），
-> 故迁来 `/api/shell/*`。
-> **2026-10-09**：`setup-helper` 随浏览器扩展一起删除（它代理壳的 `/extension-setup`，
-> 用途是把扩展目录交给用户装载）；`/extension/*` 整段前缀也已不存在。
+`/api/shell/*` 随 Electron 控制服务在 2026-10-19 删除；Tauri updater 不通过 Python 代理，
+未来如需“从界面触发更新”，应走 Tauri 自己的命令/IPC，而不是恢复这个前缀。
 
 
-## 11. 监听录制 `/api/monitor`（`routes_monitor.py`）
+## 11. 监听录制（已下线）
 
-| 方法 | 路径 | 请求 | 响应 |
-|---|---|---|---|
-| POST | `/api/monitor/start` | `{account_id}` | `{monitoring:true, log, stats, ...会话快照}`；`BrowserError` → 409 |
-| POST | `/api/monitor/stop` | `{account_id}` | `{stopped:true, stats, log}`；无进行中监听 → 409 |
-| GET | `/api/monitor/status/{account_id}` | — | `{monitoring, log, session_status}`；无会话时 `{monitoring:false}` |
-
-- `monitor_start` 会**确保托管会话在线**（不存在则自动开户），因此耗时较长（`_submit(timeout=90)`）。
-- 产物落 `runtime/monitor/<account_id8>-<YYYYmmdd-HHMMSS>/`。录制引擎三级降噪：
-  `dropped` / `trimmed` / `full`（真机验收：248 请求捕获 → 238/2/8）。
-- 会话关闭**不会自动停监听**（`_close_entry` 未清理 `entry.monitor`）——见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账。
+`/api/monitor/*` 随内置浏览器 / Monitor 在 2026-10-19 整体删除；本节保留编号以避免已有链接跳空。
 
 ## 12. 特殊通道专章
 
@@ -512,32 +467,16 @@ autologin, has_token, monitoring, monitor_log}`；
   ⚠️ **这是纯字符串前缀比较，未补路径分隔符**——`.../insight/abc` 会「包含」`.../insight/abc_evil`。
   本地单人场景风险低，但**新增类似端点时应改用 `Path.is_relative_to()`**。见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账。
 
-### 12.4 浏览器操作串行化（`/api/browser/*`、`/api/monitor/*`）
+### 12.4 浏览器操作串行化（已下线）
 
-- Playwright sync API 绑定创建它的线程且非线程安全，而 FastAPI 会把并发请求派到不同线程 →
-  `browser_pool` 持有**专职工作线程**，所有操作以 `Future` 提交串行执行。
-- **事件回调内禁止连接调用**（`response.text()` / `page.evaluate` 重入 = worker 死锁）——
-  Monitor 的事件只入队，在 worker 作业间隙统一 `drain()`。
-- 超时：`monitor_start` 为 90s（可能触发开户），其余多数作业**无超时**——
-  页面操作卡住时 HTTP 请求会一直挂着（见 `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） 的风险台账）。
-- CDP 模式三律：`remote-debugging-port` 必须 app ready 前设置（**故端口在 `app.whenReady` 里协商完立即设**）；**先到壳控制服务 `/windows` 开户再 connect**；
-  Playwright 实例由 `_CdpState` 单一持有（同线程第二个 sync 实例会死锁）。
+2026-10-19：内置浏览器 / Monitor / CDP 整体下线，本节描述的 `browser_pool` 专职线程、
+`/windows` 开户、Playwright sync 约束均不再适用；保留此标题只为让旧链接能落到解释处。
 
-## 13. 更新面 `/api/update`（`routes_update.py`）
+## 13. 更新面（已下线）
 
-| 方法 | 路径 | 请求 | 响应 |
-|---|---|---|---|
-| GET | `/api/update` | — | `{version, shell:{...}, updateAvailable}` |
-| POST | `/api/update/{action}` | `action` ∈ `check` / `install` | `{ok, result?, shell?, error?}` |
-
-- 数据来源是**壳写的 `shell-state.json`**（不是每次 HTTP 探壳）：账号中心每 3s 轮询，
-  读本地文件更便宜，且壳不在时能优雅降级。
-- `shell` 结构固定不缺键；**TTL 60s**（壳每 15s 心跳）：超过即 `live:false` + `phase:"inactive"` +
-  `label:"桌面壳未运行"`（损坏/缺失文件走同一条降级路径）。
-- `POST` 代理到壳控制服务（基准 `:18767`，实际端口读 `config.CONTROL_PORT`；`check` 超时 60s、`install` 8s）；
-  **壳不可用时返回 `ok:false` 而非报错**（UI 退化为文字提示，与 `/api/shell/setup-helper` 同一套降级哲学）。
-- 未知 action 返回 `{ok:false, error:"未知动作：..."}`——**HTTP 200，不是 4xx**（前端据此判 `ok`）。
-- `updateAvailable` 用 `version_tuple()` 比较（非数字段按 0 处理）。
+`/api/update` 与 `/api/shell/update-state` 随 Electron 更新器在 2026-10-19 删除。
+Tauri updater 的签名/清单/构建链路在 `tools/build_tauri.ps1` 与 `tools/tauri_update_manifest.py`；
+客户端尚未接入检查/安装 UI。
 
 ## 14. 静态资源
 
@@ -549,29 +488,15 @@ autologin, has_token, monitoring, monitor_log}`；
 页面：`index.html`（对话 + 设置）、`pages/insight.html`、
 `pages/accounts.html`、`pages/sandbox.html`（沙箱：策略 / 状态 / 执行审计 / 自检）、
 `pages/skills.html`（Skill 共享库：上传 / 安装 / 卸载 / 停用）、
-`blank.html`（壳的会话窗标记页，`?w=<windowId>`）。
+`blank.html`（旧壳错误页，保留兼容；Tauri 用本地 splash）。
 
 后两页在导航的「**Agent 能力**」分组下（`sandbox.html` / `skills.html`），
 对应下面的 §17。
 
-## 15. 壳控制服务（Electron 主进程内，非 FastAPI；基准端口 `18767`，可顺延）
+## 15. 壳控制服务（已随 Electron 删除）
 
-> 下表里的 `:18767` 全按**基准端口**理解；实际端口见 §0 的说明与 `GET /whoami`。
-
-| 方法 | 路径 | 请求 | 说明 |
-|---|---|---|---|
-| GET | `/health` | — | `{ok:true}` |
-| GET | `/whoami` | — | **身份自证**（[ADR-0011](adr/0011-port-governance.md) §D-5）：`{app, service:"workbench-shell", controlPort, serverPort, cdpPort, pid, version, startedAt, ports, fixed}`。控制服务是壳自己的，所以它的回答天然比"18765 上是谁"可信。带 `Access-Control-Allow-Origin: *`（无凭据、只读） |
-| POST | `/windows` | `{windowId}` | 开户（`partition: persist:<windowId>` 独立持久分区）；已存在且未销毁 → `{ok:true, reused:true}`；缺 windowId → 400 |
-| POST | `/windows/focus` | `{windowId}` | 还原 + 显示 + 聚焦；不存在 → 404 |
-| POST | `/windows/close` | `{windowId}` | 关窗（幂等） |
-| GET | `/update-state` | — | `{ok, shell:true, ...updater.state()}` |
-| POST | `/update-check` | `{}` | 触发手动检查（结论弹窗） |
-| POST | `/update-install` | `{}` | `{ok: installOnExit()}` |
-
-> **2026-10-09**：`POST /extension-setup` 已随浏览器扩展一起删除。
-
-无认证；仅监听 `127.0.0.1`。`browser_pool` 的 CDP 模式依赖它「先开户后连接」。
+Tauri 壳没有对外的 HTTP 控制服务；更新器直接运行在 Rust 进程内，
+Python 不再代理 `/update-check` / `/update-install`。
 
 ## 16. 服务端身份 `GET /api/health`（`api/__init__.py`）
 
@@ -579,25 +504,24 @@ autologin, has_token, monitoring, monitor_log}`；
 {
   "app": "Workbench",          // ★ 壳的就绪探测核对这个字段
   "service": "workbench-server",
-  "version": "0.3.5",
+  "version": "0.4.1",
   "pid": 21564,
   "frozen": false,
-  "ports": { "server": 18765, "cdp": 18766, "control": 18767 },
-  "portsSource": "env",            // env | desktop-ports.json | default
-  "shell": { "pid": 12108, "version": "0.3.5", "startedAt": "…" }
+  "ports": { "server": 50196 },  // Tauri 动态端口
+  "portsSource": "env"           // env | default
 }
 ```
 
-**为什么存在**：壳的 `waitReady()` 改造前只看"18765 上有人回 200"，于是**旧实例占着端口**时
-新壳会认为自己的服务已就绪、主窗打开别人的页面——一次表现成"代码改了但 UI 没变"的事故
-（[ADR-0011](adr/0011-port-governance.md) §1）。现在探测打本端点并核对 `app`。
+**为什么存在**：壳的就绪探测不能只看"端口上有人回 200"，否则**旧实例占着端口**时
+新壳会认为自己的服务已就绪、主窗打开别人的页面——一次表现成"代码改了但 UI 没变"的事故。
+现在探测打本端点并核对 `app`。
 
 **本端点是唯一的健康端点**：它只回答**进程身份**（我是谁、在哪个口），**无副作用**，可反复探测。
 > **2026-10-09**：原先还有一个 `GET /extension/health` 回答"执行面（浏览器扩展）活着吗"，
 > 它会写 `everConnected` 闩锁，是账号中心四态徽标的数据源。
 > 它随扩展一起删除（[ADR-0011](adr/0011-port-governance.md) §D-4 记录的那条分工
-> 现在只剩本端点半边）。**不要把探测打到有副作用的端点上**——壳每 300ms 探一次，
-> 若写库会把"扩展开没开过"的判定污染掉（`tests/test_ports_contract.py` 有一条专门断言本端点无副作用）。
+> 现在只剩本端点半边）。**不要把探测打到有副作用的端点上**——Tauri 启动时会反复探它，
+> 若写库会把“扩展开没开过”之类的判定污染掉（本端点自身无副作用）。
 
 ## 17. Agent 能力面：沙箱与 Skill 共享库（`routes_sandbox.py` / `routes_skills.py`）
 
@@ -618,11 +542,17 @@ autologin, has_token, monitoring, monitor_log}`；
 
 | 方法 | 路径 | 请求 | 说明 |
 |---|---|---|---|
-| GET | `/api/sandbox/policies` | — | 具名策略及指纹：`{policies:[{name,allow_network,allow_subprocesses,timeout_s,fingerprint,executables…}], default}` |
-| GET | `/api/sandbox/status` | — | 沙箱根、活跃作业数、上限、最近一次执行 |
+| GET | `/api/sandbox/policies` | — | 具名策略及指纹：`{policies:[{name,allow_network,allow_subprocesses,writes,timeout_s,fingerprint,enforced…}], default}` |
+| GET | `/api/sandbox/status` | — | 工作区根 / 权限、活跃作业数、目录布局、解释器白名单 |
+| GET | `/api/sandbox/workspace` | — | `{root,defaultRoot,mode,allowNetwork,allowSubprocess,exists,writable,modes,honest_limit}` |
+| PUT | `/api/sandbox/workspace` | `{root?,mode?,allowNetwork?,allowSubprocess?}` | 改工作区 / 权限；非法路径或模式 **400** |
+| POST | `/api/sandbox/workspace/reset` | — | 恢复默认根与保守权限（联网 / 派生进程关闭） |
 | GET | `/api/sandbox/runs?limit=50` | — | 执行审计：策略、退出码、耗时、**是否树杀**、截断标记（上限 500） |
-| GET | `/api/sandbox/selfcheck` | — | 平台能力探测（作业对象可用性、解释器、根目录可写） |
+| GET | `/api/sandbox/selfcheck` | — | 平台能力探测（作业对象可用性、解释器、工作区可写） |
 
+- **工作区边界**：`cwd` 必须在 `workspace.root` 内；`mode=read-only` 时拒绝 `writes=true`
+  的策略（`skill-script` / `mcp-stdio`），只允许 `strict-readonly`；`allowNetwork` /
+  `allowSubprocess` 对策略声明做预检。**这不是内核级只读**——见响应里的 `honest_limit`。
 - **刻意没有"通用执行"端点**：`POST /api/sandbox/exec` 这类接口等于给本机开一个
   "用 HTTP 跑任意命令"的洞（本仓服务端**无认证**，仅靠 127.0.0.1 收敛，见 §0）。
   要跑代码请走 Skill（§17.2）——那里有准入扫描、固定策略与确认门三道。
@@ -708,3 +638,87 @@ curl.exe -s "http://127.0.0.1:18765/api/logs/tail?level=ERROR&n=50"
 
 > 配置项（`WORKBENCH_LOG_*`）与日志文件清单见 [CONFIG.md](CONFIG.md) §2.1 / §6；
 > 设计与分期见 `LOGGING-DESIGN.md`（**该文件已于 2026-09-29 删除**）。
+
+---
+
+## 19. MCP 管理面 `/api/mcp`（`routes_mcp.py`，2026-10-19 引入）
+
+### `GET /api/mcp/servers`
+
+纯内存状态，**不打网络、不启动进程**——设置页轮询它没有副作用。
+
+```json
+{
+  "configPath": "C:\\Users\\<user>\\AppData\\Roaming\\Workbench\\mcp.json",
+  "exists": true,
+  "loaded": true,
+  "servers": [
+    {"name": "wecom", "enabled": true, "connected": true, "toolCount": 3,
+     "toolNames": ["send_message", "list_groups", "whoami"],
+     "command": "uvx", "risk": "write", "toolRisk": {"whoami": "read"},
+     "error": "", "restarts": 0, "protocolVersion": "2024-11-05",
+     "serverName": "wecom-bot-mcp-server", "serverVersion": "1.0.0",
+     "lastPingAt": 1730000000000, "serverInfo": {"name": "wecom-bot-mcp-server", "version": "1.0.0"}}
+  ],
+  "errors": [],
+  "tools": 3,
+  "healthy": 1,
+  "failing": 0,
+  "restarts": 0,
+  "monitorIntervalS": 30
+}
+```
+
+- `status` 里**不返回** `args` / `env`（可能有 token）；
+- `toolNames` 只给名称，不含 schema；`toolRisk` 是配置里的按工具覆盖；
+- 后台每 `monitorIntervalS` 秒做一次 `ping` 健康检查；失败 / 进程退出 /
+  `notifications/tools/list_changed` 会触发自动重连（指数退避，上限 5 分钟）；
+- 未配置时 `servers` 为空、`exists` 可能是 `false`；
+- 注册表不可用 → **503**（不是 500 空白）。
+
+### `POST /api/mcp/servers/{name}/reconnect`
+
+只重连一个 server（**立即尝试，不走退避**）。名称不存在 → **404**；重连动作本身失败 → **502**。
+返回 `{server, ...status}`。
+
+### `POST /api/mcp/reload`
+
+重读 `mcp.json` 并重建全部连接。启动 server 是真的起子进程，可能几秒，所以服务端走
+`asyncio.to_thread`。
+
+- **单个 server 失败不会让整次重连失败**：失败进 `servers[].error` 与 `errors[]`，
+  其余 server 照常可用；
+- 只有"重连动作本身崩了"才返回 **502**；
+- 重连会**先摘旧能力再注册**，不会留下"删了但还在工具表里"的幽灵。
+
+> 配置形状、安全默认（默认 `risk=write`、`trust=UNTRUSTED`、环境变量白名单）见
+> [MCP.md](MCP.md)。MCP 工具通过 `ToolHub` 的 installed 层进入 `/api/agent/tools`。
+
+---
+
+## 20. 云端账号库 `/api/vault`（`routes_vault.py`，2026-10-10 引入）
+
+设备流（RFC 8628）两拍，**会话令牌 Fernet 加密存本机**；默认云端地址
+`https://www.dragonrain.top`（443，`AKSO_VAULT_URL` 可覆盖）。
+
+| 方法 | 路径 | 说明 | 错误 |
+|---|---|---|---|
+| GET | `/api/vault/status` | 是否登录、显示名、当前 baseUrl；**不打网络** | — |
+| POST | `/api/vault/login/start` | 开局，返回 `deviceCode` / `userCode` / `verificationUrl` | 502 上游不可用 |
+| POST | `/api/vault/login/poll` | 轮询；`approved` 时**服务端落会话**（加密） | 502 |
+| POST | `/api/vault/push` | **本地→云端**：把本机账号库按 merge 契约并上云（需已登录；带 `baseRevision`） | 409 revision 冲突 · 502 |
+| GET | `/api/vault/library?refresh=1` | **只读**云端账号库：sites / accounts / boxes / counts；`refresh=1` 绕过 5 分钟缓存 | 401 会话失效 · 502 上游不可用 |
+| POST | `/api/vault/refresh` | 校验会话并取回 profile | 401 会话失效 |
+| POST | `/api/vault/logout` | 先吊销、再清本地；云端失败也清 | — |
+
+`deviceCode` **不落库、不入日志**；`POST /login/start` 的 `clientName` 最长 60。
+`POST /login/poll` 批准时**服务端落会话并把 `token` 从响应里剔除**（浏览器只看 `status`）。
+`GET /status` 刻意不验证令牌（首屏不能被断网卡住）——真正失效由 `refresh` / `library` 暴露。
+
+`GET /library` 的响应是**脱敏视图**：`accounts[]` 只含 `id/siteId/siteName/username/tabName/role/tags/note/status/scheme/box/createdAt/updatedAt/hasPassword`，
+**绝不包含** `passwordEnc` 或顶层 `fernetKey`；缓存也只存这份脱敏视图。
+断网时若本地有缓存，仍返回 200，但带 `stale=true` + `error`；**401 不回落旧数据**（那会假装还登录着）。
+
+> **当前边界**：后端保留 `/library` 只读接口（脱敏 + 缓存），但**独立云端库页面已于 2026-10-20 删除**，
+> 桌面端只保留账号中心里的设备流登录/身份入口；没有 `merge` / 冲突消解 / 本地→云端推送。
+> 不要按云端 `SYNC-CONTRACT` 假设桌面端会改云端账号。

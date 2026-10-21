@@ -8,6 +8,11 @@
 
 - **状态**：已采纳（四篇原决策的日期分别为 0.2.2 / 0.2.23 / 阶段 2B / 2026-09-17）
 - **决策者**：用户定稿
+
+> **2026-10-19 后补（仅追加，原文未改）**：用户确认未来不再需要 UI 自动登录 / 页面抓取 / 截图，
+> **内置浏览器 / 托管会话 / `browser_pool` / `autologin` / Monitor / CDP 18766 已整体从产品删除**。
+> 本文关于浏览器分配、CDP、Playwright 的决策**不再适用于现行产品**，仅作为历史决策保留；
+> 现行能力边界见 [README](../../README.md) 与 [CHANGELOG](../../CHANGELOG.md) 的 2026-10-19 条目。
 - **相关**：[ADR-0003](0003-electron-desktop-shell.md)（Electron 壳 / 更新通道 / NSIS 分发 / 品牌中立化）、[ADR-0007](0007-credentials-sandbox-and-trust.md)（凭据 / 沙箱 / 信任标签）、[API.md](../API.md) §11/§12、[SCHEMA.md](../SCHEMA.md) §5、[TOOLS.md](../TOOLS.md)
 - **取代关系（本合订本内部）**：
   - 原 ADR-0015 **修的是**原 ADR-0011 §D-4 里"仅靠 127.0.0.1 回环 + `/api/health` 的 `app` 字段自证身份"的**安全前提**（**原 ADR-0015**）；

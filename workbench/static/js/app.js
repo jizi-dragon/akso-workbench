@@ -38,11 +38,47 @@ export function switchView(name) {
 }
 
 const SPLASH_KEY = "akso-splash-seen";
+const SIDEBAR_KEY = "workbench.sidebar.hidden";
+
+function applySidebarHidden(hidden) {
+  document.querySelector(".shell")?.classList.toggle("sidebar-hidden", hidden);
+  document.documentElement.classList.toggle("sidebar-hidden", hidden);
+  const hide = document.getElementById("btn-sidebar-toggle");
+  const show = document.getElementById("btn-sidebar-open");
+  if (hide) {
+    hide.setAttribute("aria-expanded", String(!hidden));
+    hide.title = hidden ? "显示侧边栏" : "隐藏侧边栏";
+  }
+  if (show) show.setAttribute("aria-hidden", String(!hidden));
+  try {
+    localStorage.setItem(SIDEBAR_KEY, hidden ? "1" : "0");
+  } catch { /* 隐私模式 / 存储被禁用时只在本次生效 */ }
+}
+
+function initSidebar() {
+  let hidden = false;
+  try { hidden = localStorage.getItem(SIDEBAR_KEY) === "1"; } catch { /* ignore */ }
+  applySidebarHidden(hidden);
+  document.getElementById("btn-sidebar-toggle")?.addEventListener("click", () => {
+    applySidebarHidden(!document.querySelector(".shell")?.classList.contains("sidebar-hidden"));
+  });
+  document.getElementById("btn-sidebar-open")?.addEventListener("click", () => {
+    applySidebarHidden(false);
+  });
+}
 
 async function bootstrap() {
   const overlay = document.getElementById("splash-overlay");
+  // Tauri 已经有自己的启动页（src-tauri/ui/index.html）；Web 端的 splash 再播一次
+  // 就是用户看到的“两段加载动画”。用 `?shell=tauri` 显式跳过，并记住本会话。
+  let shellMode = false;
+  try {
+    shellMode = new URLSearchParams(location.search).get("shell") === "tauri"
+      || sessionStorage.getItem("workbench.shell") === "tauri";
+    if (shellMode) sessionStorage.setItem("workbench.shell", "tauri");
+  } catch { /* ignore */ }
   // 同一会话内只播一次启动动画：从平台模块返回工作台时直接进入（避免强制重看）
-  const seen = sessionStorage.getItem(SPLASH_KEY) === "1";
+  const seen = shellMode || sessionStorage.getItem(SPLASH_KEY) === "1";
   if (seen) {
     overlay?.remove();
   }
@@ -58,6 +94,10 @@ async function bootstrap() {
     initChat();
     initSettings();
     initRunTimeline();
+    initSidebar();
+    if (new URLSearchParams(location.search).get("view") === "settings") {
+      switchView("settings");
+    }
   } catch (error) {
     const el = document.getElementById("splash-status-text");
     if (el) el.textContent = `初始化失败：${error.message}`;

@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 
 from workbench import db
+from workbench.api import routes_insight
 from workbench.plugins import insight as plugin
 from workbench.services.egmp.insight import jobs
 
@@ -66,6 +67,19 @@ def test_a_file_inside_the_artifact_dir_resolves(ready, tmp_path: Path) -> None:
 
     assert target.resolve() == (tmp_path / "spider-network.md").resolve()
     assert jobs.read_artifact_text(target).startswith("# 网络")
+
+
+def test_images_are_inline_binary_not_decoded_as_text(ready, tmp_path: Path) -> None:
+    """图片必须走 FileResponse + inline；按文本读会把 PNG 读坏（§12.4）。"""
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    (tmp_path / "shot.png").write_bytes(png)
+    job_id = _seed_job(tmp_path)
+
+    response = routes_insight.read_artifact(job_id, "shot.png")
+
+    assert response.media_type == "image/png"
+    assert "inline" in response.headers["content-disposition"]
+    assert response.path == (tmp_path / "shot.png").resolve()
 
 
 @pytest.mark.parametrize("name", [

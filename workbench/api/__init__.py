@@ -7,7 +7,6 @@
 - routes_modules        模块注册表 + 依赖体检（阶段1B）
 - routes_insight        平台洞察（egmp 原生）
 - routes_accounts       统一账号库
-- routes_browser        托管浏览器/自动登录
 - routes_agent          Agent 工具层
 
 （fork 自 mogul 的知识库/钉钉同步功能已按产品方向裁剪，源码删除；
@@ -16,6 +15,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -30,45 +30,49 @@ from . import routes_chat, routes_conversations, routes_settings
 
 logger = logging.getLogger("workbench.app")
 
+#: 可选路由清单：`(日志名, 模块名)`。顺序即注册顺序（与历史一致）。
+#: ★ 新增路由加在这里即可；装配失败**不再拖垮整个应用**（见 `_optional_routers`）。
+_OPTIONAL_ROUTERS: tuple[tuple[str, str], ...] = (
+    ("modules", "routes_modules"),
+    ("insight", "routes_insight"),
+    ("attachments", "routes_attachments"),
+    ("accounts", "routes_accounts"),
+    ("agent", "routes_agent"),
+    ("mcp", "routes_mcp"),
+    ("sandbox", "routes_sandbox"),
+    ("skills", "routes_skills"),
+    ("vault", "routes_vault"),
+)
 
-def _optional_routers(app: FastAPI) -> None:
-    """注册阶段 1B/2/3 的新路由；单个路由装配失败不拖垮整个应用。"""
-    from . import (  # noqa: F401 —— 显式列出便于检索
-        routes_accounts,
-        routes_agent,
-        routes_attachments,
-        routes_browser,
-        routes_insight,
-        routes_modules,
-        routes_monitor,
-        routes_sandbox,
-        routes_shell,
-        routes_skills,
-        routes_update,
-        routes_vault,
-    )
 
-    registrations = (
-        ("modules", routes_modules),
-        ("insight", routes_insight),
-        ("attachments", routes_attachments),
-        ("accounts", routes_accounts),
-        ("browser", routes_browser),
-        ("agent", routes_agent),
-        ("shell", routes_shell),
-        ("monitor", routes_monitor),
-        ("sandbox", routes_sandbox),
-        ("skills", routes_skills),
-        ("update", routes_update),
-        ("vault", routes_vault),
-    )
-    for name, mod in registrations:
-        router = getattr(mod, "router", None)
-        if router is None:
-            logger.warning("路由模块 %s 缺少 router，跳过", name)
-            continue
-        app.include_router(router)
-        logger.info("路由已注册：%s", name)
+def _optional_routers(app: FastAPI, *, importer=None) -> None:
+    """注册业务路由；**单个路由装配失败不拖垮整个应用**。
+
+    ## 2026-10-19 修：注释承诺了容错，实现里没有
+
+    原实现是一整块 `from . import (...)` ＋ 一个 `for` 循环 —— 任何**一个**模块
+    import 失败都会让整个应用起不来，与文档串逐字相反。现在逐个 import、逐个注册，
+    失败只记一条 WARNING（含堆栈）并继续下一个。
+
+    `importer` 只为可测性存在：测试注入一个"第 3 个模块 import 失败"的假 importer，
+    断言其余模块仍然注册成功（不需要真的把某个模块改坏）。
+
+    ★ 这里吞异常与 `plugins.load_all` 同一语义：**装配期少一个域**比**整个应用起不来**
+    更难查，所以必须留一条可见的 WARNING；但它不该阻断其余能力。
+    """
+    if importer is None:
+        importer = importlib.import_module
+    for name, module_name in _OPTIONAL_ROUTERS:
+        try:
+            module = importer(f"{__package__}.{module_name}")
+            router = getattr(module, "router", None)
+            if router is None:
+                logger.warning("路由模块 %s 缺少 router，跳过", name)
+                continue
+            app.include_router(router)
+            logger.info("路由已注册：%s", name)
+        except Exception as exc:  # noqa: BLE001 —— 单个域装配失败不能拖垮应用
+            logger.warning("路由 %s 装配失败（跳过，其余域继续）：%s", name, exc, exc_info=True)
 
 
 @asynccontextmanager
@@ -81,9 +85,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     _sandbox_setup()
     _skills_setup()
     _tool_selfcheck()
+    _mcp_setup()
     # **启动横幅放在这里而不是入口脚本里**：入口脚本只覆盖两条路
     # （`main.py` 与 `server_entry.py`），而**桌面壳的开发态是直接 spawn
-    # `python -m uvicorn workbench.api:app`**（见 `desktop/main.js::spawnServer` 的
+    # `python -m uvicorn workbench.api:app`**（见 Tauri 的 sidecar 启动路径）
     # 开发态回退分支）——那条路**不经过任何入口脚本**，于是"版本/端口/数据目录/日志路径/
     # 插件装配失败"全都不会留痕。lifespan 是**所有启动路径的唯一交集**。
     logging_setup.banner(host=config.HOST, port=config.PORT)
@@ -93,7 +98,30 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info("父进程监视：%s", lifecycle.watch_parent())
     logger.info("应用就绪：lifespan 装配完成，监听 %s:%s", config.HOST, config.PORT)
     yield
+    # MCP 连接是子进程：退出时主动收，不留给 OS 去猜（尤其 Windows 上子进程不会
+    # 因为父进程退出就自动消失）。失败不阻断退出。
+    try:
+        from .. import mcp_registry
+
+        mcp_registry.reset_registry()
+    except Exception:  # noqa: BLE001
+        logger.warning("MCP 收尾失败（不影响应用退出）", exc_info=True)
     logger.info("应用退出：lifespan 收尾")
+
+
+def _mcp_setup() -> None:
+    """MCP 后台装载：**不阻塞启动**。
+
+    一个 MCP server 的 `initialize` 可能要等几秒（npx/uvx 首次拉包更久），
+    把它放在 lifespan 的同步路径上会让窗口迟迟打不开。这里只起一个后台线程；
+    设置页的「重新连接」按钮是用户能看到的第二条路。
+    """
+    try:
+        from .. import mcp_registry
+
+        mcp_registry.start_background()
+    except Exception:  # noqa: BLE001 —— MCP 是增强能力，坏了不影响主流程
+        logger.warning("MCP 后台装载启动失败（MCP 不可用，应用继续启动）", exc_info=True)
 
 
 def _skills_setup() -> None:
@@ -186,7 +214,7 @@ def create_app() -> FastAPI:
         """静态页与首页**禁止缓存**。
 
         为什么必须这么做（血泪）：本项目是"改完就重建、重建就要立刻看到"的本机工具，
-        客户端就是自己的 Electron 渲染进程。`StaticFiles` 默认发 `ETag` + `Last-Modified`，
+        客户端就是自己的 Tauri WebView2。`StaticFiles` 默认发 `ETag` + `Last-Modified`，
         于是重建产物后浏览器带 `If-Modified-Since` 复验、服务端回 **304 未修改** →
         **渲染进程继续用自己那份旧副本**，而服务端实吐的已经是新版。
         表现就是「我明明重建了、服务端也对，界面上却还是旧功能」——排查成本极高，

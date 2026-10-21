@@ -40,6 +40,9 @@
       <div class="shell">
         <aside class="sidebar">
           <div class="sidebar-brand">
+            <button class="sidebar-toggle" id="btn-sidebar-toggle" type="button" title="隐藏侧边栏" aria-label="隐藏侧边栏" aria-expanded="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/><path d="m15 9-3 3 3 3"/></svg>
+            </button>
             <div class="brand-emblem">A</div>
             <div class="brand-name">
               <b>AKSO</b>
@@ -73,20 +76,6 @@
           </div>
 
           <div class="sidebar-section">
-            <div class="sidebar-section-title"><span>Agent 能力</span></div>
-            <nav class="sidebar-nav">
-              <a class="nav-item nav-link" href="/static/pages/skills.html" id="nav-skills">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10l2 2h6.5A1.5 1.5 0 0 1 20 7.5v10A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5v-12Z"/><path d="M12 11v5M9.5 13.5h5"/></svg>
-                Skill 管理
-              </a>
-              <a class="nav-item nav-link" href="/static/pages/sandbox.html" id="nav-sandbox">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6.5v5c0 4.6 3.2 8.4 8 9.5 4.8-1.1 8-4.9 8-9.5v-5L12 3Z"/><path d="M9.5 12.2l1.8 1.8 3.4-3.6"/></svg>
-                沙箱
-              </a>
-            </nav>
-          </div>
-
-          <div class="sidebar-section">
             <div class="sidebar-section-title">
               <span>会话记录</span>
               <button class="icon-btn" id="btn-new-conversation" title="新建会话">＋</button>
@@ -99,6 +88,10 @@
             <span id="engine-stats">就绪</span>
           </div>
         </aside>
+
+        <button class="sidebar-floating-toggle" id="btn-sidebar-open" type="button" title="显示侧边栏" aria-label="显示侧边栏">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/><path d="m13 9 3 3-3 3"/></svg>
+        </button>
 
         <main class="main">
           <!-- 对话视图 -->
@@ -231,6 +224,24 @@
                     <button class="btn-primary" id="btn-save-prompt" type="button">保存提示词</button>
                     <button class="btn-ghost" id="btn-prompt-default" type="button">填入默认内容</button>
                     <small>改完点「保存提示词」立即生效；⚠️ 会让下一次请求的缓存前缀失效一次（之后恢复命中）。</small>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <h2 class="settings-section-title">⚡ MCP 服务器</h2>
+                <div class="settings-card">
+                  <p class="settings-hint">
+                    MCP（Model Context Protocol）把外部工具接进对话。配置文件是
+                    <code id="mcp-config-path">（读取中…）</code>，形状与 WorkBuddy / Claude Desktop 一致：
+                    <code>{"mcpServers": {"名字": {"command": "...", "args": []}}}</code>。
+                    <b>默认 risk=write</b>（每次调用都要你确认），可在 server 配置里显式写
+                    <code>"risk": "read"</code> 放宽。命令只从配置文件来，模型不能指定。
+                  </p>
+                  <div class="mcp-list" id="mcp-servers"></div>
+                  <div class="prompt-actions">
+                    <button class="btn-ghost" id="btn-mcp-reload" type="button">重新连接</button>
+                    <small id="mcp-note"></small>
                   </div>
                 </div>
               </section>

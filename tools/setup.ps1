@@ -50,7 +50,7 @@ $lockPath = Join-Path $PSScriptRoot "..\uv.lock"
 Check "uv.lock 存在" (Test-Path $lockPath) "依赖锁定文件（随仓库分发，勿手改）"
 
 # 3) 核心依赖
-foreach ($mod in @("fastapi", "uvicorn", "httpx", "pydantic", "cryptography", "playwright")) {
+foreach ($mod in @("fastapi", "uvicorn", "httpx", "pydantic", "cryptography")) {
     & $pyExe -c "import $mod" 2>$null
     $ok = ($LASTEXITCODE -eq 0)
     $detail = "ok"
@@ -58,22 +58,22 @@ foreach ($mod in @("fastapi", "uvicorn", "httpx", "pydantic", "cryptography", "p
     Check "python:$mod" $ok $detail
 }
 
-# 4) Playwright chromium（托管浏览器内核，单行 -c 保证 5.1 兼容）
+# 4) Playwright chromium（**仅 Web UI E2E 验收需要**；2026-10-19 起产品不再依赖浏览器）
 $pwCheck = (& $pyExe -c "from playwright.sync_api import sync_playwright; from pathlib import Path; p = sync_playwright().start(); print('1' if Path(p.chromium.executable_path).exists() else '0'); p.stop()" 2>$null) -join ""
 $chromiumOk = ($LASTEXITCODE -eq 0 -and "$pwCheck".Trim() -eq "1")
 $chromiumDetail = "ok"
-if (-not $chromiumOk) { $chromiumDetail = "执行: uv run playwright install chromium" }
-Check "Playwright chromium" $chromiumOk $chromiumDetail
+if (-not $chromiumOk) { $chromiumDetail = "未安装（仅 tools/verify_*_ui.py 需要；uv run playwright install chromium）" }
+Check "Playwright chromium（仅 E2E）" $chromiumOk $chromiumDetail -Info
 
-# 5) Node（**仅构建桌面壳 / 浏览器扩展时需要**；运行时能力已全部原生化，见 docs/adr/0005）
+# 5) Node（**仅 Tauri CLI / Web UI E2E 需要**；运行时能力已全部原生化，见 docs/adr/0005）
 #    —— 信息项，不计入失败（历史口径「洞察/工厂功能不可用」已过时）
 $nodeCmd = "node"
 if ($env:NODE_COMMAND) { $nodeCmd = $env:NODE_COMMAND }
 $nodePath = Get-Command $nodeCmd -ErrorAction SilentlyContinue
 $nodeVer = $null
 if ($nodePath) { $nodeVer = (& $nodeCmd --version 2>$null) -join "" }
-$nodeDetail = "未找到；仅影响 desktop/ 与 extensions/ 的构建（运行时不需要）"
-if ($nodeVer) { $nodeDetail = "$nodeVer（仅构建桌面壳/扩展时需要）" }
+$nodeDetail = "未找到；仅影响 Tauri CLI 构建与 Web UI E2E（运行时不需要）"
+if ($nodeVer) { $nodeDetail = "$nodeVer（仅 Tauri CLI/E2E 需要）" }
 Check "Node 20+（仅构建需要）" ($null -ne $nodeVer -and $nodeVer -ne "") $nodeDetail -Info
 
 # 6) 原项目只读引用（adapters 声明，只检查不写入）
@@ -93,7 +93,7 @@ foreach ($file in $adapters) {
         $detail = "$repo"
         if (-not $exists) { $detail = "原仓库不存在：$repo" }
         elseif (-not $entryOk) { $detail = "入口缺失：$($json.entry)（原仓库需构建）" }
-        Check "适配器 $($json.id)" ($exists -and $entryOk) $detail
+        Check "适配器 $($json.id)" ($exists -and $entryOk) $detail -Info
     } catch { Check "适配器 $($file.Name)" $false "JSON 解析失败" }
 }
 

@@ -534,7 +534,7 @@ class PluginOrigin(str, Enum):
     """产品自带的（`plugins/__init__.py::_MODULES` 显式清单）。**不可卸载**，可在界面上禁用。"""
 
     INSTALLED = "installed"
-    """用户从共享库安装的（Skill）。**可一键卸载**。"""
+    """运行期装的（Skill，或 MCP server 发现的工具）。**可一键卸载**。"""
 
 
 @dataclass(frozen=True)
@@ -675,7 +675,7 @@ class ToolHub:
     | 层 | 谁 | 何时变 | 能否卸载 |
     |---|---|---|---|
     | **core** | `plugins/__init__.py::_MODULES` 显式清单 | 导入期一次，之后**只读** | ❌ 不可卸载（可禁用） |
-    | **installed** | 用户从共享库安装的 Skill | **运行期可变** | ✅ 可一键卸载 |
+    | **installed** | 用户装的 Skill ＋ MCP server 发现的工具 | **运行期可变** | ✅ 可一键卸载 |
 
     **core 那条"导入期一次、之后只读"的纪律原样保留**——本类新增的
     `register_installed` / `deregister_capability` / `set_plugin_enabled` 只作用于 installed 层，
@@ -1309,8 +1309,32 @@ class ToolHub:
                 self._audit(spec, inv, _extra(spec, args))
                 return inv
 
-        # 确认门：风险工具没有单次令牌就不执行
-        if spec.risk is not Risk.READ and self._approval_gate is not None:
+        # 确认门：风险工具没有单次令牌就不执行。
+        #
+        # ★ 2026-10-19：**门没装配时改为拒执行（fail-closed）**。
+        # 原实现是 `if risk != READ and self._approval_gate is not None:` ——
+        # 一个裸 `ToolHub()` 会**不经过门**直接跑 WRITE 工具，与沙箱"未知策略一律拒"
+        # 正好相反。今天生产路径由 `hub.get_hub()` 保证先 `approvals.install()`，
+        # 所以它一直是"潜在"而不是"已发生"；但潜在的方向是**静默放行**，
+        # 而这类缺省值的后果不可接受（同 `trust` 为什么没有缺省：缺省必须落到更安全的一档）。
+        if spec.risk is not Risk.READ:
+            if self._approval_gate is None:
+                inv = Invocation(
+                    tool=name, status=ToolStatus.REJECTED,
+                    content=(
+                        f"⛔ 工具 {name} 属于「{spec.risk.value}」级操作，但宿主**没有装配确认门**，"
+                        "因此这次调用被拒绝，handler **没有执行**。这是 fail-closed 行为："
+                        "没有审批通道时，宁可不动，也不要静默放行一次写操作。"
+                        "（若这是测试夹具，请先 `approvals.install(hub)`。）"
+                    ),
+                    audit_id=audit_id, risk=spec.risk, plugin_id=spec.plugin_id,
+                    request_id=_call_id(arguments),
+                    error="确认门未装配：拒绝执行风险工具（fail-closed）",
+                )
+                logger.error("风险工具 %s 在确认门未装配时被拒绝执行（fail-closed）", name)
+                self._audit(spec, inv, _extra(spec, args))
+                return inv
+
             passed, pending_id, reason = self._approval_gate(
                 spec, args, ctx.approval_token, ctx.conversation_id, ctx.tainted
             )

@@ -174,64 +174,6 @@ CASES: list[Case] = [
         note="「未知工具」这条观测是模型唯一能自我纠正的线索（I13：工具异常 = 观测）。",
     ),
     Case(
-        id="dangerous_blocked",
-        title="危险工具被确认门拦下，且**绝不执行**",
-        user="打开浏览器",
-        script=[
-            {"content": "", "tool_calls": [_call("accounts_browser_open", {"account_id": "a1"})]},
-            {"content": "需要你先放行。"},
-        ],
-        expect_tools=["accounts_browser_open"],
-        # ★ 期望里**有**它：`observe` 层面这次调用确实发生过（它产生了
-        # `approval_required` 与一条观测）。真正的判据是下面那条 `expect_handler_not_run`。
-        expect_events=["approval_required", "observation", "final"],
-        expect_event_order=["approval_required", "observation"],
-        expect_handler_not_run=["accounts_browser_open"],
-        note="★ 回归断言的是「handler 调用记录为空」，不是返回码（AGENTS.md 规则 9）。",
-    ),
-    Case(
-        id="confirm_then_approve",
-        title="模型发起实时确认 → 用户同意 → 目标工具执行",
-        user="帮我确认一下再开浏览器",
-        script=[
-            {"content": "", "tool_calls": [{
-                "id": "c1", "name": "request_user_confirmation",
-                # ⚠️ `target_tool` 必须是 **write / dangerous** 级：只读目标会被
-                # `_prepare_confirmation` **拒掉**（报 bad_args），而那是刻意的 ——
-                # 「用户以为批准了 A，实际什么也没批准」更坏。
-                # ★ 本用例第一版填了只读目标，整条走了 bad_args 分支，
-                # 而它**看起来像「确认没触发」**。
-                "arguments": json.dumps({
-                    "question": "将要打开浏览器会话，是否继续？",
-                    "details": "会影响该账号的登录态",
-                    "target_tool": "accounts_browser_open",
-                    "target_args": {"account_id": "a1"},
-                    "timeout_s": 2.0,
-                }, ensure_ascii=False)}]},
-            # ★ 第二步：模型用**完全相同的参数**再发一次 —— 这一次会被预批准直接放行。
-            {"content": "", "tool_calls": [
-                _call("accounts_browser_open", {"account_id": "a1"}, call_id="c2")]},
-            {"content": "浏览器已打开。"},
-        ],
-        expect_tools=["request_user_confirmation", "accounts_browser_open"],
-        # ★ 同意之后目标**要等模型自己再发一次同样的调用**才执行 —— 那一次会被
-        # **指纹绑定**的预批准直接放行（"用户同意的就是这一组具体参数"）。
-        # 本用例第二版把第二步写成纯文本，于是目标永远没执行；
-        # 而那条路上的语义（"预批准到底放行了没有"）恰恰是本用例最该测的。
-        expect_handlers=["accounts_browser_open"],
-        expect_content=["浏览器已打开"],
-        expect_events=["confirm_required", "confirm_resolved", "final"],
-        expect_event_order=["confirm_required", "confirm_resolved"],
-        answer_confirm=True,
-        timeout_s=2.0,
-        note="★ 时序是判据：`confirm_resolved` 必须在 `observation` **之前**"
-             "（答复要立刻回给界面，不能等到下一条观测）。"
-             "★ `target_tool` 必须是 **write / dangerous** 级 —— 只读目标会被"
-             "`_prepare_confirmation` 拒掉（报 bad_args），而那是刻意的："
-             "「用户以为批准了 A，实际什么也没批准」更坏。本用例第一版填了只读目标，"
-             "整条走了 bad_args 分支，**而它看起来像「确认没触发」**。",
-    ),
-    Case(
         id="truncated_args_not_executed",
         title="输出被长度上限截断 ⇒ 半截参数**绝不进工具层**",
         user="读一个大文件",

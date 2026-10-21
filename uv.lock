@@ -1175,7 +1175,7 @@ wheels = [
 
 [[package]]
 name = "workbench"
-version = "0.3.13"
+version = "0.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -1183,7 +1183,6 @@ dependencies = [
     { name = "httpx" },
     { name = "networkx" },
     { name = "openpyxl" },
-    { name = "playwright" },
     { name = "pydantic" },
     { name = "pypdf" },
     { name = "python-docx" },
@@ -1196,6 +1195,7 @@ build = [
     { name = "pyinstaller" },
 ]
 dev = [
+    { name = "playwright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -1207,7 +1207,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "networkx", specifier = ">=3.0" },
     { name = "openpyxl", specifier = ">=3.1" },
-    { name = "playwright", specifier = ">=1.49" },
+    { name = "playwright", marker = "extra == 'dev'", specifier = ">=1.49" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pyinstaller", marker = "extra == 'build'", specifier = ">=6.10" },
     { name = "pypdf", specifier = ">=5.1" },

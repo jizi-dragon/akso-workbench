@@ -1,18 +1,19 @@
 """打包态服务端入口（PyInstaller → dist/WorkbenchServer/WorkbenchServer.exe）。
 
-调用约定：桌面壳 spawn `WorkbenchServer.exe --server`（见 desktop/main.js 的 spawnServer）。
+调用约定：Tauri 壳 spawn `WorkbenchServer.exe --server --host 127.0.0.1 --port <动态端口>`
+（见 `src-tauri/src/main.rs` 的 spawn_sidecar）。
 
-与开发态入口 `workbench/main.py` 的区别：**不打开浏览器**——打包态 UI 由 Electron 主窗承载，
-sidecar 只提供服务本身；另外冻结态会把启动信息落到 `DATA_DIR/server.log`，
-因为壳以 `stdio: 'ignore'` 启动本进程，端口占用/启动崩溃在用户现场是"零输出"的。
+与开发态入口 `workbench/main.py` 的区别：**不打开浏览器**——打包态 UI 由 Tauri 主窗承载；
+冻结态会把启动信息落到 `DATA_DIR/server.log`，因为壳以文件重定向接收 stdout/stderr，
+端口占用/启动崩溃在用户现场需要可查。
 
-⚠ 历史教训：本文件在一次重构中丢失，而 server.spec 仍指向它 → `tools/build.ps1` 第 5 步
-（PyInstaller）直接失败，而开发态走 venv + uvicorn 完全不受影响，故长期无人察觉。
-改动打包链路后务必真跑一次 build.ps1，不要只看开发态。
+⚠ 历史教训：本文件在一次重构中丢失，而 server.spec 仍指向它 → PyInstaller 第 5 步
+直接失败，而开发态走 venv + uvicorn 完全不受影响，故长期无人察觉。
+改动打包链路后务必真跑一次 `tools/build_tauri.ps1`，不要只看开发态。
 
 ⚠ 实现约束：本文件被 PyInstaller 当**顶层脚本**执行（spec 的 Analysis 直接指向它），
 因此**只能用绝对导入**（`from workbench import ...`）——相对导入（`from . import ...`）
-在 `__main__` 语境下会 ImportError。第 4 条断言（tools/verify_packaging.py）会守住这点。
+在 `__main__` 语境下会 ImportError。P2 断言（tools/verify_packaging.py）会守住这点。
 """
 
 from __future__ import annotations
@@ -71,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     logging_setup.install_excepthooks()
 
     line = (
-        f"WorkbenchServer v{__version__} pid={os.getpid()} → http://{host}:{port} "
+        f"WorkbenchServer v{__version__} pid={os.getpid()} -> http://{host}:{port} "
         f"(frozen={config.FROZEN})"
     )
     print(line, flush=True)

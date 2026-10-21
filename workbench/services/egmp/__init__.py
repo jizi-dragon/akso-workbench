@@ -1,4 +1,4 @@
-"""egmp —— eGMP 平台客户端 Python 化（读路径 + Monitor）。
+"""egmp —— eGMP 平台客户端 Python 化（只读 HTTP 路径）。
 
 原 akso-cc 的 Node 子进程封装已由本包原生承接（`routes_insight` 直接调用），
 运行时不再依赖 node 与原仓库；`adapters/akso-cc.json` 是只读参考存档。
@@ -7,8 +7,13 @@
 - client.py / auth.py / cache.py / queries.py   HTTP 内核（信封/分页/token 缓存/查询层）
 - kernel/                                        **端点与枚举的唯一事实源**（endpoints/semantics/urls）
 - insight/                                       读路径（登录 / 蜘蛛五步织网 + networkx）
-- monitor/                                       Monitor 录制/查询/解读（Playwright 载体）
 - replay.py                                      离线回放夹具客户端（insight 的离线门禁用）
+
+> ## 2026-10-19：Monitor 随内置浏览器一起下线
+>
+> 用户确认未来不再需要 UI 自动登录 / 页面抓取 / 截图，`monitor/`（Playwright 录制引擎）
+> 与 `browser_pool` / `autologin` 一并移除。账号连通性验证仍走 `accounts_login`
+> （httpx 直连），不依赖浏览器。
 
 > ## 2026-09-22：写路径整体移除
 >
@@ -32,5 +37,4 @@
 > （`tests/test_env_isolation.py` 的「缓存隔离」一节），删了它会连带删掉一个与工厂无关的安全属性。
 """
 
-__all__ = ["client", "auth", "cache", "queries", "kernel", "replay",
-           "insight", "monitor"]
+__all__ = ["client", "auth", "cache", "queries", "kernel", "replay", "insight"]

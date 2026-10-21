@@ -72,3 +72,7 @@ node_modules/
 # 这种"对一切基于 git 的清点不可见"的状态，正是删减没删干净能长期存活的机制（PITFALLS 同族）。
 #
 # 口径已统一为：**整棵 `data/` 不存在**。若将来重建采集工具链，再按新口径重新决定哪些入库。
+
+# Tauri 构建产物（生成物）
+src-tauri/target/
+src-tauri/gen/

@@ -1,4 +1,10 @@
-"""egmp 原生化验收：洞察织网 / Monitor 录制解读 / 平台端点常量（离线，全量 mock）。
+"""egmp 原生化验收：洞察织网 / 平台端点常量（离线，全量 mock）。
+
+> ## 2026-10-19：Monitor 随内置浏览器下线
+>
+> 用户确认未来不再需要 UI 自动登录 / 页面抓取 / 截图，`egmp.monitor` 与
+> `browser_pool` / `autologin` 一并删除；本文件只保留**不依赖浏览器**的
+> 洞察织网与平台端点常量。历史 Monitor 结论不再有代码承载，故用例一并删除。
 
 > ## 2026-09-22：写路径用例随配置工厂整体移除
 >
@@ -14,15 +20,10 @@
 > 等条目的**平台侧结论**已迁进
 > [docs/PLATFORM-OPERATIONS-LEARNED.md](../../docs/PLATFORM-OPERATIONS-LEARNED.md)
 > 的「平台事实台账」，原始真机取证在 `factory-tuning/reports/**`。
->
-> 这里只保留**不依赖写路径**的部分：洞察织网、Monitor 录制/解读/裁剪，
-> 以及**端点常量**这一类纯平台事实（`OBJECT_PICKLIST` 的读路径形状曾被"猜"错过一次，
-> 值得单独钉死）。
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -30,14 +31,6 @@ from fakes import FakeEgmpClient
 
 from workbench.services.egmp.insight import run_spider
 from workbench.services.egmp.kernel import endpoints as egmp_endpoints
-from workbench.services.egmp.monitor import (
-    classify_api,
-    compare_recordings,
-    interpret_segment,
-    query_monitor_log,
-    read_log_entries,
-)
-from workbench.services.egmp.monitor.monitor import TRIM_SIZE, trim_body
 from workbench.services.egmp.queries import GaiaQueries
 
 # ---------------------------------------------------------------- 洞察命令
@@ -60,87 +53,6 @@ def test_insight_spider_networkx(tmp_path: Path) -> None:
     # drawio 基本结构
     drawio_text = (tmp_path / "spider-network.drawio").read_text(encoding="utf-8")
     assert drawio_text.startswith("<mxfile") and 'relative="1"' in drawio_text
-
-
-# ---------------------------------------------------------------- Monitor
-
-
-def test_monitor_classify_and_query(tmp_path: Path) -> None:
-    assert classify_api("GET", "/api/platform/BasicObject/FieldPage") == "READ"
-    assert classify_api("POST", "/api/platform/BasicObject/SaveBasicObject") == "WRITE"
-    assert classify_api("POST", "/api/platform/Workflow/DeleteWorkflowStep") == "DANGEROUS"
-
-    log_path = tmp_path / "monitor-log.json"
-    entries = [
-        {"method": "POST", "path": "/api/platform/BasicObject/SaveBasicObject",
-         "url": "https://fake.example.com/api/platform/BasicObject/SaveBasicObject",
-         "timestamp": 1, "postData": json.dumps({"name": "A", "code": "a__c", "extra": 1}),
-         "known": True, "status": 200, "body": {"code": 0}},
-        {"method": "POST", "path": "/api/platform/BasicObject/SaveBasicObject",
-         "url": "https://fake.example.com/api/platform/BasicObject/SaveBasicObject",
-         "timestamp": 2, "postData": json.dumps({"name": "B", "code": "b__c"}),
-         "known": True, "status": 200, "body": {"code": 0}},
-        {"method": "GET", "path": "/api/openapi/v1.0/BasicObject/a__c",
-         "url": "https://fake.example.com/x", "timestamp": 3, "known": True},
-    ]
-    # 格式一：纯数组
-    log_path.write_text(json.dumps(entries), encoding="utf-8")
-    assert len(read_log_entries(log_path)) == 3
-    result = query_monitor_log(log_path, keyword="SaveBasicObject", unknown_only=False)
-    assert result["total"] == 2
-    # 格式二：{entries,_actions}
-    log_path.write_text(json.dumps({"entries": entries, "_actions": []}), encoding="utf-8")
-    assert len(read_log_entries(log_path)) == 3
-
-    samples = [{"postData": e.get("postData")} for e in entries[:2]]
-    inference = compare_recordings(samples)
-    assert inference["params"]["$.name"]["required"] is True
-    assert inference["confidence"] > 0
-
-
-def test_monitor_interpret_segment(tmp_path: Path) -> None:
-    """复现计划只记**平台侧事实**（方法/路径/参数），不记"调用哪个函数"。
-
-    这一段是 2026-09-22 改造后的判据：写路径随配置工厂移除时，`API_MAP`
-    （端点 → `writers.*` 函数）被删掉了——留着它会产出一份**指向不存在模块**的计划。
-    所以这里断言的正是"计划里没有 module/fn，且写入的分类符合 PLANNABLE_CLASSES"。
-    """
-    (tmp_path / "monitor-log.json").write_text(json.dumps([
-        {"method": "POST", "path": "/api/platform/BasicObject/SaveBasicObject",
-         "url": "https://fake.example.com/api/platform/BasicObject/SaveBasicObject",
-         "timestamp": 100, "postData": json.dumps({"name": "A", "code": "a__c"}),
-         "known": True, "status": 200},
-        {"method": "GET", "path": "/api/openapi/v1.0/BasicObject/a__c",
-         "url": "https://fake.example.com/api/openapi/v1.0/BasicObject/a__c",
-         "timestamp": 110, "known": True, "status": 200},
-        {"method": "POST", "path": "/api/platform/Workflow/DeleteWorkflowStep",
-         "url": "https://fake.example.com/api/platform/Workflow/DeleteWorkflowStep",
-         "timestamp": 120, "postData": json.dumps({"id": "step-1"}),
-         "known": True, "status": 200},
-    ]), encoding="utf-8")
-    (tmp_path / "checkpoints.jsonl").write_text(
-        json.dumps({"checkpoint": "start", "timestamp": 50}) + "\n"
-        + json.dumps({"checkpoint": "user-query", "timestamp": 200}) + "\n",
-        encoding="utf-8")
-    outcome = interpret_segment(tmp_path / "monitor-log.json", tmp_path, question="创建对象A")
-    assert outcome["segmentEntries"] == 3
-    plan = json.loads((tmp_path / "reproduce-plan.json").read_text(encoding="utf-8"))
-    assert plan["baseUrl"] == "https://fake.example.com"
-    assert plan["executor"] is None, "本仓库不提供回放执行器（写路径已移除）"
-
-    steps = plan["steps"]
-    assert [s["path"] for s in steps] == ["/api/platform/BasicObject/SaveBasicObject"], (
-        f"只应收集 WRITE 类：READ 无需回放、DANGEROUS 永不入计划；实际 {steps}"
-    )
-    assert all("module" not in s and "fn" not in s for s in steps), (
-        "计划里不该再出现'调用哪个函数'——那些模块已随配置工厂删除"
-    )
-    assert steps[0]["params"] == json.dumps({"name": "A", "code": "a__c"}), (
-        "原始参数必须原样保留（它是平台侧事实）"
-    )
-
-    report = (tmp_path / "interpretation.md").read_text(encoding="utf-8")
-    assert "待 Agent 填充" in report and "是否已迭代学习: 否" in report
 
 
 # ---------------------------------------------------------------- 端点常量（纯平台事实）
@@ -178,32 +90,3 @@ def test_get_picklist_normalizes_option_array_to_picklist_id() -> None:
     assert isinstance(meta, dict), f"必须是归一化后的 dict，拿到 {type(meta).__name__}"
     assert meta["id"] == picklist_id
     assert len(meta["options"]) == 2
-
-
-# ---------------------------------------------------------------- 大响应裁剪（PITFALLS #63）
-
-
-def test_trim_body_keeps_data_under_real_platform_envelope() -> None:
-    """真机信封是 `{code, errorCode, message, data, requestID, traceId}` —— **内容全在 `data` 里**。
-
-    旧白名单是 `("code", "message", "id", "name", "success")`，**漏了 `data`**；
-    实测一次 20 条写请求的采集里 11 条响应被裁成只剩 `{code, message}`。
-    """
-    big = {"code": 0, "errorCode": 0, "message": None,
-           "data": {"datas": [{"code": f"f{i}__c", "name": f"字段{i}"} for i in range(400)],
-                    "hasNext": False, "total": 400},
-           "requestID": "0HNON16GD5ER9:00000063", "traceId": "t" * 40}
-    text = json.dumps(big, ensure_ascii=False)
-    assert len(text) > TRIM_SIZE, "样例不够大，测不到裁剪分支"
-
-    out = trim_body(text)
-    assert isinstance(out, dict)
-    assert out["_trimmed"] is True, "截断必须显式告知（AGENTS.md 规则 4）"
-    assert "data" in out, "data 被整个丢掉了 —— 这正是 #63"
-    assert "f0__c" in str(out["data"]), "data 留下了但内容没保住"
-
-
-def test_trim_body_leaves_small_bodies_untouched() -> None:
-    small = json.dumps({"code": 0, "data": True})
-    assert trim_body(small) == small
-    assert trim_body(None) is None

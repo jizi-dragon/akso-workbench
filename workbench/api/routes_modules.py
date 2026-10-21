@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/modules", tags=["modules"])
 
 @router.get("")
 def list_all() -> dict:
-    """全部模块清单 + 依赖体检（Node/入口/repoPath/Python 依赖/Playwright）。"""
+    """全部模块清单 + 依赖体检（Node/入口/repoPath/Python 依赖）。"""
     items = modules_svc.list_modules()
     return {
         "modules": items,

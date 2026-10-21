@@ -109,7 +109,7 @@ env = {
     "WORKBENCH_DATA": str(report.parent / "data"),
     "WORKBENCH_LOG_DIR": str(report.parent / "logs"),
     "WORKBENCH_PORT": port,
-    "WORKBENCH_PARENT_PID": str(os.getpid()),   # ← 与 desktop/main.js 下发的是同一个东西
+    "WORKBENCH_PARENT_PID": str(os.getpid()),   # ← 与 Tauri 壳下发的是同一个东西
     "PYTHONIOENCODING": "utf-8",
 }
 stdio = (report.parent / "stdio.log").open("w", encoding="utf-8")

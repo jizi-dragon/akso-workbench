@@ -58,7 +58,7 @@
 .settings-card {
   border: 1px solid var(--line);
   border-radius: var(--radius-l);
-  background: var(--ink-2);
+  background: var(--ink-3);
   padding: 18px 20px;
 }
 
@@ -108,7 +108,7 @@
   padding: 16px 18px;
   border: 1px solid var(--line);
   border-radius: var(--radius-l);
-  background: var(--ink-2);
+  background: var(--ink-3);
   transition: all 0.2s var(--ease-out);
 }
 
@@ -164,7 +164,7 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--ink-2);
+  background: var(--ink-3);
   border: 2px solid var(--teal);
   box-shadow: 0 0 10px rgba(7, 108, 224, 0.5);
   transition: transform 0.15s var(--ease-out);
@@ -296,7 +296,7 @@
   padding: 11px 13px;
   border: 1px solid var(--line);
   border-radius: var(--radius-m);
-  background: var(--ink-2);
+  background: var(--ink-3);
 }
 
 .cache-metric-main {
@@ -328,4 +328,72 @@
   border-radius: 3px;
   background: var(--teal);
   transition: width 0.35s var(--ease-out);
+}
+
+/* ---------------------------------------------------------------- MCP 服务器 */
+
+.mcp-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+
+.mcp-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--ink-3);
+}
+
+.mcp-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.mcp-dot.on {
+  background: var(--teal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 18%, transparent);
+}
+
+.mcp-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcp-main b {
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.mcp-main small {
+  font-size: 11px;
+  color: var(--text-3);
+  word-break: break-all;
+}
+
+.mcp-error {
+  color: var(--red, #e5534b);
+}
+
+.mcp-row .btn-ghost {
+  flex: none;
+  align-self: center;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.mcp-tools {
+  font-family: var(--font-mono, "IBM Plex Mono", monospace) !important;
+  opacity: 0.85;
 }

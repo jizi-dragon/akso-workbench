@@ -7,7 +7,7 @@
 | `builtin` | 通用能力（原 `harness/tools.py` 三件套） | `get_current_time` / `read_local_file` / `read_web_page` |
 | `websearch` | 自建联网检索（DeepSeek API **没有**内置 web_search） | `web_search` |
 | `insight` | 平台洞察（akso-cc 沉淀） | `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` / `insight_accounts` |
-| `accounts` | 快捷登录 + 账号库（quick-login 沉淀） | `accounts_list` / `accounts_login` / `accounts_browser_open` / `accounts_browser_sessions` / `accounts_browser_close` |
+| `accounts` | 账号库 + 平台登录验证（quick-login 沉淀） | `accounts_list` / `accounts_login` |
 
 > **2026-09-22：`factory` 插件整体移除。** 配置工厂（蓝图校验 / 幂等创建 / 拓扑编排 /
 > 断点续跑）连同 `services/egmp/writers/**`、`services/egmp/orchestrate.py`、

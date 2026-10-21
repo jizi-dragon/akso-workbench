@@ -9,7 +9,7 @@ _2026-09-18 撰写。锚定 `15b847e`（main，v0.3.12 + 3）。本文是**新�
 > | 文档 | 回答什么 | 性质 |
 > |---|---|---|
 > | 本文 | **核心 Agent 长什么样、为什么这样分层、离行业标准差在哪** | 结构说明 + 评估，随架构变 |
-> | `CODEBASE_OVERVIEW.md`（**2026-09-29 曾删除，2026-10-07 重新生成**） | 整个代码库的模块地图、风险台账、验收基线 | 全仓视角，随代码变 |
+> | `CODEBASE_OVERVIEW.md` | 代码地图、模块职责、当前风险索引（**2026-10-19 精简重写**） | 全仓视角，随代码变 |
 > | [TOOLS.md](TOOLS.md) | **现在到底有哪些工具**、加一个工具要同步哪五处 | **清单由脚本生成**，机检守着 |
 > | `PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） | 怎么写一个插件（契约细节） | 面向插件作者 |
 > | [adr/](adr/) | **不再变的决策**及其后果 | 只增不改 |
@@ -41,10 +41,11 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 
 - **不是安全边界**：沙箱是**限损层**（[ADR-0014](adr/0007-credentials-sandbox-and-trust.md) §D-3）。跑起来的代码仍能读它有权读的一切。
 - **不做自动发现**：插件装配是 `plugins/__init__.py::_MODULES` 显式清单。研究结论是"发现机制的收益接近零"（`docs/research/core-plugin-separation-research.md` §0）。
-- **不做热插拔（核心层）**：core 插件导入期一次装配、之后只读；只有 `installed` 层（Skill）运行期可变。
+- **不做热插拔（核心层）**：core 插件导入期一次装配、之后只读；只有 `installed` 层（Skill / MCP 工具）运行期可变。
 - **不做多 Agent 编排**：无 planner/worker 分工、无子 Agent 派生。理由见 §7.3。
 - **不做向量检索/知识库**：迁移 6 已把 `knowledge_nodes` / `faq_cards` 删除，Embedding 配置随之移除。
-- **不做 MCP 客户端**：本期未接入，但**通道已预留**（`mcp-stdio` 策略 + stdio/JSON 同构的脚本协议）。见 §7.2。
+- **MCP 只做 stdio（2026-10-19 起）**：用户级 `mcp.json` + `tools/list`/`tools/call`，接进 installed 层；
+  **不做**远程 HTTP/SSE 传输、resources/prompts/sampling、自动重连。见 §7.2 与 [MCP.md](MCP.md)。
 
 ---
 
@@ -69,7 +70,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 │ L6 工具中枢层  plugin_api.ToolHub                                         │
 │   ToolSpec{name, description, args_model, handler, risk, timeout_s}       │
 │   Risk: READ / WRITE / DANGEROUS  ·  Invocation  ·  ToolContext           │
-│   core 层（导入期只读） / installed 层（运行期可变）                       │
+│   core 层（导入期只读） / installed 层（Skill / MCP 工具，运行期可变）      │
 │   _tools 是 **派生视图**（_rebuild 从启用中的插件推导）                    │
 └──────┬────────────────────────────────────────────┬──────────────────────┘
        │ 风险工具先过门                              │ handler(args, ctx)
@@ -180,7 +181,7 @@ class Risk(str, Enum):
     DANGEROUS = "dangerous"  # 过门 + UI 二次确认 + 永不进入 Monitor 可执行回放
 ```
 
-当前分布（机检输出）：**16 read · 2 write · 0 dangerous**（共 18 个 core 工具）。
+当前分布（机检输出）：**15 read · 0 write · 0 dangerous**（共 15 个 core 工具；2026-10-19 内置浏览器下线后 `accounts_browser_*` 三条已删除）。
 
 > ⚠️ **产品当前一个 `DANGEROUS` 工具都没有**——唯一的那个（`factory_create`）随配置工厂在 2026-09-22 整体删除。
 > **删的是工具，不是分级能力**：枚举三档照旧、确认门的 dangerous 分支照旧（§3.5 与 §5 的 I6 都没变），
@@ -206,6 +207,11 @@ class Risk(str, Enum):
 `register_installed()` 比 `add_plugin()` 多三道校验：强制 `origin=INSTALLED`、`removable=True`
 （不信任调用方传对）、**不许顶掉核心工具名**（冲突直接拒——核心工具是产品面，
 被一个上传的 Skill 覆盖会变成安全事故）。
+
+> **2026-10-19 起 installed 层有两个生产者**：用户从共享库安装的 Skill，以及
+> `mcp_registry` 从 MCP server 的 `tools/list` 生成的工具。后者同样必须显式声明
+> `risk/trust/reversibility`，默认 `WRITE/UNTRUSTED/IRREVERSIBLE`（见 [MCP.md](MCP.md)）。
+> `core_specs()` 的 15 个工具仍是文档承诺的"产品面"；MCP 工具与 Skill 一样属于"运行期"。
 
 `deregister_capability("")` 的守卫（`:369-373`）值得单独记：核心插件的 `capability_id` 是**空串**，
 于是传空会把所有核心插件误判成可卸载目标。**先查"请求是否合法"再查"是否存在"**——
@@ -477,7 +483,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 | 维度 | 行业当前做法 | 本项目 | 判定 |
 |---|---|---|---|
 | **工具契约** | JSON Schema + 名字 + 描述；Anthropic 2025-11 追加 `input_examples` | pydantic `args_model` → `_openai_schema()` 自动派生，**schema 不手写第二份** | ✅ **优于主流**：类型即契约，schema 由类型派生，天然不会漂移 |
-| **工具来源标准化** | **MCP** 已是事实标准：2025-12-09 由 Anthropic 捐给 Linux Foundation 下的 Agentic AI Foundation（Anthropic/Block/OpenAI 共同创立，Google/Microsoft/AWS/Cloudflare/Bloomberg 支持），1 万+ 公开 server、97M+ 月 SDK 下载，ChatGPT/Cursor/Gemini/Copilot/VS Code 均已采用 | 自有 `ToolHub` 插件协议，**未接 MCP** | ❌ **缺失**，但**通道已预留**（见 §7.2） |
+| **工具来源标准化** | **MCP** 已是事实标准：2025-12-09 由 Anthropic 捐给 Linux Foundation 下的 Agentic AI Foundation（Anthropic/Block/OpenAI 共同创立，Google/Microsoft/AWS/Cloudflare/Bloomberg 支持），1 万+ 公开 server、97M+ 月 SDK 下载，ChatGPT/Cursor/Gemini/Copilot/VS Code 均已采用 | `ToolHub` 插件协议 ＋ **2026-10-19 起的最小 stdio MCP 客户端**（[MCP.md](MCP.md)） | ✅ **基础对齐**（stdio + tools；无远程/resources/sampling） |
 | **大规模工具注入** | Anthropic Tool Search Tool（`defer_loading`）：>10K token 或 10+ 工具时按需发现，上下文省 85%；纯工具定义在 5 server 场景可达 55K token，Anthropic 内部见过 134K | **全量注入**，自估 ~2k token/轮；`list_api_for(plugins)` 已留白名单口子 | 🟡 当前工具规模（见 [TOOLS.md](TOOLS.md)）、~2k token **远低于 10K 阈值**，当前全量注入是**正确选择**；但缺"工具变多之后的退路" |
 | **风险分级** | 框架普遍有（OpenAI Agents SDK `needsApproval`、LangGraph `interrupt()`） | `Risk` 三档 + 显式声明（装配期强制，不声明不给过） | ✅ 符合 |
 | **工具结果体量** | 普遍靠截断；前沿做法是 Programmatic Tool Calling（工具在代码沙箱里编排，中间结果不进上下文，token 降 37%） | `MAX_RESULT_CHARS=16_000` **显式告知**截断 + 沙箱已具备执行能力，但**未做工具编排** | 🟡 截断处理比多数项目诚实（告知而非静默）；PTC 是明确的下一步 |
@@ -551,9 +557,9 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 | 文档数字与代码一致 | 靠人记，必然漂移 | **`gen_tools_doc.py` 机检**：文档清单 == 运行期中枢，且校验各文档里的"N 个工具" |
 | 启动自检 | 少见 | `verify_required_tools()` + `GET /api/agent/selfcheck`，把"打包漏收插件"提前到启动日志 |
 | 失败可见性 | 静默降级常见 | 插件装配失败进 `hub.failures` 并在两个端点暴露；沙箱拒绝也带完整审计信息 |
-| 决策留痕 | 散在 PR 描述里 | **22 份 ADR**，含"为什么不做"（D-3 / D-7 这类"诚实边界"条目） |
+| 决策留痕 | 散在 PR 描述里 | **8 篇合订 ADR**（由 22 篇合并），含"为什么不做"（D-3 / D-7 这类"诚实边界"条目） |
 | 坑的机构记忆 | 少见 | `PITFALLS.md` 只增不改，记真机环境坑与实测证据 |
-| CI | 常规 | 12 步，含解释器版本契约、工具清单门禁、打包静态检查 13 项 |
+| CI | 常规 | 12 步，含解释器版本契约、工具清单门禁、打包静态检查 7 项 |
 
 **这一层是本项目与"同类开源项目"最大的差异点**：多数开源 agent 项目在能力上跑得更快，
 但很少有 `PITFALLS.md` + ADR + 机检门禁这种"给六个月后的自己留路"的纪律。
@@ -586,22 +592,33 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 
 **触发条件**：出现一次"请求超长"报错，或 `summary_calls` 明显偏离预期。
 
-### 7.2 【中成本，看需求】MCP 客户端接入
+### 7.2 【已部分落地】MCP 客户端接入（2026-10-19 起）
 
-**缺口**：MCP 已是事实标准（2025-12 捐给 Linux Foundation 下的 AAIF，1 万+ server）。
-本项目有 `mcp-stdio` 沙箱策略（预留未启用）、`script_runner` 的 stdio/JSON 协议与 MCP 同构。
+**原判断（2026-09-18）**：当前不接。理由：价值在领域工具、MCP 收益随生态增长、
+不可信 server 是新的信任边界。**2026-10-19 改判为"接最小面"**：
+对标 WorkBuddy 时，MCP 是基础五件套之一；不接就无法验证"外部工具能不能被安全地管住"。
+原判断的第三条（信任边界）没有消失，而是被落成了默认值。
 
-**现状判断**：**当前不接是对的选择**。理由：
-1. 本项目的价值在**领域工具**（eGMP 对象分析 / 账号），不在"接入尽可能多的工具"；
-2. MCP 的收益随工具数与生态规模增长，而本项目工具数在"几十"这个量级、单一领域；
-3. MCP 会引入**不可信 server** 这个新信任边界，而现有的 `capabilities` Fail-Closed 设计
-   是按"包是我们自己审过的"来设计的。
+**已落地**（[MCP.md](MCP.md)）：
 
-**做法（真要做时）**：把 MCP server 当作 `installed` 层的一个特殊 `Plugin`，
-每个 server 声明所需 `capabilities` → 映射到沙箱策略 + 确认门下限。
-`mcp-stdio` 策略已经在那了。
+| 项 | 做法 |
+|---|---|
+| 配置 | 用户级 `<数据目录>/mcp.json`（WorkBuddy / Claude Desktop 同形） |
+| 传输 | stdio、一行一个 JSON-RPC 2.0 消息 |
+| 方法 | `initialize` / `notifications/initialized` / `tools/list` / `tools/call` |
+| 注册 | 每个 server 一个 `Plugin`，走 `installed` 层；重连先摘旧能力 |
+| 默认值 | `risk=WRITE`、`trust=UNTRUSTED`、`reversibility=IRREVERSIBLE`、`parallel_safe=False` |
+| 环境 | 白名单继承 + `env` 显式追加；不传宿主凭据 |
+| 失败 | 按 server 隔离；坏配置只跳过自己；后台装载不阻塞启动 |
 
-**触发条件**：需要接入的**外部**能力（不只 eGMP）超过 5 个，或需要复用社区 server。
+**仍然不做**：远程 HTTP/SSE、`resources` / `prompts` / `sampling`、OAuth、自动重启、
+按工具粒度的 risk 覆盖。**MCP server 不在沙箱里**——它的权限等于当前用户，
+这条边界写在 [MCP.md](MCP.md) §3。
+
+**触发条件（下一阶段）**：出现第一个必须走远程传输的 server，或需要 `resources` 才能完成的任务。
+
+**工具数警报**：`MAX_TOTAL_TOOLS = 40` 在接 MCP 之后才真正有意义（一个 server 可能带几十个工具）；
+超限只记 failure，不拒装。
 
 ### 7.3 【需先想清楚】多 Agent 与子上下文隔离
 
@@ -627,7 +644,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
   收益：模型一次发 N 个独立工具调用时延迟从 N× 降到 1×。
   风险：确认门 + 并发的交互需要想清楚（多个风险工具同时被拦时的 pending 展示顺序）。
 - **裁剪**：`plugins` 白名单口子已留。可按页面/意图注入子集，进一步压低每轮 schema 成本。
-  当前工具数下不必要，但**是接 MCP 之前必须有的能力**（MCP 会让工具数暴涨）。
+  当前工具数下不必要，但**是 MCP 进工具面之后更值得有的能力**（一个 server 就可能带几十个工具）。
 
 ### 7.5 【中成本】可观测性对齐 OTel —— **2026-09-24 已落地一半**
 
@@ -704,7 +721,7 @@ Python 包的元数据（并出现在 PyPI / 安装器的许可展示里）。**
 
 **建议**：以 `LICENSE` 文件为准（Apache-2.0，含专利授权条款，对企业分发更友好），
 把 `pyproject.toml` 改成 `license = "Apache-2.0"`（PEP 639 写法）或
-`license = { text = "Apache-2.0" }`（旧写法），并跑一次 `bump.py check` 确认五写版本同步没被影响。
+`license = { text = "Apache-2.0" }`（旧写法），并跑一次 `bump.py check` 确认 `VERSION` 与派生副本同步没被影响。
 
 > ⚠️ **本文只报告事实，不提供法律意见**。最终选哪个许可应由项目所有者决定；
 > 但**两个声明必须一致**，这一点没有争议。
@@ -747,12 +764,12 @@ Codex 之所以必须提供 `unelevated` 回退，正是因为企业策略常常
 | **技能供给层**（L3） | `skills/` 7 文件 **1,775 行** | 同上 |
 | 工具插件实现 | `plugins/` **4 文件 1,420 行**（删掉 `factory.py` 之后） | 同上 |
 | 模型接入（L1） | `deepseek.py` **255 行** | — |
-| 工具规模 | **4 插件 / 18 core 工具**（**16 read · 2 write · 0 dangerous**） | `python tools/gen_tools_doc.py` |
+| 工具规模 | **4 插件 / 15 core 工具**（**15 read · 0 write · 0 dangerous**） | `python tools/gen_tools_doc.py` |
 | HTTP 端点 | **99** | `@router.` 计数 |
 | 数据库迁移 | **1–25** | `workbench/db.py::MIGRATIONS` |
-| **仓库全量** | `workbench/**.py` **85 文件 20,201 行**；前端 `static` js+css **25 文件 10,039 行**；扩展 TS **25 文件 5,917 行**；测试 **35 文件 10,216 行**；`tools/` **36 文件 6,846 行**（`.py`/`.mjs`/`.ps1`/`.js`）；Electron 壳 `desktop/*.js` **5 文件 1,697 行** | 同上 |
-| 测试 | **516 passed / 11 deselected**（默认跳过 slow 层）——**2026-09-18 记录，未重跑** | `pytest -o addopts="" -q -m "not slow"` |
-| 打包静态检查 | **13/13** | `tools/verify_packaging.py` |
+| **仓库全量** | `workbench/**.py`；前端 `static` js+css；测试；`tools/`；Tauri 壳 `src-tauri/`（Electron `desktop/` 已删除） | 同上 |
+| 测试 | **2026-10-20：1009 passed / 1 skipped**（全量含 slow） | `pytest -o addopts=""` |
+| 打包静态检查 | **7/7** | `tools/verify_packaging.py` |
 
 > **Agent 核心约占全仓 17%**（3,435 / 20,201）。这符合定位：本项目的难点不在 agent 循环本身，
 > 而在**它要操作的那个平台**（`services/egmp/` **3,851 行**，写路径删除后）与**让操作安全的那套约束**

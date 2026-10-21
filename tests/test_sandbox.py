@@ -46,7 +46,7 @@ def test_policies_are_enumerable_and_self_valid() -> None:
     assert described, "至少应有一条策略"
     for policy in described:
         assert set(policy) == {"name", "severity", "timeout_s", "max_output_bytes",
-                               "allow_subprocesses", "allow_network", "description",
+                               "allow_subprocesses", "writes", "allow_network", "description",
                                "fingerprint", "enforced"}
         assert policy["enforced"], f"{policy['name']} 没有声明任何强制项"
         assert policy["fingerprint"]
@@ -152,7 +152,7 @@ def test_run_rejects_cwd_outside_root(tmp_path) -> None:
     result = run(ExecRequest(argv=[sys.executable, "-c", "print(1)"],
                              policy_name="skill-script", cwd=outside))
     assert result.ok is False
-    assert "越出沙箱根" in result.error
+    assert "越出" in result.error and "工作区根" in result.error
 
 
 def test_run_rejects_sensitive_cwd() -> None:

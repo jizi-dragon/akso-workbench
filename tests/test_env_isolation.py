@@ -23,8 +23,12 @@ from workbench.services.egmp import client as egmp_client
 from workbench.services.egmp.cache import QueryCache
 from workbench.services.egmp.queries import GaiaQueries, invalidate_object_cache
 
-ENV_A = "https://a.example.com"
-ENV_B = "https://b.example.com"
+# ★ 2026-10-19：用**本机未监听的端口**而不是 `a.example.com`。
+# 原值要走真实域名解析失败，`test_login_cache_is_not_shared_between_accounts`
+# 因此要等 ~5 秒；连接本机关闭端口是**立即** ConnectionRefused，
+# 而断言（抛 `httpx.HTTPError`）一个字都不用改。
+ENV_A = "http://127.0.0.1:1"
+ENV_B = "http://127.0.0.1:2"
 
 
 def _jwt(exp: float) -> str:
@@ -121,13 +125,21 @@ def test_login_returns_cached_token_without_network() -> None:
     assert egmp_client.login(ENV_A, "alice", "pw") == "tokA"
 
 
-def test_login_cache_is_not_shared_between_accounts() -> None:
-    """alice 有票、bob 没有：bob 登录必须走网络（此处域名不可达 → 抛错即是证明）。
+def test_login_cache_is_not_shared_between_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """alice 有票、bob 没有：bob 登录必须走网络（此处注入连接失败 → 抛错即是证明）。
 
-    断言具体类型而非裸 Exception：登录走 httpx，域名不可达时 httpx 抛 HTTPError
+    断言具体类型而非裸 Exception：登录走 httpx，连接失败时 httpx 抛 HTTPError
     （含 ConnectError/ConnectTimeout 等子类）。裸 Exception 会把"实现里换了个完全
     无关的异常"也判成通过，等于什么都没钉住。
+
+    ★ 2026-10-19：网络那一跳用 `monkeypatch` 注入 `ConnectError`，不再真的去解析域名。
+    原实现要等 DNS 超时 ~5 秒；而本用例要证明的是**bob 没有命中 alice 的缓存**，
+    "网络不可达"只是那个证明的手段，注入同样成立且更快、更稳定（不受代理/DNS 影响）。
     """
+    def refuse(*_a, **_k):
+        raise httpx.ConnectError("模拟：没有网络可达的登录端点")
+
+    monkeypatch.setattr(httpx.Client, "post", refuse)
     egmp_client.save_cached_token(ENV_A, "alice", "tokA")
     with pytest.raises(httpx.HTTPError):
         egmp_client.login(ENV_A, "bob", "pw")

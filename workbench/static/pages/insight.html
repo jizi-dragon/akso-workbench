@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="/static/css/tokens.css" />
     <link rel="stylesheet" href="/static/css/base.css" />
     <link rel="stylesheet" href="/static/css/modules.css" />
+    <link rel="stylesheet" href="/static/css/sidebar.css" />
+    <script src="/static/js/sidebar.js" defer></script>
   </head>
   <body>
     <div class="module-shell">
@@ -55,7 +57,13 @@
 
       <section class="mcard">
         <h2>产物</h2>
-        <div id="ins-artifacts" class="empty">点上方任务行的「产物」查看（markdown / drawio 可就地预览）</div>
+        <div class="artifact-toolbar">
+          <div class="artifact-filters" id="ins-artifact-filters"></div>
+          <span class="hint" id="ins-artifact-count"></span>
+        </div>
+        <div id="ins-artifacts" class="artifact-grid">
+          <div class="empty" style="grid-column:1/-1">点上方任务行的「产物」查看（markdown / drawio / JSON / CSV / 日志 / 图片）</div>
+        </div>
       </section>
     </div>
 
@@ -71,6 +79,8 @@
         <div class="apv-bar">
           <div class="apv-tabs" id="apv-tabs"></div>
           <div class="spacer"></div>
+          <button class="mbtn ghost" id="apv-copy">复制正文</button>
+          <a class="mbtn ghost" id="apv-open" target="_blank" rel="noopener noreferrer">新窗口打开</a>
           <button class="mbtn ghost" id="apv-raw">原始</button>
           <a class="mbtn ghost" id="apv-download">下载</a>
         </div>

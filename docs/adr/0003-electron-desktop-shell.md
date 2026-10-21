@@ -9,6 +9,15 @@
 - **状态**：已采纳（Electron 33 换代 / 0.3.3 更新状态机 / 0.3.1 首个可安装版本 / 2026-09-16 更名）
 - **决策者**：用户定稿（更名原话：「更名，剥离 akso 的信息，按照 workbench 进行后续发展
   （逐渐将项目转变成可复用的工作台，核心差距就在于插件/tools 功能）」）
+
+> **2026-10-19 后补（仅追加，原文未改）**：用户已确认**最终迁移到 Tauri 2 + Python sidecar**，
+> 并使用内部 HTTPS 静态源做自动更新；Electron 只是 Phase 0 的过渡壳。
+> 本文关于 Electron/Chromium/CDP 的具体决策在 Tauri 迁移完成后**将被取代**；
+> 迁移中的版本真源已先统一为仓库根目录 `VERSION`（见 `CONTRIBUTING.md` §3.2）。
+>
+> **2026-10-19 再后补**：`desktop/` 与 electron-builder / electron-updater 已删除；
+> Tauri 2 壳是唯一分发路径。本文保留为“当时为什么这么选”的历史记录，
+> 其 Electron 构建/更新/端口细节**不再是现行实现**。
 - **影响面**：`desktop/**`（壳 4 文件约 850 行 JS）、`.github/workflows` + `tools/build.ps1`、
   `tools/verify_packaging.py`、`tools/bump.py`；更名面 **58 个文件 / 200 处字符串
   + 6 处协议与持久化标识**（会静默坏数据，见 §2.4）

@@ -22,6 +22,153 @@
 
 ### Removed
 
+- **云端账号库独立页面（2026-10-20）**：删除 `static/pages/cloud.html`、
+  `static/js/cloud.js`、`tests/test_cloud_page.py`、`tools/verify_cloud_ui.py`；
+  用户选择只保留账号中心，云端设备流登录/身份胶囊仍在账号中心右上角，`/api/vault` 后端保留。
+- **Electron 退役（2026-10-19）**：删除 `desktop/`（主进程、端口 broker、代理、更新器、
+  electron-builder 配置与旧产物）、`tests/test_desktop_launcher.py` /
+  `test_ports_contract.py` / `test_shell_control.py` / `test_update.py`、
+  `tools/build.ps1` / `publish_release.py` / `verify_update_flow.py` /
+  `verify_updater_logic.mjs` / `verify_update_proxy.js` / `verify_port_broker.mjs` /
+  `verify_wheel_page.py`，以及 Python 的 `routes_update` / `routes_shell`。
+  Tauri 2 + Python sidecar 成为唯一桌面分发路径。
+- **Electron 专属配置面**：`WORKBENCH_CONTROL_PORT`、`desktop-ports.json`、
+  `shell-state.json`、`/api/update`、`/api/shell/*`、固定 18767 控制服务、
+  electron-updater 的 `latest.yml`/`.updaterId` 不再产生或读取。
+- **版本副本**：`desktop/package.json` / `desktop/package-lock.json` 从 `bump.py`
+  的同步与检查中删除；Tauri 的 `tauri.conf.json` / `Cargo.toml` 成为必备副本。
+
+### Changed
+
+- **侧边导航栏 v2（2026-10-20）**：宽度 **268 → 180px**（削减约三分之一）；左上角
+  隐藏/显示按钮，折叠状态存 `localStorage` 并在页面间保持；账号中心/对象分析/
+  Skill/沙箱改为共享 `sidebar.css` + `sidebar.js` 注入侧栏，点击导航不丢侧栏；
+  **Skill 管理 / 沙箱两个 Agent 菜单从侧栏隐藏**。
+- **账号中心改为云端数据源（2026-10-20）**：移除本地站点/账号/盒子/分配池/备份管理；
+  未登录时整页遮罩并提示登录；登录后读取 `/api/vault/library` 展示云端账号/站点/盒子。
+  新增「本地推到云端」：按 akso-cloud merge 契约带 `baseRevision` 推送，409 提示先刷新。
+- **启动只保留一段加载动画（2026-10-20）**：Tauri 窗口带 `?shell=tauri`，Web 端
+  `app.js` 跳过自己的 splash；只保留 Tauri 启动页。窗口默认占工作区 80% 并居中。
+- **启动窗口默认居中、占工作区 80%（2026-10-20）**：Tauri 按主显示器工作区计算
+  `80% × 80%` 并居中，不再固定 `1440×920` 或最大化；1440×900 工作区下窗口约
+  `1152×720`。
+- **Tauri 启动不再弹浏览器（2026-10-20）**：`on_navigation` 现在把 Windows 的
+  `http://tauri.localhost/` 也视为本地 URL；此前它被当外部链接交给 Edge，
+  必须先关网页才能看到主窗（PITFALLS #129）。
+- 账号中心版本角标改为只读 `/api/health` 的版本号；不再提供“检查更新”点击入口
+  （Tauri updater 的检查/安装 UI 尚未接入）。
+- 打包静态核对（`tools/verify_packaging.py`）改为检查 Tauri 资源映射、构建脚本 BOM、
+  Tauri UI/图标与插件 `hiddenimports`；**7 项**。
+- `README` / `USER-MANUAL` / `CONFIG` / `API` / `CONTRIBUTING` / `AGENTS` / ADR 同步为
+  Tauri 动态端口、内部 HTTPS 静态源、手动覆盖安装的当前口径。
+
+### Added
+
+- **Tauri 2 壳 + Python sidecar（2026-10-19，Phase 1 骨架）**：新增 `src-tauri/`
+  （Tauri 2、single-instance、updater、opener），Rust 侧负责选空闲端口、拉起
+  `WorkbenchServer`、健康检查、splash→主窗、外链交系统浏览器、退出按进程树清理；
+  sidecar 下发 `WORKBENCH_PARENT_PID`，父进程死亡时由 Python `lifecycle` 兜底。
+  已在本机完成 release 构建：sidecar **60.7 MB**、NSIS 安装包 **26.95 MiB**、
+  updater `.sig` 已生成；构建脚本 `tools/build_tauri.ps1`，更新清单生成器
+  `tools/tauri_update_manifest.py`，静态契约测试 `tests/test_tauri_config.py` /
+  `tests/test_tauri_update_manifest.py`。
+- **版本真源 `VERSION`（2026-10-19）**：根目录新增 `VERSION`，`tools/bump.py` 改为
+  **读 `VERSION`、写全部派生副本**（`pyproject.toml` / `workbench/__init__.py` /
+  `desktop/package.json` / `desktop/package-lock.json` / `uv.lock` / `.version.json`；
+  未来 Tauri 工程存在时还会写 `src-tauri/tauri.conf.json` 与 `Cargo.toml`）。
+  CI 在 `uv sync` 之前跑 `bump.py check`；新增 `tests/test_version_contract.py`（11 条）。
+- **桌面壳启动器（2026-10-19）**：`npm start` 改走 `desktop/launch.js`，在子进程环境里
+  删除 `ELECTRON_RUN_AS_NODE`。此前外层 Electron/IDE/Agent 宿主注入该变量时，
+  `electron .` 会以纯 Node 运行，`require('electron').app` 为 `undefined`，报错落在
+  `app.whenReady()`（看起来像 main.js 的 bug）。`main.js` 同时加守卫，给出可操作错误。
+- **sidecar 兜底日志加固（2026-10-19）**：`sidecar-stdio-<日期>.log` 打开前超过 16 MiB
+  先轮转一份 `.1`；写入流监听 `error` 并降级到 console，避免磁盘异常把 Electron 主进程
+  带崩；管道仍持续消费，不阻塞子进程。
+- **云端账号库页面（2026-10-19）**：新增「云端账号库」页（`pages/cloud.html` +
+  `js/cloud.js` + `css/cloud.css`），按 akso-cloud / akso-pass 的视觉口径展示站点 / 账号 /
+  盒子；设备流登录、盒子芯片筛选、搜索、站点/盒子台账、账号详情、同步数据与导出视图。
+  后端新增 `GET /api/vault/library`：**只读**快照 + 脱敏（剔除 `passwordEnc` / `fernetKey`）
+  + 5 分钟缓存 + 断网回落（`stale=true`）；401 清会话并回登录页。新增
+  `tools/verify_cloud_ui.py`（14/14）与 `tests/test_cloud_page.py`。
+- **沙箱工作区与权限（2026-10-19）**：工作区根可配，新增只读/读写、联网、派生进程三项权限
+  预检；策略新增 `writes` 声明（`strict-readonly` 只读、`skill-script`/`mcp-stdio` 会写）。
+  `cwd` 必须在工作区根内；只读模式拒绝写策略；配置不可用时 Fail-Closed。新增
+  `GET/PUT /api/sandbox/workspace` 与 `POST /api/sandbox/workspace/reset`，沙箱页新增
+  「工作区与权限」。**诚实边界**：不是内核级只读（见 ADR-0007 §8）。
+- **MCP 稳定性（2026-10-19）**：30 秒健康巡检（`ping`）、进程退出 / ping 失败 /
+  `notifications/tools/list_changed` 自动重连（指数退避，上限 5 分钟）、单 server 手动重连
+  `POST /api/mcp/servers/{name}/reconnect`、按工具 `risk` 覆盖、状态显示协议/版本/工具名；
+  测试 13 → 22 条。
+- **产物面板（2026-10-19）**：对象分析产物由表格改为卡片墙 + 类型筛选 + 搜索；预览新增
+  CSV 表格、图片、复制正文、新窗口打开；`tools/verify_insight_preview.py` 更新到 18/18，
+  另加 Node 直跑 CSV 解析判据。
+- **MCP（Model Context Protocol）最小可用接入（2026-10-19）**：用户级 `mcp.json`
+  （与 WorkBuddy / Claude Desktop 同形）、stdio JSON-RPC、`initialize` / `tools/list` /
+  `tools/call`；工具在运行期进入 `ToolHub` 的 installed 层，默认
+  `risk=write` / `trust=UNTRUSTED` / `reversibility=IRREVERSIBLE`；设置页「MCP 服务器」
+  显示状态并可重新连接；新增 `GET /api/mcp/servers`、`POST /api/mcp/reload`、
+  `docs/MCP.md` 与 13 条测试（假 server，不联网）。自动重连 / 健康检查 / 按工具 risk
+  在同日「MCP 稳定性」条目里补齐；仍**不做**远程传输、resources/prompts/sampling
+  （见 `docs/MCP.md` §8）。
+- **前端契约判据（2026-10-19）**：`tests/test_frontend_contract.py` 用 Node 直接 import
+  真实的 `static/js/api.js`，断言**发出去的请求体**（不需要浏览器，0.35 秒）。
+- **路由装配判据（2026-10-19）**：`tests/test_api_routers.py` 覆盖"单域失败不拖垮应用"，
+  并断言动态导入的 13 个路由模块都进了 `server.spec` 的 hiddenimports。
+- **对象分析 SSE 终态判据（2026-10-19）**：`tests/test_insight_sse.py` 覆盖正常结束 /
+  客户端断开 / worker 失败三个出口。
+- **云端账号库测试（2026-10-19）**：`tests/test_vault.py`（7 条）——会话密文落库、
+  `status` 不打网络、退出清本地、路由 502/401 映射。
+- **对标文档（2026-10-19）**：`docs/AGENT-BENCHMARK.md`（WorkBuddy 基础五件套矩阵 +
+  仍存在的缺陷与优先级）。
+
+### Fixed
+
+- **停止键实际不可用（2026-10-19）**：`static/js/api.js` 的 `jsonFetch` 现在统一序列化
+  对象 body。此前 `stopChat` 实发 `"[object Object]"`，服务端 422，前端把异常吞成
+  "按钮退回停止"——用户点了没反应。判据见 `tests/test_frontend_contract.py`（PITFALLS #122）。
+- **对象分析任务永远 `running`（2026-10-19）**：`routes_insight.run_sse` 的终态写入移入
+  `finally`；客户端断开且 worker 未结束时用 `add_done_callback` 收尾。判据见
+  `tests/test_insight_sse.py`（PITFALLS #123）。
+- **确认门未装配时 fail-open（2026-10-19）**：`ToolHub.execute` 对 `risk != READ` 且
+  `_approval_gate is None` 的调用返回 `REJECTED`，handler **不执行**；补两条判据
+  （`test_write_tool_is_refused_when_approval_gate_is_not_installed` 与只读对照）。
+- **可选路由注释承诺的容错没有实现（2026-10-19）**：`_optional_routers` 改为逐个 import /
+  注册、单域失败只记 WARNING；`server.spec` 补 13 个 hiddenimports。
+- **云端账号库默认地址仍是 `:8443`（2026-10-19）**：改为 443（`AKSO_VAULT_URL` 仍可覆盖）。
+- **锁文件漂移（2026-10-19）**：`uv.lock` 与 `desktop/package-lock.json` 从 0.3.13 同步到
+  0.4.1；`bump.py` 从四写扩为**六写**并纳入 `check`；CI 在 `uv sync` **之前**跑
+  `uv lock --check`（PITFALLS #124）。
+- **文档事实漂移（2026-10-19）**：`CONTRIBUTING` 测试基线、`VERSIONING` 的 tag/Release 数字、
+  `ADR-0011` 的扩展发现状态、README 的"云端账号数据接管"表述，按当日实测校正。
+
+### Changed
+
+- **测试提速（2026-10-19）**：快层 **66.9s → 25.8s**。I11 的 AST 扫描从 O(n²) 降为
+  O(n)（9.7s → 0.8s）；账号隔离用例的 DNS 等待改为注入失败（5.2s → 0.2s）；
+  自动登录验收（真实 2.5s/4s 时间轴）归入 `slow` 层，CI 仍显式跑 `-m slow`。
+- **文档合并精简（2026-10-19）**：`docs/VERSIONING.md` 正文并入
+  `CONTRIBUTING.md` §3.6（文件只留指针）；`docs/CODEBASE_OVERVIEW.md` 从 498 行重写为
+  约 150 行的代码地图 + 风险索引；`docs/USER-MANUAL.md` 删除已失效的扩展/轮盘章节。
+- **工具面文档（2026-10-19）**：`docs/TOOLS.md` 增加 installed 层（Skill / MCP）说明；
+  README 的文档地图删掉 5 行"已删除文件"的条目。
+
+### Removed
+
+- **内置浏览器 / Monitor / 自动登录整体下线（2026-10-19，用户确认未来不再需要 UI 自动登录 /
+  页面抓取 / 截图）**。删除面：
+  - `services/browser_pool.py`、`services/autologin.py`、`api/routes_browser.py`、
+    `api/routes_monitor.py`、`services/egmp/monitor/**`；
+  - 工具 `accounts_browser_open` / `accounts_browser_sessions` / `accounts_browser_close`；
+    产品工具面 **18 → 15**（15 read / 0 write）；
+  - CDP 18766、`WORKBENCH_CDP_PORT`、`WORKBENCH_SESSION_MODE`、`/windows*` 控制端点、
+    `routes_shell.py` 的 `/launch-chrome`；
+  - 账号中心的会话徽标 / 打开 / 聚焦 / 关闭 / 监听按钮；`runtime/browser-states/` 与
+    `runtime/monitor/` 不再产生（旧残留可手工删除）；
+  - 打包链路的 Playwright / Chromium / `ms-playwright` 收集；`verify_packaging.py` 的
+    P8 / P8b（**9 项 → 7 项**）；Playwright 仅保留在 dev 依赖，供 Web UI E2E 使用；
+  - `tests/test_browser_parallel.py` / `test_browser_state.py` / `test_autologin.py`；
+    `tools/verify_confirmation.py`（产品暂无 WRITE 工具，端到端确认门没有真实目标）与
+    `tools/diag_electron_typing.py`（依赖已删除的 CDP 18766）。
 - **浏览器扩展整体移出本仓库（2026-10-09，用户决策：桌面端与扩展不耦合，本仓只需账号库管理页
   来承接云端的数据环境）**。删除面：
   - 源码树 `extensions/quick-login/`（42 文件 / 约 324 KB，含 manifest、TS 源、构建脚本）；
@@ -32,7 +179,7 @@
   - 账号中心的扩展 UI：卡片「快捷登录」按钮、四态徽标、两条提示条（未安装 / 版本过旧）、
     以及 `pages/wheel-picker.html` 与 `static/css/wheel.css`；
   - 打包链路：`desktop/package.json` 的 `extraResources` 第二项、`build.ps1` 的扩展重建步骤
-    （8 步 → 7 步）、`bump.py` 的第五/六写（现为**四写**）、`verify_packaging.py` 的
+    （8 步 → 7 步）、`bump.py` 的第五/六写（2026-10-19 起为**六写**）、`verify_packaging.py` 的
     P4a/P4b/P4c/P10（**13 项 → 9 项**）、CI 的 `npm ci && npm run build` 步骤；
   - 验证工具：`verify_extension_sync.mjs` / `_boot.py` / `_isolation.py` / `_version.py` /
     `acceptance_extension_e2e.py` / `verify_command_latency.py` / `verify_host_logic.mjs` /
@@ -50,12 +197,12 @@
 - `/api/health` 成为**唯一**的健康端点（原 `/extension/health` 的 `everConnected` 闩锁与
   `extStale` 判定随之消失）。
 - `tests/test_ports_contract.py` 的"探测端点无副作用"改为直接断言 settings 表不变
-  （不再依赖被删模块的私有键名）。测试基线：**1016 → 1011 项**（删 5 条扩展专属用例）。
+  （不再依赖被删模块的私有键名）。测试基线：**1016 → 1005 项**（删两类扩展专属用例；2026-10-19 起含本轮新增 32 条，含 slow）。
 - **仓库更名为 `akso-workbench`（2026-10-11，用户决策）**：`jizi-dragon/akso-mogul` →
   `jizi-dragon/akso-workbench`。随更名同步的**外部标识**：`desktop/package.json` 的
   `build.publish.repo`（`owner` 仍 `jizi-dragon`）、`desktop/proxy.js` 的直连探测 `PROBE_URL`、
   `tools/verify_update_proxy.js` 的 Release 资产 URL、`tools/publish_release.py` 的 `REPO`
-  常量与 `GH_TOKEN` 提示文案、`README.md` 的「仓库地址」行、`docs/VERSIONING.md` 与
+  常量与 `GH_TOKEN` 提示文案、`README.md` 的「仓库地址」行、`CONTRIBUTING.md` §3.6 与
   `CONTRIBUTING.md` 里可见性/规则集的实测 URL。
   ★ **产品展示名与全部产物名一个字未动**（`Workbench-x.y.z-setup.exe` / `dist/WorkbenchServer` /
   `%APPDATA%\Workbench` / `Workbench/` 数据目录本来已是新形态）。
@@ -73,16 +220,12 @@
 
 > 新条目写在这里（`tools/publish_release.py` 逐字认这一行标题，说明与约束见文件顶部注释）。
 >
-> ⚠️ **发版前必须先清理本段（2026-09-24 记）**：下面的 `### Fixed` 与 `### Added` 里仍有若干
-> **描述已删除能力**的条目（配置工厂 / `factory_*` 工具 / `docs/FACTORY-*.md` / `ADR-0017` / `ADR-0018`
-> 相关的行）。而 `notes_from_changelog()` 是**逐字**把 `- ` 与 `### ` 开头的块抽成发布说明的
-> ⇒ **不清理就会把已删功能当"新增"对外发布**，且这中间**不会报任何错**。
-> 逐条位置：`grep -n '配置工厂\|factory\|FACTORY\|ADR-001[78]' CHANGELOG.md` 取行号落在本段内的那些。
-> （本警示写成引用块是**刻意的**：`notes_from_changelog()` 只收 `- `/`### ` 开头的行，
-> `>` 不会被抽进发布说明。）
->
-> ★ **0.4.1 发版时本段仍未清理**（上面那条警示依然有效）—— 本次是 MINOR 升版，
-> 发布说明会包含下面 0.4.1 段与**沿用下来的历史条目**。清理是独立的一件事，别和发版混在一起。
+> ★ **2026-10-19 已清理**：本段里描述已删除能力（配置工厂 / `factory_*` / `ADR-0017` / `ADR-0018`）
+> 的条目已不在。发版前仍建议跑一次
+> `grep -n '配置工厂\|factory\|FACTORY\|ADR-001[78]' CHANGELOG.md`，取行号落在本段内的那些确认。
+> 原因：`notes_from_changelog()` **逐字**把 `- ` 与 `### ` 开头的块抽成发布说明，
+> **不清理就会把已删功能当"新增"对外发布，且不报错**。
+> （本警示写成引用块是刻意的：`notes_from_changelog()` 只收 `- `/`### ` 开头的行。）
 
 ## [0.4.1] - 2026-09-29
 
@@ -2741,7 +2884,7 @@
 - **下载失败"无法单账号归属"（0.2.21，用户实测仍未修复）**：`authHeaderForUrl` 旧实现要求"全库中该 host 只有 1 个账号"才敢重试，而实测站点是**一站两账号**（示例租户：dev-user / T0901）→ 永远返回 null → 下载 401 后从不重试（诊断包原话：`下载失败（无法单账号归属，不自动重试）`）。改为分层归属：①同 URL 被 webRequest 观察到的绑定页签账号（最精确）→ ②该 host 上**唯一有活跃绑定页签**的账号（正在浏览该站点的账号）→ ③全库唯一账号（原兜底）；都不成立才不注入。实测 `chrome.downloads.download({headers})` 不需要 host 权限即可带出 Authorization（Chromium 早已移除该校验），故该重试路径不受授权状态影响。
 - **带端口站点被误判为"漫游到非授权域"而解绑（0.2.21）**：`onNavigation` 用 `URL.hostname`（永不含端口）与 `binding.host` 直接比较，站点自身 host 带端口（如 `192.0.2.10:8080`）时永远不相等 → 一打开就被解绑（规则不装、身份不注入）。比较前先去端口。
 - **同主机不同端口被当成同一站点（0.2.21）**：`hostRelated` 仅比较域名，导致桌面自身页面 `127.0.0.1:18765` 会被当作内网站点 `127.0.0.1:18996`（下载归属、Cookie 归属、站点判定的误判来源）。现两端都带端口时要求端口一致。
-- **诊断日志被桌面同步轮询淹没（0.2.21）**：桌面同步端点（`127.0.0.1:18765`）的响应此前被归属给"唯一绑定账号"，每 2s 刷两条 `captureResponseCookies：无页签响应…`，把 120 条环形诊断缓冲冲掉、真问题被挤出。此类 URL 不再计入。
+- **诊断日志被桌面同步轮询淹没（0.2.21）**：桌面同步端点（`127.0.0.1:18765`）的响应此前被归属给"唯一绑定账号"，每 2s 刷两条 `captureResponseCookies：无页签响应…`，把 122 条环形诊断缓冲冲掉、真问题被挤出。此类 URL 不再计入。
 
 ### Changed
 

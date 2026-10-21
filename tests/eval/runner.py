@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -398,6 +399,15 @@ def run_offline_case(case: Case) -> CaseResult:
 
 
 def _replay_case(case: Case, hub, calls: list[str], fixture_path) -> CaseResult:
+    # transcript 会按 `conversation_id` 落工具轨迹；评测用的是合成 id，
+    # 库里没有对应会话行时 `messages.conversation_id` 的外键会失败（只留一条
+    # WARNING + 栈，不影响结果，但会污染评测输出）。先补一行空会话。
+    db.connect()
+    now = int(time.time() * 1000)
+    db.execute(
+        "INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (f"eval-{case.id}", f"eval: {case.title}", now, now),
+    )
     # ★ **严格模式**：夹具 miss 要当场抛，不能静默继续。
     #
     # 用 `strict=False` 的话，miss 时 `stream_chat` 一个事件都不发 ⇒

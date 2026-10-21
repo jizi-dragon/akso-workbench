@@ -80,6 +80,9 @@ async def vault_login_poll(body: PollBody) -> dict:
         raise HTTPException(502, str(exc)) from exc
     if resp.get("status") == "approved":
         await asyncio.to_thread(vault.save_session, resp["token"], resp.get("user") or {})
+        # ★ 令牌只留在本机（Fernet 密文）；**不能回给浏览器**。
+        # 前端只需要知道 approved，拿到 token 只会多一个泄漏面。
+        resp = {key: value for key, value in resp.items() if key != "token"}
     return resp
 
 
@@ -91,6 +94,36 @@ async def vault_refresh() -> dict:
     except vault.VaultError as exc:
         raise HTTPException(401, str(exc)) from exc
     return {"profile": prof}
+
+
+@router.get("/library")
+async def vault_library(refresh: bool = False) -> dict:
+    """云端账号库的**只读展示视图**（脱敏、5 分钟缓存、断网回落）。
+
+    - `refresh=true` 绕过缓存（页面上的「同步数据」）；
+    - 断网时若本地有缓存，仍返回 200，但带 `stale=true` + `error`；
+    - 会话失效返回 **401**（不回落旧数据 —— 那会假装还登录着）。
+    """
+    try:
+        data = await asyncio.to_thread(vault.library, refresh)
+    except vault.VaultError as exc:
+        raise HTTPException(401 if vault.is_auth_error(exc) else 502, str(exc)) from exc
+    data["profile"] = await asyncio.to_thread(vault.profile)
+    data["baseUrl"] = await asyncio.to_thread(vault.base_url)
+    return data
+
+
+@router.post("/push")
+async def vault_push() -> dict:
+    """把本机账号库并上云端（仅在已登录时可用）。
+
+    云端契约见 akso-cloud `docs/SYNC-CONTRACT.md` §4–§5：
+    带 `baseRevision` 的 merge；409 时不重试，提示用户先刷新再推。
+    """
+    try:
+        return await asyncio.to_thread(vault.push_local)
+    except vault.VaultError as exc:
+        raise HTTPException(409 if exc.status == 409 else 502, str(exc)) from exc
 
 
 @router.post("/logout")

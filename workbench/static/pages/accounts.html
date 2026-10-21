@@ -7,203 +7,87 @@
     <link rel="stylesheet" href="/static/css/tokens.css" />
     <link rel="stylesheet" href="/static/css/base.css" />
     <link rel="stylesheet" href="/static/css/modules.css" />
+    <link rel="stylesheet" href="/static/css/sidebar.css" />
+    <script src="/static/js/sidebar.js" defer></script>
     <link rel="stylesheet" href="/static/css/ql-theme.css" />
     <link rel="stylesheet" href="/static/css/ql-parallel.css" />
+    <link rel="stylesheet" href="/static/css/cloud-account.css" />
   </head>
   <body>
     <div class="wrap">
-      <!-- ============ 品牌头 ============ -->
-      <header class="head">
+      <header class="head cloud-head">
         <div class="brand">
           <span class="brand-ring" aria-hidden="true"><i></i></span>
           <div class="brand-text">
             <h1>账号中心</h1>
-            <p>账号库与平台环境 · 打开即用内置 Chromium 托管会话</p>
+            <p>云端账号库 · 数据源始终为云端</p>
           </div>
         </div>
         <div class="head-right">
           <div class="head-actions">
             <a class="btn-primary btn-sm" href="/" title="返回工作台主页" style="text-decoration: none">← 主页</a>
-            <!-- 云端账号库入口。用 `target="_blank"` 而不是 `window.open`：桌面壳的
-                 `setWindowOpenHandler` 会把 http(s) 一律交给系统浏览器（不会开裸 Electron 窗口）。
-                 ⚠️ 地址暂时写死；等桌面端接上服务器后应改为从配置读（见 EXTENSION-SPLIT-PLAN §7）。 -->
-            <!-- 云端账号库：登录后显示身份胶囊，未登录显示登录按钮。
-     设备流：点登录 -> 开系统浏览器 -> 轮询取会话。**不抄码**。 -->
-              <button id="vault-chip" class="vault-chip" type="button" title="云端账号库">
-                <span id="vault-avatar" class="vault-avatar" aria-hidden="true"></span>
-                <span id="vault-name">登录云端账号库</span>
-              </button>
-              <div id="vault-panel" class="vault-panel hidden" role="dialog" aria-label="云端登录">
-                <div class="vault-panel-head">
-                  <span>云端账号库</span>
-                  <button id="vault-cancel" class="vault-x" type="button" aria-label="取消">&#215;</button>
-                </div>
-                <div id="vault-body" class="vault-body"></div>
-                <div class="vault-actions">
-                  <button id="vault-reopen" class="btn-ghost btn-sm" type="button">重新打开浏览器</button>
-                  <button id="vault-logout" class="btn-ghost btn-sm hidden" type="button">退出云端</button>
-                </div>
-              </div>
-            <button id="btn-export" class="btn-ghost btn-sm" type="button">导出备份</button>
-            <button id="btn-import-backup" class="btn-ghost btn-sm" type="button">导入备份</button>
-            <input type="file" id="backup-file" accept=".json" class="hidden" />
-            <button id="btn-import" class="btn-ghost btn-sm" type="button">env 导入</button>
+            <button id="btn-refresh" class="btn-ghost btn-sm" type="button">同步云端</button>
+            <button id="btn-push" class="btn-ghost btn-sm" type="button" title="把本机旧账号库并上云端">本地推到云端</button>
+            <button id="btn-logout" class="btn-ghost btn-sm hidden" type="button">退出登录</button>
           </div>
           <div class="stats">
-            <span class="stat"><b id="stat-accounts">0</b><span>账号</span></span>
-            <span class="stat stat-online"><i class="pulse-dot"></i><b id="stat-online">0</b><span>在线</span></span>
-            <span class="stat"><b id="stat-boxes">0</b><span>盒子</span></span>
+            <span class="stat"><b id="stat-accounts">—</b><span>账号</span></span>
+            <span class="stat"><b id="stat-sites">—</b><span>站点</span></span>
+            <span class="stat"><b id="stat-boxes">—</b><span>盒子</span></span>
           </div>
-          <button id="ver-chip" class="status-chip ver-chip" type="button" title="点击检查更新（桌面壳运行时生效）">v—</button>
+          <span id="cloud-user" class="status-chip" title="云端身份">未登录</span>
         </div>
       </header>
 
-      <!-- ============ 并行账号（盒子收纳 + 批量管理 + 会话徽标） ============ -->
-      <section class="card block">
-        <div class="block-head row">
-          <div>
-            <h2>并行账号</h2>
-            <p class="desc">一账号 = 一份独立存储命名空间。徽标来自扩展执行面实时状态。</p>
+      <div id="cloud-notice" class="cloud-notice hidden" role="status"></div>
+
+      <main id="cloud-content" class="cloud-content">
+        <section class="card block">
+          <div class="block-head row">
+            <div>
+              <h2>云端账号</h2>
+              <p class="desc">只读展示云端账号库；本地不再维护账号、盒子与密码。</p>
+            </div>
+            <span id="cloud-counts" class="cloud-counts"></span>
           </div>
-          <button id="batch-toggle" class="btn-ghost" type="button">批量管理</button>
-        </div>
-
-        <div id="box-chips" class="chips"></div>
-
-        <div id="batch-bar" class="batch-bar hidden">
-          <span class="batch-info">已选 <b id="sel-count">0</b> 个账号</span>
-          <span class="batch-actions">
-            <button id="sel-clear" class="btn-ghost btn-sm" type="button">取消选择</button>
-            <button id="sel-move" class="btn-ghost btn-sm" type="button">移入盒子…</button>
-            <button id="sel-delete" class="btn-danger btn-sm" type="button">删除所选</button>
-          </span>
-        </div>
-
-        <ul id="acc-wall" class="account-grid">
-          <li class="empty" style="grid-column:1/-1"><span class="empty-ico">⌛</span>加载中…</li>
-        </ul>
-      </section>
-
-      <!-- ============ 添加账号（单列 · 第二位） ============ -->
-      <section class="card block">
-        <div class="block-head">
-          <h2>添加账号</h2>
-          <p class="desc">密码 Fernet 加密入库，明文只在自动登录内存中出现。</p>
-        </div>
-        <div class="form">
-          <div class="field-pair">
-            <label class="field"><span>站点（站点管理中添加）</span>
-              <select id="acc-env"></select>
-            </label>
-            <label class="field"><span>盒子（可留空 = 默认盒）</span>
-              <input id="acc-box" list="box-list" autocomplete="off" />
-              <datalist id="box-list"></datalist>
-            </label>
+          <div class="cloud-toolbar">
+            <div id="box-chips" class="chips"></div>
+            <input id="acc-search" class="cloud-search" type="search" placeholder="搜索站点 / 用户名 / 页签名" autocomplete="off" />
           </div>
-          <div class="field-pair">
-            <label class="field"><span>用户名</span><input id="acc-username" autocomplete="off" /></label>
-            <label class="field"><span>密码</span><input id="acc-password" type="password" autocomplete="new-password" /></label>
-          </div>
-          <label class="field"><span>页签名（别名，可选）</span><input id="acc-tabname" placeholder="默认与用户名一致——便于在浏览器里快速定位页签" /></label>
-          <div class="btn-group">
-            <button id="btn-acc-add" class="btn-primary" type="button">新增账号</button>
-            <button id="btn-acc-bulk-toggle" class="btn-ghost" type="button">批量添加 ▾</button>
-          </div>
-          <div id="bulk-panel" class="import-panel hidden">
-            <p class="desc">每行一条：<code>用户名,密码[,盒子]</code>——批量建号到所选站点。</p>
-            <textarea id="acc-bulk" rows="3" placeholder="user1,pw123,客户A盒&#10;user2,pw456"></textarea>
-            <div class="btn-group"><button id="btn-acc-bulk" class="btn-ghost" type="button">批量添加</button></div>
-            <div id="bulk-result" class="log-console" style="height:110px; display:none"></div>
-          </div>
-        </div>
-      </section>
+          <ul id="acc-wall" class="account-grid">
+            <li class="empty" style="grid-column:1/-1"><span class="empty-ico">⌛</span>正在读取云端账号库…</li>
+          </ul>
+        </section>
 
-      <!-- ============ 站点管理（单列 · 第三位） ============ -->
-      <section class="card block">
-        <div class="block-head">
-          <h2>站点管理</h2>
-          <p class="desc">粘贴完整链接自动清洗为站点（保留端口）；站点名称支持修改，站点地址不可改。</p>
-        </div>
-        <form id="site-form" class="site-grid site-grid-3">
-          <input id="s-name" placeholder="站点名称（留空取域名首段）" autocomplete="off" />
-          <input id="s-host" placeholder="粘贴完整链接或域名，如 https://example-config.example.com/admin/..." autocomplete="off" spellcheck="false" />
-          <button class="btn-ghost" type="submit">添加站点</button>
-        </form>
-        <ul id="site-list" class="plain site-list"></ul>
-      </section>
+        <section class="card block">
+          <div class="block-head">
+            <h2>站点</h2>
+            <p class="desc">云端站点台账；桌面端不提供本地站点编辑。</p>
+          </div>
+          <ul id="site-list" class="plain site-list cloud-list"></ul>
+        </section>
 
-      <!-- ============ 分配池（单列 · 第四位） ============ -->
-      <section class="card block">
-        <div class="block-head">
-          <h2>分配池</h2>
-          <p class="desc">对象分析的账号下拉只列出配置池内成员；点击成员打开内置会话。</p>
-        </div>
-        <div class="chips" style="margin-bottom:8px"><span class="chip active">配置池</span></div>
-        <div id="pool-config" class="plain site-list"></div>
-      </section>
+        <section class="card block">
+          <div class="block-head">
+            <h2>盒子</h2>
+            <p class="desc">云端盒子清单（含空盒）；账号归属以云端为准。</p>
+          </div>
+          <ul id="box-list" class="plain site-list cloud-list"></ul>
+        </section>
+      </main>
     </div>
 
-    <!-- ============ 通用输入模态（Electron 不支持 window.prompt；原生 dialog 焦点最稳） ============ -->
-    <dialog id="ask-modal">
-      <div class="modal-card">
-        <h3 id="ask-title">输入</h3>
-        <input id="ask-input" autocomplete="off" />
-        <div class="modal-actions">
-          <button id="ask-cancel" class="btn-ghost" type="button">取消</button>
-          <button id="ask-ok" class="btn-primary" type="button">确定</button>
-        </div>
+    <!-- 未登录遮罩：覆盖账号中心内容，但保留左侧导航可用 -->
+    <div id="login-overlay" class="cloud-login-overlay" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <div class="cloud-login-card">
+        <div class="login-emblem" aria-hidden="true">A</div>
+        <h2 id="login-title">登录云端账号库</h2>
+        <p id="login-message" class="login-message">账号中心的数据全部来自云端，请先登录。</p>
+        <button id="cloud-login" class="btn-primary login-button" type="button">开始登录</button>
+        <div id="login-progress" class="login-progress hidden" aria-live="polite"></div>
+        <p class="login-hint">会打开系统浏览器完成授权；批准后自动返回，不需要抄验证码。</p>
       </div>
-    </dialog>
-
-    <!-- ============ 移入盒子弹窗（上游 box-modal 语义；原生 dialog） ============ -->
-    <dialog id="box-modal">
-      <div class="modal-card">
-        <h3 id="box-modal-title">移入盒子</h3>
-        <div class="box-options" id="box-options"></div>
-        <input id="box-new-name" placeholder="输入新盒名即自动创建并选中" autocomplete="off" />
-        <div class="modal-actions">
-          <button id="box-modal-cancel" class="btn-ghost" type="button">取消</button>
-          <button id="box-modal-ok" class="btn-primary" type="button">确定</button>
-        </div>
-      </div>
-    </dialog>
-
-    <!-- ============ 环境管理对话框 ============ -->
-    <dialog id="edit-dialog" class="mdialog">
-      <div class="mdialog-head">
-        <h3>编辑账号</h3>
-        <button class="mdialog-close" data-close-dialog title="关闭">×</button>
-      </div>
-      <div class="mdialog-body">
-        <div class="mgrid cols-2">
-          <label class="mfield">环境<select id="edit-env"></select></label>
-          <label class="mfield">用户名<input id="edit-username" autocomplete="off" /></label>
-          <label class="mfield">密码（留空 = 不修改）<input id="edit-password" type="password" autocomplete="new-password" /></label>
-          <label class="mfield">页签名（别名，可选）<input id="edit-tabname" placeholder="默认与用户名一致" /></label>
-          <label class="mfield">盒子<input id="edit-box" list="box-list" placeholder="默认盒子（可留空）" /></label>
-          <label class="mfield">标签（逗号分隔）<input id="edit-tags" /></label>
-        </div>
-      </div>
-      <div class="mdialog-foot">
-        <button class="mbtn ghost" id="btn-edit-cancel">取消</button>
-        <button class="mbtn" id="btn-edit-save">保存</button>
-      </div>
-    </dialog>
-
-    <dialog id="import-dialog" class="mdialog">
-      <div class="mdialog-head">
-        <h3>从原项目 env 文件导入（只读）</h3>
-        <button class="mdialog-close" data-close-dialog title="关闭">×</button>
-      </div>
-      <div class="mdialog-body">
-        <p class="desc" style="margin:0 0 8px">扫描 akso-cc / akso-auto 的 env 文件，原文件不动。</p>
-        <div id="import-preview" class="log-console" style="height:200px">…</div>
-      </div>
-      <div class="mdialog-foot">
-        <button class="mbtn ghost" id="btn-import-close">取消</button>
-        <button class="mbtn" id="btn-import-run">开始导入</button>
-      </div>
-    </dialog>
+    </div>
 
     <script type="module" src="/static/js/accounts.js"></script>
   </body>

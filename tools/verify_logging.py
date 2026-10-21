@@ -136,12 +136,13 @@ def main() -> int:
         client.post("/api/agent/invoke", json={"tool": "get_current_time", "args": {}})
         # 未知工具：错误路径（路由层短路 → 由 routes_agent 单独记）
         client.post("/api/agent/invoke", json={"tool": "no_such_tool", "args": {}})
-        # 风险工具：确认门（**必须给合法参数**，否则先撞 bad_args 而不是 needs_approval）
-        # 2026-09-22：原先用的是 `factory_create`（当时产品里唯一的 dangerous 工具），
-        # 它随配置工厂整体移除；改用 `accounts_browser_close`（write 级，同样过确认门）。
+        # 需要确认的工具：模型发起的实时确认（**必须给合法参数**）。
+        # 2026-10-19：内置浏览器下线后产品里没有 WRITE 工具，旧写法
+        # `accounts_browser_close` 已不存在；这里改用 `request_user_confirmation`
+        # 驱动同一条“需要确认 → 留痕”的日志路径，判据改看 `needs_confirmation`。
         client.post("/api/agent/invoke",
-                    json={"tool": "accounts_browser_close",
-                          "args": {"account_id": "probe-acc"}})
+                    json={"tool": "request_user_confirmation",
+                          "args": {"question": "验证确认门日志留痕"}})
 
         # 日志面（**自身不该产生 http 行**）
         client.get("/api/logs/days")
@@ -165,8 +166,8 @@ def main() -> int:
         dump = json.dumps(direct, ensure_ascii=False)
         check("B1 启动横幅（版本 + pid + frozen + 端口 + 数据目录 + 日志路径）",
               "Workbench v" in dump and "log=" in dump)
-        check("B2 路由注册逐条留痕（应有 12 条）",
-              len([r for r in direct if "路由已注册" in str(r.get("msg"))]) >= 12,
+        check("B2 路由注册逐条留痕（应有 9 条）",
+              len([r for r in direct if "路由已注册" in str(r.get("msg"))]) >= 9,
               f"实际 {len([r for r in direct if '路由已注册' in str(r.get('msg'))])} 条")
         check("B3 工具中枢自检（插件数 / 工具数）",
               any("工具中枢：" in str(r.get("msg")) for r in direct))
@@ -209,14 +210,16 @@ def main() -> int:
                   f"HTTP {detail.status_code}")
         check("D4 未知工具被单独记下（HTTP 路径在路由层短路，故由 routes_agent 记）",
               any("未知工具调用" in str(r.get("msg")) for r in direct))
-        check("D5 风险工具被确认门拦下并留痕",
-              any("确认门拦下" in str(r.get("msg")) for r in direct)
-              or any(r.get("tool") == "accounts_browser_close" and r.get("status") == "needs_approval"
+        check("D5 需要确认的工具调用被拦下并留痕",
+              any("确认" in str(r.get("msg")) for r in direct)
+              or any(r.get("tool") == "request_user_confirmation"
+                     and r.get("status") == "needs_confirmation"
                      for r in tool_rows),
-              f"accounts_browser_close 的日志："
-              f"{[r.get('status') for r in tool_rows if r.get('tool') == 'accounts_browser_close']}")
-        check("D6 被拦后的工具日志状态是 needs_approval",
-              any(r.get("tool") == "accounts_browser_close" and r.get("status") == "needs_approval"
+              f"request_user_confirmation 的日志："
+              f"{[r.get('status') for r in tool_rows if r.get('tool') == 'request_user_confirmation']}")
+        check("D6 被拦后的工具日志状态是 needs_confirmation",
+              any(r.get("tool") == "request_user_confirmation"
+                  and r.get("status") == "needs_confirmation"
                   for r in tool_rows))
 
         print("\n=== E. 检索面与自指噪声 ===")
@@ -271,13 +274,13 @@ def main() -> int:
                 proc.kill()
         handle.close()
 
-    # ── H. 开发态启动路径（**桌面壳 `npm start` 走的就是这条**）
+    # ── H. 开发态启动路径（Tauri sidecar / 手工 uvicorn 覆盖的 Python 侧）
     #
-    # 为什么单列一组：`desktop/main.js::spawnServer` 的**开发态回退分支**是直接 spawn
-    # `python -m uvicorn workbench.api:app`——**不经过任何入口脚本**。
+    # 为什么单列一组：Tauri 开发态 spawn `python -m workbench.server_entry`，
+    # 而测试/手工排障仍可能直接 spawn `python -m uvicorn workbench.api:app`——**不经过入口脚本**。
     # 于是"启动横幅"如果只在 `main.py` / `server_entry.py` 里记，日常开发测试时日志就是残缺的
     # （2026-09-20 实测确认过这个缺口，随后把横幅移到 `api.lifespan`）。
-    print("\n=== H. 开发态启动路径（桌面壳 npm start 的 Python 侧）===")
+    print("\n=== H. 开发态启动路径（裸 uvicorn 的 Python 侧）===")
     dev_port = PORT + 1
     dev_dir = workdir / "dev"
     dev_env = {**env, "WORKBENCH_DATA": str(dev_dir), "WORKBENCH_LOG_DIR": str(dev_dir / "logs"),

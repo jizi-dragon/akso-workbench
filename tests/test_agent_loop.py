@@ -346,8 +346,7 @@ def test_default_prompt_is_minimal(hub) -> None:
     for section in ("# 工具", "# 信息"):
         assert section in prompt
     # 不再点名具体工具：那是 plugins/ 里 description 的职责
-    for leaked in ("insight_run", "accounts_browser_open", "accounts_login",
-                   "request_user_confirmation"):
+    for leaked in ("insight_run", "accounts_login", "request_user_confirmation"):
         assert leaked not in prompt, f"提示词里又硬编码工具名了：{leaked}"
     assert "ISPE" not in prompt and "阿克索" not in prompt, "身份设定已按用户要求移除"
 

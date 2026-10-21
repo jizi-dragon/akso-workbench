@@ -229,6 +229,35 @@ def test_write_tool_blocked_without_token(hub) -> None:
     assert CALLS == [], "被拦下的工具绝不能被调用"
 
 
+def test_write_tool_is_refused_when_approval_gate_is_not_installed() -> None:
+    """★ fail-closed：**门没装配**时风险工具也必须拒执行。
+
+    反证：把 `execute` 里的 `if self._approval_gate is None` 分支删掉 ⇒
+    这个裸 hub 会直接跑 `write_handler`，CALLS 里会出现 `write:...`。
+    这是"缺省值落到危险一侧"的典型：原实现只在门存在时才拦，等于把
+    "没装配"解释成"不需要审批"。
+    """
+    CALLS.clear()
+    bare = pa.ToolHub()
+    bare.add_plugin(probe_plugin(risk=pa.Risk.WRITE))
+
+    inv = run(bare.execute("probe_write", {"text": "不该执行"}))
+
+    assert inv.status is pa.ToolStatus.REJECTED
+    assert "确认门" in (inv.error or "")
+    assert CALLS == [], "fail-closed 分支绝不能调用 handler"
+
+
+def test_read_tool_still_runs_without_approval_gate() -> None:
+    """前提断言：fail-closed 只针对风险工具，别把只读工具一起拒了。"""
+    CALLS.clear()
+    bare = pa.ToolHub()
+    bare.add_plugin(probe_plugin(risk=pa.Risk.WRITE))
+    inv = run(bare.execute("probe_echo", {"text": "只读"}))
+    assert inv.status is pa.ToolStatus.OK
+    assert CALLS == ["echo:只读"]
+
+
 def test_dangerous_tool_needs_approval_then_runs_with_token(hub) -> None:
     CALLS.clear()
     hub.add_plugin(probe_plugin(risk=pa.Risk.DANGEROUS))
@@ -464,14 +493,14 @@ def test_real_hub_risk_grading() -> None:
     > 2026-09-22：`factory_*` 三条随配置工厂移除。连带后果是**产品里再没有 DANGEROUS 工具**
     > （`factory_create` 曾是唯一一个），因此这里不再有 dangerous 期望项——
     > "dangerous 归零"这件事本身由 `tests/test_app.py::test_agent_selfcheck` 守着。
+    > 2026-10-19：内置浏览器下线，产品当前**没有 WRITE 工具**；风险门本身仍由
+    > `tests/test_agent_approval.py` 用合成 ToolHub 覆盖，不依赖某个真实工具存在。
     """
     hub = get_hub()
     expected = {
         "insight_read_config": pa.Risk.READ,
         "insight_run": pa.Risk.READ,
         "accounts_login": pa.Risk.READ,
-        "accounts_browser_open": pa.Risk.WRITE,
-        "accounts_browser_close": pa.Risk.WRITE,
     }
     for name, risk in expected.items():
         spec = hub.get(name)

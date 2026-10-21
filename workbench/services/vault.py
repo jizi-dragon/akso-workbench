@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,11 +34,27 @@ import urllib.request
 from . import accounts, storage
 
 #: 云端地址。默认指向正式环境；`AKSO_VAULT_URL` 可以覆盖（本地联调时用）。
-DEFAULT_URL = os.environ.get("AKSO_VAULT_URL") or "https://www.dragonrain.top:8443"
+#:
+#: ★ 2026-10-19：默认端口从 `:8443` 改为标准的 **443**。
+#: 服务端 2026-10-13 已完成迁移（备案通过），`:8443` 现在只是一段
+#: `iptables REDIRECT` 垫片；垫片按云端 README 的约定会在两端客户端升级后撤掉。
+#: 继续把新安装指向旧端口 = 给将来预埋一次"登录突然打不开"。
+DEFAULT_URL = os.environ.get("AKSO_VAULT_URL") or "https://www.dragonrain.top"
 
 _SETTING_TOKEN = "vault_session_token"      # 密文
 _SETTING_PROFILE = "vault_profile"          # 明文 JSON：displayName/avatar 不是凭据
 _SETTING_URL = "vault_base_url"
+_SETTING_LIBRARY = "vault_library_cache"    # **脱敏后**的展示快照（不含 fernetKey/passwordEnc）
+_SETTING_LIBRARY_AT = "vault_library_cache_at"
+_SETTING_REVISION = "vault_revision"        # 上次拉取/推送的云端 revision（乐观并发）
+
+#: 展示缓存的保鲜期。云控台改一条账号后，桌面端最多 5 分钟内看到旧数据；
+#: 用户点「同步数据」会绕过它（`library(refresh=True)`）。
+LIBRARY_TTL_MS = 5 * 60 * 1000
+
+#: 云端快照合法的 `format` 值。★ 2026-10-11 服务端改过名，但形状没变；
+#: 新客户端**两个都接受**（见 akso-cloud `docs/SYNC-CONTRACT.md` §3.1）。
+SNAPSHOT_FORMATS = frozenset({"akso-cloud-snapshot", "akso-vault-snapshot"})
 
 #: 单次请求超时。设备流是**轮询**，所以这个值要小 —— 大超时会让
 #: "网络断了"表现为"界面卡住十几秒没有任何反馈"。
@@ -46,6 +63,10 @@ TIMEOUT_S = 12
 
 class VaultError(RuntimeError):
     """云端调用失败。消息**面向用户**（会被直接显示在界面上）。"""
+
+    def __init__(self, message: str, status: int = 0) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 def base_url() -> str:
@@ -74,7 +95,7 @@ def _request(method: str, path: str, *, body: dict | None = None, token: str | N
             detail = json.loads(exc.read().decode("utf-8")).get("detail", "")
         except Exception:  # noqa: BLE001 —— 错误体不是 JSON 也不该让这里炸
             pass
-        raise VaultError(detail or f"云端返回 {exc.code}") from exc
+        raise VaultError(detail or f"云端返回 {exc.code}", status=exc.code) from exc
     except urllib.error.URLError as exc:
         raise VaultError(f"连不上云端（{exc.reason}）—— 请检查网络与地址") from exc
     try:
@@ -101,6 +122,8 @@ def session_token() -> str:
 def save_session(token: str, profile: dict) -> None:
     storage.set_setting(_SETTING_TOKEN, accounts.encrypt_password(token))
     storage.set_setting(_SETTING_PROFILE, json.dumps(profile, ensure_ascii=False))
+    # 换了一个会话 ⇒ 上一份展示缓存属于**上一个身份**，必须丢。
+    clear_library_cache()
 
 
 def clear_session() -> None:
@@ -109,6 +132,7 @@ def clear_session() -> None:
     界面就必须退出，不能因为网络不通而卡在一个半登录状态）。"""
     storage.set_setting(_SETTING_TOKEN, "")
     storage.set_setting(_SETTING_PROFILE, "")
+    clear_library_cache()
 
 
 def profile() -> dict:
@@ -183,12 +207,271 @@ def fetch_profile(token: str | None = None) -> dict:
     return prof
 
 
-def snapshot() -> dict:
-    """拉一份完整账号库快照（站点 + 账号 + fernetKey）。"""
-    tok = session_token()
-    if not tok:
+#: 账号库同步（`GET /api/vault/snapshot` / `POST /api/vault/merge`）**刻意未实现**：
+#: 云端契约要求 `snapshotId` 幂等、空快照不清本地、`revision` 乐观并发（S1–S4），
+#: 而本仓只做了设备流登录。下面只做**只读展示**：拉快照 → 脱敏 → 缓存。
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def is_auth_error(exc: VaultError) -> bool:
+    text = str(exc)
+    return "401" in text or "会话" in text or "未登录" in text or "重新登录" in text
+
+
+def clear_library_cache() -> None:
+    """清掉展示缓存。退出 / 换会话时调用（缓存里没有凭据，但它是**上一个身份的数据**）。"""
+    storage.set_setting(_SETTING_LIBRARY, "")
+    storage.set_setting(_SETTING_LIBRARY_AT, "")
+
+
+def _load_library_cache() -> dict | None:
+    raw = storage.get_setting(_SETTING_LIBRARY) or ""
+    if not raw:
+        return None
+    try:
+        view = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(view, dict):
+        return None
+    try:
+        view["_cachedAt"] = int(storage.get_setting(_SETTING_LIBRARY_AT) or 0)
+    except (TypeError, ValueError):
+        view["_cachedAt"] = 0
+    return view
+
+
+def _store_library_cache(view: dict) -> None:
+    storage.set_setting(_SETTING_LIBRARY, json.dumps(view, ensure_ascii=False))
+    storage.set_setting(_SETTING_LIBRARY_AT, str(_now_ms()))
+
+
+def _int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _str(value: object, default: str = "") -> str:
+    return str(value) if value is not None else default
+
+
+def _tags(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, (str, int, float))]
+
+
+def _snapshot() -> dict:
+    """拉云端全量快照并做**形状校验**（不校验的后果是页面静默空白）。"""
+    token = session_token()
+    if not token:
         raise VaultError("尚未登录云端账号库")
-    return _request("GET", "/api/vault/snapshot", token=tok)
+    data = _request("GET", "/api/vault/snapshot", token=token)
+    if not isinstance(data, dict):
+        raise VaultError("云端快照形状不对：顶层不是对象")
+    if data.get("format") not in SNAPSHOT_FORMATS:
+        raise VaultError(f"云端快照格式不认识：{data.get('format')!r}")
+    if _int(data.get("version"), 0) != 1:
+        raise VaultError(f"云端快照版本不支持：{data.get('version')!r}")
+    for key in ("sites", "accounts", "boxes"):
+        if not isinstance(data.get(key), list):
+            raise VaultError(f"云端快照缺少数组字段：{key}")
+    return data
+
+
+def _safe_library(data: dict) -> dict:
+    """把云端快照压成**可以给浏览器看**的只读视图。
+
+    ★ **绝不透传** `fernetKey` 与 `passwordEnc`：前者能解开全部密码，后者是密文。
+    页面需要的"有没有密码"由 `hasPassword` 表达，不需要密文本体。
+    """
+    sites = [
+        {
+            "id": _str(site.get("id")),
+            "name": _str(site.get("name")),
+            "baseUrl": _str(site.get("baseUrl")),
+            "note": _str(site.get("note")),
+            "createdAt": _int(site.get("createdAt")),
+            "updatedAt": _int(site.get("updatedAt")),
+            "accountCount": _int(site.get("accountCount")),
+        }
+        for site in data.get("sites") or [] if isinstance(site, dict)
+    ]
+    accounts = [
+        {
+            "id": _str(account.get("id")),
+            "siteId": _str(account.get("siteId")),
+            "siteName": _str(account.get("siteName")),
+            "baseUrl": _str(account.get("baseUrl")),
+            "username": _str(account.get("username")),
+            "tabName": _str(account.get("tabName")) or _str(account.get("username")),
+            "role": _str(account.get("role")),
+            "tags": _tags(account.get("tags")),
+            "note": _str(account.get("note")),
+            "status": _str(account.get("status"), "idle"),
+            "scheme": _str(account.get("scheme")),
+            "box": _str(account.get("box")),
+            "createdAt": _int(account.get("createdAt")),
+            "updatedAt": _int(account.get("updatedAt")),
+            "hasPassword": bool(account.get("passwordEnc")),
+        }
+        for account in data.get("accounts") or [] if isinstance(account, dict)
+    ]
+    boxes = [
+        {
+            "name": _str(box.get("name")),
+            "isDefault": bool(box.get("isDefault")),
+            "disabled": bool(box.get("disabled")),
+            "autoDisabled": bool(box.get("autoDisabled")),
+            "count": _int(box.get("count")),
+            "deletable": bool(box.get("deletable")),
+            "renameable": bool(box.get("renameable")),
+            "bindable": bool(box.get("bindable")),
+            "siteId": _str(box.get("siteId")),
+            "siteName": _str(box.get("siteName")),
+            "sortOrder": _int(box.get("sortOrder"), 999),
+        }
+        for box in data.get("boxes") or [] if isinstance(box, dict)
+    ]
+    counts = data.get("counts") if isinstance(data.get("counts"), dict) else {}
+    return {
+        "format": _str(data.get("format")),
+        "version": _int(data.get("version"), 1),
+        "snapshotId": _str(data.get("snapshotId")),
+        "revision": _int(data.get("revision")),
+        "generatedAt": _int(data.get("generatedAt")),
+        "fetchedAt": _now_ms(),
+        "defaultBox": _str(data.get("defaultBox"), "默认盒子"),
+        "counts": {
+            "sites": _int(counts.get("sites"), len(sites)),
+            "accounts": _int(counts.get("accounts"), len(accounts)),
+            "boxes": _int(counts.get("boxes"), len(boxes)),
+        },
+        "sites": sites,
+        "accounts": accounts,
+        "boxes": boxes,
+    }
+
+
+def library(refresh: bool = False) -> dict:
+    """云端账号库的**只读展示视图**（脱敏 + 5 分钟缓存 + 断网回落）。
+
+    - `refresh=True` 绕过 TTL（用户点「同步数据」）；
+    - 断网/5xx 时若有缓存，返回 `stale=True` + `error`，页面显示"上次同步的数据"；
+    - **401 不回落**：会话失效必须让用户重新登录（返回旧数据会假装还登录着）。
+    """
+    cached = _load_library_cache()
+    if not refresh and cached and _now_ms() - int(cached.get("_cachedAt") or 0) < LIBRARY_TTL_MS:
+        view = dict(cached)
+        view.pop("_cachedAt", None)
+        view.update(stale=False, fromCache=True)
+        _remember_revision(view)
+        return view
+    try:
+        view = _safe_library(_snapshot())
+        _store_library_cache(view)
+        _remember_revision(view)
+        return {**view, "stale": False, "fromCache": False}
+    except VaultError as exc:
+        if is_auth_error(exc):
+            clear_session()
+            raise
+        if cached:
+            view = dict(cached)
+            view.pop("_cachedAt", None)
+            view.update(stale=True, fromCache=True, error=str(exc))
+            _remember_revision(view)
+            return view
+        raise
+
+
+def _remember_revision(view: dict) -> None:
+    revision = _int(view.get("revision"))
+    if revision > 0:
+        storage.set_setting(_SETTING_REVISION, str(revision))
+
+
+def _host_of(base_url: str) -> tuple[str, str]:
+    raw = (base_url or "").strip()
+    if not raw:
+        return "", ""
+    if "://" not in raw:
+        raw = "https://" + raw
+    parsed = urllib.parse.urlsplit(raw)
+    return (parsed.hostname or "").lower(), parsed.scheme or "https"
+
+
+def _local_merge_payload() -> dict:
+    """把本机账号库整理成云端 `/api/vault/merge` 的请求体。
+
+    ★ 只作为“本地→云端”的一次性迁移/推送：账号中心不再提供本地增删改。
+    密码在内存里解密后随 HTTPS 请求发出，不落日志；没有密码的账号发空串。
+    """
+    sites_by_host: dict[str, dict] = {}
+    rows: list[dict] = []
+    for item in accounts.list_accounts():
+        host, scheme = _host_of(str(item.get("env_base_url") or ""))
+        if not host:
+            continue
+        sites_by_host.setdefault(host, {
+            "host": host,
+            "name": str(item.get("env_name") or host),
+            "scheme": scheme,
+            "note": "",
+        })
+        try:
+            password = accounts.reveal_password(str(item["id"])) if item.get("has_password") else ""
+        except Exception:  # noqa: BLE001 —— 单条坏密文不拖垮整次推送
+            password = ""
+        rows.append({
+            "siteHost": host,
+            "username": str(item.get("username") or ""),
+            "password": password,
+            "tabName": str(item.get("tab_name") or ""),
+            "box": str(item.get("box") or ""),
+            "scheme": "",
+            "updatedAt": _int(item.get("updated_at")),
+        })
+    payload: dict = {
+        "sites": list(sites_by_host.values()),
+        "accounts": rows,
+        "clientAccountCount": len(rows),
+    }
+    revision = _int(storage.get_setting(_SETTING_REVISION))
+    if revision > 0:
+        payload["baseRevision"] = revision
+    return payload
+
+
+def push_local() -> dict:
+    """把本机账号库并上云端（`POST /api/vault/merge`）。
+
+    - 仅在已登录时可用；请求走与拉取相同的会话令牌；
+    - 带上上次拉取的 `revision`，云端 409 时**不重试**，把“重新拉取后再推”
+      交给用户/界面（M3：拿旧 revision 反复重试会永远 409）；
+    - 成功后记住新的 `revision`，供下一次推送使用。
+    """
+    token = session_token()
+    if not token:
+        raise VaultError("请先登录云端账号库")
+    payload = _local_merge_payload()
+    if not payload["accounts"]:
+        raise VaultError("本机没有可推送的账号")
+    resp = _request("POST", "/api/vault/merge", body=payload, token=token)
+    revision = _int(resp.get("revision"))
+    if revision > 0:
+        storage.set_setting(_SETTING_REVISION, str(revision))
+    return {
+        "ok": bool(resp.get("ok", True)),
+        "sent": len(payload["accounts"]),
+        "sites": len(payload["sites"]),
+        "result": resp,
+    }
 
 
 def logout() -> None:

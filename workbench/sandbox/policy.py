@@ -95,6 +95,9 @@ class SandboxPolicy:
     max_output_bytes: int = 256 * 1024
     #: 是否允许子进程再派生子进程。Windows 上由 Job Object 的进程数上限强制。
     allow_subprocesses: bool = False
+    #: 是否**声明会写工作区**。`read-only` 工作区会拒绝这类策略（见 `layout.permission_error`）。
+    #: 注意：这是意图声明，不是内核级只读——脚本仍以当前用户权限运行。
+    writes: bool = False
     #: 声明：是否允许联网。**本期不强制**（强制需 WFP/防火墙，见 ADR-0014 §3）。
     allow_network: bool = False
     #: 额外允许注入的环境变量（**显式列出**；不得含凭据，`validate()` 会拒）。
@@ -105,7 +108,8 @@ class SandboxPolicy:
     @property
     def enforced(self) -> tuple[str, ...]:
         """**真正被代码强制**的项。其余字段只是声明——别读错。"""
-        enforced = ["进程树整棵终止（超时/取消）", "环境变量白名单", "工作目录必须在沙箱根内",
+        enforced = ["进程树整棵终止（超时/取消）", "环境变量白名单", "工作目录必须在工作区根内",
+                    "工作区权限预检（只读/联网/派生进程）",
                     "敏感路径拒绝", "输出字节上限", "执行审计留痕"]
         if not self.allow_subprocesses:
             enforced.append("子进程数上限 = 1（Job Object）")
@@ -115,7 +119,7 @@ class SandboxPolicy:
         """策略指纹：写进审计，用来回答"这次执行当时用的是哪份策略"。"""
         payload = json.dumps({
             "name": self.name, "severity": int(self.severity), "timeout_s": self.timeout_s,
-            "max_output_bytes": self.max_output_bytes, "allow_subprocesses": self.allow_subprocesses,
+            "max_output_bytes": self.max_output_bytes, "allow_subprocesses": self.allow_subprocesses, "writes": self.writes,
             "allow_network": self.allow_network, "extra_env": sorted(self.extra_env),
         }, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
@@ -207,14 +211,16 @@ POLICIES: dict[str, SandboxPolicy] = {
         severity=Severity.NORMAL,
         timeout_s=120,
         allow_subprocesses=False,
+        writes=True,
         allow_network=False,
-        description="Skill 脚本（本期首个消费方）：可在沙箱根内读写，不联网、不派生进程、2 分钟上限。",
+        description="Skill 脚本（本期首个消费方）：可在工作区内读写，不联网、不派生进程、2 分钟上限。",
     ),
     "mcp-stdio": SandboxPolicy(
         name="mcp-stdio",
         severity=Severity.NORMAL,
         timeout_s=300,
         allow_subprocesses=True,
+        writes=True,
         allow_network=True,
         description="MCP stdio 服务端（预留，本期不启用）：允许派生进程与联网，5 分钟上限。",
     ),
@@ -244,6 +250,7 @@ def describe_policies() -> list[dict]:
             "timeout_s": p.timeout_s,
             "max_output_bytes": p.max_output_bytes,
             "allow_subprocesses": p.allow_subprocesses,
+            "writes": p.writes,
             "allow_network": p.allow_network,
             "description": p.description,
             "fingerprint": p.fingerprint(),

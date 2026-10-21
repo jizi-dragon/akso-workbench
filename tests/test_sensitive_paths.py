@@ -66,7 +66,7 @@ def test_sensitive_table_has_exactly_one_definition_site() -> None:
     """表在**源码里只能有一处定义**——直接查源文件，而不是比对象 identity。
 
     为什么不用 `policy.SENSITIVE_PATH_PARTS is config.SENSITIVE_PATH_PARTS`：
-    `tests/test_ports_contract.py` 会 `importlib.reload(config)`，
+    过去 `test_ports_contract.py` 会 `importlib.reload(config)`（该测试已随 Electron 删除），
     重载后 `config` 的属性被换成**新对象**，而 `sandbox/policy.py` 还握着旧引用——
     于是 identity 断言变成**测试顺序相关**的（本文件第一版就是这么写错的）。
     真正要守的不变量是"**只有一处定义**"，那就直接查定义处。

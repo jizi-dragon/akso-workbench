@@ -237,22 +237,37 @@ def _run(req: ExecRequest) -> ExecResult:
                 policy_name=policy.name, policy_fingerprint=policy.fingerprint())
         timeout = req.timeout_s
 
+    # ── 1.5) 工作区权限：只读 / 联网 / 派生进程（2026-10-19）
+    from .layout import permission_error, workspace_root
+
+    try:
+        permission_why = permission_error(policy)
+    except Exception as exc:  # noqa: BLE001 —— 策略层读不出配置也必须 Fail-Closed
+        return _reject(f"工作区权限不可判定：{type(exc).__name__}: {exc}",
+                       policy_name=policy.name, policy_fingerprint=policy.fingerprint())
+    if permission_why:
+        return _reject(permission_why, policy_name=policy.name,
+                       policy_fingerprint=policy.fingerprint())
+
     # ── 2) 可执行文件
     exe, why = resolve_executable(req.argv)
     if exe is None:
         return _reject(why, policy_name=policy.name, policy_fingerprint=policy.fingerprint())
     argv = [exe] + list(req.argv[1:])
 
-    # ── 3) 文件系统：cwd 必须在沙箱根内，且不得命中敏感路径
-    from .layout import SANDBOX_ROOT  # 本地导入：避免与 layout 形成循环
-
+    # ── 3) 文件系统：cwd 必须在**工作区根**内，且不得命中敏感路径
     cwd = Path(req.cwd)
+    try:
+        root = workspace_root()
+    except Exception as exc:  # noqa: BLE001 —— 同上
+        return _reject(f"工作区根不可用：{type(exc).__name__}: {exc}",
+                       policy_name=policy.name, policy_fingerprint=policy.fingerprint())
     if is_sensitive_path(cwd):
         return _reject(f"工作目录命中敏感路径拒绝表：{cwd}",
                        policy_name=policy.name, policy_fingerprint=policy.fingerprint())
-    if not within_root(cwd, SANDBOX_ROOT):
+    if not within_root(cwd, root):
         return _reject(
-            f"工作目录越出沙箱根：{cwd}（沙箱根 = {SANDBOX_ROOT}）",
+            f"工作目录越出工作区根：{cwd}（工作区根 = {root}）",
             policy_name=policy.name, policy_fingerprint=policy.fingerprint())
     if not cwd.is_dir():
         return _reject(f"工作目录不存在：{cwd}",
@@ -260,7 +275,10 @@ def _run(req: ExecRequest) -> ExecResult:
 
     # ── 4) 环境：白名单
     env = build_env(policy, extra=req.extra_env)
-    notes: list[str] = [f"环境变量白名单：注入 {len(env)} 个，宿主其余变量未传入"]
+    notes: list[str] = [
+        f"环境变量白名单：注入 {len(env)} 个，宿主其余变量未传入",
+        f"工作区：{root}（cwd={cwd}）",
+    ]
 
     # ── 5) 起进程 + 绑 Job
     started = time.perf_counter()

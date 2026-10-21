@@ -69,7 +69,7 @@ def test_encoding_and_line_endings(rel: str, spec: tuple[str, bool]) -> None:
     ending, bom_ok = spec
     raw = _read(ROOT / rel)
 
-    # ① BOM：本仓的 markdown 一律无 BOM（`tools/build.ps1` 是刻意的例外，它不在这张表里）
+    # ① BOM：本仓的 markdown 一律无 BOM（`tools/build_tauri.ps1` 是刻意的例外，它不在这张表里）
     has_bom = raw.startswith(b"\xef\xbb\xbf")
     assert has_bom == bom_ok, (
         f"{rel}：BOM 状态不对（实际 {'有' if has_bom else '无'}，期望 {'有' if bom_ok else '无'}）—— "

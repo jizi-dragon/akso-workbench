@@ -9,8 +9,8 @@ r"""危险操作的可撤销性声明（计划 §8.3）。
 DANGEROUS 工具出现之前**没有任何调用方** —— 而本仓对这件事有明确态度
 （`summary_fn` 的文档串）：「零调用方的扩展点是**下一次重构里最容易被无声改坏的东西**」。
 
-⇒ 口径落到**所有会改状态的工具**（`risk is not READ`），今天就有 2 个真实调用方
-（`accounts_browser_open` / `accounts_browser_close`）。
+⇒ 口径落到**所有会改状态的工具**（`risk is not READ`）。2026-10-19 内置浏览器下线后
+产品里暂时没有真实 WRITE 工具，本文件的装配期契约由合成 `ToolSpec` 覆盖。
 
 ## 本文件钉住的四件事
 
@@ -115,7 +115,8 @@ def test_every_real_mutating_tool_declares_reversibility() -> None:
     hub = default_registry()
     assert hub.failures == [], f"装配有失败：{hub.failures}"
     mutating = [s for s in hub.specs() if s.risk is not pa.Risk.READ]
-    assert mutating, "前提不成立：一个会改状态的工具都没有"
+    # 2026-10-19：内置浏览器下线后产品里暂时没有 WRITE 工具，因此这里允许为空。
+    # 本文件其余用例用合成 spec 覆盖 UNDOABLE / IRREVERSIBLE 的装配期契约。
     for spec in mutating:
         assert spec.reversibility is not None, f"{spec.name} 没声明 reversibility"
         if spec.reversibility is pa.Reversibility.UNDOABLE:

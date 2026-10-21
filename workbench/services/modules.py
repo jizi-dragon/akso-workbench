@@ -3,7 +3,7 @@
 三个模块：
 - workbench   自身（FastAPI/Python 依赖体检）
 - insight     平台洞察（只读引用；能力已原生化，体检只做信息项）
-- accounts    统一账号库 + 托管浏览器（能力已内化，检查 Playwright）
+- accounts    统一账号库（能力已内化；2026-10-19 起不再依赖 Playwright）
 
 ⚠️ **模块 id 与存档文件名不一致是刻意的**：id 是本工作台自己的模块名（`insight`），
 文件名是「这份存档对应哪个来源项目」的引用真源（`akso-cc.json`，其 `repoPathEnv`
@@ -43,14 +43,13 @@ BUILTIN_MODULES: list[dict[str, Any]] = [
     },
     {
         "id": "accounts",
-        "title": "账号中心（凭据托管 + 托管会话 + 分配池，迁自 quick-login）",
+        "title": "账号中心（凭据托管 + 分配池，迁自 quick-login）",
         "runtime": "python",
         "mode": "native",
         "repoPath": None,
         "entry": None,
         "commands": {
             "accounts": {"description": "账号/环境 CRUD + 卡片墙 + 分配池"},
-            "browser": {"description": "一键启动托管会话（轮盘快速入口）"},
         },
     },
 ]
@@ -89,18 +88,15 @@ def resolve_repo_path(adapter: dict[str, Any]) -> Path | None:
 
 def _check_python_deps() -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
-    for modname, need in (
-        ("fastapi", True), ("uvicorn", True), ("httpx", True),
-        ("pydantic", True), ("cryptography", True), ("playwright", False),
-    ):
+    for modname in ("fastapi", "uvicorn", "httpx", "pydantic", "cryptography"):
         try:
             __import__(modname)
             checks.append({"name": f"python:{modname}", "ok": True, "detail": "ok"})
         except ImportError:
             checks.append({
                 "name": f"python:{modname}",
-                "ok": not need,
-                "detail": "缺失" if need else "未安装（托管浏览器功能不可用）",
+                "ok": False,
+                "detail": "缺失",
             })
     return checks
 
@@ -121,27 +117,6 @@ def _check_adapter(adapter: dict[str, Any]) -> list[dict[str, Any]]:
     return checks
 
 
-def _check_playwright_browser() -> dict[str, Any]:
-    """检测 Playwright chromium 是否可执行。"""
-    try:
-        # 打包态必须先指向随包分发的 chromium，否则这里会误报「未安装」：
-        # playwright 默认找 %LOCALAPPDATA%\ms-playwright，包里那份在 _MEIPASS 下。
-        # 与 browser_pool 共用**同一个**单点实现（2026-09-14 打包态实测修复）——
-        # 现在连"怎么问 Playwright"也只有一处（async 探测，不留 pending task，
-        # 见 browser_pool.chromium_executable_path 的注释）。
-        from .browser_pool import chromium_executable_path
-
-        path = chromium_executable_path()
-        ok = path.exists()
-        return {
-            "name": "playwright:chromium",
-            "ok": ok,
-            "detail": str(path) if ok else "chromium 未安装（.venv/Scripts/playwright install chromium）",
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"name": "playwright:chromium", "ok": False, "detail": f"检测失败：{exc}"}
-
-
 def module_status(mod_id: str, adapter: dict[str, Any] | None = None) -> dict[str, Any]:
     """单个模块的完整状态（清单 + 体检）。
 
@@ -158,7 +133,7 @@ def module_status(mod_id: str, adapter: dict[str, Any] | None = None) -> dict[st
         checks = _check_python_deps()
         mod = BUILTIN_MODULES[0]
     elif mod_id == "accounts":
-        checks = _check_python_deps() + [_check_playwright_browser()]
+        checks = _check_python_deps()
         mod = BUILTIN_MODULES[1]
     else:
         mod = resolved or {}

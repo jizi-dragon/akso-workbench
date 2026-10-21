@@ -53,6 +53,16 @@ INLINE_SUFFIXES = {
     ".csv": "text/csv",
 }
 
+#: 图片走**内联**二进制（不能让 `PlainTextResponse` 把 PNG 按 UTF-8 读坏）。
+#: 只给浏览器 `<img>` 用，不参与 `read_artifact_text`。
+INLINE_IMAGE_SUFFIXES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+
 #: 内联返回的正文上限（超出截断并告知；下载不受限）。
 MAX_INLINE_CHARS = 2_000_000
 

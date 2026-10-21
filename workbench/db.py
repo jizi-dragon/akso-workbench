@@ -564,7 +564,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_conv_seq ON messages(conversation_id, se
 
 
 # ------------------------------------------------------------------ 方言边界
-# 交付形态是单机单人（Electron + 本机 sidecar），因此保留 SQLite。为了让将来
+# 交付形态是单机单人（Tauri + 本机 sidecar），因此保留 SQLite。为了让将来
 # 万一改判为「服务端多人部署」时是一次受控迁移而不是全库搜索替换，SQLite 特有
 # 构造全部收拢在下面这一节，以及 MIGRATIONS 里标注的少数几处：
 #   1. PRAGMA 语句            → _PRAGMAS

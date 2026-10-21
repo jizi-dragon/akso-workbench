@@ -53,8 +53,9 @@ from urllib.parse import unquote
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 # 不是我们的内容，也没有人会去点它们的链接
+# `target` 是 Tauri/Cargo 构建产物（含旧 sidecar 资源），不是活文档。
 SKIP_DIRS = {".git", ".venv", "node_modules", "dist", "build", "__pycache__",
-             "tmp", ".pytest_cache", ".ruff_cache"}
+             "tmp", ".pytest_cache", ".ruff_cache", "target"}
 
 ARCHIVES = (
     "factory-tuning",                       # 带日期的真机取证报告（历史证据）

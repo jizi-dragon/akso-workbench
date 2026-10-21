@@ -75,7 +75,8 @@ function renderBoundary(payload) {
   const declared = [
     '允许联网（allow_network）：仅记录意图，未做网络层强制',
     '允许派生进程（allow_subprocesses）：仅设进程数上限，未做系统调用级限制',
-    '文件系统：只校验工作目录在沙箱根内，未做读写权限隔离',
+    '文件系统：只校验工作目录在工作区根内，未做内核级读写权限隔离',
+    '只读模式：拒绝「声明会写」的策略，不是脚本真的写不了文件',
     '内存 / CPU：未限制',
   ];
   $('sb-declared').innerHTML = declared.map((x) => `<li>${esc(x)}</li>`).join('');
@@ -85,7 +86,7 @@ function renderPolicies(payload) {
   const tbody = document.querySelector('#sb-policies tbody');
   const rows = payload.policies || [];
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="hint">没有加载到任何策略——沙箱不可用</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="hint">没有加载到任何策略——沙箱不可用</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((p) => `
@@ -95,6 +96,7 @@ function renderPolicies(payload) {
       <td>${p.timeout_s}s</td>
       <td>${fmtBytes(p.max_output_bytes)}</td>
       <td>${p.allow_subprocesses ? '允许' : '限 '}</td>
+      <td>${p.writes ? '声明会写' : '只读'}</td>
       <td>${p.allow_network ? '声明允许' : '声明禁止'}</td>
       <td class="hint">${esc(p.description)}</td>
     </tr>`).join('');
@@ -102,10 +104,14 @@ function renderPolicies(payload) {
 
 function renderStatus(status, health) {
   const dirs = status.layout || {};
+  const workspace = status.workspace || {};
   const cards = [
     ['平台', status.platform === 'windows' ? 'Windows' : status.platform],
     ['Job Object', status.job?.job_api ? `可用（持有 ${status.job.active_jobs}）` : '不可用 → 走进程组'],
-    ['沙箱根', dirs.root || '—'],
+    ['工作区根', workspace.root || dirs.root || '—'],
+    ['权限', `${workspace.mode === 'read-only' ? '只读' : '读写'} · `
+      + `${workspace.allowNetwork ? '联网开' : '联网关'} · `
+      + `${workspace.allowSubprocess ? '派生进程开' : '派生进程关'}`],
     ['工作区 / 已解包', `${dirs.run_count ?? '—'} / ${dirs.staged_count ?? '—'}`],
     ['允许的解释器', (status.executables_allowed || []).join(', ') || '—'],
     ['自检', health?.ok ? '通过' : '未通过'],
@@ -115,6 +121,62 @@ function renderStatus(status, health) {
       <span class="hint">${esc(k)}</span>
       <div class="mono" style="word-break:break-all">${esc(String(v))}</div>
     </div>`).join('');
+}
+
+function renderWorkspace(data) {
+  if (!data) return;
+  $('sb-ws-root').value = data.root || '';
+  $('sb-ws-mode').value = data.mode || 'read-write';
+  $('sb-ws-network').checked = Boolean(data.allowNetwork);
+  $('sb-ws-subprocess').checked = Boolean(data.allowSubprocess);
+  const mode = data.mode === 'read-only' ? '只读' : '读写';
+  $('sb-ws-meta').textContent =
+    `当前：${mode} · ${data.allowNetwork ? '允许联网' : '禁止联网'} · `
+    + `${data.allowSubprocess ? '允许派生进程' : '禁止派生进程'} · `
+    + `配置文件 ${data.configPath || '—'}`;
+  $('sb-ws-honest').textContent = data.honest_limit || '';
+}
+
+async function saveWorkspace() {
+  const meta = $('sb-ws-meta');
+  try {
+    const data = await api('/api/sandbox/workspace', {
+      method: 'PUT',
+      body: {
+        root: $('sb-ws-root').value.trim(),
+        mode: $('sb-ws-mode').value,
+        allowNetwork: $('sb-ws-network').checked,
+        allowSubprocess: $('sb-ws-subprocess').checked,
+      },
+    });
+    renderWorkspace(data);
+    meta.textContent = '✓ 已保存。下一次沙箱执行起生效。';
+  } catch (err) {
+    meta.textContent = `✗ 保存失败：${err.message}`;
+    meta.style.color = '#f85149';
+    setTimeout(() => { meta.style.color = ''; }, 3200);
+  }
+}
+
+async function resetWorkspace() {
+  const meta = $('sb-ws-meta');
+  try {
+    const data = await api('/api/sandbox/workspace/reset', { method: 'POST' });
+    renderWorkspace(data);
+    await refresh();
+    // `refresh()` 会再 renderWorkspace 一次；提示必须放在它之后，否则被"当前：…"覆盖。
+    meta.textContent = '✓ 已恢复默认工作区与保守权限。';
+  } catch (err) {
+    meta.textContent = `✗ 重置失败：${err.message}`;
+  }
+}
+
+async function loadWorkspace() {
+  try {
+    renderWorkspace(await api('/api/sandbox/workspace'));
+  } catch (err) {
+    $('sb-ws-meta').textContent = `读取失败：${err.message}`;
+  }
 }
 
 function renderRuns(payload) {
@@ -153,6 +215,7 @@ async function refresh() {
     renderBoundary(policies);
     renderPolicies(policies);
     renderStatus(status, health);
+    renderWorkspace(status.workspace);
     renderRuns(runs);
   } catch (err) {
     const tbody = document.querySelector('#sb-runs tbody');
@@ -161,4 +224,16 @@ async function refresh() {
 }
 
 $('sb-refresh')?.addEventListener('click', refresh);
+$('sb-ws-save')?.addEventListener('click', saveWorkspace);
+$('sb-ws-reset')?.addEventListener('click', resetWorkspace);
+$('sb-ws-copy')?.addEventListener('click', async (event) => {
+  const root = $('sb-ws-root').value.trim();
+  try {
+    await navigator.clipboard.writeText(root);
+    event.currentTarget.textContent = '已复制';
+  } catch {
+    event.currentTarget.textContent = '复制失败';
+  }
+  setTimeout(() => { event.currentTarget.textContent = '复制路径'; }, 1200);
+});
 refresh();

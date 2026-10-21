@@ -8,7 +8,7 @@
 | 级别 | 调用数 | 去向 | 结果 |
 |---|---|---|---|
 | `info` / `debug` | 19 | 无 handler → `logging.lastResort`（**WARNING 级**）→ 丢弃 | **完全不可见** |
-| `warning` / `error` | 19 | `lastResort` → **stderr** → 桌面壳 `stdio: 'ignore'`（`desktop/main.js:88,99`） | **打包态不可见** |
+| `warning` / `error` | 19 | `lastResort` → **stderr** → Tauri 的 `tauri-sidecar.log` | **打包态不可见** |
 
 最能说明问题的一条：`api/__init__.py::_tool_selfcheck()` 的注释写着
 「**必须把结果喊出来**：少了哪个插件一眼可见」，而它的 `logger.error` **喊不出去**——
@@ -510,9 +510,9 @@ def banner(*, host: str | None = None, port: int | None = None) -> str:
 
     ## 为什么调用点在 `api.lifespan` 而不是入口脚本
 
-    入口脚本只覆盖 `main.py` 与 `server_entry.py` 两条路；而**桌面壳的开发态**是直接
-    spawn `python -m uvicorn workbench.api:app`（`desktop/main.js::spawnServer` 的开发态回退），
-    **不经过任何入口脚本**。lifespan 是所有启动路径的唯一交集，放这里才不漏。
+    入口脚本只覆盖 `main.py` 与 `server_entry.py` 两条路；而**裸 uvicorn 启动**
+    `python -m uvicorn workbench.api:app`（测试脚本、旧的手工启动）不经过任何入口脚本。
+    lifespan 是所有启动路径的唯一交集，放这里才不漏。
     """
     logger = logging.getLogger(f"{ROOT_LOGGER_NAME}.startup")
     parts = [f"Workbench v{__version__} pid={os.getpid()} frozen={config.FROZEN}"]

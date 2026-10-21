@@ -66,6 +66,7 @@ export function initSettings() {
 
   initPromptEditor();
   initCachePanel();
+  initMcpPanel();
 }
 
 /* ---------------------------------------------------------------- 系统提示词 */
@@ -221,4 +222,99 @@ function flashButton(id, text) {
   const original = btn.innerHTML;
   btn.innerHTML = text;
   setTimeout(() => { btn.innerHTML = original; }, 1600);
+}
+
+/* ---------------------------------------------------------------- MCP 面板 */
+
+function initMcpPanel() {
+  document.getElementById("btn-mcp-reload").addEventListener("click", () => loadMcp(true));
+  document.getElementById("mcp-servers").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-mcp-reconnect]");
+    if (!button) return;
+    const name = button.dataset.mcpReconnect;
+    button.disabled = true;
+    button.textContent = "重连中…";
+    try {
+      await api.reconnectMcp(name);
+      await loadMcp(false);
+    } catch (error) {
+      const note = document.getElementById("mcp-note");
+      if (note) note.textContent = `重连 ${name} 失败：${error.message}`;
+      button.disabled = false;
+      button.textContent = "重连";
+    }
+  });
+  void loadMcp(false);
+}
+
+async function loadMcp(reload) {
+  const box = document.getElementById("mcp-servers");
+  const note = document.getElementById("mcp-note");
+  if (!box) return;
+  if (reload) note.textContent = "正在重连…（启动子进程可能要几秒）";
+  try {
+    const data = reload ? await api.reloadMcp() : await api.getMcpServers();
+    paintMcp(data);
+    if (reload) note.textContent = "已重新读取配置";
+  } catch (error) {
+    box.innerHTML = `<div class="cache-empty">读取失败：${esc(error.message)}</div>`;
+    note.textContent = "";
+  }
+}
+
+function paintMcp(data) {
+  const box = document.getElementById("mcp-servers");
+  const note = document.getElementById("mcp-note");
+  const path = document.getElementById("mcp-config-path");
+  if (path) path.textContent = data.configPath || "（未知）";
+
+  if (!data.servers || !data.servers.length) {
+    box.innerHTML =
+      '<div class="cache-empty">还没有配置 MCP 服务器。在数据目录新建 mcp.json 后点「重新连接」。</div>';
+    note.textContent = data.errors && data.errors.length
+      ? `配置有 ${data.errors.length} 处问题：${data.errors.join("；")}`
+      : (data.loaded ? "未发现 mcpServers 配置" : "后台装载中…");
+    return;
+  }
+
+  box.innerHTML = data.servers.map((server) => {
+    const state = server.connected ? "已连接" : (server.enabled ? "连接失败" : "已禁用");
+    const badge = server.connected ? "badge-lime" : (server.enabled ? "badge-red" : "badge-teal");
+    const version = [server.serverName, server.serverVersion].filter(Boolean).join(" ");
+    const protocol = server.protocolVersion ? `MCP ${server.protocolVersion}` : "MCP —";
+    const tools = (server.toolNames || []).slice(0, 6).join("、");
+    const details = [
+      esc(server.command || ""),
+      `${Number(server.toolCount || 0)} 个工具`,
+      `risk=${esc(server.risk || "write")}`,
+      protocol,
+      version ? esc(version) : "",
+      Number(server.restarts || 0) ? `已重连 ${Number(server.restarts)} 次` : "",
+    ].filter(Boolean).join(" · ");
+    return `
+      <div class="mcp-row">
+        <span class="mcp-dot ${server.connected ? "on" : "off"}"></span>
+        <div class="mcp-main">
+          <b>${esc(server.name)}</b>
+          <small>${details}</small>
+          ${tools ? `<small class="mcp-tools" title="前 6 个工具">${esc(tools)}${(server.toolNames || []).length > 6 ? " …" : ""}</small>` : ""}
+          ${server.error ? `<small class="mcp-error">${esc(server.error)}</small>` : ""}
+        </div>
+        <span class="badge ${badge}">${state}</span>
+        <button class="btn-ghost btn-sm" type="button" data-mcp-reconnect="${esc(server.name)}"
+                ${server.enabled ? "" : "disabled"}
+                title="${server.enabled ? "只重连这个 server" : "server 在配置里已禁用"}">重连</button>
+      </div>`;
+  }).join("");
+
+  const errors = data.errors || [];
+  note.textContent = errors.length
+    ? `配置有 ${errors.length} 处问题：${errors.join("；")}`
+    : `共 ${data.tools || 0} 个 MCP 工具已进入工具面（健康 ${data.healthy ?? 0} / 失败 ${data.failing ?? 0}；每 ${data.monitorIntervalS ?? 30} 秒巡检）`;
+}
+
+function esc(text) {
+  return String(text ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[ch]));
 }

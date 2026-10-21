@@ -2,19 +2,15 @@
 
 ## 它解决什么（2026-09-20 实测复现）
 
-桌面壳用 Node 的 `child_process.spawn` 拉起 sidecar，**Windows 下不使用 Job Object**——
-所以父进程一旦**非正常死亡**（任务管理器结束、壳自身崩溃），
+桌面壳（Tauri）用 Rust `std::process::Command` 拉起 sidecar，**Windows 下不使用 Job Object**——
+所以父进程一旦**非正常死亡**（任务管理器结束、壳自身崩溃），`RunEvent::Exit` 的清理不会触发，
+sidecar 会存活。实测（`subprocess.Popen` 精确模拟 Tauri 的 spawn，语义一致）：
 
-- `before-quit` 不会触发 → `killServer()` 不会执行 → **sidecar 存活**；
-- 实测（`subprocess.Popen` 精确模拟 Electron 的 spawn，语义一致）：
+      对父进程执行 taskkill /F（不带 /T）→ 3 秒后 sidecar 仍在
 
-      对父进程执行 taskkill /F（不带 /T）→ 3 秒后 sidecar 仍在、端口仍在 LISTEN
-
-- 后果在**固定端口**设计（[ADR-0012](../../docs/adr/0011-port-governance.md)）下被放大：
-  孤儿占着 18765 → 下次启动 `portPreflight` 立刻失败 → 用户必须**手工**清理才能再用。
-  更糟的是 `portBroker.clearStale()` 只清 `desktop-ports.json` 这个**文件**，清不了**活着的
-  进程**；文件一清 `prev` 变 null，弹窗只能说"占用者不是 Workbench 实例"——
-  **明明是我们自己的孤儿，却认不出来**（PITFALLS #20 的完整形态）。
+Tauri 已改用动态端口，孤儿不再占用固定 18765；但**孤立进程仍会占着数据库连接与动态端口**，
+且下次启动可能读到同一份 `WORKBENCH_DATA`。所以父进程监视仍然是必需的，
+不能把清理只挂在正常退出链上（PITFALLS #20 / #54）。
 
 ## 做法：等父进程的**句柄**，而不是轮询
 

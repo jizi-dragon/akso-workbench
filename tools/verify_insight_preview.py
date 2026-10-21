@@ -166,17 +166,22 @@ def main() -> int:
             page.wait_for_timeout(600)
 
             page.click("#ins-runs tbody tr:first-child a")          # 「产物」→ 列产物
-            wait("#ins-artifacts table.mtable tbody tr", "产物列表")
+            wait("#ins-artifacts .artifact-card", "产物列表")
             names = page.eval_on_selector_all(
-                "#ins-artifacts tbody tr td:first-child", "els => els.map(e => e.textContent)")
+                "#ins-artifacts .artifact-card .artifact-name", "els => els.map(e => e.textContent)")
             expect = {"markdown-probe.md",
                       "step1-relations.md", "step2-status-table.md", "step3-attribution.md",
                       "step4-workflows.drawio", "spider-network.md", "spider-network.json",
                       "spider-network.drawio", "multi-page-probe.drawio"}
             checks.append((f"P1 产物列表（{len(names)} 件）", expect <= set(names)))
+            shot = Path(tempfile.gettempdir()) / "artifact-panel-preview.png"
+            page.locator("#ins-artifacts").scroll_into_view_if_needed()
+            page.wait_for_timeout(200)
+            page.screenshot(path=str(shot), full_page=False)
+            print(f"  产物面板截图：{shot}")
 
             # —— markdown 预览（真产物：step2 四列表） ——
-            page.click("#ins-artifacts tbody tr:has-text('step2-status-table.md') a:has-text('预览')")
+            page.click('.artifact-card[data-name="step2-status-table.md"] button[title="预览"]')
             wait("#artifact-preview[open] .apv-md table.apv-table", "markdown 表格")
             headers = page.eval_on_selector_all(
                 ".apv-md table.apv-table th", "els => els.map(e => e.textContent)")
@@ -200,7 +205,7 @@ def main() -> int:
             page.wait_for_timeout(300)
 
             # —— 另一份真产物（step1 关联对象表，含未展开边界列表） ——
-            page.click("#ins-artifacts tbody tr:has-text('step1-relations.md') a:has-text('预览')")
+            page.click('.artifact-card[data-name="step1-relations.md"] button[title="预览"]')
             wait("#artifact-preview[open] .apv-md table.apv-table", "step1 关联表")
             step1_heads = page.eval_on_selector_all(
                 ".apv-md table.apv-table th", "els => els.map(e => e.textContent)")
@@ -234,7 +239,7 @@ def main() -> int:
             # ⇒ 在它上面断言"渲染出的 `<li>` 数 == 源里的 `- ` 数"永远是 **0 == 0**，
             # 一个把列表整个吞掉的渲染器同样通过。**那种断言比没有更坏**：
             # 它占着"这里验过了"的位置（PITFALLS #112 那一族）。
-            page.click("#ins-artifacts tbody tr:has-text('markdown-probe.md') a:has-text('预览')")
+            page.click('.artifact-card[data-name="markdown-probe.md"] button[title="预览"]')
             wait("#artifact-preview[open] .apv-md", "markdown 探针")
             li_texts = page.eval_on_selector_all(
                 ".apv-md li", "els => els.map(e => e.textContent)")
@@ -255,7 +260,7 @@ def main() -> int:
             page.wait_for_timeout(300)
 
             # —— drawio 预览（真产物：spider 生成的工作流流程图） ——
-            page.click("#ins-artifacts tbody tr:has-text('step4-workflows.drawio') a:has-text('预览')")
+            page.click('.artifact-card[data-name="step4-workflows.drawio"] button[title="预览"]')
             wait("#artifact-preview[open] .apv-canvas svg", "drawio 画布")
             shapes = page.eval_on_selector_all(
                 ".apv-canvas:not([hidden]) svg .apv-node", "els => els.length")
@@ -272,7 +277,7 @@ def main() -> int:
             page.wait_for_timeout(300)
 
             # —— 多页页签 ——
-            page.click("#ins-artifacts tbody tr:has-text('multi-page-probe.drawio') a:has-text('预览')")
+            page.click('.artifact-card[data-name="multi-page-probe.drawio"] button[title="预览"]')
             wait("#artifact-preview[open] .apv-canvas svg", "多页画布")
             tabs = page.eval_on_selector_all(".apv-tab", "els => els.map(e => e.textContent)")
             first = page.eval_on_selector_all(".apv-canvas:not([hidden]) svg .apv-node", "els => els.length")

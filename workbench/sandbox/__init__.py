@@ -23,7 +23,16 @@ from __future__ import annotations
 
 from .job import IS_WINDOWS
 from .job import stats as job_stats
-from .layout import SANDBOX_ROOT, ensure_dirs
+from .layout import (
+    SANDBOX_ROOT,
+    describe_workspace,
+    ensure_dirs,
+    permission_error,
+    reset_workspace,
+    save_workspace,
+    workspace_root,
+    workspace_settings,
+)
 from .policy import (
     POLICIES,
     SandboxError,
@@ -49,10 +58,16 @@ __all__ = [
     "Severity",
     "build_env",
     "describe_policies",
+    "describe_workspace",
     "ensure_dirs",
     "get_policy",
     "is_sensitive_path",
     "job_stats",
+    "permission_error",
+    "reset_workspace",
     "run",
+    "save_workspace",
     "within_root",
+    "workspace_root",
+    "workspace_settings",
 ]

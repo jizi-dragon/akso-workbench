@@ -408,15 +408,111 @@ function renderJsonInto() {
   box.appendChild(pre);
 }
 
+/* ————————————————————————————— CSV ————————————————————————————— */
+
+const CSV_MAX_ROWS = 500;
+const CSV_MAX_COLS = 60;
+
+export function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i += 1; }
+      else if (ch === '"') quoted = false;
+      else field += ch;
+      continue;
+    }
+    if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(field); field = ''; }
+    else if (ch === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+      if (rows.length >= CSV_MAX_ROWS) break;
+    } else if (ch !== '\r') field += ch;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  return rows.slice(0, CSV_MAX_ROWS).map((cells) => cells.slice(0, CSV_MAX_COLS));
+}
+
+function renderCsvInto() {
+  const box = bodyEl();
+  box.innerHTML = '';
+  const rows = parseCsv(current.text);
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">CSV 是空的</div>';
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'apv-csv-wrap';
+  const table = document.createElement('table');
+  table.className = 'apv-csv';
+  const head = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (const cell of rows[0]) {
+    const th = document.createElement('th');
+    th.textContent = cell;
+    headRow.appendChild(th);
+  }
+  head.appendChild(headRow);
+  const body = document.createElement('tbody');
+  for (const row of rows.slice(1)) {
+    const tr = document.createElement('tr');
+    for (const cell of row) {
+      const td = document.createElement('td');
+      td.textContent = cell;
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+  table.append(head, body);
+  wrap.appendChild(table);
+  box.appendChild(wrap);
+  const note = document.createElement('p');
+  note.className = 'apv-note';
+  note.textContent = rows.length >= CSV_MAX_ROWS
+    ? `仅显示前 ${CSV_MAX_ROWS} 行 / ${CSV_MAX_COLS} 列；完整内容请下载`
+    : `${rows.length} 行 · 最多 ${CSV_MAX_COLS} 列`;
+  box.appendChild(note);
+}
+
+/* ————————————————————————————— 图片 ————————————————————————————— */
+
+function isImageSuffix(suffix) {
+  return ['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(suffix);
+}
+
+function renderImageInto() {
+  const box = bodyEl();
+  box.innerHTML = '';
+  const img = document.createElement('img');
+  img.className = 'apv-image';
+  img.alt = current.name;
+  img.src = fileUrl(current.jobId, current.name);
+  img.onerror = () => {
+    box.innerHTML = '<div class="empty">图片无法显示（可能不是有效图片）</div>';
+  };
+  box.appendChild(img);
+}
+
 function paint() {
   const suffix = current.name.slice(current.name.lastIndexOf('.')).toLowerCase();
-  el('apv-raw').hidden = !['.md', '.drawio'].includes(suffix);
+  const image = isImageSuffix(suffix);
+  el('apv-raw').hidden = image || !['.md', '.markdown', '.drawio', '.json', '.csv'].includes(suffix);
   el('apv-raw').textContent = current.raw ? '渲染' : '原始';
+  el('apv-copy').hidden = image;
   el('apv-tabs').innerHTML = '';
+  if (image) { renderImageInto(); return; }
   if (current.raw) { renderRaw(); return; }
-  if (suffix === '.md') renderMarkdownInto();
+  if (['.md', '.markdown'].includes(suffix)) renderMarkdownInto();
   else if (suffix === '.drawio') renderDrawioInto();
   else if (suffix === '.json') renderJsonInto();
+  else if (suffix === '.csv') renderCsvInto();
   else renderRaw();
 }
 
@@ -425,12 +521,24 @@ export async function previewArtifact({ jobId, name, size }) {
   const dlg = el('artifact-preview');
   if (!dlg) return;
   current = { jobId, name, text: '', raw: false, pages: null };
+  const suffix = name.slice(name.lastIndexOf('.')).toLowerCase();
   el('apv-title').textContent = name;
-  el('apv-meta').textContent = size == null ? '' : fmtBytes(size);
+  el('apv-meta').textContent = size == null
+    ? (suffix.replace('.', '').toUpperCase() || '文件')
+    : `${fmtBytes(size)} · ${suffix.replace('.', '').toUpperCase() || '文件'}`;
   el('apv-download').href = fileUrl(jobId, name, true);
   el('apv-download').setAttribute('download', name);
+  el('apv-open').href = fileUrl(jobId, name);
   bodyEl().innerHTML = '<div class="empty">读取中…</div>';
   if (!dlg.open) dlg.showModal();
+
+  if (isImageSuffix(suffix)) {
+    el('apv-copy').hidden = true;
+    el('apv-raw').hidden = true;
+    el('apv-tabs').innerHTML = '';
+    renderImageInto();
+    return;
+  }
 
   try {
     current.text = await fetchText(jobId, name);
@@ -441,7 +549,6 @@ export async function previewArtifact({ jobId, name, size }) {
   if (current.text.length > MAX_PREVIEW_BYTES) {
     current.text = `${current.text.slice(0, MAX_PREVIEW_BYTES)}\n…（超长截断，完整内容请下载）`;
   }
-  const suffix = name.slice(name.lastIndexOf('.')).toLowerCase();
   if (suffix === '.drawio') {
     try { current.pages = renderDrawio(current.text); }
     catch (e) {
@@ -456,6 +563,16 @@ export async function previewArtifact({ jobId, name, size }) {
 export function bindPreview() {
   el('apv-close').onclick = close;
   el('apv-raw').onclick = () => { current.raw = !current.raw; paint(); };
+  el('apv-copy').onclick = async () => {
+    const button = el('apv-copy');
+    try {
+      await navigator.clipboard.writeText(current.text || '');
+      button.textContent = '已复制';
+    } catch {
+      button.textContent = '复制失败';
+    }
+    setTimeout(() => { button.textContent = '复制正文'; }, 1400);
+  };
   el('artifact-preview').addEventListener('click', (event) => {
     if (event.target === el('artifact-preview')) close();   // 点遮罩关闭
   });

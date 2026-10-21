@@ -2,18 +2,14 @@
 """PyInstaller 打包定义：WorkbenchServer（服务端 sidecar，onedir）。
 
 构建：pyinstaller workbench/server.spec --noconfirm
-产物：dist/WorkbenchServer/ → build.ps1 v3 交给 electron-builder（extraResources）
+产物：dist/WorkbenchServer/ → build.ps1 交给 electron-builder（extraResources）
 要点：
-- playwright collect_all（node 驱动）+ chromium 浏览器本体打入（运行时
-  browser_pool 设 PLAYWRIGHT_BROWSERS_PATH=_MEIPASS/ms-playwright）；
+- 2026-10-19 内置浏览器下线：不再收集 playwright / chromium / ms-playwright；
 - workbench/static 与 adapters/ 作为数据文件；
 - 入口 = workbench/server_entry.py（uvicorn 阻塞运行）。
 """
 
-import os
 from pathlib import Path
-
-from PyInstaller.utils.hooks import collect_all
 
 ROOT = Path(SPECPATH).parent
 
@@ -39,6 +35,23 @@ hiddenimports = [
     # 漏收的后果是**静默的**：plugins/__init__.py 的 load_all 会把 ImportError
     # 吞成一条 failure，于是 builtins 整插件消失（6 个工具没了）而应用照常启动。
     "workbench.net_guard",
+    # 可选路由是**按名字动态导入**的（api/__init__.py::_OPTIONAL_ROUTERS 里是字符串），
+    # PyInstaller 的静态分析看不到。2026-10-19 把那段 `from . import (...)` 改成
+    # 逐个 try/except 之后，这些模块**必须**在这里显式登记，否则打包后它们会整段
+    # 消失，而应用照常启动（静默少功能，正是 P7 要防的那一类）。
+    "workbench.api.routes_modules",
+    "workbench.api.routes_insight",
+    "workbench.api.routes_attachments",
+    "workbench.api.routes_accounts",
+    "workbench.api.routes_agent",
+    "workbench.api.routes_mcp",
+    "workbench.api.routes_sandbox",
+    "workbench.api.routes_skills",
+    "workbench.api.routes_vault",
+    # MCP：连接器与注册器都在函数体内延迟导入（不阻塞启动 / 不循环依赖）。
+    "workbench.hub",
+    "workbench.mcp_registry",
+    "workbench.services.mcp",
     "workbench.plugins",
     "workbench.plugins.builtins",
     "workbench.plugins.websearch",
@@ -68,29 +81,6 @@ hiddenimports = [
     "openpyxl",
     "pypdf",
 ]
-
-ms_pw = Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright"
-# ⚠ **chromium 缺失必须炸，不能静默跳过**（2026-09-17 加固）。
-# 旧实现是 `if ms_pw.exists():` —— 机器上没装浏览器时它既不收集**也不报错**，
-# 于是打出一个"成功"的、**没有浏览器**的安装包，问题只在客户运行期暴露
-# （Monitor 录制 / 免密直达 / 自愈重登全废）。这里与 tools/verify_packaging.py 的 P8
-# 构成**双保险**：P8 在打包前拦（省掉一次几分钟的 PyInstaller），这里在 PyInstaller
-# 内部兜底（有人绕过 build.ps1 直接跑 spec 时仍然拦得住）。
-chromium_dirs = [d for d in sorted(ms_pw.glob("chromium*")) if d.is_dir()] if ms_pw.exists() else []
-if not chromium_dirs:
-    raise SystemExit(
-        f"打包中止：{ms_pw} 下没有任何 chromium* 目录，安装包会缺少浏览器内核。\n"
-        "  处置： .\\.venv\\Scripts\\python.exe -m playwright install chromium\n"
-        "  （原因与后果见 docs/adr/0009-*.md 与 tools/verify_packaging.py 的 P8）"
-    )
-for browser_dir in chromium_dirs:
-    datas.append((str(browser_dir), f"ms-playwright/{browser_dir.name}"))
-
-for pkg in ("playwright",):
-    pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
-    datas += pkg_datas
-    binaries += pkg_binaries
-    hiddenimports += pkg_hidden
 
 a = Analysis(
     [str(ROOT / "workbench" / "server_entry.py")],

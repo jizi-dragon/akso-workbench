@@ -350,3 +350,164 @@ dialog#artifact-preview { width: min(1080px, calc(100vw - 64px)); }
 .sb-list li::marker { color: var(--acc-success); }
 .sb-list.sb-declared { color: var(--text-3); }
 .sb-list.sb-declared li::marker { color: var(--acc-warning); }
+
+/* ───────── 产物面板（insight.html）：卡片墙 + 过滤器 ───────── */
+.artifact-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.artifact-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.artifact-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--ink-2);
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 12px;
+}
+.artifact-chip:hover { border-color: var(--line-strong); }
+.artifact-chip.active {
+  border-color: var(--teal);
+  background: var(--teal-dim);
+  color: var(--teal-strong);
+}
+.artifact-chip b { color: var(--text-3); font-size: 11px; font-weight: 600; }
+.artifact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(238px, 1fr));
+  gap: 8px;
+}
+.artifact-card {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  gap: 9px;
+  align-items: center;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--rad-input);
+  background: var(--ink-2);
+  cursor: pointer;
+  transition: border-color .16s, background .16s, transform .16s;
+}
+.artifact-card:hover {
+  border-color: var(--line-strong);
+  background: var(--ink-0);
+  transform: translateY(-1px);
+}
+.artifact-card.selected {
+  border-color: var(--teal);
+  background: var(--teal-dim);
+}
+.artifact-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--ink-3);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+}
+.artifact-card[data-kind="report"] .artifact-icon { background: var(--teal-dim); color: var(--teal-strong); }
+.artifact-card[data-kind="graph"] .artifact-icon { background: rgba(124, 92, 255, .1); color: #6650d8; }
+.artifact-card[data-kind="data"] .artifact-icon { background: var(--lime-dim); color: #15803d; }
+.artifact-card[data-kind="log"] .artifact-icon { background: var(--amber-dim); color: var(--amber); }
+.artifact-card[data-kind="image"] .artifact-icon { background: var(--sky-dim); color: var(--sky); }
+.artifact-main { min-width: 0; }
+.artifact-name {
+  overflow: hidden;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-meta { margin-top: 2px; color: var(--text-3); font-size: 11px; }
+.artifact-actions { display: flex; gap: 4px; }
+.artifact-actions a,
+.artifact-actions button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: none;
+}
+.artifact-actions a:hover,
+.artifact-actions button:hover { background: var(--ink-3); color: var(--text-1); }
+
+/* 预览弹窗新增：图片 / CSV / 复制 / 新窗口 */
+.apv-image {
+  display: block;
+  max-width: 100%;
+  max-height: 62vh;
+  margin: 0 auto;
+  border-radius: var(--rad-input);
+  background: #fff;
+}
+.apv-csv-wrap {
+  max-height: 62vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--rad-input);
+  background: #fff;
+}
+.apv-csv {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.apv-csv th,
+.apv-csv td {
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.apv-csv th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ink-1);
+  color: var(--text-2);
+  font-weight: 600;
+}
+.apv-csv tr:nth-child(even) td { background: var(--ink-0); }
+.apv-note { margin: 8px 0 0; color: var(--text-3); font-size: 11.5px; }
+
+/* 沙箱运行期状态：4 列（此前只有 cols-2/cols-3，cols-4 落成一列、卡片被拉成整行） */
+.mgrid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 1000px) {
+  .mgrid.cols-2,
+  .mgrid.cols-3,
+  .mgrid.cols-4 { grid-template-columns: 1fr; }
+}
+
+/* 产物名允许两行：文件名是主要识别信息，不应被省略号吃掉一半 */
+.artifact-card { grid-template-columns: 34px minmax(0, 1fr) auto; }
+.artifact-name {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
