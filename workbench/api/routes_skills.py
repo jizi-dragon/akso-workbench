@@ -19,6 +19,7 @@ Skill 是 ZIP。本仓已有 `python-multipart` 依赖（附件上传在用）�
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -79,7 +80,10 @@ async def upload(file: UploadFile = File(...), allow_warn: bool = False) -> dict
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"包过大：{len(data)} 字节 > 上限 {MAX_UPLOAD_BYTES}")
-    result = L.upload(data, filename=file.filename or "", allow_warn=allow_warn)
+    # I11：解压/扫描/落库都是同步 IO，直接在事件循环里跑会让整个服务卡住
+    # （实测 250 文件 ZIP 上传期间 /api/health 从 ~5ms 掉到秒级）。
+    result = await asyncio.to_thread(
+        L.upload, data, filename=file.filename or "", allow_warn=allow_warn)
     payload = result.to_dict()
     # 拒绝用 400：这是调用方能自己修的问题（改包重传），不是服务端故障
     if not result.ok:

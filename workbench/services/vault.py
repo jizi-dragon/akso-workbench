@@ -62,11 +62,22 @@ TIMEOUT_S = 12
 
 
 class VaultError(RuntimeError):
-    """云端调用失败。消息**面向用户**（会被直接显示在界面上）。"""
+    """云端调用失败。消息**面向用户**（会被直接显示在界面上）。
 
-    def __init__(self, message: str, status: int = 0) -> None:
+    ★ `kind` 是**机器可读**分类，调用方只准读它，不许拿消息文本猜
+    （旧实现用 `"401" in str(exc)` / `"会话" in text`：云端换一句措辞，
+    401 就退化成 502，界面会把"请重新登录"显示成"上游挂了"）。
+    `status` 是 HTTP 状态码（没有则 0），只用于展示/诊断。
+    """
+
+    KINDS = frozenset({"auth", "network", "format", "validation", "upstream"})
+
+    def __init__(self, message: str, status: int = 0, kind: str = "upstream") -> None:
         super().__init__(message)
+        if kind not in self.KINDS:
+            raise ValueError(f"未知的 VaultError.kind：{kind!r}")
         self.status = status
+        self.kind = kind
 
 
 def base_url() -> str:
@@ -95,15 +106,21 @@ def _request(method: str, path: str, *, body: dict | None = None, token: str | N
             detail = json.loads(exc.read().decode("utf-8")).get("detail", "")
         except Exception:  # noqa: BLE001 —— 错误体不是 JSON 也不该让这里炸
             pass
-        raise VaultError(detail or f"云端返回 {exc.code}", status=exc.code) from exc
+        raise VaultError(
+            detail or f"云端返回 {exc.code}",
+            status=exc.code,
+            kind="auth" if exc.code == 401 else "upstream",
+        ) from exc
     except urllib.error.URLError as exc:
-        raise VaultError(f"连不上云端（{exc.reason}）—— 请检查网络与地址") from exc
+        raise VaultError(
+            f"连不上云端（{exc.reason}）—— 请检查网络与地址", kind="network") from exc
     try:
         return json.loads(raw or "{}")
     except json.JSONDecodeError as exc:
         # 200 但不是 JSON：多半是被中间设备（代理/门户）拦截了。
         # 明说这一条，否则用户会以为是自己密码错了。
-        raise VaultError("云端返回的不是 JSON —— 疑似被代理或网络门户拦截") from exc
+        raise VaultError(
+            "云端返回的不是 JSON —— 疑似被代理或网络门户拦截", kind="format") from exc
 
 
 # ---------------------------------------------------------------- 会话
@@ -195,11 +212,11 @@ def fetch_profile(token: str | None = None) -> dict:
     """
     tok = token or session_token()
     if not tok:
-        raise VaultError("尚未登录云端账号库")
+        raise VaultError("尚未登录云端账号库", kind="auth")
     try:
         resp = _request("GET", "/api/auth/profile", token=tok)
     except VaultError as exc:
-        if "会话" in str(exc) or "401" in str(exc) or "重新登录" in str(exc):
+        if exc.kind == "auth":
             clear_session()
         raise
     prof = resp.get("profile") or {}
@@ -217,8 +234,8 @@ def _now_ms() -> int:
 
 
 def is_auth_error(exc: VaultError) -> bool:
-    text = str(exc)
-    return "401" in text or "会话" in text or "未登录" in text or "重新登录" in text
+    """会话失效的**唯一**判据是 `kind`，不是消息里有没有"401/会话/重新登录"。"""
+    return exc.kind == "auth"
 
 
 def clear_library_cache() -> None:
@@ -270,17 +287,17 @@ def _snapshot() -> dict:
     """拉云端全量快照并做**形状校验**（不校验的后果是页面静默空白）。"""
     token = session_token()
     if not token:
-        raise VaultError("尚未登录云端账号库")
+        raise VaultError("尚未登录云端账号库", kind="auth")
     data = _request("GET", "/api/vault/snapshot", token=token)
     if not isinstance(data, dict):
-        raise VaultError("云端快照形状不对：顶层不是对象")
+        raise VaultError("云端快照形状不对：顶层不是对象", kind="format")
     if data.get("format") not in SNAPSHOT_FORMATS:
-        raise VaultError(f"云端快照格式不认识：{data.get('format')!r}")
+        raise VaultError(f"云端快照格式不认识：{data.get('format')!r}", kind="format")
     if _int(data.get("version"), 0) != 1:
-        raise VaultError(f"云端快照版本不支持：{data.get('version')!r}")
+        raise VaultError(f"云端快照版本不支持：{data.get('version')!r}", kind="format")
     for key in ("sites", "accounts", "boxes"):
         if not isinstance(data.get(key), list):
-            raise VaultError(f"云端快照缺少数组字段：{key}")
+            raise VaultError(f"云端快照缺少数组字段：{key}", kind="format")
     return data
 
 
@@ -458,10 +475,10 @@ def push_local() -> dict:
     """
     token = session_token()
     if not token:
-        raise VaultError("请先登录云端账号库")
+        raise VaultError("请先登录云端账号库", kind="auth")
     payload = _local_merge_payload()
     if not payload["accounts"]:
-        raise VaultError("本机没有可推送的账号")
+        raise VaultError("本机没有可推送的账号", kind="validation")
     resp = _request("POST", "/api/vault/merge", body=payload, token=token)
     revision = _int(resp.get("revision"))
     if revision > 0:

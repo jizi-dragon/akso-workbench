@@ -5,14 +5,14 @@
 `read_web_page` 是 `risk=read`（**不过确认门**，见 [plugin_api.Risk]），且接受**任意 URL**。
 把它与下面两件**已经存在**的事实叠起来，就是一条从"外部网页"到"本机内网"的读取链：
 
-1. `/api/*` **无认证**是 **ADR-0015 §D-7 的有意保留**，而控制端口固定 18765 / 18767
-   （[ADR-0012](../docs/adr/0011-port-governance.md)）；
+1. `/api/*` **无认证**是 ** 的有意保留**，而控制端口固定 18765 / 18767
+；
 2. `read_web_page` 本身就是一个**无需确认的外发通道** —— 把秘密拼进 query 即可。
 
 于是：恶意页面或搜索结果 → 模型读到"请读 `http://127.0.0.1:18765/api/agent/audit`"
 → `read_web_page`（read 级，不过门）→ 本机 API 内容进上下文 → 随下一次请求外发。
 
-## 这是什么、不是什么（口径与 [ADR-0014](../docs/adr/0007-credentials-sandbox-and-trust.md) §D-3 一致）
+## 这是什么、不是什么（口径与 §D-3 一致）
 
 **这是限损措施，不是 DNS 绑定防护。** `getaddrinfo` 校验与真实连接之间存在 TOCTOU
 窗口：控制权威 DNS 的一方可以让第一次解析回公网 IP、第二次解析回 `127.0.0.1`
@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+import time
 from urllib.parse import urljoin, urlparse
 
 #: 明确不许去的 IPv4 段。宁可多列：这些都是"本机/内网/保留"语义，任何一条被漏掉
@@ -73,6 +74,9 @@ _BLOCKED_V6 = tuple(
 
 #: 最多跟几跳重定向。超过就中止 —— 无限跳转是一种廉价的拖死手段。
 MAX_REDIRECT_HOPS = 3
+
+#: 单次响应体上限（默认 5 MB）。超过就**截断并显式标记**，不把整个响应读进内存。
+MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
 
 def _blocked_reason(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
@@ -141,6 +145,19 @@ async def aguard_public_url(url: str) -> str:
     return await asyncio.to_thread(guard_public_url, url)
 
 
+async def _capped_body(res, max_bytes: int) -> tuple[bytes, bool]:
+    """流式读响应体，最多 `max_bytes`。返回 `(body, truncated)`。"""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in res.aiter_bytes():
+        if total + len(chunk) > max_bytes:
+            chunks.append(chunk[: max(0, max_bytes - total)])
+            return b"".join(chunks), True
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks), False
+
+
 async def guarded_get(
     url: str,
     *,
@@ -149,8 +166,17 @@ async def guarded_get(
     method: str = "GET",
     max_hops: int = MAX_REDIRECT_HOPS,
     transport=None,
+    max_bytes: int = MAX_RESPONSE_BYTES,
 ):
     """按**逐跳校验**取一个 URL，返回最终的 `httpx.Response`。
+
+    ## 时间与体积都是**总预算**，不是每跳预算
+
+    - `timeout` 是**整次调用**（含全部重定向）的总时限。旧实现把它当成每跳超时，
+      4 跳就能花掉 80 秒；调用方以为 20 秒就结束了。
+    - `max_bytes` 是响应体上限（默认 5 MB）。旧实现直接 `res.text`，一个慢速大文件
+      就能把内存吃满。超限时**截断并在响应头标记** `x-workbench-truncated: 1`，
+      调用方据此告诉用户/模型"这不是完整内容"。
 
     ## 为什么不用 `follow_redirects=True`
 
@@ -166,6 +192,7 @@ async def guarded_get(
     """
     import httpx
 
+    deadline = time.monotonic() + timeout
     current = await aguard_public_url(url)
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(timeout, connect=min(10.0, timeout)),
@@ -173,12 +200,27 @@ async def guarded_get(
         transport=transport,
     ) as client:
         for _ in range(max_hops + 1):
-            res = await client.request(method, current, headers=headers or {})
-            if not res.is_redirect:
-                return res
-            location = res.headers.get("location")
-            if not location:
-                return res
-            # 相对 Location 要先并成绝对地址，否则下一跳校验的是个残缺 URL
-            current = await aguard_public_url(urljoin(current, location))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise httpx.TimeoutException(f"总时限 {timeout:g}s 用尽（含重定向）")
+            async with client.stream(
+                method, current, headers=headers or {}, timeout=remaining
+            ) as res:
+                if res.is_redirect:
+                    location = res.headers.get("location")
+                    if not location:
+                        body, truncated = await _capped_body(res, max_bytes)
+                        return httpx.Response(
+                            res.status_code, headers=dict(res.headers),
+                            content=body, request=res.request)
+                    # 相对 Location 要先并成绝对地址，否则下一跳校验的是个残缺 URL
+                    current = await aguard_public_url(urljoin(current, location))
+                    continue
+
+                body, truncated = await _capped_body(res, max_bytes)
+                headers_out = dict(res.headers)
+                if truncated:
+                    headers_out["x-workbench-truncated"] = "1"
+                return httpx.Response(
+                    res.status_code, headers=headers_out, content=body, request=res.request)
     raise ValueError(f"重定向次数超过 {max_hops} 次，已中止（可能是跳转环）")

@@ -71,7 +71,18 @@ _ENV_ALLOW = (
 
 
 class McpError(RuntimeError):
-    """MCP 协议/进程错误。消息面向用户（会被写进工具观测或设置页）。"""
+    """MCP 协议/进程错误。消息面向用户（会被写进工具观测或设置页）。
+
+    `code` 是 JSON-RPC 错误码（有就填），调用方按**码**分类，不按消息文本
+    （旧实现用 `"-32601" in str(exc)`：server 换一句措辞，ping 的兼容分支就失效，
+    健康检查会把一台正常 server 每 30 秒重启一次）。
+    """
+
+    def __init__(self, message: str, *, code: int | None = None,
+                 kind: str = "protocol") -> None:
+        super().__init__(message)
+        self.code = code
+        self.kind = kind
 
 
 @dataclass(frozen=True)
@@ -385,8 +396,7 @@ class McpClient:
         try:
             self._request("ping", {}, timeout=timeout)
         except McpError as exc:
-            text = str(exc)
-            if "-32601" in text or "Method not found" in text:
+            if exc.code == -32601:
                 return
             raise
 
@@ -475,8 +485,12 @@ class McpClient:
                 if message.get("id") == req_id:
                     if "error" in message:
                         error = message.get("error") or {}
+                        raw_code = error.get("code")
+                        code = raw_code if isinstance(raw_code, int) else None
                         raise McpError(
-                            f"MCP {method} 失败：{error.get('message') or error}"
+                            f"MCP {method} 失败：{error.get('message') or error}",
+                            code=code,
+                            kind="rpc",
                         )
                     return message.get("result") or {}
                 # server 反向请求（sampling 等）：本客户端不支持，明确拒绝而不是装死

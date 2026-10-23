@@ -288,7 +288,7 @@ def test_ping_method_not_found_is_not_a_failure(
     client = mcp.McpClient(servers["fake"])
 
     def unsupported(*_a, **_k):
-        raise mcp.McpError("MCP ping 失败：{'code': -32601, 'message': 'Method not found'}")
+        raise mcp.McpError("MCP ping 失败：Method not found", code=-32601, kind="rpc")
 
     monkeypatch.setattr(client, "_request", unsupported)
     client.ping(timeout=0.1)  # 不抛 = 当作健康

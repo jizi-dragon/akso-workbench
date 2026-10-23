@@ -10,8 +10,25 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
+
 from .cache import cache_key, default_cache
+from .client import ApiError
 from .kernel import endpoints
+
+
+def _is_missing(exc: Exception) -> bool:
+    """这次失败是否等于"对象不存在/无权看"——只有这一种才允许回落 `None`。
+
+    ★ 旧实现 `except Exception: return None` 把**超时、DNS、平台 500** 也变成了
+    "这个对象没有选项集"，调用方随后会拿 `None` 当"确认不存在"继续跑。
+    现在只吞两类**有身份**的未命中；网络类与 5xx 必须抛给调用方。
+    """
+    if isinstance(exc, ApiError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in (401, 403, 404)
+    return False
 
 
 class GaiaQueries:
@@ -67,8 +84,10 @@ class GaiaQueries:
         """
         try:
             data = self._client.get(endpoints.render(endpoints.OBJECT_PICKLIST, code=code))
-        except Exception:  # noqa: BLE001 —— 不存在/无权限按未命中处理
-            return None
+        except (ApiError, httpx.HTTPStatusError) as exc:
+            if _is_missing(exc):
+                return None
+            raise
         if not data:
             return None
         if isinstance(data, list):
@@ -81,8 +100,10 @@ class GaiaQueries:
         try:
             data = self._client.get(endpoints.render(endpoints.WORKFLOW, code=code))
             return data or None
-        except Exception:  # noqa: BLE001
-            return None
+        except (ApiError, httpx.HTTPStatusError) as exc:
+            if _is_missing(exc):
+                return None
+            raise
 
 
 def invalidate_object_cache(code: str | None = None) -> None:

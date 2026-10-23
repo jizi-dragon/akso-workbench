@@ -353,7 +353,7 @@ class ToolSpec:
     里跑 ⇒ 用户被要求为一次**必然失败**的写操作授权，点完还是同一个拒绝
     （2026-09-22 15:08 真机实测：同一份输入连着问两次放行）。
 
-    > 这条坑是从已删除的配置工厂里踩出来的（原 ADR-0018 / PITFALLS #85）；代码没了，
+    > 这条坑是从已删除的配置工厂里踩出来的（原 / PITFALLS #85）；代码没了，
     > **机制与教训都在**——凡是"用户点了也改变不了结果"的确认，都不该问。
 
     ## 三条纪律
@@ -696,6 +696,9 @@ class ToolHub:
         self._failures: list[dict[str, str]] = []
         self._loaded = False
         self._audit_writer: Callable[[dict[str, Any]], None] | None = None
+        self._permission_gate: (
+            Callable[[ToolSpec, BaseModel], tuple[str, str]] | None
+        ) = None
         self._approval_gate: (
             Callable[[ToolSpec, BaseModel, str, str, bool], tuple[bool, str, str]] | None
         ) = None
@@ -907,6 +910,17 @@ class ToolHub:
     def set_audit_writer(self, writer: Callable[[dict[str, Any]], None]) -> None:
         """注入审计写入器（由 `approvals`/api 层提供，避免 plugin_api 依赖 db）。"""
         self._audit_writer = writer
+
+    def set_permission_gate(
+        self,
+        gate: Callable[[ToolSpec, BaseModel], tuple[str, str]],
+    ) -> None:
+        """注入**权限策略**：`(spec, 已校验参数) → (allow|ask|deny, 理由)`。
+
+        与 `set_approval_gate` 是两层：权限策略回答"这个工作区允不允许"，
+        确认门回答"这一次调用有没有拿到一次性令牌"。`allow` **不**绕开确认门。
+        """
+        self._permission_gate = gate
 
     def set_approval_gate(
         self,
@@ -1244,6 +1258,30 @@ class ToolHub:
             self._audit(spec, inv, {})
             return inv
 
+        # ── 权限策略（工作区级）：deny 是硬阻断，先于任何确认/前置检查。
+        # 策略门由宿主注入（`plugin_api` 不 import db/services，规则 7）；
+        # 门自己坏了按 deny 处理 —— 配置读不出来时不能静默放行。
+        permission, permission_reason = "allow", ""
+        if self._permission_gate is not None:
+            try:
+                permission, permission_reason = self._permission_gate(spec, args)
+            except Exception as exc:  # noqa: BLE001 —— Fail-Closed
+                permission = "deny"
+                permission_reason = f"权限策略不可用（fail-closed）：{type(exc).__name__}: {exc}"
+            if permission not in ("allow", "ask", "deny"):
+                permission = "deny"
+                permission_reason = f"权限策略返回了未知决定 {permission!r}（fail-closed）"
+        if permission == "deny":
+            reason = f"权限策略拒绝执行 {name}：{permission_reason}"
+            inv = Invocation(
+                tool=name, status=ToolStatus.REJECTED, content=f"⛔ {reason}（handler 没有执行）",
+                audit_id=audit_id, risk=spec.risk, plugin_id=spec.plugin_id,
+                request_id=_call_id(arguments), error=reason, risk_reason=permission_reason,
+            )
+            logger.warning("权限策略拒绝：%s —— %s", name, permission_reason[:200])
+            self._audit(spec, inv, _extra(spec, args))
+            return inv
+
         # 实时确认（`needs_confirmation`）：模型主动"先问再做"。
         #
         # 位置在风险门**之前**，但两者不会互相触发：确认工具自己必须是 read
@@ -1306,6 +1344,40 @@ class ToolHub:
                     request_id=_call_id(arguments),
                 )
                 logger.warning("前置检查拒绝：%s —— %s", name, refusal[:200])
+                self._audit(spec, inv, _extra(spec, args))
+                return inv
+
+        # 权限策略对**只读**工具的 ask：借用同一套一次性令牌门。
+        # 写工具的 ask 由下面的风险门处理（它本来就要确认），不重复问两次。
+        if permission == "ask" and spec.risk is Risk.READ:
+            if self._approval_gate is None:
+                inv = Invocation(
+                    tool=name, status=ToolStatus.REJECTED,
+                    content=(
+                        f"⛔ 权限策略要求确认 {name}，但宿主没有装配确认门，"
+                        "因此这次调用被拒绝（fail-closed）。"
+                    ),
+                    audit_id=audit_id, risk=spec.risk, plugin_id=spec.plugin_id,
+                    request_id=_call_id(arguments), risk_reason=permission_reason,
+                    error="权限策略要求确认，但确认门未装配",
+                )
+                self._audit(spec, inv, _extra(spec, args))
+                return inv
+            passed, pending_id, _why = self._approval_gate(
+                spec, args, ctx.approval_token, ctx.conversation_id, ctx.tainted
+            )
+            if not passed:
+                inv = Invocation(
+                    tool=name, status=ToolStatus.NEEDS_APPROVAL,
+                    content=(
+                        f"⏸ 权限策略要求确认 {name}：{permission_reason}"
+                        f"（pending_id={pending_id}）。放行后由服务端用相同参数继续执行；"
+                        "不要自己更换参数重试。"
+                    ),
+                    audit_id=audit_id, risk=spec.risk, plugin_id=spec.plugin_id,
+                    pending_id=pending_id, request_id=_call_id(arguments),
+                    risk_reason=permission_reason,
+                )
                 self._audit(spec, inv, _extra(spec, args))
                 return inv
 
@@ -1620,7 +1692,7 @@ def _trust_prefix(spec: ToolSpec, args: BaseModel | None) -> str:
     前缀不会阻止模型被诱导，它做两件事：① 让模型有一个**结构性的**依据把外部文本
     与我们的话分开；② 配合 taint 传播，让**用户在放行写操作之前**知道这一回合读过外部内容。
     真正的强制拦截**刻意没做**——那会与"用户明确要求写入"的日常场景冲突，
-    判断与理由见 ADR-0022。
+    判断与理由。
     """
     if spec.trust is not Trust.UNTRUSTED:
         return ""

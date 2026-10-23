@@ -11,12 +11,18 @@ r"""不变量 **I11**：同步阻塞调用一律 `asyncio.to_thread`（`CORE-ARC
 ★ 那正是本仓最防的一类失败：**不报错、别的判据也不红**，只表现为"服务没反应"，
 而排查会从"是不是模型慢"开始。
 
-## 两条规则（都是**精确**的）
+## 三条规则（都是**精确**的）
 
 ### 规则 A：`async def` 里不得**直接**调用已知阻塞的名字
 
 `time.sleep` / `requests.*` / `subprocess.*` / `sqlite3.connect` / `urlopen`
 ＋ ★ **本项目自己的**同步入口（§5 逐字点名了 `egmp.client` / `proc` / `sandbox.run`）。
+
+### 规则 T：`async def` 里不得直接调 `services|skills|sandbox` 的同步 IO 入口
+
+名单只有三个已经实测会卡住事件循环的入口：`upload` / `start_job` / `run_job`。
+别名会解析（`from ..skills import library as L` → `L.upload`；`jobs.start_job`）。
+**只收证据，不泛化** —— 把整个 services 层都算进来会变成噪音源。
 
 ### ★★ 规则 S（结构）：`async def` 里的嵌套同步 `def` 不得被**直接调用**
 
@@ -59,6 +65,10 @@ BLOCKING_EXACT = {
     "sandbox.run",
 }
 
+#: 规则 T 的名单：`workbench.services|skills|sandbox` 里**已知会做 IO** 的入口。
+#: 只收已经在真机/审计里证明会卡住事件循环的那几个，不泛化。
+SLOW_SERVICE_CALLS = {"upload", "start_job", "run_job"}
+
 #: 前缀匹配（本项目自己的同步模块）
 BLOCKING_PREFIXES = ("egmp_client.", "proc.")
 
@@ -87,6 +97,36 @@ def _is_blocking(name: str) -> bool:
     if not name:
         return False
     return name in BLOCKING_EXACT or any(name.startswith(p) for p in BLOCKING_PREFIXES)
+
+
+def _module_aliases(tree: ast.Module) -> dict[str, str]:
+    """本地名 → 模块路径（`from ..skills import library as L` → `L: skills.library`）。"""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            module = (node.module or "").removeprefix("workbench.")
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                local = alias.asname or alias.name
+                aliases[local] = f"{module}.{alias.name}" if module else alias.name
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                local = alias.asname or alias.name.split(".")[0]
+                aliases[local] = alias.name.removeprefix("workbench.")
+    return aliases
+
+
+def _is_slow_service_call(name: str, aliases: dict[str, str]) -> bool:
+    """`L.upload` / `jobs.start_job` / 直接导入的 `upload`，且来源是 services/skills/sandbox。"""
+    if not name:
+        return False
+    parts = name.split(".")
+    tail = parts[-1]
+    if tail not in SLOW_SERVICE_CALLS:
+        return False
+    target = aliases.get(parts[0], name if len(parts) == 1 else "")
+    return target.startswith(("services.", "skills.", "sandbox."))
 
 
 def _forwarders(tree: ast.Module) -> dict[str, set[str]]:
@@ -182,6 +222,7 @@ def _scan(tree: ast.Module) -> list[tuple[str, str, str, int]]:
         inside.update(id(inner) for inner in _walks(root))
 
     out: list[tuple[str, str, str, int]] = []
+    aliases = _module_aliases(tree)
     for outer in [n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)]:
         nested = {n.name for n in ast.walk(outer) if isinstance(n, ast.FunctionDef)}
         for node in ast.walk(outer):
@@ -192,6 +233,8 @@ def _scan(tree: ast.Module) -> list[tuple[str, str, str, int]]:
                 continue
             if _is_blocking(name):
                 out.append(("A", outer.name, name, node.lineno))
+            elif _is_slow_service_call(name, aliases):
+                out.append(("T", outer.name, name, node.lineno))
             elif name in nested:
                 out.append(("S", outer.name, name, node.lineno))
     return out
@@ -208,8 +251,11 @@ def _violations() -> list[str]:
         for kind, outer, callee, lineno in _scan(tree):
             if f"{rel}:{outer}" in EXEMPT:
                 continue
-            why = ("已知会阻塞" if kind == "A"
-                   else "嵌套同步函数（它存在的理由就是被 to_thread 挪走）")
+            why = {
+                "A": "已知会阻塞",
+                "T": "services/skills/sandbox 的同步 IO 入口（必须 to_thread）",
+                "S": "嵌套同步函数（它存在的理由就是被 to_thread 挪走）",
+            }[kind]
             out.append(f"{rel}:{lineno} 在 async def {outer}() 里直接调了 {callee}() —— {why}")
     return out
 
@@ -250,18 +296,19 @@ def test_the_blocking_list_is_not_empty() -> None:
     assert BLOCKING_EXACT, "阻塞调用名单空了 —— 规则 A 就不再验任何东西"
 
 
-def test_both_rules_fire_on_planted_violations() -> None:
-    """★★★ **判据自身的反证**：现场种违规，两条规则都要抓到、合规的不能抓。
+def test_all_rules_fire_on_planted_violations() -> None:
+    """★★★ **判据自身的反证**：现场种违规，A/T/S 三条规则都要抓到、合规的不能抓。
 
     ★ 这是这条判据能不能被信任的**唯一**理由：主判据今天全绿，
     而"全绿"与"扫描器坏了"在输出上**长得一模一样**。
 
-    ★ `good()` 那一段同样承重：一个"看见嵌套同步函数就报"的实现会把它误报，
-    而那种实现会让判据变成噪音源。
+    ★ `good()` / `good_t()` 两段同样承重：一个"看见 service 调用就报"的实现
+    会把 `to_thread(L.upload, ...)` 也误报，而那种实现会让判据变成噪音源。
     """
     src = (
         "import asyncio\n"
         "import time\n"
+        "from workbench.skills import library as L\n"
         "\n"
         "async def bad_a():\n"
         "    time.sleep(1)\n"
@@ -271,12 +318,18 @@ def test_both_rules_fire_on_planted_violations() -> None:
         "        return 1\n"
         "    return helper()\n"
         "\n"
+        "async def bad_t():\n"
+        "    return L.upload(b'')\n"
+        "\n"
         "async def good():\n"
         "    def helper():\n"
         "        return 1\n"
         "    return await asyncio.to_thread(helper)\n"
+        "\n"
+        "async def good_t():\n"
+        "    return await asyncio.to_thread(L.upload, b'')\n"
     )
     got = sorted(f"{kind}:{outer}" for kind, outer, _n, _l in _scan(ast.parse(src)))
-    assert got == ["A:bad_a", "S:bad_s"], (
-        f"抓错了：{got}（应当只抓 bad_a 与 bad_s，good 不该被抓）"
+    assert got == ["A:bad_a", "S:bad_s", "T:bad_t"], (
+        f"抓错了：{got}（应当抓 bad_a / bad_s / bad_t，good / good_t 不该被抓）"
     )

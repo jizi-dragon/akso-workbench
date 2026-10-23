@@ -105,7 +105,7 @@ def test_refresh_maps_to_401_when_session_is_gone(
     ready, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def boom(*_a, **_k):
-        raise vault.VaultError("会话已过期，请重新登录")
+        raise vault.VaultError("会话已过期，请重新登录", kind="auth")
 
     monkeypatch.setattr(vault, "fetch_profile", boom)
     with pytest.raises(HTTPException) as ei:
@@ -219,7 +219,7 @@ def test_library_auth_error_clears_session_and_cache(
     vault.library(refresh=True)
 
     def boom(*_a, **_k):
-        raise vault.VaultError("会话已过期（401），请重新登录")
+        raise vault.VaultError("会话已过期（401），请重新登录", kind="auth")
 
     monkeypatch.setattr(vault, "_request", boom)
     with pytest.raises(vault.VaultError):
@@ -238,7 +238,7 @@ def test_library_rejects_unknown_snapshot_format(ready, monkeypatch: pytest.Monk
 
 def test_library_route_maps_errors(ready, monkeypatch: pytest.MonkeyPatch) -> None:
     def auth(*_a, **_k):
-        raise vault.VaultError("尚未登录云端账号库")
+        raise vault.VaultError("尚未登录云端账号库", kind="auth")
 
     monkeypatch.setattr(vault, "library", auth)
     with pytest.raises(HTTPException) as ei:

@@ -26,6 +26,9 @@ from .kernel import endpoints, normalize_base_url
 
 TOKEN_TTL_S = 55 * 60
 
+#: `paged_post` 的硬上限（2026-10-22：恒 `hasNext` 的桩实测能打出 501 页）。
+MAX_PAGES = 20
+
 
 class ApiError(RuntimeError):
     """平台返回非 0 信封或网络错误（对应 TS 版 ApiError）。"""
@@ -211,15 +214,23 @@ class EgmpClient:
         return self._envelope("POST", path, body or {})
 
     def paged_post(self, path: str, body: dict | None = None, page_size: int = 1000) -> list[dict]:
-        """平台统一分页循环（pageIndex 从 1；datas/items 兼容；hasNext 续页）。"""
+        """平台统一分页循环（pageIndex 从 1；datas/items 兼容；hasNext 续页）。
+
+        ★ 有硬上限：`hasNext` 恒为 true 的坏 server/坏代理会让这里**无限请求**
+        （实测算过 501 页）。到上限抛 `ApiError(code="pagination")`，不静默返回半截。
+        """
         rows: list[dict] = []
         page_index = 1
-        while True:
+        for _page in range(1, MAX_PAGES + 1):
             data = self._envelope("POST", path, {**(body or {}), "pageIndex": page_index, "pageSize": page_size})
             if isinstance(data, dict):
                 batch = data.get("datas") or data.get("items") or []
                 rows.extend(batch if isinstance(batch, list) else [])
                 if data.get("hasNext") is True:
+                    if _page == MAX_PAGES:
+                        raise ApiError(
+                            "POST", path, "pagination",
+                            f"分页超过 {MAX_PAGES} 页，已中止（hasNext 可能没有前进）")
                     page_index += 1
                     continue
             break

@@ -41,7 +41,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from . import db
+from . import db, permissions
 from .plugin_api import (
     DEFAULT_CONFIRM_TIMEOUT_S,
     ZERO_ARGS,
@@ -101,7 +101,7 @@ class PendingAction:
 
     为什么不做成硬闸门（"有 untrusted 就不许调写工具"）：那会与"用户明确要求写入"
     的日常场景直接冲突 —— 一次正常的"看看这个网页，然后照它建个对象"会被拦死。
-    判断与理由见 ADR-0022。
+    判断与理由。
     """
 
     target_tool: str = ""
@@ -691,7 +691,7 @@ _TAINT_NOTE = (
 
 ★ 它**不改变放行判定**：一次"读过外部内容"不会让批准变得更难。
 硬闸门（"有 untrusted 就不许调写工具"）会与"用户明确要求写入"直接冲突 ——
-判断与理由见 ADR-0022。
+判断与理由。
 """
 
 
@@ -862,6 +862,8 @@ def install(hub: ToolHub) -> None:
     却查不到 / 批不了"，而且只在测试里出现、生产看不出，最难查的那种。
     """
     hub.set_audit_writer(write_audit)
+    # 权限策略先于确认门：deny 是硬阻断，allow 不绕开确认门（两层各管各的）。
+    hub.set_permission_gate(permissions.decide)
     hub.set_approval_gate(
         lambda spec, args, token, conversation_id, tainted=False: pending_store().gate(
             spec, args, token, conversation_id, tainted

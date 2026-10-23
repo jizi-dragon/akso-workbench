@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import cache
+from .. import cache, permissions
 from ..harness import prompts
 from ..services import storage
 from ..services.settings import all_settings_json, save_deepseek, save_max_steps
@@ -26,6 +26,15 @@ class PromptBody(BaseModel):
     """系统提示词正文；**空串 = 恢复基线**（见 harness/prompts.py）。"""
 
 
+class PermissionsBody(BaseModel):
+    """权限策略更新（`None` = 不动该字段）。规则形状：`tool` 或 `tool(subject)`。"""
+
+    mode: str | None = None
+    allow: list[str] | None = None
+    ask: list[str] | None = None
+    deny: list[str] | None = None
+
+
 @router.get("/bootstrap")
 def bootstrap() -> dict:
     metrics = storage.list_metrics(200)
@@ -37,7 +46,8 @@ def bootstrap() -> dict:
             "qaTotal": len(metrics),
             "adoptRate": round(len(adopted) / len(rated) * 100) if rated else None,
         },
-        "settings": {**all_settings_json(), "systemPrompt": prompts.prompt_state()},
+        "settings": {**all_settings_json(), "systemPrompt": prompts.prompt_state(),
+                     "permissions": permissions.settings_json()},
         "cache": cache.usage_overview(),
     }
 
@@ -51,6 +61,26 @@ def put_settings(body: SettingsBody) -> dict:
     )
     save_max_steps(body.maxSteps)
     return {"ok": True, "settings": {**all_settings_json(), "systemPrompt": prompts.prompt_state()}}
+
+
+# ---------------------------------------------------------------- 权限策略
+
+
+@router.get("/settings/permissions")
+def get_permissions() -> dict:
+    """当前权限策略（`deny > ask > allow`）。"""
+    return permissions.settings_json()
+
+
+@router.put("/settings/permissions")
+def put_permissions(body: PermissionsBody) -> dict:
+    """更新权限策略。**非法规则返回 400**，不静默忽略。"""
+    try:
+        policy = permissions.save(
+            mode=body.mode, allow=body.allow, ask=body.ask, deny=body.deny)
+    except permissions.PermissionConfigError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return policy.to_json()
 
 
 # ---------------------------------------------------------------- 系统提示词

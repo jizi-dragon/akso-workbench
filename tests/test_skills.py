@@ -10,11 +10,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
+import time
 import zipfile
 
 import pytest
 
+from workbench.api import routes_skills
 from workbench.hub import get_hub, reset_hub
 from workbench.plugin_api import PluginOrigin, Risk
 from workbench.skills import layout
@@ -389,3 +392,48 @@ def test_capability_id_and_version_reject_traversal() -> None:
     for bad in ("1.0", "1.0.0.0", "../1.0.0", ""):
         with pytest.raises(ValueError):
             layout.library_version_dir("ok-id", bad, create=False)
+
+
+def test_upload_does_not_block_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """I11 规则 T 的效果判据：上传 0.4s 期间，事件循环必须还在转。
+
+    反证：把 `await asyncio.to_thread(...)` 改回直接 `L.upload(...)`，
+    下面 `ticks >= 4` 当场失败（实测直接调用时 ticks=0）。
+    """
+    class _File:
+        filename = "probe.zip"
+
+        async def read(self) -> bytes:
+            return b"x"
+
+    class _Result:
+        ok = True
+
+        def to_dict(self) -> dict:
+            return {"ok": True, "verdict": "ok"}
+
+    def slow_upload(*_args, **_kwargs):
+        time.sleep(0.4)
+        return _Result()
+
+    monkeypatch.setattr(routes_skills.L, "upload", slow_upload)
+    ticks = {"n": 0}
+
+    async def scenario() -> float:
+        async def ticker() -> None:
+            for _ in range(8):
+                await asyncio.sleep(0.05)
+                ticks["n"] += 1
+
+        task = asyncio.create_task(ticker())
+        started = time.perf_counter()
+        await routes_skills.upload(_File(), False)  # type: ignore[arg-type]
+        elapsed = time.perf_counter() - started
+        task.cancel()
+        return elapsed
+
+    elapsed = asyncio.run(scenario())
+    assert 0.35 <= elapsed < 0.9, f"上传耗时异常：{elapsed:.3f}s"
+    assert ticks["n"] >= 4, (
+        f"上传期间事件循环只跳了 {ticks['n']} 次 —— `L.upload` 又跑回事件循环上了"
+    )

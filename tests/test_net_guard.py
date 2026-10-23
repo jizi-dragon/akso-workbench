@@ -3,7 +3,7 @@
 ## 为什么这些断言值得写
 
 `read_web_page` 是 `risk=read`（**不过确认门**）且接受任意 URL，而 `/api/*` 无认证是
-ADR-0015 §D-7 的有意保留、控制端口固定 18765/18767（ADR-0012）。三件事叠起来就是
+ 的有意保留、控制端口固定 18765/18767。三件事叠起来就是
 一条"外部网页 → 本机内网 API → 进上下文 → 外发"的链，而它**不会报任何错**。
 
 其中**最容易被写漏的一条是第一跳之外的跳转**：`follow_redirects=True` 只校验了
@@ -208,3 +208,34 @@ def test_no_module_follows_redirects_blindly() -> None:
         "这些地方在盲目跟随重定向（只校验第一跳）：" + ", ".join(offenders)
         + "。改用 workbench.net_guard.guarded_get（逐跳校验）。"
     )
+
+
+def test_response_body_is_capped_and_marked() -> None:
+    """响应体是**总预算**：超过 `max_bytes` 截断，并用响应头显式标记。"""
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 10_000)
+
+    res = asyncio.run(net_guard.guarded_get(
+        "http://8.8.8.8/big", transport=_mock(handler), max_bytes=100))
+    assert len(res.content) == 100, "响应体没有被上限截断"
+    assert res.headers.get("x-workbench-truncated") == "1"
+    assert len(res.text) == 100
+
+
+def test_total_deadline_covers_all_redirects() -> None:
+    """`timeout` 是**整次调用**的总时限，不是每跳时限。
+
+    反证：旧实现每跳 0.1s、4 跳能花 0.4s+，这里会变成
+    "跳转次数超过上限"而不是 "总时限用尽"。
+    """
+    import time as _time
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        _time.sleep(0.12)
+        return httpx.Response(302, headers={"location": "http://8.8.8.8/next"})
+
+    started = _time.perf_counter()
+    with pytest.raises(httpx.TimeoutException, match="总时限"):
+        asyncio.run(net_guard.guarded_get(
+            "http://8.8.8.8/start", transport=_mock(handler), timeout=0.2, max_hops=3))
+    assert _time.perf_counter() - started < 0.5

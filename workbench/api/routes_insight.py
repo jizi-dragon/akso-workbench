@@ -97,7 +97,9 @@ async def run_sse(req: InsightRequest):
     更不该留下一个永远 `running` 的幽灵任务。
     """
     async def gen():
-        job_id, workdir = jobs.start_job(req)
+        # I11：`start_job` 是同步 DB 写入（建 run 行 + 准备目录）。
+        # 它必须在生成器内部（见上），但不能再直接跑在事件循环上。
+        job_id, workdir = await asyncio.to_thread(jobs.start_job, req)
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
 
