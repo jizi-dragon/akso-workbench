@@ -1,0 +1,72 @@
+{
+  "formatVersion": 1,
+  "name": "domain_document_locator",
+  "model": "deepseek-flash",
+  "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
+  "interactions": [
+    {
+      "key": "357c6782801f6d0f4d5f68f74d7c45d36740c7740354aae48c21e94279ea2eaf",
+      "kind": "stream",
+      "label": "stream |  2 msgs | 20 tools | 这份 PDF 第 2 页的结论是什么？",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "d4",
+            "name": "attachment_list",
+            "arguments": "{}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "dd8cefc8ec8c88abcffc3a9e3f31f9670a9d567eea947c02ddad75d8e1c7afb0",
+      "kind": "stream",
+      "label": "stream |  4 msgs | 20 tools | 这份 PDF 第 2 页的结论是什么？",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "d5",
+            "name": "attachment_read",
+            "arguments": "{\"attachment_id\": \"att-demo\", \"unit\": \"page\", \"index\": 2}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "119d18840704fb68f7234492ab18a5f1d8118b1795d53bb64d4ffe867efe7ad0",
+      "kind": "stream",
+      "label": "stream |  6 msgs | 20 tools | 这份 PDF 第 2 页的结论是什么？",
+      "event": {
+        "ok": true,
+        "content": "第 2 页的结论是：偏差调查需在 30 天内关闭。引用：报告.pdf 第 2 页。",
+        "tool_calls": [],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ],
+  "case": "domain_document_locator"
+}

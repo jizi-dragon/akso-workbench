@@ -276,6 +276,26 @@ CASES: list[Case] = [
         note="垂直评测：锁的是“先查平台配置、再给结论”的形状，不是模型措辞。",
     ),
     Case(
+        id="domain_document_locator",
+        title="垂直场景：按页定位附件结论并带引用",
+        user="这份 PDF 第 2 页的结论是什么？",
+        script=[
+            {"content": "", "tool_calls": [_call("attachment_list", call_id="d4")]},
+            {"content": "", "tool_calls": [_call("attachment_read",
+                                                  {"attachment_id": "att-demo", "unit": "page", "index": 2},
+                                                  call_id="d5")]},
+            {"content": "第 2 页的结论是：偏差调查需在 30 天内关闭。引用：报告.pdf 第 2 页。"},
+        ],
+        expect_tools=["attachment_list", "attachment_read"],
+        expect_content=["第 2 页", "引用"],
+        expect_events=["action", "observation", "final"],
+        stub_returns={
+            "attachment_list": '{"attachments":[{"id":"att-demo","name":"报告.pdf"}]}',
+            "attachment_read": "第 2 页：偏差调查需在 30 天内关闭。",
+        },
+        note="垂直评测：验证“先列附件、再按页读、最后带引用”的链路。",
+    ),
+    Case(
         id="domain_skill_catalog",
         title="垂直场景：标准 SKILL.md 技能目录 → 按需读正文",
         user="用监管报告技能帮我写一份偏差报告",
