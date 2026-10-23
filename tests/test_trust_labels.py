@@ -211,7 +211,7 @@ def test_every_real_tool_declares_trust() -> None:
     missing = [s.name for s in hub.specs()
                if not isinstance(s.trust, pa.Trust)]
     assert not missing, f"这些工具没有声明 trust：{missing}"
-    assert len(hub.specs()) == 15, "工具数变了 —— 新工具要顺手声明 trust"
+    assert len(hub.specs()) == 18, "工具数变了 —— 新工具要顺手声明 trust"
 
 
 # ---------------------------------------------------------------- ③ taint 传播
@@ -349,7 +349,7 @@ def test_taint_does_not_change_the_decision(monkeypatch) -> None:
     """★ taint **不参与放行判定**（计划 §8.2 第 4 条：硬拦截刻意不做）。
 
     这条断言是刻意的**反向**保护：如果哪天有人把 taint 变成硬闸门
-    （"有 untrusted 就不许调写工具"），它会红 —— 而那时应该先回去读 ADR-0022，
+    （"有 untrusted 就不许调写工具"），它会红 —— 而那时应该先回去读，
     而不是顺手把这条测试改掉。
 
     为什么不做硬闸门：那会与"用户明确要求写入"的日常场景直接冲突 ——
@@ -367,7 +367,7 @@ def test_taint_does_not_change_the_decision(monkeypatch) -> None:
 
     kinds = [e["type"] for e in events]
     assert "approval_required" in kinds, (
-        "taint 把写操作直接拦掉了 —— 那是硬闸门，计划 §8.2 明确不做（见 ADR-0022）"
+        "taint 把写操作直接拦掉了 —— 那是硬闸门，计划 §8.2 明确不做"
     )
     assert "confirm_resolved" in kinds, "带 taint 的 pending 竟然不能被批准"
     resolved = next(e for e in events if e["type"] == "confirm_resolved")

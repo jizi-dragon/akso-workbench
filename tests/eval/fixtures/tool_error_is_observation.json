@@ -5,9 +5,9 @@
   "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
   "interactions": [
     {
-      "key": "fa9d4f1e73628ec1b65a7b5b38244e574884e94e15bed1f02144487498135c94",
+      "key": "d8749f8eaf623ab773937f8f3fdaff1d7145c21c3d66456b8b9e76e2587afc12",
       "kind": "stream",
-      "label": "stream |  2 msgs | 15 tools | 读一个不存在的文件",
+      "label": "stream |  2 msgs | 18 tools | 读一个不存在的文件",
       "event": {
         "ok": true,
         "content": "",
@@ -28,9 +28,9 @@
       }
     },
     {
-      "key": "758edeada118a130ef42180eb3112a5b2521370ade5dc5bd7fee6ed6880f0c28",
+      "key": "074335059b302f3e08c29927c1379724a03f27146920fa2e317f8c24ef17175e",
       "kind": "stream",
-      "label": "stream |  4 msgs | 15 tools | 读一个不存在的文件",
+      "label": "stream |  4 msgs | 18 tools | 读一个不存在的文件",
       "event": {
         "ok": true,
         "content": "那个文件读不到。",

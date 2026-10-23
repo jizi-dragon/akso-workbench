@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import time
 import uuid
 from dataclasses import dataclass
@@ -330,4 +331,66 @@ def describe() -> dict:
             sum(1 for p in staged_dir_root().iterdir() if p.is_dir())
             if staged_dir_root().exists() else 0
         ),
+    }
+
+def cleanup_runs(*, keep_days: int = 30, keep_count: int = 200,
+                 max_bytes: int = 512 * 1024 * 1024, dry_run: bool = True) -> dict:
+    """按保留策略清理 `runs/`（**默认只预览**）。
+
+    三个维度任一超限都从最旧的开始删：
+    - `keep_days`：mtime 早于 now-keep_days 的目录；
+    - `keep_count`：最多保留多少个 run；
+    - `max_bytes`：总字节上限。
+
+    `staged/` 与工作区根不在范围内；`RUN_ID_RE` 之外的目录也不碰（宁可留，不可误删）。
+    """
+    if keep_days < 0 or keep_count < 0 or max_bytes < 0:
+        raise ValueError("keep_days / keep_count / max_bytes 必须 ≥ 0")
+    base = runs_dir()
+    if not base.exists():
+        return {"deleted": [], "freedBytes": 0, "kept": 0, "dryRun": dry_run}
+    entries: list[tuple[float, Path, int]] = []
+    for path in base.iterdir():
+        if not path.is_dir() or not RUN_ID_RE.match(path.name):
+            continue
+        size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+        entries.append((path.stat().st_mtime, path, size))
+    entries.sort(key=lambda item: item[0])
+    now = time.time()
+    cutoff = now - keep_days * 86400
+    doomed: set[Path] = {path for mtime, path, _ in entries if keep_days > 0 and mtime < cutoff}
+
+    remaining = [item for item in entries if item[1] not in doomed]
+    if len(remaining) > keep_count:
+        doomed.update(path for _, path, _ in remaining[: len(remaining) - keep_count])
+        remaining = remaining[len(remaining) - keep_count:]
+
+    total = sum(size for _, path, size in remaining if path not in doomed)
+    for _mtime, path, size in remaining:
+        if total <= max_bytes:
+            break
+        if path in doomed:
+            continue
+        doomed.add(path)
+        total -= size
+
+    freed = sum(size for _, path, size in entries if path in doomed)
+    deleted: list[str] = []
+    errors: list[dict[str, str]] = []
+    for _, path, _size in entries:
+        if path not in doomed:
+            continue
+        deleted.append(path.name)
+        if dry_run:
+            continue
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:
+            errors.append({"run": path.name, "error": f"{type(exc).__name__}: {exc}"})
+    return {
+        "deleted": deleted,
+        "freedBytes": freed,
+        "kept": len(entries) - len(doomed),
+        "dryRun": dry_run,
+        "errors": errors,
     }

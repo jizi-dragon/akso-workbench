@@ -285,6 +285,11 @@ def create_app() -> FastAPI:
     app.include_router(routes_conversations.router)
     app.include_router(routes_settings.router)
     app.include_router(routes_chat.router)
+    # 能力诊断：运维面，不允许被 `_optional_routers` 的容错注册静默跳过。
+    from . import routes_diagnostics, routes_memory
+
+    app.include_router(routes_diagnostics.router)
+    app.include_router(routes_memory.router)
     _optional_routers(app)
     # 日志检索（放在 `_optional_routers` 之外：它是运维面，不是一个"业务域"，
     # 且**不允许被容错注册静默跳过**——查不到日志比少了某个业务路由更严重）
@@ -302,11 +307,11 @@ def create_app() -> FastAPI:
 
         本端点只回答"你是哪个进程、在哪个端口"，**不写任何状态**，因此可以被反复探测。
         （历史上还有一个 `/extension/health` 回答"浏览器扩展活着吗"并写 `everConnected` 闩锁；
-        2026-10-09 扩展整体移除后它已不存在，ADR-0011 §D-4 的分工只剩本端点半边。）
+        2026-10-09 扩展整体移除后它已不存在， 的分工只剩本端点半边。）
         **不要把探测打到有副作用的端点上。**
 
         存在理由：改造前壳的 `waitReady()` 只看"18765 上有人回了 200"，于是
-        "旧实例占着端口 + 新壳起不来" 会表现成"代码改动没生效"（ADR-0011 §1）。
+        "旧实例占着端口 + 新壳起不来" 会表现成"代码改动没生效"。
         """
         import os
 

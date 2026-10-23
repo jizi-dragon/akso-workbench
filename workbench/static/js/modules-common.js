@@ -49,15 +49,6 @@ export async function postSSE(path, body, { onLog, onDone, onError } = {}) {
 
 export function el(id) { return document.getElementById(id); }
 
-export function logLine(consoleEl, text, cls = '') {
-  const div = document.createElement('div');
-  if (cls) div.className = cls;
-  div.textContent = text;
-  consoleEl.appendChild(div);
-  consoleEl.scrollTop = consoleEl.scrollHeight;
-  while (consoleEl.children.length > 1200) consoleEl.removeChild(consoleEl.firstChild);
-}
-
 export function fmtBytes(n) {
   if (n == null) return '';
   if (n < 1024) return `${n} B`;

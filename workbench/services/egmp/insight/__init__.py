@@ -51,7 +51,10 @@ def run_spider(client: EgmpClient, codes: list[str], *, output_dir: Path | None 
     graphs = spider.get("workflowGraphs") or []
     unexpanded = spider["model"].get("unexpandedRelations") or []
     coverage = workspace.build_coverage(
-        total=len(codes), succeeded=len(codes),
+        total=len(codes),
+        # 实际读到的对象数，不是"我打算读几个"：全部端点都失败时也必须显示 degraded
+        # （旧实现写死 len(codes)，覆盖度会谎报 complete —— 见 2026-10-22 审计 2.11）。
+        succeeded=len(spider.get("objects") or []),
         failures=spider.get("failures") or [],
         objectNodes=stats.get("objectNodes"), stateNodes=stats.get("stateNodes"),
         attrEdges=stats.get("attrEdges"), relationEdges=stats.get("relationEdges"),

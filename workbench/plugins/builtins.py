@@ -214,6 +214,8 @@ async def read_web_page(args: ReadWebPageArgs, ctx: pa.ToolContext) -> str:
     title, text = _extract_text(res.text)
     truncated = len(text) > MAX_PAGE_CHARS
     notice = "\n（正文过长，已截断）" if truncated else ""
+    if res.headers.get("x-workbench-truncated") == "1":
+        notice += "\n（响应体超过 5 MB，已截断）"
     body = text[:MAX_PAGE_CHARS] + ("…" if truncated else "")
     return f"【{title or url}】\n来源：{url}{notice}\n\n{body}"
 

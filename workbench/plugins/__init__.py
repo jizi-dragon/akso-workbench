@@ -43,6 +43,7 @@ _MODULES: tuple[str, ...] = (
     "websearch",
     "insight",
     "accounts",
+    "memory",
 )
 
 

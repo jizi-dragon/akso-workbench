@@ -340,7 +340,7 @@ async def run_agent_loop(
     # 而它不在 messages 里 —— 所以折叠判定要单独把它算进去（计划 §7.1）。
     # 在这里算一次就够：`plugins` 在整个回合里不变，schema 也就不变。
     _tools_tokens = estimate_tools_tokens(registry.list_api_for(plugins))
-    # ★ 校准系数（计划 §7.1(b)，[ADR-0024](../docs/adr/0019-in-turn-context-and-budget-governance.md)）：
+    # ★ 校准系数（计划 §7.1(b)）：
     # 拿**API 自报的 `prompt_tokens`** 反过来校准字数估算。
     #
     # ★ 为什么不是计划原文的 `tiktoken cl100k_base`：那是 **OpenAI 的分词器**，
@@ -1086,7 +1086,7 @@ PARALLEL_READ_MAX = 4
 **超过这个数的批次整批退回串行**，而不是切成几波并发。理由：切波要引入
 "波与波之间要不要重新查停止/预算"的额外语义，而那正是这条快路径最该保持简单的地方。
 模型一次发 2–4 个独立只读调用是最常见的形状，所以这个上限覆盖了绝大多数收益场景。
-想放宽它时，先回答"波之间怎么处理停止请求"（见 ADR-0023）。
+想放宽它时，先回答"波之间怎么处理停止请求"。
 """
 
 
@@ -1148,7 +1148,7 @@ async def _run_parallel_batch(calls: list[dict], registry, config, safety, *, co
     "同轮可以并发多次调用" —— 所以 `action, action, observation, observation`
     这种分组形状它已经能处理。）
 
-    ## ★ 它对"停止"意味着什么（必须写清楚，见 ADR-0023）
+    ## ★ 它对"停止"意味着什么（必须写清楚）
 
     §5.6 的检查点②是**每次工具调用前**问一次；这条快路径把粒度放到了**整批之前**。
     也就是说：**一批全只读调用已经并发出去之后，用户的停止请求要等这一批跑完才生效。**

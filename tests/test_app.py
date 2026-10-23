@@ -193,8 +193,8 @@ def test_agent_selfcheck(client: TestClient) -> None:
         "出现了 DANGEROUS 级工具：请确认它真的不可逆，并更新本断言的注释"
     )
     assert data["riskCounts"]["read"] > 0
-    # 内置浏览器下线后产品没有 WRITE 工具；风险门机制由 probe_write 单独覆盖。
-    assert data["riskCounts"]["write"] == 0
+    # 2026-10-22：memory_add / memory_delete 是 WRITE 工具（过确认门）。
+    assert data["riskCounts"]["write"] == 2
 
 
 def test_agent_unknown_tool_404(client: TestClient) -> None:

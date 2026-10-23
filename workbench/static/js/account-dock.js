@@ -308,10 +308,6 @@ export function showDockError(message) {
   }, 6000);
 }
 
-export function currentSelection() {
-  return current;
-}
-
 /** 刷新页面后把卡片画回来。
  *
  *  选择活在服务端（进程内，按会话记），所以刷新不该让它消失

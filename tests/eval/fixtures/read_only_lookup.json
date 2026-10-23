@@ -5,9 +5,9 @@
   "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
   "interactions": [
     {
-      "key": "70ae737692dc20eb0c69dfc2ece8a78cff2142adf1c37a0ae963554addafa4c2",
+      "key": "360c4cceee863a7b293334ee6c2ec9d0ac7896f68757bee356e5adbd78d34ee9",
       "kind": "stream",
-      "label": "stream |  2 msgs | 15 tools | 现在几点？",
+      "label": "stream |  2 msgs | 18 tools | 现在几点？",
       "event": {
         "ok": true,
         "content": "",
@@ -28,9 +28,9 @@
       }
     },
     {
-      "key": "98bcd82c5ebad27e0edea7c24a9d0cb3ba449f3339003aac48dcb6d1cbb66ee2",
+      "key": "e843c26e648e8e31297452c522d96ef44a2fcaa098910f6bf247aee5fd95d0a4",
       "kind": "stream",
-      "label": "stream |  4 msgs | 15 tools | 现在几点？",
+      "label": "stream |  4 msgs | 18 tools | 现在几点？",
       "event": {
         "ok": true,
         "content": "查到了。",
