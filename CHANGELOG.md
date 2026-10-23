@@ -84,6 +84,11 @@
   只读 Agent 回合，`rounds+1`；达到 `max_rounds` 或非 active 时拒绝；设置页新增「继续一轮」。
   仍不自动续跑（自动 goal loop 未落地）。
 
+### Added
+
+- **目标有限自动推进（2026-10-23）**：`POST /api/goals/{id}/advance` 连续执行只读回合，
+  最多剩余轮次；正文含「目标完成」标记 done，否则到上限停止。设置页新增「自动推进」。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

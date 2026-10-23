@@ -93,6 +93,7 @@ function initGoals() {
         </div>
         ${goal.status === "active"
           ? `<button class="btn-ghost btn-sm" type="button" data-goal-continue="${esc(goal.id)}">继续一轮</button>
+             <button class="btn-ghost btn-sm" type="button" data-goal-advance="${esc(goal.id)}">自动推进</button>
              <button class="btn-ghost btn-sm" type="button" data-goal-status="paused" data-id="${esc(goal.id)}">暂停</button>`
           : goal.status === "paused"
             ? `<button class="btn-ghost btn-sm" type="button" data-goal-status="active" data-id="${esc(goal.id)}">恢复</button>`
@@ -135,9 +136,16 @@ function initGoals() {
   list.addEventListener("click", async (event) => {
     const statusBtn = event.target.closest("[data-goal-status]");
     const continueBtn = event.target.closest("[data-goal-continue]");
+    const advanceBtn = event.target.closest("[data-goal-advance]");
     const delBtn = event.target.closest("[data-goal-del]");
     try {
-      if (continueBtn) {
+      if (advanceBtn) {
+        if (!window.confirm("自动推进到剩余轮次上限？每轮都会调用模型，可能耗时并产生费用。")) return;
+        meta.textContent = "正在自动推进（只读，可能多轮）…";
+        const result = await api.advanceGoal(advanceBtn.dataset.goalAdvance, null);
+        meta.textContent = `✓ 已推进 ${result.rounds} 轮（${result.goal.rounds}/${result.goal.maxRounds}）`;
+        await load();
+      } else if (continueBtn) {
         meta.textContent = "正在推进一轮（只读，可能要一会儿）…";
         const result = await api.continueGoal(continueBtn.dataset.goalContinue);
         meta.textContent = result.error

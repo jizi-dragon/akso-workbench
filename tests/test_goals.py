@@ -92,3 +92,46 @@ def test_goal_ui_has_continue_button() -> None:
     api_js = (root / "js" / "api.js").read_text(encoding="utf-8")
     assert "continueGoal" in js and "data-goal-continue" in js
     assert "continueGoal" in api_js
+
+
+def test_goal_advance_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    goal = goals.create("推进", "完成只读检查", max_rounds=3)
+    calls: list[str] = []
+
+    def fake_round(goal_id: str) -> dict:
+        calls.append(goal_id)
+        current = goals.get(goal_id)
+        updated = goals.update(goal_id, rounds=current["rounds"] + 1)
+        return {"goal": updated, "content": f"第 {updated['rounds']} 轮", "error": "",
+                "conversationId": "conv-1"}
+
+    monkeypatch.setattr(goals, "execute_round", fake_round)
+    result = goals.advance(goal["id"], max_rounds=2)
+    assert result["rounds"] == 2
+    assert result["goal"]["rounds"] == 2
+    assert len(calls) == 2
+    goals.delete(goal["id"])
+
+
+def test_goal_advance_stops_on_completion_marker(monkeypatch: pytest.MonkeyPatch) -> None:
+    goal = goals.create("推进", "完成只读检查", max_rounds=5)
+
+    def fake_round(goal_id: str) -> dict:
+        current = goals.get(goal_id)
+        updated = goals.update(goal_id, rounds=current["rounds"] + 1)
+        return {"goal": updated, "content": "目标完成，已交付。", "error": "",
+                "conversationId": "conv-1"}
+
+    monkeypatch.setattr(goals, "execute_round", fake_round)
+    result = goals.advance(goal["id"])
+    assert result["goal"]["status"] == "done"
+    assert result["rounds"] == 1
+    goals.delete(goal["id"])
+
+
+def test_goal_advance_ui_is_wired() -> None:
+    root = Path(__file__).resolve().parents[1] / "workbench" / "static"
+    js = (root / "js" / "settings.js").read_text(encoding="utf-8")
+    api_js = (root / "js" / "api.js").read_text(encoding="utf-8")
+    assert "advanceGoal" in js and "data-goal-advance" in js
+    assert "advanceGoal" in api_js

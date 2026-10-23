@@ -656,6 +656,7 @@ Python 不再代理 `/update-check` / `/update-install`。
 | POST | `/api/goals` | `{title,objective,maxRounds=10,conversationId=""}` | 创建；`maxRounds` 1–100，非法 **400** |
 | PATCH | `/api/goals/{id}` | `{title?,objective?,status?,rounds?,maxRounds?}` | 局部更新；`status` ∈ active/paused/done；不存在 **404** |
 | POST | `/api/goals/{id}/continue` | — | **手动**推进一轮（只读 Agent 回合，新建/复用绑定会话）；达到上限或非 active → **400** |
+| POST | `/api/goals/{id}/advance` | `{maxRounds?}` | **手动触发**的有限自动推进：最多 N 轮，正文含「目标完成」则标记 done，否则到上限停；只读 |
 | DELETE | `/api/goals/{id}` | — | 删除；不存在 **404** |
 
 - 不自动续跑、不自动判定完成；用户点「继续一轮」手动推进，**只读工具**可用；

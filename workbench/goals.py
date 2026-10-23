@@ -186,3 +186,35 @@ def execute_round(goal_id: str) -> dict:
     updated = update(goal_id, rounds=current["rounds"] + 1)
     return {"goal": updated, "content": content, "error": error,
             "conversationId": conv_id}
+
+
+def advance(goal_id: str, max_rounds: int | None = None) -> dict:
+    """**手动触发**的有限自动推进：连续执行只读回合，直到上限/失败/模型说完成。
+
+    - 不是后台自动循环：调用方点一次，最多推进 `max_rounds` 轮；
+    - 只读边界由 `execute_round` 保证；
+    - 完成判定只认模型正文里的「目标完成」标记，否则到上限停下，不擅自改 done。
+    """
+    current = get(goal_id)
+    if current is None:
+        raise GoalError(f"目标不存在：{goal_id}")
+    if current["status"] != "active":
+        raise GoalError("只有 active 目标可以推进")
+    remaining = current["maxRounds"] - current["rounds"]
+    if remaining <= 0:
+        raise GoalError(f"目标已达到轮次上限 {current['maxRounds']}")
+    limit = remaining if max_rounds is None else min(int(max_rounds), remaining)
+    if limit < 1:
+        raise GoalError("max_rounds 必须 ≥1")
+
+    results: list[dict] = []
+    for _ in range(limit):
+        result = execute_round(goal_id)
+        results.append({"content": result["content"], "error": result["error"]})
+        current = result["goal"]
+        if result["error"]:
+            break
+        if "目标完成" in (result["content"] or ""):
+            current = update(goal_id, status="done")
+            break
+    return {"goal": current, "rounds": len(results), "results": results}

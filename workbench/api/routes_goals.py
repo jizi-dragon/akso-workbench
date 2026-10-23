@@ -19,6 +19,10 @@ class GoalBody(BaseModel):
     conversationId: str = ""
 
 
+class GoalAdvance(BaseModel):
+    maxRounds: int | None = None
+
+
 class GoalPatch(BaseModel):
     title: str | None = None
     objective: str | None = None
@@ -58,6 +62,16 @@ async def continue_goal(goal_id: str) -> dict:
     except goals.GoalError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 —— 一轮失败要可读
+        raise HTTPException(502, f"目标推进失败：{exc}") from exc
+
+
+@router.post("/{goal_id}/advance")
+async def advance_goal(goal_id: str, body: GoalAdvance) -> dict:
+    try:
+        return await asyncio.to_thread(goals.advance, goal_id, body.maxRounds)
+    except goals.GoalError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"目标推进失败：{exc}") from exc
 
 
