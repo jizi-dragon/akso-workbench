@@ -57,3 +57,14 @@ def test_acl_runner_failure_is_fail_closed(tmp_path, monkeypatch) -> None:
         layout.save_workspace(root=original.root, mode=original.mode,
                               allow_network=original.allow_network,
                               allow_subprocess=original.allow_subprocess)
+
+
+def test_runner_is_auto_discovered_in_data_dir(tmp_path, monkeypatch) -> None:
+    from workbench import config
+
+    monkeypatch.delenv("WORKBENCH_WINDOWS_ACL_RUNNER", raising=False)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    runner = tmp_path / "sandbox-runner" / win_acl_runner.RUNNER_REL
+    runner.parent.mkdir(parents=True)
+    runner.write_text("// fake", encoding="utf-8")
+    assert win_acl_runner.runner_path() == runner

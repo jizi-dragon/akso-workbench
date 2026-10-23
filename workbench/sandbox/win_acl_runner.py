@@ -25,15 +25,25 @@ import shutil
 import sys
 from pathlib import Path
 
+from .. import config
+
 IS_WINDOWS = sys.platform == "win32"
+RUNNER_REL = Path("node_modules/@deepseek-ai/dsh-sandbox-windows-acl/lib/runner.js")
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def runner_path() -> Path | None:
+    """显式 env 优先；否则找数据目录/仓库 runtime 下的已安装包。"""
     raw = os.environ.get("WORKBENCH_WINDOWS_ACL_RUNNER", "").strip()
-    if not raw:
-        return None
-    path = Path(raw).expanduser()
-    return path if path.is_file() else None
+    candidates = [Path(raw).expanduser()] if raw else []
+    candidates.extend([
+        config.DATA_DIR / "sandbox-runner" / RUNNER_REL,
+        REPO_ROOT / "runtime" / "sandbox-runner" / RUNNER_REL,
+    ])
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
 
 
 def node_path() -> str | None:

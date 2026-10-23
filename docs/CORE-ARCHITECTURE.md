@@ -286,7 +286,9 @@ Windows 上绑定用挂起创建消除竞态；但在宿主嵌套 Job 里补绑�
    `strict-readonly` 会附加 `WRITE_RESTRICTED` 令牌；`workspace-write` 若设置
    `WORKBENCH_WINDOWS_ACL_RUNNER`，由 DSH `sandbox-windows-acl` runner 执行
    capability SID + Low label + deny DELETE_CHILD 的完整编排（工作区可写、外部拒绝）；
-   **未配置时仍按当前用户权限写工作区**（声明而非强制）。没有独立账户/AppContainer/容器。
+   **未配置时仍按当前用户权限写工作区**（声明而非强制）；可用
+   `python tools\install_sandbox_runner.py` 把 runner 装到数据目录后自动发现。
+   没有独立账户/AppContainer/容器。
 2. **启动前校验 + read-only 的运行时写限制**：`cwd` 在沙箱根内、可执行文件在白名单、
    环境变量白名单、`cwd` 不命中敏感路径；read-only 额外由令牌拒绝写（Everyone 的环境授予
    仍可能放行，属 **partial**）。**读、网络、注册表仍不拦截**。
