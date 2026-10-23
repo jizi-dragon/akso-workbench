@@ -28,7 +28,7 @@ from ..services import attachments as attachment_store
 from ..services import storage
 from ..services.deepseek import DeepSeekClient
 from ..services.settings import load_deepseek, load_max_steps
-from ..services.storage import MESSAGE_KIND_DEFAULT, MESSAGE_KIND_ERROR
+from ..services.storage import MESSAGE_KIND_DEFAULT, MESSAGE_KIND_ERROR, TOOL_ALLOWLIST_KEY
 
 logger = logging.getLogger("workbench.chat")
 
@@ -176,6 +176,22 @@ def _system_prompt() -> str:
         logger.warning("读取 MCP instructions 失败，按无 MCP 说明继续", exc_info=True)
         return prompt
     return f"{prompt}\n\n{block}" if block else prompt
+
+
+def _tool_allowlist(explicit: list[str] | None) -> tuple[str, ...] | None:
+    """请求显式白名单优先；否则读全局设置（空 = 不限制）。"""
+    if explicit is not None:
+        return tuple(explicit)
+    raw = storage.get_setting(TOOL_ALLOWLIST_KEY)
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(parsed, list):
+        return None
+    return tuple(str(item) for item in parsed)
 
 
 def _sse(event: dict) -> str:
@@ -473,7 +489,7 @@ async def _stream_agent(
             if plan else ""
         ),
         plan_mode=plan,
-        allowed_tools=tuple(allowed_tools) if allowed_tools is not None else None,
+        allowed_tools=_tool_allowlist(allowed_tools),
         # 步数预算从设置读（默认 40）。**这里曾经什么都不传** —— 于是 `max_steps`
         # 永远是 `AgentConfig` 里的类默认值，用户没有任何手段调大它，
         # 而"稍微长一点的多步任务"必然撞上限并**整轮被砍掉**。

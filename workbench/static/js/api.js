@@ -49,6 +49,9 @@ export const api = {
 
   /** 系统提示词：读当前生效值 + 基线 + 是否自定义 */
   getPrompt: () => jsonFetch("/api/settings/prompt"),
+  getToolScope: () => jsonFetch("/api/settings/tools"),
+  saveToolScope: (allowed) =>
+    jsonFetch("/api/settings/tools", { method: "PUT", body: JSON.stringify({ allowed }) }),
   /** 保存提示词（传空串 = 恢复基线） */
   savePrompt: (prompt) =>
     jsonFetch("/api/settings/prompt", { method: "PUT", body: JSON.stringify({ prompt }) }),

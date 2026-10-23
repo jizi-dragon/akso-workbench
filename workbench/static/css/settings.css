@@ -397,3 +397,28 @@
   font-family: var(--font-mono, "IBM Plex Mono", monospace) !important;
   opacity: 0.85;
 }
+
+
+/* 工具范围（设置页）：只影响模型可见 schema，不是权限闸门 */
+.tool-scope-list {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  margin: 6px 0 10px;
+}
+.tool-scope-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.tool-scope-row:last-child { border-bottom: 0; }
+.tool-scope-row small {
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

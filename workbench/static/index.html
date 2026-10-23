@@ -230,6 +230,22 @@
               </section>
 
               <section class="settings-section">
+                <h2 class="settings-section-title">⚡ 工具范围</h2>
+                <div class="settings-card">
+                  <p class="settings-hint">
+                    只把勾选的工具发给模型。减少工具面能降低每轮 token 与选错概率；
+                    <b>一个都不勾 = 模型没有任何工具</b>（仍可聊天）。清空限制即恢复全部。
+                  </p>
+                  <div id="tool-scope-list" class="tool-scope-list"><small class="hint">加载中…</small></div>
+                  <div class="prompt-actions">
+                    <button class="btn-primary" id="btn-save-tools" type="button">保存工具范围</button>
+                    <button class="btn-ghost" id="btn-reset-tools" type="button">恢复全部工具</button>
+                    <small id="tool-scope-meta"></small>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-section">
                 <h2 class="settings-section-title">⚡ MCP 服务器</h2>
                 <div class="settings-card">
                   <p class="settings-hint">

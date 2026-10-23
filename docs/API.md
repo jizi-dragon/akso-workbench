@@ -74,6 +74,8 @@ FastAPI 服务（本文档主体）          127.0.0.1:<动态端口>
 | PUT | `/api/settings` | `{apiKey?, model?, temperature?}` | `{ok:true, settings:{…}}`（`model` 会归一为官方现行名，见下） |
 | GET | `/api/settings/prompt` | — | `{prompt, default, custom, chars}`——`prompt` 是**当前生效**的那一份 |
 | PUT | `/api/settings/prompt` | `{prompt}` | 同上；**空串 = 恢复基线** |
+| GET | `/api/settings/tools` | — | `{allowed: list[str]\|null, tools:[{name,description,risk,plugin}]}`；`null` = 不限制 |
+| PUT | `/api/settings/tools` | `{allowed: list[str]\|null}` | 保存白名单；未知工具 **400**；`null` 清空限制 |
 | GET | `/api/settings/permissions` | — | `{mode,allow,ask,deny,precedence,modes}` —— 工具权限策略（`deny > ask > allow`） |
 | GET | `/api/diagnostics?live=false` | — | `{schemaVersion, ok, summary, modules, issues}` —— 能力诊断；`live=true` 只读内存注册表，不启动 MCP |
 | PUT | `/api/settings/permissions` | `{mode?, allow?, ask?, deny?}` | 同上；规则形状 `tool` / `tool(subject)`；**非法规则 400**，不静默忽略 |

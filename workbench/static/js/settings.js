@@ -65,8 +65,78 @@ export function initSettings() {
   });
 
   initPromptEditor();
+  initToolScope();
   initCachePanel();
   initMcpPanel();
+}
+
+/* ---------------------------------------------------------------- 工具范围 */
+
+function initToolScope() {
+  const list = document.getElementById("tool-scope-list");
+  const meta = document.getElementById("tool-scope-meta");
+  if (!list) return;
+  let allowed = null;
+  let tools = [];
+
+  const render = () => {
+    if (!tools.length) {
+      list.innerHTML = '<small class="hint">没有可用工具</small>';
+      return;
+    }
+    list.innerHTML = tools.map((tool) => {
+      const checked = allowed === null || allowed.includes(tool.name);
+      return `
+        <label class="tool-scope-row" title="${esc(tool.description || "")}">
+          <input type="checkbox" value="${esc(tool.name)}" ${checked ? "checked" : ""} />
+          <span class="mono">${esc(tool.name)}</span>
+          <span class="badge ${tool.risk === "read" ? "badge-teal" : "badge-red"}">${esc(tool.risk)}</span>
+          <small>${esc((tool.description || "").slice(0, 80))}</small>
+        </label>`;
+    }).join("");
+  };
+
+  const load = async () => {
+    try {
+      const data = await api.getToolScope();
+      allowed = data.allowed;
+      tools = data.tools || [];
+      render();
+      meta.textContent = allowed === null
+        ? `全部 ${tools.length} 个工具`
+        : `已限制为 ${allowed.length} / ${tools.length}`;
+    } catch (err) {
+      list.innerHTML = `<small class="hint" style="color:#f85149">加载失败：${esc(err.message)}</small>`;
+    }
+  };
+
+  document.getElementById("btn-save-tools").addEventListener("click", async () => {
+    const checked = [...list.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);
+    const next = checked.length === tools.length ? null : checked;
+    try {
+      const data = await api.saveToolScope(next);
+      allowed = data.allowed;
+      meta.textContent = allowed === null
+        ? `已恢复全部 ${tools.length} 个工具`
+        : `已保存 ${allowed.length} / ${tools.length} 个工具`;
+      render();
+      flashButton("btn-save-tools", "✓ 已保存");
+    } catch (err) {
+      meta.textContent = `✗ 保存失败：${err.message}`;
+    }
+  });
+
+  document.getElementById("btn-reset-tools").addEventListener("click", async () => {
+    try {
+      await api.saveToolScope(null);
+      await load();
+      flashButton("btn-reset-tools", "✓ 已恢复");
+    } catch (err) {
+      meta.textContent = `✗ 恢复失败：${err.message}`;
+    }
+  });
+
+  load();
 }
 
 /* ---------------------------------------------------------------- 系统提示词 */

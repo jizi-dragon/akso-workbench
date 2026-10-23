@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import cache, permissions
 from ..harness import prompts
+from ..harness.tools import default_registry
 from ..services import storage
 from ..services.settings import all_settings_json, save_deepseek, save_max_steps
+from ..services.storage import TOOL_ALLOWLIST_KEY
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
@@ -24,6 +28,11 @@ class SettingsBody(BaseModel):
 class PromptBody(BaseModel):
     prompt: str = ""
     """系统提示词正文；**空串 = 恢复基线**（见 harness/prompts.py）。"""
+
+
+class ToolScopeBody(BaseModel):
+    allowed: list[str] | None = None
+    """None = 不限制；空数组 = 一个工具都不给；字符串数组 = 白名单。"""
 
 
 class PermissionsBody(BaseModel):
@@ -61,6 +70,44 @@ def put_settings(body: SettingsBody) -> dict:
     )
     save_max_steps(body.maxSteps)
     return {"ok": True, "settings": {**all_settings_json(), "systemPrompt": prompts.prompt_state()}}
+
+
+@router.get("/settings/tools")
+def get_tool_scope() -> dict:
+    """当前工具白名单 + 可用工具清单（设置页渲染复选框）。"""
+    raw = storage.get_setting(TOOL_ALLOWLIST_KEY)
+    allowed = None
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                allowed = [str(item) for item in parsed]
+        except ValueError:
+            allowed = None
+    specs = default_registry().specs()
+    return {
+        "allowed": allowed,
+        "tools": [
+            {"name": spec.name, "description": spec.description,
+             "risk": spec.risk.value, "plugin": spec.plugin_id}
+            for spec in specs
+        ],
+    }
+
+
+@router.put("/settings/tools")
+def put_tool_scope(body: ToolScopeBody) -> dict:
+    """保存工具白名单；未知工具名直接 400，不静默忽略。"""
+    if body.allowed is not None:
+        known = {spec.name for spec in default_registry().specs()}
+        unknown = [name for name in body.allowed if name not in known]
+        if unknown:
+            raise HTTPException(400, f"未知工具：{unknown}")
+        deduped = list(dict.fromkeys(body.allowed))
+        storage.set_setting(TOOL_ALLOWLIST_KEY, json.dumps(deduped, ensure_ascii=False))
+        return {"allowed": deduped}
+    storage.set_setting(TOOL_ALLOWLIST_KEY, "")
+    return {"allowed": None}
 
 
 # ---------------------------------------------------------------- 权限策略

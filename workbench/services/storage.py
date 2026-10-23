@@ -210,3 +210,7 @@ def list_metrics(limit: int = 500) -> list[dict]:
         "FROM qa_metrics ORDER BY created_at DESC LIMIT ?",
         (limit,),
     )
+
+
+#: 全局工具白名单（设置页写入；空串 = 不限制，JSON 数组 = 白名单）。
+TOOL_ALLOWLIST_KEY = "toolAllowlist"

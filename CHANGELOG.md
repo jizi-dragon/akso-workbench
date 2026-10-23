@@ -61,6 +61,11 @@
   `AgentConfig.allowed_tools` 同时收窄模型可见 schema 与执行闸门（被点名但不在清单 →
   回填"未执行"，不执行）。与 `plan_mode` 正交，供页面/Agent 按场景裁剪工具面。
 
+### Added
+
+- **工具范围设置 UI（2026-10-23）**：设置页新增工具白名单勾选（`GET/PUT /api/settings/tools`），
+  保存后对话默认按白名单收窄 schema；未知工具 400；「恢复全部工具」清空限制。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式
