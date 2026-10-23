@@ -79,3 +79,10 @@ def test_schedule_ui_is_wired() -> None:
     assert 'id="sch-title"' in html and 'id="sch-list"' in html
     assert "initSchedules" in js and "api.createSchedule" in js
     assert "listSchedules" in api and "createSchedule" in api
+
+
+def test_scheduled_tools_are_read_only() -> None:
+    tools = set(scheduler._read_only_tools())
+    assert "get_current_time" in tools
+    assert "memory_add" not in tools
+    assert "memory_delete" not in tools
