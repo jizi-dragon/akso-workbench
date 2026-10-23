@@ -106,8 +106,17 @@ jobs:
         run: .venv\Scripts\python.exe tools\verify_packaging.py
 
       # Rust 壳最小编译检查（2026-10-22）：Tauri 配置/命令错误不必等到 NSIS 阶段。
+      # 先装/更新 stable：GitHub windows runner 的预装 Rust 可能低于 Cargo.toml 的
+      # rust-version=1.90，直接 cargo check 会因工具链过旧失败（与代码无关）。
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
       - name: Rust shell check
-        run: cargo check --manifest-path src-tauri\Cargo.toml
+        run: |
+          rustc --version
+          cargo --version
+          cargo check --manifest-path src-tauri\Cargo.toml
 
       # 工具清单 / 数字门禁（2026-09-16 随"工具清单治理"引入）：
       # 核对 docs/TOOLS.md 的清单与"N 个工具/插件"数字 == 运行期 ToolHub。
