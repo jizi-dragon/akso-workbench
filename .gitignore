@@ -76,3 +76,7 @@ node_modules/
 # Tauri 构建产物（生成物）
 src-tauri/target/
 src-tauri/gen/
+
+# 覆盖率产物（tools/coverage_gate.py 的临时报告）
+.coverage
+htmlcov/

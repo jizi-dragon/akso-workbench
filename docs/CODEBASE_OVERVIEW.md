@@ -6,7 +6,7 @@
 > **一张能用的代码地图 + 一个指向当前风险台账的索引**。
 >
 > 想要"为什么这么设计"看 [CORE-ARCHITECTURE.md](CORE-ARCHITECTURE.md) 与
-> [adr/](adr/)；想要"和 WorkBuddy 差在哪"看 [AGENT-BENCHMARK.md](AGENT-BENCHMARK.md)；
+>；想要"和 WorkBuddy 差在哪"看 [AGENT-BENCHMARK.md](AGENT-BENCHMARK.md)；
 > 想要"真机踩过什么"看 [PITFALLS.md](PITFALLS.md)。
 
 ---
@@ -32,7 +32,7 @@
 | 服务端 | FastAPI + uvicorn；SSE（`text/event-stream`） |
 | 桌面壳 | **Tauri 2（Rust）+ WebView2**，动态端口、Python sidecar、NSIS per-user（2026-10-19 Electron 退役） |
 | 浏览器自动化 | **已下线**（2026-10-19：Playwright / Chromium / CDP / browser_pool 全部删除） |
-| 数据 | SQLite（WAL + 外键 + 单连接 RLock），迁移 1–25 |
+| 数据 | SQLite（WAL + 外键 + 单连接 RLock），迁移 1–26 |
 | 凭据 | 口令 Fernet；会话令牌 Fernet；平台 JWT 明文缓存（已知口径不齐） |
 | 模型 | DeepSeek OpenAI 兼容协议（流式 + function calling + 前缀缓存） |
 | MCP | 自研 stdio 客户端（2026-10-19 新增，见 [MCP.md](MCP.md)） |
@@ -94,7 +94,7 @@ Tauri 用 `free_port()` 选空闲端口，经 `WORKBENCH_PORT` 下发；Web 模�
 ## 六、数据与配置
 
 - 数据目录：`%APPDATA%\Workbench`（`WORKBENCH_DATA` 可覆盖）。
-- 数据库：`workbench.db`，迁移 1–25（**只增不改**）。
+- 数据库：`workbench.db`，迁移 1–26（**只增不改**）。
 - 配置五层：环境变量 / settings 表 / 代码常量 / 数据目录文件 / 前端常量。
 - 新增的数据目录文件：`mcp.json`（MCP server 配置，可含凭据，已列入敏感路径）、
   `sandbox-workspace.json`（工作区根 / 只读 / 联网 / 派生进程开关）。
@@ -116,7 +116,7 @@ Tauri 用 `free_port()` 选空闲端口，经 `WORKBENCH_PORT` 下发；Web 模�
 2. 同步阻塞一律 `asyncio.to_thread`（I11）。
 3. 插件**不得** import `workbench/api/**`；`services/` 不 import `plugin_api`。
 4. DB 只走迁移；凭据不落明文；审计维度不含凭据。
-5. 文档分层：ADR = 不再变的决策；`API/CONFIG/SCHEMA/TOOLS` = 随代码走；PITFALLS = 真机坑。
+5. 文档分层：决策 = `CORE-ARCHITECTURE.md`；`API/CONFIG/SCHEMA/TOOLS` = 随代码走；PITFALLS = 真机坑。
 6. 写完断言先问「拆掉什么它才会红」。
 
 ## 九、当前风险索引（2026-10-19）
@@ -149,5 +149,5 @@ Tauri 用 `free_port()` 选空闲端口，经 `WORKBENCH_PORT` 下发；Web 模�
 - 改模块边界 / 加一层 → 改本文 §三/§五；
 - 修掉一条风险 → 从 §九删掉（不要留着再标"已修"）；
 - 新增判据 → [AGENTS.md](../AGENTS.md) §3 的矩阵加一行；
-- 数字（工具/迁移/ADR/坑）由脚本核对，**不要手抄**：`gen_tools_doc.py`、
+- 数字（工具/迁移/坑）由脚本核对，**不要手抄**：`gen_tools_doc.py`、
   `tests/test_agents_md.py`、`check_doc_links.py`。

@@ -2,7 +2,7 @@
 
 > 面向**使用者**（阿克索实施工程师）。目标：把工作台的四个模块用起来，并知道数据放在哪、什么情况下会出错。
 >
-> 想了解设计取舍看 [docs/adr/](adr/)；想调接口看 [docs/API.md](API.md)；
+> 想了解设计取舍看；想调接口看 [docs/API.md](API.md)；
 > 想改行为/排障看 [docs/CONFIG.md](CONFIG.md) 与 [PITFALLS.md](PITFALLS.md)。
 
 ## 目录

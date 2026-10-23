@@ -432,5 +432,5 @@ def test_real_tools_are_not_opted_in_by_default() -> None:
     assert opted == ["get_current_time"], (
         f"标了并发的工具变了：{opted}。"
         "新增一个之前请先回答「它并发跑两个会不会碰同一份可变状态」"
-        "（见 ToolSpec.parallel_safe 的文档串与 ADR-0023）"
+        "（见 ToolSpec.parallel_safe 的文档串与）"
     )

@@ -232,10 +232,10 @@ reports/
 
 这些是**带日期的历史证据**（记录 2026-09-21/22 真机上发生了什么）。报告里指向
 `docs/FACTORY-VERIFICATION-PLAN.md` / `docs/FACTORY-DECISION-BRIEF.md` /
-`workbench/plugins/factory.py` / `docs/adr/0018-*.md` 的那些链接，**在当时都是有效的**
+`workbench/plugins/factory.py` / 的那些链接，**在当时都是有效的**
 —— 那些文件随配置工厂一起被删了。
 
-**今天把它们改成"该文件已删除"，是改写历史。** 这与"ADR 只增不改""CHANGELOG 是历史"
+**今天把它们改成"该文件已删除"，是改写历史。** 这与"历史只增不改""CHANGELOG 是历史"
 是同一条纪律：证据的形态本身就是证据的一部分（它证明了写报告时的仓库长什么样）。
 
 ⇒ 读那些报告的取回副本时请记住：**里面的链接不代表当前仓库的结构**。

@@ -5,8 +5,6 @@
 `AGENTS.md` 是**每一次 AI 协作的入口**，而它此前**没有任何机检**。代价已经付过：
 
 - 它写着"真机环境坑（**89 条**）"，而 `PITFALLS.md` 当时已经是 **92 条**（本轮又到 94）；
-- 它写着"**16 篇 ADR**"，而 `docs/adr/` 是 17 个文件（含 `0000-template.md`）——
-  这个歧义让两处引用口径都对不上；
 - 铁律编号在**阅读顺序上不单调**（1–12 → 33–37 → 13–32 → 38），因为 33 之后是后来补的、
   而编号是稳定 ID 不能重编。**"哪个节里应该有哪些号"没有任何东西守着**。
 
@@ -21,7 +19,6 @@
 | 编号 1..N 连续无缺号 | 删规则时整行删掉（PITFALLS #44 的形态） |
 | 编号在**阅读顺序**上单调递增 | 新规则插在中间，读者以为后面没有了 |
 | 头部声明的坑数 == `PITFALLS.md` 实际条目数 | "89 条"那类数字漂移 |
-| 头部声明的 ADR 篇数 == `docs/adr/` 实际篇数 | 同上（且要排除 `0000-template.md`） |
 | 全部 markdown 链接指向存在的文件 | 被引文档被移动/删除/归档后留下死链 |
 | `## N.` 节号连续 | 用标题当锚点插入新节时把原标题吃掉（本仓实录犯过 3 次） |
 """
@@ -93,18 +90,6 @@ def test_declared_pitfall_count_matches_the_real_file() -> None:
     assert declared == actual, (
         f"AGENTS.md 写 {declared} 条，PITFALLS.md 实际 {actual} 条。"
         "加了坑就要同步这里（本轮之前已经漂过 89 → 92 → 94 三次）"
-    )
-
-
-def test_declared_adr_count_matches_the_real_directory() -> None:
-    """头部写的 ADR 篇数必须等于 `docs/adr/` 里**除模板外**的篇数。"""
-    match = re.search(r"不再变的决策（\*\*(\d+) 篇\*\*", _text())
-    assert match, "头部里找不到「不再变的决策（**N 篇** ADR」这句话，断言失去锚点"
-    declared = int(match.group(1))
-    files = [p for p in (ROOT / "docs" / "adr").glob("*.md") if not p.name.startswith("0000")]
-    assert declared == len(files), (
-        f"AGENTS.md 写 {declared} 篇 ADR，docs/adr/ 里实际 {len(files)} 篇（不含模板）。"
-        "新增 ADR 要同步这里"
     )
 
 

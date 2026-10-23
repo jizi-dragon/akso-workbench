@@ -437,7 +437,7 @@ def test_otel_export_does_not_fabricate_attribute_confidence() -> None:
     那会让"这个属性名对不对"这个问题从**已知的未知**变成**未知的未知**，
     而后者正是本仓最防的一类（`CORE-ARCHITECTURE.md` §7.5 已明写"未逐条核"）。
 
-    核对之后当然可以改：**改了这条就会红，提醒你把核对结论写进 ADR**。
+    核对之后当然可以改：**改了这条就会红，提醒你把核对结论写进 `CORE-ARCHITECTURE.md`**。
     """
     from tools.export_otel import OTEL_ATTRS
 
@@ -447,5 +447,5 @@ def test_otel_export_does_not_fabricate_attribute_confidence() -> None:
     raise AssertionError(
         "所有属性都标成了 ok —— 请确认你真的逐条对着 "
         "https://opentelemetry.io/docs/specs/semconv/gen-ai/ 核过，"
-        "并把核对日期与结论写进 ADR-0021 的「外部参照」栏。"
+        "并把核对日期与结论写进 的「外部参照」栏。"
     )

@@ -21,7 +21,7 @@
       <div id="detail"></div>
     </div>
     <script>
-      // 壳把"就绪探测探到了什么"经 detail 传进来（ADR-0011 §D-6）：
+      // 壳把"就绪探测探到了什么"经 detail 传进来：
       // 光显示"超时"无法区分「服务还没起来」与「端口上坐着别人的服务」——
       // 后者正是那次"代码改了但 UI 没变"事故的形态，必须让它在现场看得见。
       const params = new URLSearchParams(location.search);

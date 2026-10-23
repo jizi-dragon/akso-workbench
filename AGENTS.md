@@ -15,15 +15,14 @@
 > 别在这里找细节。
 >
 > **规则编号是稳定 ID，不是排序号，也永不重编**：全仓有 **38 处**按编号引用它们
-> （`CHANGELOG.md` / `PITFALLS.md` / 源码注释 / ADR）。分节按**主题**，所以**同一节里的
+> （`CHANGELOG.md` / `PITFALLS.md` / 源码注释）。分节按**主题**，所以**同一节里的
 > 编号可能不连续**；但**整份文件的阅读顺序必须单调递增**——这条有机器守卫，
 > 见 `pytest tests/test_agents_md.py -o addopts=""`。
 >
 > | 想了解 | 去哪 |
 > |---|---|
 > | ★ **核心 Agent 架构与分层契约 ＋ 不变量 I1–I18（地基）** | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
-> | 真机环境坑（**130 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
-> | 不再变的决策（**8 篇** ADR ＋ `0000-template.md` 模板 = 9 个文件） | [docs/adr/](docs/adr/) |
+> | 真机环境坑（**134 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
 > | 怎么接外部 MCP server、安全默认是什么 | [docs/MCP.md](docs/MCP.md) |
 > | **和 WorkBuddy 差在哪、还剩哪些缺陷** | [docs/AGENT-BENCHMARK.md](docs/AGENT-BENCHMARK.md) |
@@ -92,7 +91,7 @@
 | 14 | **审计写在唯一扼流点**（`sandbox.run()`，`_run()` 只被它调用）。不要在调用方补审计——PITFALLS #42：`audit.record` 一度**没有任何调用方**，E4 层在文档上写着"已实现"而实际永远空转 |
 | 15 | **脚本式 Skill 的 `risk` 不得低于 `write`**。上传的代码无法被静态证明只读，标 `read` 等于给模型一张"不经确认随便跑"的通行证 |
 | 16 | **PowerShell 与 `cmd` 刻意不在沙箱解释器白名单内**。加进去等于把"执行脚本"变成"执行任意命令" |
-| 17 | **沙箱不是安全边界，是限损层**（[ADR-0014](docs/adr/0007-credentials-sandbox-and-trust.md) §D-3）。不要在任何地方把它描述成"安全"，也不要把 `allow_network` 当成强制——它是声明 |
+| 17 | **沙箱不是安全边界，是限损层**（见 [CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) 的「安全姿态与诚实边界」一节）。不要在任何地方把它描述成"安全"，也不要把 `allow_network` 当成强制——它是声明 |
 
 ### 数据与凭据
 
@@ -137,8 +136,8 @@
 
 | # | 规则 |
 |---|---|
-| 33 | **模型发起的确认（`needs_confirmation`）不是安全边界**：它买的是"模型可以先问再做"，`Risk` 买的是"不做就不能做"。**不要**把它写成"高风险操作的批准环节"，**不要**因为它存在而放宽任何 `Risk` 分级（[ADR-0016](docs/adr/0007-credentials-sandbox-and-trust.md) §5）。判据：`grep -rn "needs_confirmation=True" workbench/plugins/` 里每一个的 `risk` 都必须是 `READ`（`ToolSpec.valid()` 在装配期强制） |
-| 34 | **不要在工具 handler 里等用户。** `execute()` 一旦 `await`，调用它的异步生成器就挂起了，事件发不出去 → 界面不知道有东西要确认 → 用户永远点不了。跨"通知 → 等答复 → 继续"的交互**必须把等待放在循环层**（`harness/loop.py` 发完 `confirm_required` 再 `await registry.await_confirmation`）。这条不是偏好，是架构约束（[ADR-0016](docs/adr/0007-credentials-sandbox-and-trust.md) §D-2） |
+| 33 | **模型发起的确认（`needs_confirmation`）不是安全边界**：它买的是"模型可以先问再做"，`Risk` 买的是"不做就不能做"。**不要**把它写成"高风险操作的批准环节"，**不要**因为它存在而放宽任何 `Risk` 分级（见 `ToolSpec.needs_confirmation` 的文档串）。判据：`grep -rn "needs_confirmation=True" workbench/plugins/` 里每一个的 `risk` 都必须是 `READ`（`ToolSpec.valid()` 在装配期强制） |
+| 34 | **不要在工具 handler 里等用户。** `execute()` 一旦 `await`，调用它的异步生成器就挂起了，事件发不出去 → 界面不知道有东西要确认 → 用户永远点不了。跨"通知 → 等答复 → 继续"的交互**必须把等待放在循环层**（`harness/loop.py` 发完 `confirm_required` 再 `await registry.await_confirmation`）。这条不是偏好，是架构约束（见 `harness/loop.py` 的确认等待段） |
 | 35 | **"发通知 → 等对方回 → 我再登记等待"的形状，接收端必须提前建好。** 对方的响应会比你开始等更早到达，晚建的 `Future` 接不住它 → 表现为"对方明明答复了，我方干等满一个超时"（事故见 PITFALLS #57：实时确认卡了整整一个 `timeoutS`）。判据：`pytest tests/test_user_confirmation.py -o addopts=""`——它**在 `confirm_required` 事件的回调里**就答复，命中这个时序；挂起不返回 = 本条复发 |
 | 36 | **给 Agent 接一条既有能力链时，先问"这条路上有哪几步只有人能做的"，把答案逐个变成工具。** 缺一个动词**不会报错、不会让测试变红**——它只让流程走不通，而走不通的表现是**模型开始输出"请你去做某事"**（事故见 PITFALLS #59）。判据：`Get-ChildItem -Recurse workbench -Include *.py,*.js \| Select-String '拖进页面\|页面上传\|让用户上传'` —— **必须零命中** |
 | 37 | **"输出太长被截断"必须与"参数写错了"分开。** `finish_reason == "length"` 是唯一的信号，丢了它模型只会看到「参数解析失败」，于是原样重试、又截断一次（事故见 PITFALLS #58）。收流式响应时**必须收 `finish_reason`**；截断时**绝不让半截参数进工具层**，并明说"没有执行任何工具"。判据：`pytest tests/test_agent_loop.py::test_truncated_output_is_not_reported_as_bad_args -o addopts=""` |
@@ -148,9 +147,9 @@
 | # | 规则 |
 |---|---|
 | 38 | **交付给用户实测之前，最后一步必须是「杀干净 + 重启」，不是「跑完测试」。** 违反它的后果**不是报错，是归因错误**——而错误归因会烧掉整轮排查（两次实录见 PITFALLS #71）。<br>**判据（交付前跑，三条都要过）**：① `Get-NetTCPConnection -LocalPort 18765,18767 -State Listen` —— Web 模式必须为空，或全部属于同一个刚启动的进程；Tauri 动态端口用 `Get-Process Workbench` 确认无旧实例；② 改过 `workbench/**` 或 `src-tauri/**`（Python / 壳）**必须重启应用**（只刷新页面对 `static/**` 才够）；③ **跑测试与用户实测分成两段**，跑完测试要重启一次再交付——别让测试的副作用留在现场。<br>**为什么单列一条**：固定端口（Web 模式）让"旧进程还活着"和"测试戳到了真端口"这两件事**都不报错**，只让现象指向错误的嫌疑人 |
-| 39 | **每个工具都要声明 `trust`（`LOCAL` / `UNTRUSTED`），而且它没有缺省值。** 问的是「这个工具的**返回值是谁写的**」：外部抓来的（网页 / 搜索 / 上传的脚本产物）标 `UNTRUSTED`，自己边界内的（平台 API / 本机文件）标 `LOCAL`。未声明 ⇒ `ToolSpec.valid()` 在**装配期**报错（[ADR-0022](docs/adr/0007-credentials-sandbox-and-trust.md)）。<br>★ **为什么比 `risk` 严**：`risk` 的缺省 `READ` 落到**最安全的那一档**（不过确认门），而 `trust` **没有安全的缺省** —— 缺省成 `LOCAL` 等于把外部内容**静默**声明为自己边界内的数据，**不报错**。**同一类字段，缺省值的后果可以完全相反**，所以"照抄隔壁字段的默认值"是一个会静默出错的直觉（PITFALLS #105）。<br>★ **系统提示词里写"工具结果比用户的话可信"是劝告，贴在内容上的标签才是结构** —— 前者与外部内容在上下文里**并列**，后者与它**同生共死**。<br>判据：`pytest tests/test_trust_labels.py -o addopts=""`（**12 条**）。其中 `test_the_real_web_tools_are_declared_untrusted` 是**对着手写清单**核的 —— 把 `read_web_page` 改成 `LOCAL`，I18 当场失效而**别的测试一条都不会红** |
-| 40 | **`parallel_safe` 要逐工具举证，缺省 `False`。**标它之前必须回答一句 **「这个工具并发跑两个，会不会碰同一份可变状态？」** —— ★ **"只读"不足以支撑并发**：HTTP 会话（`requests.Session` 非线程安全）、浏览器那条**单工作线程队列**（并发只排队，不加速）、sqlite 连接（跨线程直接抛）都是"只读但会碰"的例子，而其中两类**不报错**。今天全仓只有 `get_current_time` 标了它（纯计算）；其余 14 个保持缺省不是"判定安全"，而是**还没核实**（[ADR-0023](docs/adr/0019-in-turn-context-and-budget-governance.md)）。<br>★ **为什么口径比计划原文窄**：§7.4 原文是「整批都是 `Risk.READ` 就并发」，按它实现会让**计划自己 §5.6 的两条停止判据 + 一条评测用例变红** —— 因为并发必然把停止的检查点从"每次调用之间"退到"每批之间"。**新功能让已批准的判据变红时，默认假设是新功能错了，不是判据该改**（PITFALLS #107）。<br>★ **预检必须是纯的**：`SafetyGate.is_loop` / `_stopped(should_stop)` **都不能**拿来做资格判定 —— 一个改滑窗、一个消费检查点（后者一度让停止测试报出"该只执行第 0 个，实际 `[]`"）。用只读探针 `would_loop`。<br>判据：`pytest tests/test_agent_parallel.py -o addopts=""`（**14 条**），其中 `test_a_tool_that_did_not_opt_in_stays_serial` 与 `test_real_tools_are_not_opted_in_by_default` 是守门人 —— 它们红了**不要改它们**，回去读 ADR-0023 §1 |
-| 41 | **会改状态的工具必须声明 `reversibility`，而且它没有缺省值。** 问的是 **「这一次写做错了能不能撤」**：能撤就 `UNDOABLE` ＋给一条**具体指令**（`undo_recipe`，落 `agent_audit.meta`）；撤不了就明说 `IRREVERSIBLE`；确实不留残留才 `REVERSIBLE`（[ADR 见 §8.3 与 `ToolSpec.reversibility`](workbench/plugin_api.py)）。<br>★ **不是只对 `DANGEROUS` 强制**：计划 §8.3 原文说"接第一个不可逆写工具时"才要，而**全仓今天 0 个 DANGEROUS** ⇒ 那样这个字段**没有调用方**，而零调用方的扩展点是本仓明确要防的东西（见 `summary_fn` 的文档串）。<br>★ **幂等不是回滚**：幂等层防的是"重复执行同一次调用"，防不了"这一次本来就做错了" —— 所以"再跑一遍就好了"**不是** `REVERSIBLE` 的理由。<br>★ **第三方来源只能声明最保守的那一档**：脚本式 Skill 一律 `IRREVERSIBLE`（上传的代码无法被静态证明可逆，与"它的 risk 不得低于 write"同一条推理）；转发式 Skill **继承**被包装工具的档位与配方（不继承的话，一个包装写工具的 Skill 会**静默地**把不可逆操作说成"没有残留"）。<br>判据：`pytest tests/test_undo_recipe.py -o addopts=""`（**8 条**）。★ 其中 `test_the_recipe_ends_up_in_the_audit_row` 是**端到端**的（真调一次写工具、真查审计行）—— 其余七条当时全绿而它红，因为"函数算对了"与"真的落库了"是两件事（PITFALLS #110） |
+| 39 | **每个工具都要声明 `trust`（`LOCAL` / `UNTRUSTED`），而且它没有缺省值。** 问的是「这个工具的**返回值是谁写的**」：外部抓来的（网页 / 搜索 / 上传的脚本产物）标 `UNTRUSTED`，自己边界内的（平台 API / 本机文件）标 `LOCAL`。未声明 ⇒ `ToolSpec.valid()` 在**装配期**报错。<br>★ **为什么比 `risk` 严**：`risk` 的缺省 `READ` 落到**最安全的那一档**（不过确认门），而 `trust` **没有安全的缺省** —— 缺省成 `LOCAL` 等于把外部内容**静默**声明为自己边界内的数据，**不报错**。**同一类字段，缺省值的后果可以完全相反**，所以"照抄隔壁字段的默认值"是一个会静默出错的直觉（PITFALLS #105）。<br>★ **系统提示词里写"工具结果比用户的话可信"是劝告，贴在内容上的标签才是结构** —— 前者与外部内容在上下文里**并列**，后者与它**同生共死**。<br>判据：`pytest tests/test_trust_labels.py -o addopts=""`（**12 条**）。其中 `test_the_real_web_tools_are_declared_untrusted` 是**对着手写清单**核的 —— 把 `read_web_page` 改成 `LOCAL`，I18 当场失效而**别的测试一条都不会红** |
+| 40 | **`parallel_safe` 要逐工具举证，缺省 `False`。**标它之前必须回答一句 **「这个工具并发跑两个，会不会碰同一份可变状态？」** —— ★ **"只读"不足以支撑并发**：HTTP 会话（`requests.Session` 非线程安全）、浏览器那条**单工作线程队列**（并发只排队，不加速）、sqlite 连接（跨线程直接抛）都是"只读但会碰"的例子，而其中两类**不报错**。今天全仓只有 `get_current_time` 标了它（纯计算）；其余 14 个保持缺省不是"判定安全"，而是**还没核实**。<br>★ **为什么口径比计划原文窄**：§7.4 原文是「整批都是 `Risk.READ` 就并发」，按它实现会让**计划自己 §5.6 的两条停止判据 + 一条评测用例变红** —— 因为并发必然把停止的检查点从"每次调用之间"退到"每批之间"。**新功能让已批准的判据变红时，默认假设是新功能错了，不是判据该改**（PITFALLS #107）。<br>★ **预检必须是纯的**：`SafetyGate.is_loop` / `_stopped(should_stop)` **都不能**拿来做资格判定 —— 一个改滑窗、一个消费检查点（后者一度让停止测试报出"该只执行第 0 个，实际 `[]`"）。用只读探针 `would_loop`。<br>判据：`pytest tests/test_agent_parallel.py -o addopts=""`（**14 条**），其中 `test_a_tool_that_did_not_opt_in_stays_serial` 与 `test_real_tools_are_not_opted_in_by_default` 是守门人 —— 它们红了**不要改它们**，回去读 |
+| 41 | **会改状态的工具必须声明 `reversibility`，而且它没有缺省值。** 问的是 **「这一次写做错了能不能撤」**：能撤就 `UNDOABLE` ＋给一条**具体指令**（`undo_recipe`，落 `agent_audit.meta`）；撤不了就明说 `IRREVERSIBLE`；确实不留残留才 `REVERSIBLE`（见 [`ToolSpec.reversibility`](workbench/plugin_api.py) 的文档串）。<br>★ **不是只对 `DANGEROUS` 强制**：计划 §8.3 原文说"接第一个不可逆写工具时"才要，而**全仓今天 0 个 DANGEROUS** ⇒ 那样这个字段**没有调用方**，而零调用方的扩展点是本仓明确要防的东西（见 `summary_fn` 的文档串）。<br>★ **幂等不是回滚**：幂等层防的是"重复执行同一次调用"，防不了"这一次本来就做错了" —— 所以"再跑一遍就好了"**不是** `REVERSIBLE` 的理由。<br>★ **第三方来源只能声明最保守的那一档**：脚本式 Skill 一律 `IRREVERSIBLE`（上传的代码无法被静态证明可逆，与"它的 risk 不得低于 write"同一条推理）；转发式 Skill **继承**被包装工具的档位与配方（不继承的话，一个包装写工具的 Skill 会**静默地**把不可逆操作说成"没有残留"）。<br>判据：`pytest tests/test_undo_recipe.py -o addopts=""`（**8 条**）。★ 其中 `test_the_recipe_ends_up_in_the_audit_row` 是**端到端**的（真调一次写工具、真查审计行）—— 其余七条当时全绿而它红，因为"函数算对了"与"真的落库了"是两件事（PITFALLS #110） |
 
 ---
 
@@ -204,17 +203,18 @@
 | 端口号 / `workbench/config.py` / `src-tauri/src/main.rs` | Tauri 用动态端口；没有 `verify_port_broker` / `test_ports_contract`。改端口链路跑 `pytest tests\test_tauri_config.py -o addopts=""` 与 `cargo check`；Web 模式仍用 18765 |
 | 任何 `docs/` 里的数字（N 个工具/插件） | `tools\gen_tools_doc.py`（它扫 `README.md` + `docs/TOOLS.md` + `docs/API.md`；★ `docs/PLUGIN-SDK.md` **已于 2026-09-29 删除**，`docs/CODEBASE_OVERVIEW.md` **曾于同批删除、2026-10-07 重新生成**，两者都不在 `CLAIM_DOCS` 里） |
 | ★ **运行时间线 / 可观测性面**（`api/routes_agent.py` 的 `/runs`、`harness/trace.py`、`static/js/run-timeline.js`、`static/css/app.css` 的 `.rt-*`） | `pytest tests\test_agent_timeline.py -o addopts=""`（**5 条**：空结果是 200 不是 404 / run 与 span 一次返回 / 按 `step` 升序 / 会话过滤真的生效 / **摘要 span 自己声明 `attrs.summary`**）**+** `python tools\verify_agent_ui.py`（**19 项**端到端）。<br>★ **为什么另要一条端到端**：`verify_agent_ui.py` 读的是**计算样式**（`getComputedStyle`）而不是类名 —— 我写那个面板时凭印象编了 `badge-ok` / `badge-danger` 这些**不存在的类名**（真实的是 `badge-lime` / `badge-red`），后果是徽章退化成**灰底灰字**，而**界面上看不出哪里错了**：它只是"颜色不太对"，不是"少了一个元素"。同 PITFALLS #87 的教训：**类名对不对推不出渲染出来是什么样**。<br>★ **摘要那次调用必须标红且解释**：它几乎必然全 miss（摘要读完整段历史，前缀命中概率最低），而 miss 的价是命中的 **50 倍**。不标出来的话，用户看到"这一轮贵"只会去怪工具调用 |
-| ★ **任何 `docs/**` 或根目录的 markdown**（改链接 / 挪文件 / 提 ADR 编号 / 加存档目录） | `pytest tests\test_doc_links.py -o addopts=""`（**6 条**：断链 / 幻影 ADR 引用 / 幻影坑号 / **代码块里的链接（疑似正文被吞）** / 排除项必须真实存在且有理由 / **N 个反引号的代码段要剥干净**）。<br>★ **三类缺陷的处置口径不同，别一律改链接**：① 文件还在、只是改了名 ⇒ **改链接**；② 引用的 ADR **已退役** ⇒ 在那一行（或紧随两行）**说明它已移除**并给 `git show` 取回命令（★ 别把编号删了了事 —— 读的人需要知道"当时有一条 ADR 支撑这个判断"）；③ 那是**带日期的取证报告 / vendor 逐字存档** ⇒ 加到 `tools/check_doc_links.py` 的 `ARCHIVES` 并**写明理由** —— ★ **改存档里的链接是改写历史**（与"ADR 只增不改""CHANGELOG 是历史"同一条纪律）。<br>★ **一个整天误报的检查会把真缺陷埋掉**（实测：第一版报 789 处，其中 700+ 是假的，真正的 3 处幻影引用就埋在噪音里）—— 所以这个脚本的**作用域**（`ARCHIVES` 排除清单、剥代码块、URL 解码）是它的核心设计，不是可选项；见 PITFALLS #108 / #109 |
+| ★ **任何 `docs/**` 或根目录的 markdown**（改链接 / 挪文件 / 加存档目录） | `pytest tests\test_doc_links.py -o addopts=""`（**6 条**：断链 / 幻影坑号 / **代码块里的链接（疑似正文被吞）** / 排除项必须真实存在且有理由 / **N 个反引号的代码段要剥干净** / 决策文档目录不得存在）。<br>★ **三类缺陷的处置口径不同，别一律改链接**：① 文件还在、只是改了名 ⇒ **改链接**；② 目标文件已删除 ⇒ 从正文里**删掉那处引用**（不要留一个点不开的链接，也不要把编号留着当"依据"）；③ 那是**带日期的取证报告 / vendor 逐字存档** ⇒ 加到 `tools/check_doc_links.py` 的 `ARCHIVES` 并**写明理由** —— ★ **改存档里的链接是改写历史**（与"CHANGELOG 是历史"同一条纪律）。<br>★ **一个整天误报的检查会把真缺陷埋掉**（实测：第一版报 789 处，其中 700+ 是假的，真正的 3 处幻影引用就埋在噪音里）—— 所以这个脚本的**作用域**（`ARCHIVES` 排除清单、剥代码块、URL 解码）是它的核心设计，不是可选项；见 PITFALLS #108 / #109 |
 | ★ 改了 `harness/**`、`prompts.py`、`cache.py`、`plugin_api.py` **或任何工具描述** | `python tools\run_evals.py --offline` + `pytest tests\eval -o addopts=""`（**13 条**离线评测，不联网不花 token）。<br>★ **这是计划 §6.3 的门禁（G3 的落地形式）：提交里必须附 before/after 数**（成功率 / 工具选择准确率 / 平均步数 / token / 缓存命中率）。<br>★ **看到「回放 miss」不要先怀疑行为**：那是**请求形状变了**（提示词 / 工具描述 / 消息装配），不是功能坏了。处置：`python tools\run_evals.py --record` 重录，然后 `git diff tests/eval/fixtures/` —— **那个 diff 就是"工具面变了多少"的量化答案**。<br>★ 夹具按**请求指纹**匹配（含 `messages + tools + temperature + max_tokens + json_mode`），这条门禁的全部价值就在于此：**改了提示词或工具描述会变成一次可见的失败**。<br>★ 夹具当前是**合成**的（`note` 字段逐份标注）：它锁的是"请求形状 + 链路行为"，**不是**"模型选得对不对"。换真机 `--record` 即可，**期望一行都不用改** |
-| ★ **想量"模型选得对不对"**（计划 §6.3 的在线层） | `python tools\run_evals.py --live`（**只预览**：算出要发几次请求，**一次都不发**）→ `--live --yes`（真跑，**花真钱**）。<br>★ **两道闸门都是承重的**：① `--live` 会**覆盖受版本控制的 `tests/eval/fixtures/*.json`** 且每次请求都花钱 —— 不带 `--yes` 时一次都不发，并在最后明说"这只是预览"（本仓在固定端口上留过教训：**"预览"与"真跑"都不报错时，人分不清自己在哪一个里**，[ADR-0012](docs/adr/0011-port-governance.md)）；② **没有 Key 时抛错，绝不回落脚本** —— 回落是最坏的"友好"（以为在量真模型，量到的还是脚本），与 `ReplayLLM(strict=False)` 那个 180 秒挂起同族。<br>★ 估算按**现有夹具里的调用数**算（不拍数字）；`note` 如实区分"合成"与"真机"，**反过来会让人把"链路走对了"读成"模型选对了"**。<br>★ **它不进 CI、不进本矩阵**（要联网、花钱、依赖模型当天状态）。判据：`pytest tests\test_eval_live_mode.py -o addopts=""`（**8 条**） |
+| ★ **想量"模型选得对不对"**（计划 §6.3 的在线层） | `python tools\run_evals.py --live`（**只预览**：算出要发几次请求，**一次都不发**）→ `--live --yes`（真跑，**花真钱**）。<br>★ **两道闸门都是承重的**：① `--live` 会**覆盖受版本控制的 `tests/eval/fixtures/*.json`** 且每次请求都花钱 —— 不带 `--yes` 时一次都不发，并在最后明说"这只是预览"（本仓在固定端口上留过教训：**"预览"与"真跑"都不报错时，人分不清自己在哪一个里**）；② **没有 Key 时抛错，绝不回落脚本** —— 回落是最坏的"友好"（以为在量真模型，量到的还是脚本），与 `ReplayLLM(strict=False)` 那个 180 秒挂起同族。<br>★ 估算按**现有夹具里的调用数**算（不拍数字）；`note` 如实区分"合成"与"真机"，**反过来会让人把"链路走对了"读成"模型选对了"**。<br>★ **它不进 CI、不进本矩阵**（要联网、花钱、依赖模型当天状态）。判据：`pytest tests\test_eval_live_mode.py -o addopts=""`（**8 条**） |
 | ★ **message 落库 / 对话历史装配**（`services/storage.py` 的 `insert_message` / `list_messages` / `model_transcript`、`harness/transcript.py`、`harness/loop.py` 的落点） | `pytest tests\test_transcript_roundtrip.py -o addopts=""`（**7 条**：落库那一段与**当时发出去的**逐字段相等（串行 + **并发快路径**各一条）/ `tool_call_id` 与 `tool_calls[].id` 配对 / `record` **拒绝**不带 `tool_calls` 的 assistant / `seq` 会话内单调 / **排序键是 `seq` 不是毫秒时间戳**）。<br>★ **两条口径**：① 落库的必须是**当时逐字节发出去的那一条**（不是重新构造的近似）—— 落点就是 `context.append(...)` 那处的**同一个对象**（`_tool_message` 是单一构造点），所以「落库那份和发出去那份长得像但不是同一个」在这里没有余地；② **一个回合里只有最终那条 assistant 由 `routes_chat` 落**（带正确的 `kind`），`transcript.record` **只落带 `tool_calls` 的** —— 写重会让模型看到自己说了两遍。<br>★ **排序键必须是 `seq`**：`created_at` 是**毫秒**，一个回合里 `assistant` 与它的 `tool` 结果**背靠背**写入，并列是常态；没有决胜列的 `ORDER BY` 顺序在 SQL 语义上**未定义**，而顺序错了会让整段历史**非法**（I16）。<br>★ **反证是这条纪律的一部分**（PITFALLS #112）：本轮 5 条反证里**一开始有 3 条没红** —— 要么锚点被当子串匹配、要么改动没真的拆掉那个环节。**写完断言先问「拆掉什么它才会红」**，答不上来就说明它没在验任何东西 |
-| ★ **上下文估算 / 折叠判定**（`harness/context.py` 的 `estimate_*`、`cache._over_budget` / `plan_prefix`、`loop._build_context` / `_over_hard_limit`） | `pytest tests\test_context_tokens.py -o addopts=""`（**13 条**）**+** `python tools\compare_token_estimators.py`（**偏差表**，计划 §7.1 的前置件）。<br>★ **两个量必须分开算，因为它们服务方向相反的判定**：`estimate_messages_tokens`（消息，**含** `tool_calls`/`tool_call_id`）与 `estimate_request_tokens`（**再加**工具 schema）。**折叠判定用全量** —— 超窗的是**请求**，而 schema 是每轮都发的常量（实测 15 个工具约 2,104 token，是同一段对话正文的 **11 倍**；不算它，窗口设小就**永远不折叠**，见 PITFALLS #113 的实测）。**硬上限刻意只用消息那一份**（宁可漏判也不要误判）—— ★ 那是**已决策**，改它要**新增 ADR**；有一条判据专门钉住它。<br>★ 偏差表**没有样本时如实说没有**（`estimatedTokens` 才加进 span，样本要靠真实对话积累）—— 不编一个「平均偏差 0%」：那比没有偏差表更坏，**它看起来像验过了** |
+| ★ **上下文估算 / 折叠判定**（`harness/context.py` 的 `estimate_*`、`cache._over_budget` / `plan_prefix`、`loop._build_context` / `_over_hard_limit`） | `pytest tests\test_context_tokens.py -o addopts=""`（**13 条**）**+** `python tools\compare_token_estimators.py`（**偏差表**，计划 §7.1 的前置件）。<br>★ **两个量必须分开算，因为它们服务方向相反的判定**：`estimate_messages_tokens`（消息，**含** `tool_calls`/`tool_call_id`）与 `estimate_request_tokens`（**再加**工具 schema）。**折叠判定用全量** —— 超窗的是**请求**，而 schema 是每轮都发的常量（实测 15 个工具约 2,104 token，是同一段对话正文的 **11 倍**；不算它，窗口设小就**永远不折叠**，见 PITFALLS #113 的实测）。**硬上限刻意只用消息那一份**（宁可漏判也不要误判）—— ★ 那是**已决策**，改它要**同步更新 `CORE-ARCHITECTURE.md` §5 附近那条已决策的说明**；有一条判据专门钉住它。<br>★ 偏差表**没有样本时如实说没有**（`estimatedTokens` 才加进 span，样本要靠真实对话积累）—— 不编一个「平均偏差 0%」：那比没有偏差表更坏，**它看起来像验过了** |
 | ★ **transcript 的完整性 / 跨重启收尾**（`harness/transcript.py` 的 `dangling_calls` / `repair_dangling`、`harness/loop.py` 运行开头那一次调用） | `pytest tests\test_agent_resume.py -o addopts=""`（**8 条**）。<br>★ **为什么需要它**：`loop._fill_unexecuted` 覆盖的是**进程内**的三个出口（步数预算 / 用户取消 / 超时），而**进程死亡**时那三条**一条都跑不到** ——已写进库的 `assistant(tool_calls)` 永远没有配对结果，而「**重放一段非法历史没有意义**」（I16）。那条缺口**没有代码位置**，所以它永远不会出现在「我数了 N 个调用方」里（PITFALLS #114）。<br>★ **两条不许越过的界线**：① **只补历史，绝不重新执行**那些调用（进程可能死在「已发出、未写回」那个窗口里，我们**无法知道**它执行到哪了 ——一个写操作重放一次的后果与「少一条观测」不是一个量级）；② **一个审批令牌都不碰**（跨重启失效是 `approvals` 的**刻意**行为，有一条判据专门钉住那条界线）。<br>★ 补写的正文必须**明说「未执行」**且**不含「已完成」**字样 ——模型看得见它，写成「已完成」会让它据此下结论，**比失败更坏** |
 | ★ **`tools/verify_*.py`（那一排手动跑的端到端校验）** | `pytest tests\test_verify_scripts_are_self_contained.py -o addopts=""`（**5 条**，**0.06 秒**，**可进 CI**）：起服务的脚本必须①**数据隔离**②**端口被占就拒跑**③**端口唯一**。<br>★ **为什么单列一条**：它们是**会跑的程序**（起服务、连数据库、点按钮），不是文档 —— 而 2026-09-24 核出**3 个脚本读写用户真实数据库、4 个绑生产端口且无守卫**，其中 `verify_box_ops.py` 会**删除盒子**且 `dialog` 一律 accept。三条叠起来：应用在跑时 `uvicorn` 起不来（报错进 DEVNULL）、就绪探测却连上**正在运行的应用** ⇒ 整套验收打在真实实例上，**一个错都不报**（PITFALLS #116）。<br>★ **例外要写下来**：`# verify-guard: <规则> —— 理由：…`（**理由非空**）。<br>★ 加/改这些脚本时，跑一次它们自己确认还绿（它们不进 CI，需要 chromium） |
 | ★ **产物预览的 markdown 渲染**（`static/js/artifact-preview.js` 的 `renderMarkdown`） | `python tools\verify_insight_preview.py`（**18 项**：真起服务 + 真开 chromium，产物由**产品真跑一遍**回放夹具生成）。<br>★ **判据要断言「渲染出来的 == 源文件里的」，不要断言产品的文案** —— 三条判据曾同时坏在这一点上：`P8` 写死了列名（产品换过说法后静默过期）、`P11` 把子串写成了**列表精确匹配**、`P9` 在**错的产物**上找东西（PITFALLS #117）。<br>★ **空洞断言比没有更坏**：`0 == 0`、`all(... for [])` 在缺陷版上照样绿 —— 真产物今天**一条列表都没有**，所以列表那几条必须落在**探针产物** `markdown-probe.md` 上（`P9a`–`P9d`），且 `P9d` 带 `bool(li_texts) and` 前提。<br>★ 反证：把渲染器的列表分支改成 `if (false)` ⇒ P9a/P9b/P9c 红 |
-| ★ **token 估算的校准**（`harness/context.py` 的 `calibration_factor`、`harness/trace.py` 的 `recent_token_pairs`、`cache._over_budget` 的 `factor`、`loop.py` 运行开头那一次） | `pytest tests\test_token_calibration.py -o addopts=""`（**12 条**）。★ 它**取代**了计划 §7.1(b) 的 `tiktoken cl100k_base` 方案 —— 那是 **OpenAI 的分词器**，数 DeepSeek 的 token **是另一种近似**；而 **API 自报的 `prompt_tokens` 是真值**，且与估算值记在**同一条 span** 上（[ADR-0024](docs/adr/0019-in-turn-context-and-budget-governance.md)）。<br>★ **三道闸门都朝向「宁可不校准」**：样本 < 5 ⇒ 1.0（两三个样本算出来的系数**比不校准更坏**，而「我按数据校准过」让人更不敢质疑它）；夹 `[0.5, 2.0]`；丢掉非正配对（`prompt_tokens=0` 是**没有这个数据**，不是「0 个 token」）。<br>★ **用中位数不用平均值**，且**一次运行只算一次**（一轮之内换系数 = 「这一轮按哪个阈值折」说不清）。**系数 ≠ 1 必须留痕**，读样本失败**回落 1.0**（校准是优化，不是前提）。<br>★ 反证：用平均值 / 去掉闸门 / 不夹范围 / 系数没被用上 / 循环不读样本 —— **5/5 有效** |
+| ★ **token 估算的校准**（`harness/context.py` 的 `calibration_factor`、`harness/trace.py` 的 `recent_token_pairs`、`cache._over_budget` 的 `factor`、`loop.py` 运行开头那一次） | `pytest tests\test_token_calibration.py -o addopts=""`（**12 条**）。★ 它**取代**了计划 §7.1(b) 的 `tiktoken cl100k_base` 方案 —— 那是 **OpenAI 的分词器**，数 DeepSeek 的 token **是另一种近似**；而 **API 自报的 `prompt_tokens` 是真值**，且与估算值记在**同一条 span** 上。<br>★ **三道闸门都朝向「宁可不校准」**：样本 < 5 ⇒ 1.0（两三个样本算出来的系数**比不校准更坏**，而「我按数据校准过」让人更不敢质疑它）；夹 `[0.5, 2.0]`；丢掉非正配对（`prompt_tokens=0` 是**没有这个数据**，不是「0 个 token」）。<br>★ **用中位数不用平均值**，且**一次运行只算一次**（一轮之内换系数 = 「这一轮按哪个阈值折」说不清）。**系数 ≠ 1 必须留痕**，读样本失败**回落 1.0**（校准是优化，不是前提）。<br>★ 反证：用平均值 / 去掉闸门 / 不夹范围 / 系数没被用上 / 循环不读样本 —— **5/5 有效** |
 | ★ **不变量 I1–I18 的守卫**（`CORE-ARCHITECTURE.md` §5） | `pytest tests\test_invariant_i11.py tests\test_invariant_coverage.py -o addopts=""`（**4 ＋ 8 条**）。<br>★ **I11**（同步阻塞一律 `to_thread`）此前**连判据都没有** —— 而它的后果是「**整个服务卡住（不是报错）**」。现在两条规则：**规则 A**（`async def` 里不得直接调已知阻塞名）＋ ★★ **规则 S（结构）**（`async def` 里的**嵌套同步 `def`** 不得被**直接调用**—— 它存在的理由就是被 `to_thread` 挪走）。<br>★★ **名单式判据必须先反证再相信**（PITFALLS #119）：第一版用名字名单，实测 0 处违规，而**把 `to_thread` 拆掉它照样绿** —— 那种判据的「全绿」与「没有违规」**在输出上长得一模一样**。结构规则才抓得到，且**实测 0 处误报**。<br>★ **覆盖率也要机检**：注册表里的每条反证**必须真的存在**；覆盖表 ＋ 缺口表合起来必须正好是 §5 里那些编号；★ `PENDING` **现在是空的**（18 条全部有反证），而它**不允许再变大**。<br>★ 反证：拆掉 `routes_attachments` 的 `to_thread` ⇒ 当场红 |
-| **任何代码** | 改了就必须重跑 §3 基线四条（PITFALLS #41） |
+| **敏感路径**（`workbench/sandbox/**`、`approvals.py`、`services/vault.py`、`plugin_api.py`、`harness/loop.py`、`permissions.py`、`diagnostics.py`、`checkpoints.py`） | `coverage run --source=workbench -m pytest -o addopts=""` → `coverage json -o tmp\coverage.json` → `python tools\coverage_gate.py tmp\coverage.json`（基线只许升；`--update` 需人工确认） |
+| **任何代码** | 改了就必须重跑 §3 基线四条（PITFALLS #41）；结构门禁 `python tools\repolint.py --frontend`（文件预算 / error-text / 新端点必须登记进 `tools/frontend_parity.json`） |
 
 **加一个工具必须同步 5 处**（漏任何一处 = 装完静默没功能，PITFALLS #32）：
 
@@ -244,28 +244,16 @@
 ## 5. 文档纪律
 
 - **文档按变更频率分层**（`CONTRIBUTING.md` §5）：
-  ADR 记**不再变的决策**；`API.md` / `CONFIG.md` / `SCHEMA.md` 记**随代码走的事实**（改必更）；
+  **决策**写进 [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md)（现行规则与边界）与
+  `CHANGELOG.md`（按版本）；`API.md` / `CONFIG.md` / `SCHEMA.md` 记**随代码走的事实**（改必更）；
   `PITFALLS.md` 记**真机环境坑**（只增不改，机构记忆）。
-- **`docs/adr/` 按主题合订、定期合并**（2026-10-07 起）：ADR 是**不再变的决策**，
-  但它**不是"只增不改"的流水账**——2026-10-07 已把 22 篇按主题合并成 **8 篇合订本**
-  （用户授权：「快速合并历史的 ADR」「未来的开发存在变更是正常的」）。
-  三条规矩：
-  1. **合订本取该组最小的编号**（`0001` / `0002` / `0003` / `0005` / `0007` / `0010` / `0011` / `0019`），
-     被吸收的编号**整篇并入后删除文件**，**不留 stub**（留了会让 `test_agents_md.py` 的篇数对不上）。
-  2. **合并只做组织与去重，不改写决策措辞**；每节要标**出处**（`（原 ADR-00XX）`），
-     让读者能看出"这条决策是当时哪一篇定的"。
-  3. **改已采纳的决策时，在合订本里保留原决策并标注取代关系**
-     （划线 + 「已被本文 §X 取代」），**不要删掉** —— 让"曾经的方案"与"取代它的方案"都能看见。
-- **`docs/adr/` 的"诚实边界"类小节不许在合并中弱化**：`已知风险（已登记，未修）` /
-  `诚实边界` / `这一层挡不住什么` / `本期做与不做` / `重新评估的触发器` / `外部参照`
-  六类小节必须**逐条保留**（可重组位置、可改标题，不可丢条目、不可软化措辞）。
-  ★ 被吸收的原文件删除后，**取回命令写进 `CHANGELOG.md` / `docs/PITFALLS.md` 的退役说明**
-  （在那两处只允许**追加**说明，**不许改写原有文字** —— 它们是历史记录）。
-- **新增决策请用** [docs/adr/0000-template.md](docs/adr/0000-template.md) —— 它比历史 ADR 多一栏
-  **「外部参照」**（谁解决过同一问题、他们怎么做、我们为何不同），**别省掉那一栏**。
-  新增**新编号**（现有最大值 +1），**不要复用已退役的编号**。
-- **补写历史 ADR 时**：只允许追加，且必须像 ADR-0014 那样**显式标注"这段是后补的"**，
-  让"决策当时的认知"与"后来的认知"都能看见。
+- **决策不单独建目录**（2026-10-22 用户定稿）：不维护独立的决策文档集，也不给它们编号。
+  决策写进 `CORE-ARCHITECTURE.md` 的对应小节；被取代的旧决策在原处划线并标「已被 §X 取代」，
+  让"曾经的方案"与"取代它的方案"都能看见。
+- **安全与能力边界必须写进活文档，不许弱化**：`已知风险（已登记，未修）` /
+  `诚实边界` / `这一层挡不住什么` / `本期做与不做` 四类小节必须**逐条保留**
+  （可重组位置、可改标题，不可丢条目、不可软化措辞）。用户可见的边界同时写进
+  `CORE-ARCHITECTURE.md` 与 `USER-MANUAL.md`。
 - **`CHANGELOG.md` 顶部的 `## [Unreleased]` 是发布说明的数据源**；当前由 `build_tauri.ps1 -Notes`
   写入 `latest.json`，没有自动抽取脚本。
 - **PITFALLS 条目要有判据**："症状 / 根因 / 判据 / 处置 / 推广"五段，
@@ -276,10 +264,10 @@
   判据（改完任何文档立刻跑一次）：`Select-String -Path <文件> -Pattern '^#{2,3} '` ——
   **逐行看编号是否连续**（`§0 → §1 → §1.5 → §2 …`）。本次三次都靠这条才发现并修回。
 - **本文件自己的纪律也走机检，不靠自觉**：`pytest tests/test_agents_md.py -o addopts=""`
-  （**6 条**）守四件事 —— 铁律编号**无缺号**、铁律在**阅读顺序上单调递增**、
-  头部声明的**坑数与 ADR 篇数**与 `PITFALLS.md` / `docs/adr/` 实际一致、**全部链接存活**。
-  ★ 每一条都对应一次**已经发生过**的漂移（"89 条"其实已是 92；"16 篇 ADR"其实是 17 个文件；
-  阅读顺序 1–12 → 33–37 → 13–32）。**加了规则 / 坑 / ADR 就跑它** —— 本文件是入口，
+  （**5 条**）守四件事 —— 铁律编号**无缺号**、铁律在**阅读顺序上单调递增**、
+  头部声明的**坑数**与 `PITFALLS.md` 实际一致、**全部链接存活**。
+  ★ 每一条都对应一次**已经发生过**的漂移（"89 条"其实已是 92；
+  阅读顺序 1–12 → 33–37 → 13–32）。**加了规则 / 坑就跑它** —— 本文件是入口，
   它写错的数字会被逐字继承。
 
 ---
@@ -325,4 +313,4 @@
 _本文件遵循 [AGENTS.md](https://agents.md) 约定（它是 Linux Foundation 旗下
 [Agentic AI Foundation](https://aaif.io/) 的创始项目之一，与 MCP 同属一套）。
 约定很简单：**仓库根目录的 `AGENTS.md` 就是 AI 协作者的规则入口**——短、规则形状、可执行。
-如果你发现自己需要在这里加"背景介绍"，那说明它该去 `CONTRIBUTING.md` 或 ADR。_
+如果你发现自己需要在这里加"背景介绍"，那说明它该去 `CONTRIBUTING.md` 或 `CORE-ARCHITECTURE.md`。_

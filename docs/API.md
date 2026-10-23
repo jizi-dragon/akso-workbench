@@ -37,7 +37,7 @@ FastAPI 服务（本文档主体）          127.0.0.1:<动态端口>
 
 | 项 | 约定 |
 |---|---|
-| 绑定 | `127.0.0.1` 回环。**`/api/*` 无认证、无 CSRF、无 CORS 配置**——信任边界 = 本机（该取舍的理由见 [ADR-0002](adr/0002-browser-allocation-policy.md) D-7） |
+| 绑定 | `127.0.0.1` 回环。**`/api/*` 无认证、无 CSRF、无 CORS 配置**——信任边界 = 本机（该取舍的理由 D-7） |
 | 时间戳 | 毫秒整数（`storage.now_ms()`） |
 | 字段命名 | 请求/响应默认 **camelCase**（`routes_settings` 用 pydantic alias 转换）；`account`/`env` 行**原样返回 snake_case 表列** + JOIN 出的 `env_name` / `env_base_url`，仅 `password_enc` 被剔除 |
 | 路径前缀 | `/api/*` 为业务面；`/api/shell/*` 与 `/api/update` 已随 Electron 控制服务删除 |
@@ -70,10 +70,13 @@ FastAPI 服务（本文档主体）          127.0.0.1:<动态端口>
 
 | 方法 | 路径 | 请求 | 响应 |
 |---|---|---|---|
-| GET | `/api/bootstrap` | — | `{conversations, stats:{qaTotal, adoptRate\|null}, settings:{apiKey,model,temperature,systemPrompt:{prompt,default,custom,chars}}, cache:{…}}` |
+| GET | `/api/bootstrap` | — | `{conversations, stats:{qaTotal, adoptRate\|null}, settings:{apiKey,model,temperature,systemPrompt:{prompt,default,custom,chars},permissions:{mode,allow,ask,deny,precedence,modes}}, cache:{…}}` |
 | PUT | `/api/settings` | `{apiKey?, model?, temperature?}` | `{ok:true, settings:{…}}`（`model` 会归一为官方现行名，见下） |
 | GET | `/api/settings/prompt` | — | `{prompt, default, custom, chars}`——`prompt` 是**当前生效**的那一份 |
 | PUT | `/api/settings/prompt` | `{prompt}` | 同上；**空串 = 恢复基线** |
+| GET | `/api/settings/permissions` | — | `{mode,allow,ask,deny,precedence,modes}` —— 工具权限策略（`deny > ask > allow`） |
+| GET | `/api/diagnostics?live=false` | — | `{schemaVersion, ok, summary, modules, issues}` —— 能力诊断；`live=true` 只读内存注册表，不启动 MCP |
+| PUT | `/api/settings/permissions` | `{mode?, allow?, ask?, deny?}` | 同上；规则形状 `tool` / `tool(subject)`；**非法规则 400**，不静默忽略 |
 | GET | `/api/agent/cache?days=7&conversationId=` | — | `{days, conversationId, answers, promptTokens, cacheHitTokens, cacheMissTokens, completionTokens, summaryCalls, hitRate, savedRatio}` |
 
 > `conversationId` 非空 ⇒ **只统计这一段对话**。输入框下面那行常驻指标（缓存命中量 /
@@ -109,6 +112,17 @@ DeepSeek 的上下文缓存按"**完整匹配**一个缓存前缀单元"命中�
 `deepseek_usage` 表的**真实累计值**：`cache.py` 在每次回答收尾时入账，
 **摘要重算那部分开销单独计**（`summaryCalls`）——它的输入是历史原文、几乎必然全 miss，
 是"缓存优化到底有没有省到钱"最该看的数字。
+
+## 2.4 长期记忆 `/api/memory`（`routes_memory.py`）
+
+| 方法 | 路径 | 请求 | 响应 |
+|---|---|---|---|
+| GET | `/api/memory?scope=&limit=100` | — | `{memories:[{id,scope,type,title,body,keywords,revision,createdAt,updatedAt,expiresAt}], count}` |
+| POST | `/api/memory` | `{title, body, scope?, type?, keywords?, expiresAt?}` | 新建的 memory 行；非法参数 400 |
+| DELETE | `/api/memory/{memory_id}` | — | `{ok:true, id}`；不存在 404 |
+
+> 记忆只存**事实**，不存指令；检索由 `memory_search` 工具按需触发，**不自动注入** system 前缀。
+> `memory_add` / `memory_delete` 是 WRITE 工具，走确认门。
 
 ## 3. SSE 流式对话 `POST /api/chat/stream`（`routes_chat.py`）
 
@@ -247,7 +261,7 @@ POST /api/chat/stream   Content-Type: application/json
 > 本仓不再有任何"蓝图 → 创建"的接口，也不再有暂存目录 `runtime/factory/`。
 >
 > 本节**刻意保留 §7 这个编号**（不重排 §8 起的编号）：仓库里多处交叉引用按号指向
-> §10–§18（含[只增不改的 ADR](adr/)），重排编号会让它们静默指错节。
+> §10–§18（含），重排编号会让它们静默指错节。
 > （**2026-10-09 例外**：删除 `/extension/*` 那一节时确实重排了 §11 起的编号——
 > 因为被删的那一节**自身就是编号源**，不重排会留下一个空洞；本文档内所有交叉引用
 > 已同步更新，见文首的变更说明。）
@@ -303,7 +317,7 @@ POST /api/chat/stream   Content-Type: application/json
 ## 10. Agent 工具层 `/api/agent`（`routes_agent.py`）
 
 > **单一事实源**：工具清单来自**工具插件中枢** `plugin_api.ToolHub`（`workbench/plugins/`
-> 四个插件装配，共 15 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
+> 五个插件装配，共 18 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
 > schema、审计三处读的是同一份定义。插件 SDK 契约见 `PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**）。
 
 | 方法 | 路径 | 请求 | 说明 |
@@ -352,7 +366,7 @@ POST /api/chat/stream   Content-Type: application/json
 - HTTP 链路（`POST /invoke`）：本端点**不等待**，直接 409 + `confirm` 内容；
   调用方自己看 `GET /pending` 决定何时 `approve`（同意同样会预先批准那次目标调用）。
 
-**工具清单（15 个工具，按插件）**：
+**工具清单（18 个工具，按插件）**：
 
 | 插件 | 工具 | 风险 |
 |---|---|---|
@@ -361,8 +375,9 @@ POST /api/chat/stream   Content-Type: application/json
 | `websearch` | `web_search` | read |
 | `insight` | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
 | `accounts` | `accounts_list` / `accounts_login` | read |
+| `memory` | `memory_search` / `memory_add` / `memory_delete` | search=read；add/delete=write |
 
-> **风险分布：15 read / 0 write / 0 dangerous**（2026-10-19 装配 `ToolHub` 实测）。
+> **风险分布：16 read / 2 write / 0 dangerous**（2026-10-22 装配 `ToolHub` 实测）。
 > 内置浏览器 / 托管会话下线后，产品里暂时没有 WRITE 工具；风险模型与确认门
 > 仍是 `read` / `write` / `dangerous` 三级，机制由 `tests/test_plugin_api.py` 的合成用例守着。
 > `Risk.DANGEROUS` 枚举与确认门里那一条分支**都还在**——只是产品里现在没有工具用它
@@ -519,7 +534,7 @@ Python 不再代理 `/update-check` / `/update-install`。
 **本端点是唯一的健康端点**：它只回答**进程身份**（我是谁、在哪个口），**无副作用**，可反复探测。
 > **2026-10-09**：原先还有一个 `GET /extension/health` 回答"执行面（浏览器扩展）活着吗"，
 > 它会写 `everConnected` 闩锁，是账号中心四态徽标的数据源。
-> 它随扩展一起删除（[ADR-0011](adr/0011-port-governance.md) §D-4 记录的那条分工
+> 它随扩展一起删除（§D-4 记录的那条分工
 > 现在只剩本端点半边）。**不要把探测打到有副作用的端点上**——Tauri 启动时会反复探它，
 > 若写库会把“扩展开没开过”之类的判定污染掉（本端点自身无副作用）。
 
@@ -577,7 +592,7 @@ Python 不再代理 `/update-check` / `/update-install`。
 
 1. **扫描到高危模式不会"点一下上传就入库"**：第一次返回 `verdict:"warn"` + `findings`，
    **不落库**；调用方看过之后带 `allow_warn=true` 重投才收（`reject` 的东西永远进不来）。
-   理由：准入扫描是**闸门**，不是安全边界（见 [ADR-0014](adr/0007-credentials-sandbox-and-trust.md) §D-1），
+   理由：准入扫描是**闸门**，不是安全边界，
    而闸门要生效就必须卡在"人点确认"这一步上。
 2. **读库文件只开白名单三个名字**，不做通用文件读取——那会变成"用 URL 探数据目录"的洞
    （服务端无认证；这条与 §12.4 的产物路径守卫同源）。

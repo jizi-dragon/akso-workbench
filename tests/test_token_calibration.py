@@ -1,4 +1,4 @@
-r"""token 估算的**校准**（计划 §7.1(b)，[ADR-0024](../docs/adr/0019-in-turn-context-and-budget-governance.md)）。
+r"""token 估算的**校准**（计划 §7.1(b)）。
 
 ## 这一节取代了什么
 

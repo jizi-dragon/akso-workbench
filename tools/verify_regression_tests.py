@@ -144,7 +144,7 @@ CASES: list[tuple[str, str, str, str, str]] = [
         "            early = self._decisions.pop(pending_id, None)\n",
         "            early = None  # 缺陷版：不查已到的答复\n",
     ),
-    # 这一条抓的是"预先批准绑定参数指纹"（ADR-0016 §D-3）：缺陷版让确认去批准**任意**参数，
+    # 这一条抓的是"预先批准绑定参数指纹"：缺陷版让确认去批准**任意**参数，
     # 于是"同意 X(A)"变成了"同意 X 的一切"。
     (
         "实时确认：同意 A 不等于同意 B",
@@ -256,7 +256,7 @@ CASES: list[tuple[str, str, str, str, str]] = [
         "估算：折叠判定必须含工具 schema",
         "tests/test_context_tokens.py::test_the_folding_decision_includes_the_schema",
         "workbench/cache.py",
-        # 2026-09-24 换锚点：ADR-0024 给这一行加了校准系数，原来的整行写法不再存在。
+        # 2026-09-24 换锚点： 给这一行加了校准系数，原来的整行写法不再存在。
         # 而上一轮写的 tests/test_regression_harness.py 当场抓到了它（PITFALLS #115）。
         # ⚠️ 这段刻意不用反引号：用 PowerShell here-string 写会把反引号及其后字母吃掉。
         # 缺陷形态不变：折叠判定丢掉工具 schema。

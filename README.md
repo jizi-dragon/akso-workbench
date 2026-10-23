@@ -6,8 +6,8 @@
 > 首个适配平台是阿克索 eGMP；**平台能力走插件与适配层，换平台不必改产品名与数据目录**（见下）。
 >
 > 仓库地址：`jizi-dragon/akso-workbench`（**2026-10-11 已按用户决策更名**，原为
-> `jizi-dragon/akso-mogul`；ADR-0003 §2.4 D-4 的「暂不改」与 §7.1 的触发器据此已触发，
-> 见 [ADR-0003](docs/adr/0003-electron-desktop-shell.md) 的「2026-10-19 后补」）。
+> `jizi-dragon/akso-mogul`； D-4 的「暂不改」与 §7.1 的触发器据此已触发，
+> 的「2026-10-19 后补」）。
 >
 > ⚠️ **2026-10-09：浏览器扩展已整体移出本仓库**（用户决策：桌面端与扩展不耦合，
 > 本仓只需账号库管理页来承接云端数据环境）。原先随安装包分发的 MV3 扩展、
@@ -21,7 +21,7 @@
 |---|---|---|
 | 摸清一个平台上有什么对象、字段、状态、流转 | 记命令、跑 Node 脚本、翻产物目录 | 工作台里填对象编码 → **蜘蛛五步织网**：关系网络 + `spider-network.drawio` + 生命周期流转图 |
 | 记住十几个测试账号的口令 | 明文表格 / 记事本 | **账号中心**：数据源是云端账号库（设备流登录、只读展示）；旧本地库可一次性「本地推到云端」，日常增删改在 Akso Cloud 控制台 |
-| 让 Agent 替你跑这些活 | 每件事都得自己点 | **对话 Agent + 15 个内置工具**：工具由 `ToolHub` 单一定义，**风险操作有确认门**（单次令牌，无令牌不执行），模型还能用 `request_user_confirmation` **先问再做**，每次调用**进审计表** |
+| 让 Agent 替你跑这些活 | 每件事都得自己点 | **对话 Agent + 18 个内置工具**：工具由 `ToolHub` 单一定义，**风险操作有确认门**（单次令牌，无令牌不执行），模型还能用 `request_user_confirmation` **先问再做**，每次调用**进审计表** |
 | 接外部工具 / 社区 server | 只能改代码加插件 | **MCP**（用户级 `mcp.json`，stdio）：工具运行期进入同一个 `ToolHub`，默认 `write` 过确认门、结果标 `UNTRUSTED`；健康巡检 + 自动重连（[docs/MCP.md](docs/MCP.md)） |
 
 > **本仓最该被看见的不是功能清单，而是它的工程纪律**：能力以「工具插件」形式接入，
@@ -39,12 +39,12 @@
 | **quick-login** | 统一账号库（盒子分组 / 备份导入导出）<br>~~自动登录节奏门控~~（**2026-10-19 随内置浏览器下线**） | 云端账号库（只读展示 + 本地一次性推送）<br>**浏览器扩展执行面已于 2026-10-09 移出本仓** |
 
 > 四个原项目**冻结不动**：本仓库对它们只做只读引用（`adapters/*.json`）与知识迁移，绝不修改原文件。
-> 详见 [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md)。
+> 详见 [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) §2 / §3。
 >
 > **改名记录（2026-09-22，用户下达）**：界面上的「平台洞察」更名为「**对象分析**」。
 > **只改显示名**——模块 id（`insight`）、工具名（`insight_*`）、接口路径（`/api/insight`）、
 > 落盘目录（`…/Workbench/洞察`）全部不变，所以更早的 `docs/INSIGHT-SPEC.md`（**该文件已于 2026-09-29 删除**）、
-> [ADR](docs/adr/) 与坑清单里出现旧名是**正常的**。
+> 坑清单里出现旧名是**正常的**。
 
 > ## ⚠️ 2026-09-22：「配置工厂」整体移除，平台知识留下
 >
@@ -64,18 +64,19 @@
 ## 走向"可复用工作台"：能力都在插件与工具层
 
 工作台的**核心资产是插件/tools 层**——Agent 的所有能力都经 `plugin_api.ToolHub` 注册，
-业务能力（洞察 / 账号 / 检索）各自是一个插件。当前 **4 个插件 / 15 个内置工具**
-（15 个 `read` + 0 个 `write`）；**MCP server 的工具在运行期动态进入同一个中枢**
+业务能力（洞察 / 账号 / 检索）各自是一个插件。当前 **5 个插件 / 18 个内置工具**
+（16 个 `read` + 2 个 `write`）；**MCP server 的工具在运行期动态进入同一个中枢**
 （installed 层，见 [docs/MCP.md](docs/MCP.md)）。
 
 | 想知道什么 | 去哪看 |
 |---|---|
 | **现在到底有哪些工具、谁在管、怎么加一个** | **[docs/TOOLS.md](docs/TOOLS.md)**（工具注册表 + 变更纪律 + 机检） |
+| **想让编辑器 / DSH 驱动本工作台** | **[docs/ACP.md](docs/ACP.md)**（ACP v1 stdio：initialize / session/new / session/prompt / cancel；写工具快速失败） |
 | **怎么接外部 MCP server、安全默认是什么** | **[docs/MCP.md](docs/MCP.md)** |
 | **和 WorkBuddy 这类 Agent 工作台差在哪** | **[docs/AGENT-BENCHMARK.md](docs/AGENT-BENCHMARK.md)** |
-| **不受信代码（上传的 Skill）在哪跑、拦得住什么** | **[ADR-0014](docs/adr/0007-credentials-sandbox-and-trust.md)** + 工作台「沙箱」页（工作区/权限、策略、状态、执行审计） |
+| **不受信代码（上传的 Skill）在哪跑、拦得住什么** | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) §3.4.1（安全姿态与诚实边界）+ 工作台「沙箱」页（工作区/权限、策略、状态、执行审计） |
 | **怎么上传 / 安装 / 卸载 Skill** | 工作台「Skill 管理」页 + `docs/TOOLS.md`（工具治理纪律） |
-| 为什么平台相关代码集中在 `services/egmp/` | [ADR-0005](docs/adr/0005-native-internalization-of-four-projects.md)、[ADR-0003](docs/adr/0003-electron-desktop-shell.md) |
+| 为什么平台相关代码集中在 `services/egmp/` | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) §2 / §3、[docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
 
 > 工具清单**不靠人记**：`docs/TOOLS.md` 的清单由 `tools/gen_tools_doc.py` 从运行中的工具中枢生成，
 > `python tools/gen_tools_doc.py --check` 会对不上就报红——防止再出现"我不知道多了几个工具"。
@@ -123,14 +124,13 @@
 | [docs/API.md](docs/API.md) | 要调接口/写脚本的人 | 端点权威契约 + SSE/长轮询/产物下载四类特殊通道 |
 | [docs/CONFIG.md](docs/CONFIG.md) | 现场排障、要调行为的人 | 五层配置全覆盖（环境变量 / settings 键 / 代码参数 / 数据目录文件 / 前端常量） |
 | [docs/TAURI-MIGRATION.md](docs/TAURI-MIGRATION.md) | 参与桌面壳/发布的人 | Tauri 2 + Python sidecar 架构、内部 HTTPS 自动更新与验收判据 |
-| [docs/SCHEMA.md](docs/SCHEMA.md) | 要改数据层的人 | DB 迁移 1–25、表结构、跨进程数据契约、改表清单 |
+| [docs/SCHEMA.md](docs/SCHEMA.md) | 要改数据层的人 | DB 迁移 1–26、表结构、跨进程数据契约、改表清单 |
 | **[docs/TOOLS.md](docs/TOOLS.md)** | **要给 Agent 加工具 / 想知道有哪些工具的人** | 工具注册表与治理：全量清单（插件 × 风险 × 确认门）、加一个工具要动的文件、机检命令 |
 | **[docs/MCP.md](docs/MCP.md)** | 要接外部工具的人 | `mcp.json` 形状、安全默认、工具命名、排障、诚实边界 |
 | **[docs/AGENT-BENCHMARK.md](docs/AGENT-BENCHMARK.md)** | 想知道"和 WorkBuddy 差在哪"的人 | 基础五件套对标矩阵、仍存在的缺陷清单、下一步优先级 |
 | **[docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md)** | 要动 Agent 核心的人 | 八层结构、不变量 I1–I18、与行业做法的差异 |
 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) | 接手维护的人（含 AI 助手） | 代码地图、模块职责、风险索引（2026-10-19 精简重写） |
-| [docs/adr/](docs/adr/) | 想知道「为什么这么设计」的人 | **8 篇**架构决策记录（主题合订本）＋ `0000-template.md` |
-| [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **130 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改） |
+| [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **134 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发者 | 环境搭建、版本与发布（§3）、代码规约、验收纪律 |
 | [CHANGELOG.md](CHANGELOG.md) | 所有人 | 版本变更明细（含每次事故的根因） |
 

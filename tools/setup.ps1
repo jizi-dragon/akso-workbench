@@ -65,7 +65,7 @@ $chromiumDetail = "ok"
 if (-not $chromiumOk) { $chromiumDetail = "未安装（仅 tools/verify_*_ui.py 需要；uv run playwright install chromium）" }
 Check "Playwright chromium（仅 E2E）" $chromiumOk $chromiumDetail -Info
 
-# 5) Node（**仅 Tauri CLI / Web UI E2E 需要**；运行时能力已全部原生化，见 docs/adr/0005）
+# 5) Node（**仅 Tauri CLI / Web UI E2E 需要**；运行时能力已全部原生化，见）
 #    —— 信息项，不计入失败（历史口径「洞察/工厂功能不可用」已过时）
 $nodeCmd = "node"
 if ($env:NODE_COMMAND) { $nodeCmd = $env:NODE_COMMAND }

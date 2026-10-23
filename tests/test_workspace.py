@@ -36,7 +36,7 @@ def test_default_root_is_absolute_and_named() -> None:
     """根名恒为「洞察」；父目录是新名 **或更名前的旧名**。
 
     刻意不写成"父目录必须是 `Workbench`"：本机若已存在 `<我的文档>/AksoWorkbench/洞察`，
-    默认根会**继续沿用旧目录**（产物不该因为改品牌名而"消失"，见 docs/adr/0013）。
+    默认根会**继续沿用旧目录**（产物不该因为改品牌名而"消失"）。
     """
     root = workspace.default_workspace_root()
     assert root.is_absolute()

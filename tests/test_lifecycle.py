@@ -8,7 +8,7 @@
 
     对父进程执行 taskkill /F（不带 /T）→ 3 秒后 sidecar 仍在、端口仍在 LISTEN
 
-在**固定端口**设计（ADR-0012）下后果被放大：下次启动 `portPreflight` 直接失败，
+在**固定端口**设计下后果被放大：下次启动 `portPreflight` 直接失败，
 而 `portBroker.clearStale()` 只清公布文件、清不了活着的进程 → 用户必须手工清理。
 
 ## 本文件的两层

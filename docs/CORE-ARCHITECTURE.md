@@ -12,7 +12,7 @@ _2026-09-18 撰写。锚定 `15b847e`（main，v0.3.12 + 3）。本文是**新�
 > | `CODEBASE_OVERVIEW.md` | 代码地图、模块职责、当前风险索引（**2026-10-19 精简重写**） | 全仓视角，随代码变 |
 > | [TOOLS.md](TOOLS.md) | **现在到底有哪些工具**、加一个工具要同步哪五处 | **清单由脚本生成**，机检守着 |
 > | `PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） | 怎么写一个插件（契约细节） | 面向插件作者 |
-> | [adr/](adr/) | **不再变的决策**及其后果 | 只增不改 |
+> | | **不再变的决策**及其后果 | 只增不改 |
 >
 > 本文中所有"工具数 / 风险分布"的数字都以 `python tools/gen_tools_doc.py` 的机检输出为准，不手抄。
 
@@ -39,7 +39,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 
 这些不是"还没做"，是"判断过不做"。写下来是为了避免每次评审都重新讨论一遍：
 
-- **不是安全边界**：沙箱是**限损层**（[ADR-0014](adr/0007-credentials-sandbox-and-trust.md) §D-3）。跑起来的代码仍能读它有权读的一切。
+- **不是安全边界**：沙箱是**限损层**（§D-3）。跑起来的代码仍能读它有权读的一切。
 - **不做自动发现**：插件装配是 `plugins/__init__.py::_MODULES` 显式清单。研究结论是"发现机制的收益接近零"（`docs/research/core-plugin-separation-research.md` §0）。
 - **不做热插拔（核心层）**：core 插件导入期一次装配、之后只读；只有 `installed` 层（Skill / MCP 工具）运行期可变。
 - **不做多 Agent 编排**：无 planner/worker 分工、无子 Agent 派生。理由见 §7.3。
@@ -156,7 +156,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 （`truncated=[]`），**不装作已处理**（`:157-159`）。上下文估算用的是一个粗略的
 CJK 字符数 + 英文词数估算器（`context.estimate_tokens`），**不是真 tokenizer**——这是已知的精度妥协。
 
-### 3.3 L3 工具中枢层（`plugin_api.py`，1,366 行）
+### 3.3 L3 工具中枢层（`plugin_api.py`，1,774 行）
 
 **全仓最重要的一个文件**：Agent 核心的唯一公开扩展面，也是工具清单的**单一事实源**。
 
@@ -181,7 +181,7 @@ class Risk(str, Enum):
     DANGEROUS = "dangerous"  # 过门 + UI 二次确认 + 永不进入 Monitor 可执行回放
 ```
 
-当前分布（机检输出）：**15 read · 0 write · 0 dangerous**（共 15 个 core 工具；2026-10-19 内置浏览器下线后 `accounts_browser_*` 三条已删除）。
+当前分布（机检输出）：**16 read · 2 write · 0 dangerous**（共 18 个 core 工具；2026-10-19 内置浏览器下线后 `accounts_browser_*` 三条已删除）。
 
 > ⚠️ **产品当前一个 `DANGEROUS` 工具都没有**——唯一的那个（`factory_create`）随配置工厂在 2026-09-22 整体删除。
 > **删的是工具，不是分级能力**：枚举三档照旧、确认门的 dangerous 分支照旧（§3.5 与 §5 的 I6 都没变），
@@ -211,7 +211,7 @@ class Risk(str, Enum):
 > **2026-10-19 起 installed 层有两个生产者**：用户从共享库安装的 Skill，以及
 > `mcp_registry` 从 MCP server 的 `tools/list` 生成的工具。后者同样必须显式声明
 > `risk/trust/reversibility`，默认 `WRITE/UNTRUSTED/IRREVERSIBLE`（见 [MCP.md](MCP.md)）。
-> `core_specs()` 的 15 个工具仍是文档承诺的"产品面"；MCP 工具与 Skill 一样属于"运行期"。
+> `core_specs()` 的 18 个工具仍是文档承诺的"产品面"；MCP 工具与 Skill 一样属于"运行期"。
 
 `deregister_capability("")` 的守卫（`:369-373`）值得单独记：核心插件的 `capability_id` 是**空串**，
 于是传空会把所有核心插件误判成可卸载目标。**先查"请求是否合法"再查"是否存在"**——
@@ -235,13 +235,28 @@ Agent 循环里工具异常必须是**可自我纠正的观测**，而不是终�
 `verify_required_tools()` 在启动时核对 `REQUIRED_TOOLS` 清单（**6 个**关键工具），
 把"打包漏收插件 / 插件 import 失败"从**"用户点下去才发现"**提前到**"启动日志里就有"**。
 
-### 3.4 L4 沙箱执行层（`sandbox/`，6 文件 1,171 行）
+### 3.3.1 权限策略（`workbench/permissions.py`，200 行）
 
-**唯一被允许执行不受信代码的入口**。对照 [ADR-0014](adr/0007-credentials-sandbox-and-trust.md) 的四层：
+`Risk` 回答"能不能改状态"，权限策略回答"**这个工作区**允不允许"。两层叠加，不互相替代：
+
+- 规则形状 `tool` / `tool(subject)`（subject 取 `path` / `file_path` / `account_id` / `env_id` / `url`），
+  支持 `*`；优先级固定 **`deny` > `ask` > `allow` > 默认**。
+- 默认：只读放行；写工具在 `ask` 模式要确认、`auto` 模式放行（**仍受风险门约束**）。
+- `deny` 在 `ToolHub` 的确认/前置检查**之前**硬阻断；`ask` 对只读工具复用一次性令牌门；
+  无确认门时 Fail-Closed。
+- 配置非法（少括号/非 JSON/未知 mode）**不允许静默忽略**：`ToolHub` 收到异常后按 `deny` 处理并写审计。
+- 读写入口：`settings.permissions` + `GET/PUT /api/settings/permissions`。
+
+策略门由宿主注入（`approvals.install` → `hub.set_permission_gate`），`plugin_api` 仍不 import
+`db`/`services` —— 与确认门、审计写入器同一注入方向。
+
+### 3.4 L4 沙箱执行层（`sandbox/`，6 文件 1,551 行）
+
+**唯一被允许执行不受信代码的入口**。对照 的四层：
 
 | 层 | 强制手段 |
 |---|---|
-| **E1 生命周期** | Windows **Job Object** 绑定；超时/取消 → 杀**整棵进程树**（`job.terminate`） |
+| **E1 生命周期** | Windows：`CREATE_SUSPENDED` 创建 → **Job Object** 绑定 → `NtResumeProcess` 恢复；绑定后枚举并补绑已存在的后代，`IsProcessInJob` 校验。超时/取消 → `taskkill /T` + `TerminateJobObject` 杀**整棵进程树**（`job.terminate`） |
 | **E2 环境** | `build_env()` **白名单**筛环境变量（`ENV_ALLOW_EXACT` 20 项 + `LC_` 前缀）。**默认什么都不给** |
 | **E3 文件系统** | `cwd` 必须在**沙箱根**内（`Path.resolve()` 后比较，防 `..` 与符号链接）+ 敏感路径拒绝表 |
 | **E4 可观测** | 返回体带 `policy` / `policy_fingerprint` / `tree_kill` / `output_truncated` |
@@ -252,15 +267,46 @@ Agent 循环里工具异常必须是**可自我纠正的观测**，而不是终�
 **可执行文件白名单**（`ALLOWED_EXECUTABLES`）：python / node / deno / bun。
 **PowerShell 与 cmd 刻意排除**——它们让"执行脚本"等价于"执行任意命令"。
 
+**平台能力矩阵**：`sandbox.capability_matrix()` 是"这一层到底强制什么"的单一事实源，
+同时列出 `enforced` 与 `not_enforced`（`/api/sandbox/status` 直接消费它）。
+Windows 上绑定用挂起创建消除竞态；但在宿主嵌套 Job 里补绑可能返回 `ACCESS_DENIED`，
+此时 `verified=False`，由 `taskkill /T` 兜底——**审计里写的是实际发生的事，不是愿望**。
+
 **一条设计上的自我修正**：`audit.record()` 一度**没有任何调用方**，于是 `/api/sandbox/runs`
-永远是空表、管理页的"执行审计"永远没内容，而 ADR 的 E4 层在文档上写着"已实现"。
+永远是空表、管理页的"执行审计"永远没内容，而 E4 层在文档上写着"已实现"。
 修法不是"记得在调用方写审计"，而是**把审计放在唯一扼流点**（`run()` 是唯一对外入口，
 有 7 处 `return` 的 `_run` 只被它调用）——这样"漏"在结构上不可能发生。
 
-**诚实边界**：`allow_network` 是**声明不是强制**（真强制需要 WFP/防火墙）。
-`SandboxPolicy.enforced` 属性把**真正被代码强制**的 6 项逐条列出，就是为了让"声明"与"强制"不被读混。
+#### 3.4.1 安全姿态与诚实边界（必读）
 
-### 3.5 L5 确认门与审计层（`approvals.py`，877 行）
+**这一层不是安全边界，是限损层。** 不是措辞问题，是事实：
+
+1. **与宿主同用户同权限**：没有独立账户、受限令牌、AppContainer 或容器。文件、网络、注册表
+   全按当前 Windows 用户的权限走。
+2. **只做启动前校验**：`cwd` 在沙箱根内、可执行文件在白名单、环境变量白名单、`cwd` 不命中敏感路径。
+   **运行时的系统调用一概不拦截** —— 脚本 `open()` 任意文件、`socket` 直连外网，都不经过这一层。
+3. **`allow_network` / `writes` 是声明，不是强制**（真强制需要 WFP/防火墙与文件系统 ACL）。
+4. **默认沙箱根就在数据目录下**（`<数据目录>/sandbox/runs/<id>`），而 `APPDATA` 必须在环境白名单里
+   （否则子进程连临时目录都找不到）。一段脚本用 `Path.cwd()` 往上走两级就能读到 `workbench.db`，
+   连同 `account_fernet_key` 与全部口令密文 —— 这不需要漏洞，只需要 `open()`。
+5. **Job Object 只保进程树与资源上限**，不提供权限隔离；`SandboxPolicy.enforced`
+   与 `capability_matrix()["enforced"]` 列出的项才是它的全部强制项（其余是声明）。
+
+⇒ **真正的控制点是"人点同意"**：脚本式 Skill 被强制 `risk >= write` + 一次性令牌 + `IRREVERSIBLE`，
+执行前一定会弹确认。沙箱买的是"同意之后，损失有上限"，不是"这段代码跑不出圈"。
+
+⇒ **行业里叫 sandbox 的东西**（浏览器渲染进程、iOS App Sandbox、容器 + seccomp）都靠**内核/虚拟机层的
+权限隔离**：内核替它挡住系统调用，即使代码有漏洞也逃不出去。本层没有那一层，所以：
+
+- **不要**在 UI、文档或错误提示里把它描述成"安全隔离"；
+- **不要**用它跑"来源不明、你会拒绝在自己终端里执行"的代码；
+- 若产品将来面向"用户会装陌生来源 Skill"的场景，先做 §7.10 的升级（受限令牌/AppContainer +
+  数据目录 ACL + 网络隔离），**再**启用那条分发路径。
+
+**诚实边界**：`allow_network` 是**声明不是强制**。`SandboxPolicy.enforced` 属性把
+**真正被代码强制**的项逐条列出，就是为了让"声明"与"强制"不被读混。
+
+### 3.5 L5 确认门与审计层（`approvals.py`，929 行）
 
 **把 `Risk` 从声明变成真的安全属性**。没有这一层，"危险操作需人确认"就只是一行注释——
 模型照样能一句话把 30 个对象建到真机上。
@@ -459,14 +505,11 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 > **I15–I18 来自 `CORE-AGENT-PLAN.md`（**该文件已于 2026-09-29 删除**） §2。**
 > 落地状态：**I15 ✅ / I16 ✅ / I17 ✅ / I18 ✅**（2026-09-24 全部落地；I15–I17 的判据见
 > `tests/test_cache.py` 与 `tests/test_agent_contract.py`，前两条的 PITFALLS 是 #90 / #93 / #94）。
-> 三条上下文类的合并记录在 **[ADR-0019](adr/0019-in-turn-context-and-budget-governance.md)**
-> （上下文窗口的**轮内**治理：折叠永不吞 system ＋ 预算每次调用前复检 ＋ 未执行的调用必须回填）。
-> **I18 单独成篇：[ADR-0022](adr/0007-credentials-sandbox-and-trust.md)** —— 它管的不是上下文**大小**
-> 而是上下文**来源**：`ToolSpec.trust` 装配期必填（`LOCAL` / `UNTRUSTED`）、外部结果带机器可读前缀、
-> 读过外部内容后过确认门时**给用户**带提示。判据 `tests/test_trust_labels.py`（**12 条**）。
-> ⚠️ **编号是 0019 不是 0018** —— 0017/0018 曾被已删除的配置工厂 ADR 占用，而本仓
-> （`PLATFORM-OPERATIONS-LEARNED.md` / `factory-tuning/reports/**`）**至今仍引用那个
-> 已不存在的 ADR-0018**，复用会让那些引用悄悄指向错误的文档。
+> I15–I17 是**上下文窗口的轮内治理**：折叠永不吞 system ＋ 预算每次调用前复检 ＋
+> 未执行的调用必须回填（详见 §3.2 与 §3.7）。
+> **I18 管的是上下文来源，不是大小**：`ToolSpec.trust` 装配期必填（`LOCAL` / `UNTRUSTED`）、
+> 外部结果带机器可读前缀、读过外部内容后过确认门时**给用户**带提示。
+> 判据 `tests/test_trust_labels.py`（**12 条**）。
 >
 > ⚠️ **写在这里的才算数**：I15–I17 先前只在代码注释与 PITFALLS 里被引用，
 > 而本表**没有它们** —— 于是那些引用指向的是**不存在的不变量**。
@@ -544,8 +587,8 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 > 本项目站在这条主流之外（这是主动选择，但应当被记录为**主动放弃生态位**，而不是"还没做"）。
 >
 > 如果希望未来互通，最低成本的一步是**兼容读取规范字段**（`name` 已同名；
-> `capabilities` 可同时接受规范的 `compatibility` 作为别名），与 [ADR-0013](adr/0003-electron-desktop-shell.md)
-> 处理品牌字符串时"写出端发新名 + 读取端两个都收"的手法一致。
+> `capabilities` 可同时接受规范的 `compatibility` 作为别名），
+> 与"写出端发新名 + 读取端两个都收"的兼容手法一致。
 > **建议列入 §7，但不紧急**——当前没有跨生态分发的需求。详见 §7.8。
 
 ### 6.5 工程治理（本项目的**真正强项**）
@@ -557,12 +600,12 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 | 文档数字与代码一致 | 靠人记，必然漂移 | **`gen_tools_doc.py` 机检**：文档清单 == 运行期中枢，且校验各文档里的"N 个工具" |
 | 启动自检 | 少见 | `verify_required_tools()` + `GET /api/agent/selfcheck`，把"打包漏收插件"提前到启动日志 |
 | 失败可见性 | 静默降级常见 | 插件装配失败进 `hub.failures` 并在两个端点暴露；沙箱拒绝也带完整审计信息 |
-| 决策留痕 | 散在 PR 描述里 | **8 篇合订 ADR**（由 22 篇合并），含"为什么不做"（D-3 / D-7 这类"诚实边界"条目） |
+| 决策留痕 | 散在 PR 描述里 | **决策集中记录在本文 §3 / §5 / §7**，含"为什么不做"（D-3 / D-7 这类"诚实边界"条目） |
 | 坑的机构记忆 | 少见 | `PITFALLS.md` 只增不改，记真机环境坑与实测证据 |
 | CI | 常规 | 12 步，含解释器版本契约、工具清单门禁、打包静态检查 7 项 |
 
 **这一层是本项目与"同类开源项目"最大的差异点**：多数开源 agent 项目在能力上跑得更快，
-但很少有 `PITFALLS.md` + ADR + 机检门禁这种"给六个月后的自己留路"的纪律。
+但很少有 `PITFALLS.md` + `CORE-ARCHITECTURE.md` + 机检门禁这种"给六个月后的自己留路"的纪律。
 
 ---
 
@@ -655,10 +698,10 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 把 `agent_audit` + `deepseek_usage` + `sandbox_run` 的字段映射到
 `gen_ai.*` 语义约定。这样既保住审计，又能接入通用工具。
 
-**落地状态（2026-09-24）**：✅ 已实现，见 [ADR-0021](adr/0019-in-turn-context-and-budget-governance.md)。
+**落地状态（2026-09-24）**：✅ 已实现，。
 - **粒度选择与本节原建议不同**：没有映射 `agent_audit`，而是新增了
   `agent_run` / `agent_span`（**迁移 24**）—— 理由是"一次用户回合"此前在数据里
-  **不是一个实体**，而 span 需要那个父子结构（详见该 ADR §2 D-1）。
+  **不是一个实体**，而 span 需要那个父子结构（详见 §3.7 与 §5 的 I16）。
 - 导出层是 `tools/export_otel.py`（OTLP/JSON，**零运行时依赖**，离线跑）。
 - ⚠️ **仍差一半**：`gen_ai.*` 的**具体属性名未逐条核实**（见本文档尾部的边界说明），
   当前全部标着 `verify`；另**不做** Langfuse 等生态工具的私有导入格式。
@@ -681,9 +724,9 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 
 ### 7.7 【需决策】`/api/*` 认证（R1b）
 
-已在 [ADR-0015](adr/0002-browser-allocation-policy.md) §D-7 记录为**有意保留**：
+已在 §D-7 记录为**有意保留**：
 桌面 UI 就是本服务加载的页面，加令牌要么在页面里放令牌（等于没加），要么改引导流程。
-**不是遗漏，是权衡**。重新评估的触发器已写在该 ADR §7。
+**不是遗漏，是权衡**。重新评估的触发器已写在 §7.10。
 
 ### 7.8 【低优先级】Agent Skills 生态互通
 
@@ -729,7 +772,7 @@ Python 包的元数据（并出现在 PyPI / 安装器的许可展示里）。**
 ### 7.10 【可选，需权衡】把限损层升级为权限边界
 
 **当前状态**：沙箱的强制项只有 6 条（§3.4），**没有网络强制隔离、没有文件系统写隔离、没有权限降级**。
-作者已诚实声明"不是安全边界"（ADR-0014 §D-3）。
+作者已诚实声明"不是安全边界"。
 
 **行业做法**（已核实）：OpenAI Codex 的 Windows 沙箱**完全不用 Job Object**，
 而是 `elevated`（独立低权限沙箱用户 + 文件系统权限边界 + 防火墙规则 + 本地策略）
@@ -740,7 +783,7 @@ Python 包的元数据（并出现在 PyPI / 安装器的许可展示里）。**
 Codex 之所以必须提供 `unelevated` 回退，正是因为企业策略常常禁止提权。
 
 **建议**：**维持限损层定位**，但做两件低成本的事：
-1. 把"这个沙箱拦不住什么"写进**用户可见文档**（现在只写在 ADR 与代码文档串里，用户看不到）；
+1. 把"这个沙箱拦不住什么"写进**用户可见文档**（现在只写在本节 §3.4.1 与代码文档串里，用户看不到）；
 2. 在安装脚本式 Skill 时，明确提示"这个能力会执行你不认识的代码，它**可以读你有权限读的文件、可以联网**"。
    —— 用户做决定需要的是**后果**，不是机制名。
 
@@ -764,9 +807,9 @@ Codex 之所以必须提供 `unelevated` 回退，正是因为企业策略常常
 | **技能供给层**（L3） | `skills/` 7 文件 **1,775 行** | 同上 |
 | 工具插件实现 | `plugins/` **4 文件 1,420 行**（删掉 `factory.py` 之后） | 同上 |
 | 模型接入（L1） | `deepseek.py` **255 行** | — |
-| 工具规模 | **4 插件 / 15 core 工具**（**15 read · 0 write · 0 dangerous**） | `python tools/gen_tools_doc.py` |
+| 工具规模 | **5 插件 / 18 core 工具**（**16 read · 2 write · 0 dangerous**） | `python tools/gen_tools_doc.py` |
 | HTTP 端点 | **99** | `@router.` 计数 |
-| 数据库迁移 | **1–25** | `workbench/db.py::MIGRATIONS` |
+| 数据库迁移 | **1–26** | `workbench/db.py::MIGRATIONS` |
 | **仓库全量** | `workbench/**.py`；前端 `static` js+css；测试；`tools/`；Tauri 壳 `src-tauri/`（Electron `desktop/` 已删除） | 同上 |
 | 测试 | **2026-10-20：1009 passed / 1 skipped**（全量含 slow） | `pytest -o addopts=""` |
 | 打包静态检查 | **7/7** | `tools/verify_packaging.py` |
@@ -813,7 +856,7 @@ Codex 之所以必须提供 `unelevated` 回退，正是因为企业策略常常
   ⇒ 本项目把 `Risk` 做进执行器（无令牌不调 handler）**在安全语义上强于 MCP 的提示层**。
   ⚠️ 本节结论来自子代理对 MCP 规范页（2025-06-18 与 draft）的实读回报，**主代理未逐字复核规范全文**。
 - **OTel GenAI 语义约定**：用于 span/trace 的 `gen_ai.*` 属性约定存在并被生态工具（Traceloop、Splunk 等）采用；本文 §7.5 的建议基于此。**具体属性名未逐条核实**，落地前需查 OpenTelemetry 官方语义约定文档。
-  > **2026-09-24 更新（仍未核实，但已变成一条可执行的检查）**：[ADR-0021](adr/0019-in-turn-context-and-budget-governance.md)
+  > **2026-09-24 更新（仍未核实，但已变成一条可执行的检查）**：
   > 落地了导出层，映射**集中在一张表**里 —— `tools/export_otel.py` 的 `OTEL_ATTRS`，
   > 每条带一个核实状态（`ok` / `verify`）。核对只需一条命令：
   > `python tools\export_otel.py --list-attributes`。

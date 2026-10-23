@@ -20,6 +20,41 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式
+  `WORKBENCH_DATA` / `WORKBENCH_DB` 时**不再接管遗留库**；`tests/conftest.py` 改用
+  `TemporaryDirectory`，会话结束自动清理（`WORKBENCH_TEST_KEEP=1` 保留现场）。
+  本机清掉历史残留 **219 个目录 / 327 MB**。判据：`pytest tests/test_data_isolation.py`。
+- **沙箱 Job 绑定竞态（2026-10-22，PITFALLS #132）**：Windows 改为
+  `CREATE_SUSPENDED` → 绑定 Job Object → `NtResumeProcess`；绑定后枚举并补绑已存在的后代、
+  `IsProcessInJob` 校验；`terminate()` 用 `taskkill /T /F` + `TerminateJobObject`；
+  `_run` 的启动段包 `try/finally`；新增 `sandbox.capability_matrix()` 并接入
+  `/api/sandbox/status`。判据：`pytest tests/test_sandbox.py -m slow`。
+
+- **错误身份（2026-10-22，PITFALLS #133）**：`VaultError.kind`（auth/network/format/validation/upstream）、`McpError.code`、`queries` 只吞 401/403/404 与 `ApiError`；删除 `"401" in str(exc)` 与 `"-32601" in text`。新增 `tests/test_error_identity.py`（8 条，含"消息带 401 但 kind=upstream 必须映射 502"的反证）。
+- **I11 规则 T（2026-10-22）**：`async def` 里直接调 `services|skills|sandbox` 的同步 IO 入口（`upload` / `start_job` / `run_job`）会被结构化扫描拦下；`routes_skills.upload` 与 `routes_insight.start_job` 已挪 `asyncio.to_thread`，并加"上传 0.4s 期间事件循环仍在转"的效果判据。
+- **有界分页/总超时/响应体上限（2026-10-22）**：`paged_post` 上限 20 页（恒 hasNext 的桩曾打出 501 页）；`guarded_get` 的 `timeout` 改为**整次调用总预算**（含重定向），响应体默认上限 5 MB 并带 `x-workbench-truncated` 标记。
+- **权限策略 v1（2026-10-22）**：`workbench/permissions.py`，`deny > ask > allow`、`ask`/`auto` 模式、`tool(subject)` 规则；`ToolHub` 注入权限门，`deny` 硬阻断、`ask` 对只读工具复用一次性令牌门、无确认门时 Fail-Closed；`GET/PUT /api/settings/permissions`。
+
+- **能力诊断（2026-10-22）**：新增 `/api/diagnostics` 与 `tools/doctor.py`；稳定 issue code（`mcp.config_invalid` / `permissions.invalid_config` / `sandbox.job_unavailable` 等），默认静态、`live` 只读内存注册表，路径脱敏为 `<data>/…` / `<repo>/…`。
+- **结构门禁（2026-10-22）**：`tools/repolint.py` —— 800 行文件预算棘轮（基线只降不升）、error-text 规则、前端覆盖登记（`tools/frontend_parity.json`；新端点未接 UI 且未登记即红）。
+- **MCP 状态投影（2026-10-22）**：`/api/mcp/servers` 只输出白名单字段，`env`/`headers`/未知字段永不进响应；错误文本限长 200。
+- **Cache guard（2026-10-22）**：新增 `tests/test_cache_guard.py`，断言 system + tools schema逐字节稳定、参数 schema 无易变字段。
+
+- **Wire parity（2026-10-22）**：`tests/test_wire_parity.py` + `tools/wire_contract.json` —— `api.js` 的每个路径必须命中后端路由；7 个关键端点的 required 字段必须存在，consumed 字段必须在前端源码里出现。
+- **工作区快照接缝（2026-10-22）**：`workbench/checkpoints.py`（capture/restore/list，文件数/字节上限、路径逃逸拒绝）；`sandbox.run` 在 `WORKBENCH_SANDBOX_CHECKPOINTS=1` 且策略可写时创建工作区快照，默认关闭。`tests/test_checkpoints.py`（5 条，含沙箱集成）。
+
+- **长期记忆 v1（2026-10-22，P3）**：迁移 26 新增 `agent_memory`（scope/type/revision/expires_at）；`workbench/memory.py` 提供 add/get/list/search/delete（中文单字/双字 + 英文词元重叠排序，过期不参与自动检索）；`GET/POST/DELETE /api/memory`；新增 `memory_search`（read）/ `memory_add` / `memory_delete`（write，过确认门）三个工具，core 工具数 15 → 18、插件 4 → 5。**不自动注入**（不改 system 前缀）。
+- **Eval fixtures 重录（2026-10-22）**：工具面新增 memory 三件后请求指纹变化，10 份夹具按 `tools/run_evals.py --record` 重录；`--offline` 全过。
+
+- **死代码清理（2026-10-22，P3）**：删除从未被加载的 `static/css/cloud.css`（21 KB / 1,077 行）、零引用的 `account-dock.js::currentSelection` 与 `modules-common.js::logLine`；新增 `tests/test_static_assets.py`（孤儿 CSS / 指不到的静态资源 / 重复 script 三条）。
+
+- **对象分析覆盖度自证修正（2026-10-22，PITFALLS #134）**：`run_spider` 的 `succeeded` 从 `len(codes)` 改为实际 `len(spider["objects"])`；全部读失败时 coverage=degraded、ok=False，不再把计划数当成功数。`tests/test_insight_coverage.py`（2 条，含部分失败/全失败反证）。
+
+- **ACP v1 适配器（2026-10-22，P3）**：`python -m workbench.acp` 提供 stdio NDJSON JSON-RPC；支持 `initialize` / `session/new` / `session/prompt` / `session/cancel`，流式 `agent_message_chunk`；写工具因 `approval_wait_s=0` 快速失败（无权限卡片，不挂客户端）；见 `docs/ACP.md`。
+- **沙箱 runs/ 保留策略（2026-10-22，P3 工程债）**：`layout.cleanup_runs()` + `tools/cleanup_runs.py` —— 按天数/数量/体积从最旧开始清理，默认 dry-run、`--yes` 才删；不碰 `staged/` 与非 run 目录。`tests/test_cleanup_runs.py`（5 条）。
+
 ### Removed
 
 - **云端账号库独立页面（2026-10-20）**：删除 `static/pages/cloud.html`、
@@ -59,7 +94,7 @@
   （Tauri updater 的检查/安装 UI 尚未接入）。
 - 打包静态核对（`tools/verify_packaging.py`）改为检查 Tauri 资源映射、构建脚本 BOM、
   Tauri UI/图标与插件 `hiddenimports`；**7 项**。
-- `README` / `USER-MANUAL` / `CONFIG` / `API` / `CONTRIBUTING` / `AGENTS` / ADR 同步为
+- `README` / `USER-MANUAL` / `CONFIG` / `API` / `CONTRIBUTING` / `AGENTS` 同步为
   Tauri 动态端口、内部 HTTPS 静态源、手动覆盖安装的当前口径。
 
 ### Added
@@ -94,7 +129,7 @@
   预检；策略新增 `writes` 声明（`strict-readonly` 只读、`skill-script`/`mcp-stdio` 会写）。
   `cwd` 必须在工作区根内；只读模式拒绝写策略；配置不可用时 Fail-Closed。新增
   `GET/PUT /api/sandbox/workspace` 与 `POST /api/sandbox/workspace/reset`，沙箱页新增
-  「工作区与权限」。**诚实边界**：不是内核级只读（见 ADR-0007 §8）。
+  「工作区与权限」。**诚实边界**：不是内核级只读。
 - **MCP 稳定性（2026-10-19）**：30 秒健康巡检（`ping`）、进程退出 / ping 失败 /
   `notifications/tools/list_changed` 自动重连（指数退避，上限 5 分钟）、单 server 手动重连
   `POST /api/mcp/servers/{name}/reconnect`、按工具 `risk` 覆盖、状态显示协议/版本/工具名；
@@ -139,7 +174,7 @@
   0.4.1；`bump.py` 从四写扩为**六写**并纳入 `check`；CI 在 `uv sync` **之前**跑
   `uv lock --check`（PITFALLS #124）。
 - **文档事实漂移（2026-10-19）**：`CONTRIBUTING` 测试基线、`VERSIONING` 的 tag/Release 数字、
-  `ADR-0011` 的扩展发现状态、README 的"云端账号数据接管"表述，按当日实测校正。
+  `` 的扩展发现状态、README 的"云端账号数据接管"表述，按当日实测校正。
 
 ### Changed
 
@@ -206,12 +241,12 @@
   `CONTRIBUTING.md` 里可见性/规则集的实测 URL。
   ★ **产品展示名与全部产物名一个字未动**（`Workbench-x.y.z-setup.exe` / `dist/WorkbenchServer` /
   `%APPDATA%\Workbench` / `Workbench/` 数据目录本来已是新形态）。
-  ★ **保护清单一字未改**：`docs/adr/**` 的决策文字（ADR-0003 §2.4 D-4 只**追加**了一段
+  ★ **保护清单一字未改**： 的决策文字（D-4 只**追加**了一段
   「2026-10-11 后补」说明）、本文件的历史条目、`docs/PITFALLS.md` 既有条目、
   `adapters/*.json` 指向的四个上游项目目录。
   ★ `git remote` **未改**：GitHub 侧改名后再执行 `git remote set-url`（见本条的更名说明）。
 
-> 仓库更名的**决策留痕**在 [ADR-0003](docs/adr/0003-electron-desktop-shell.md) §2.4 D-4 的
+> 仓库更名的**决策留痕**在 §2.4 D-4 的
 > 「2026-10-11 后补」—— 原「暂不改」的决策文字**原样保留**，两段认知都能看见。
 
 > ⚠️ 本次同时**修正了一处自己的失误**：用脚本批量重排 `build.ps1` 时把它的 **UTF-8 BOM 吃掉了**，
@@ -220,9 +255,9 @@
 
 > 新条目写在这里（`tools/publish_release.py` 逐字认这一行标题，说明与约束见文件顶部注释）。
 >
-> ★ **2026-10-19 已清理**：本段里描述已删除能力（配置工厂 / `factory_*` / `ADR-0017` / `ADR-0018`）
+> ★ **2026-10-19 已清理**：本段里描述已删除能力（配置工厂 / `factory_*` / `` / ``）
 > 的条目已不在。发版前仍建议跑一次
-> `grep -n '配置工厂\|factory\|FACTORY\|ADR-001[78]' CHANGELOG.md`，取行号落在本段内的那些确认。
+> `grep -n '配置工厂\|factory\|FACTORY' CHANGELOG.md`，取行号落在本段内的那些确认。
 > 原因：`notes_from_changelog()` **逐字**把 `- ` 与 `### ` 开头的块抽成发布说明，
 > **不清理就会把已删功能当"新增"对外发布，且不报错**。
 > （本警示写成引用块是刻意的：`notes_from_changelog()` 只收 `- `/`### ` 开头的行。）
@@ -275,9 +310,8 @@
 
   **★ 一条被撤回的清理建议（值得留痕）**：审计报「整个扩展 `site-auth` 子系统已死
   （9 个符号在打包产物里 0 命中）」。判据本身成立，但**结论错了** ——
-  [ADR-0004](docs/adr/0004-extension-as-execution-plane.md) 与
-  `extensions/quick-login/CHANGELOG.md` 都写着它是 **0.2.21 定稿保留的「休眠源码」**，
-  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0004 **已退役**，内容并入 [ADR-0002](docs/adr/0002-browser-allocation-policy.md)（取回原文：`git show 9b97ef0:docs/adr/0004-extension-as-execution-plane.md`）。
+  `extensions/quick-login/CHANGELOG.md` 写着它是 **0.2.21 定稿保留的「休眠源码」**，
+
   且 `parallel-session.ts` 确实在 `import type { Scheme } from './site-auth'`。
   ⇒ "打包后 0 命中"是**保留决策的预期结果，不是缺陷证据**。
   这正是本仓「零调用方的扩展点是刻意保留」那条纪律要防的误报。
@@ -304,7 +338,7 @@
     删掉后 **18 条不变量的覆盖率对账整体失效**。
 
   **断链处置（104 处）**：40 处来自活文件（`CHANGELOG` 16 / `AGENTS` 7 / `CONTRIBUTING` 6 /
-  6 篇 ADR 11）→ 去链接化 + 行内标注删除事实（命中检查器的 `RETIRED_MARKERS` 口径）；
+  6 篇决策记录 11）→ 去链接化 + 行内标注删除事实（命中检查器的 `RETIRED_MARKERS` 口径）；
   其余 64 处来自已删文档彼此互引，随文件消失。**`AGENTS.md` 的路由表按"只列现存文档"重写**，
   并把 `CORE-ARCHITECTURE` 上移到第一行（它是 §5 不变量的载体）。
 
@@ -327,7 +361,7 @@
   `/api/modules/akso-auto` 均为 404）、前端 `pages/factory.html` + `js/factory.js` +
   侧边栏入口、`tools/verify_factory_{agent,page}.py`、
   `factory-tuning/` 的采集与分析工具链（`tools/`、`analyze/`、`tests/`、`data/`）、
-  以及两份 ADR（0017 工厂×Agent 接口、0018 不许静默新建对象）与三份过程文档
+  以及两份当时的决策文档（配置工厂×Agent 接口、不许静默新建对象）与三份过程文档
   （FACTORY-AGENT-GAP / FACTORY-DECISION-BRIEF / FACTORY-VERIFICATION-PLAN）。
 
   **知识先迁出、再删源**，这是本轮的第一条纪律。迁进两份**不依赖任何产品代码**的文档：
@@ -351,7 +385,7 @@
   （端点 → 已删的 `writers.*` 函数）移除，`reproduce-plan.json` 改为只承载平台侧事实
   （`method`/`path`/`params` + 显式 `"executor": null`）——否则它会产出一份**指向不存在模块**的
   复现计划，一份"看起来正常、点下去才知道是坏的"产物。DANGEROUS 永不入计划的边界不变；
-  见 [ADR-0010](docs/adr/0010-monitor-no-dangerous-replay.md) 的后补说明。
+   的后补说明。
 
   **一个必须被看见的架构后果**：`factory_create` 曾是产品里**唯一的 `Risk.DANGEROUS` 工具**。
   删掉后产品**一个 dangerous 工具都没有了**——确认门的 dangerous 分支、审批弹窗的高危样式
@@ -372,7 +406,7 @@
   工具 schema 预算从 26 下调到 18——留一个虚高的上限等于让"工具面又长回来了"变得看不见）；
   `docs/CODEBASE_OVERVIEW.md` / `API.md` / `SCHEMA.md`（`blueprint_jobs` 标注为已退役、
   表与迁移照留）/ `CONFIG.md` / `USER-MANUAL.md` / `PLUGIN-SDK.md` / `AGENTS.md` / `README.md` /
-  `CONTRIBUTING.md` 同步收口；`docs/adr/0005` 与 `0010` 按"ADR 只增不改"追加**后补**说明。
+  `CONTRIBUTING.md` 同步收口；两份决策文档按"历史只增不改"追加**后补**说明。
   改动前后都跑了 AGENTS.md §3 的同一套门禁。
 
 ### Fixed
@@ -451,7 +485,7 @@
   `factory_create` 声明它，且与真正执行时**同一段** `precheck_blueprint`（不是第二套规则）。
 
 - **配置工厂：`createIfMissing` 显式意图位 —— 「用户确认新建」第一次有了出口**（2026-09-22 晚，
-  用户下达「方案1」；ADR-0018 §8 补记 —— **该 ADR 已随配置工厂一并移除**）。
+  用户下达「方案1」；补记 —— **该决策文档 已随配置工厂一并移除**）。
   真机实测暴露：防误建的预检闸门是**确定性**检查，**看不见对话** ——
   用户被问了「确认要新建吗」、答了"确认"、蓝图也校验通过，`factory_create` **仍被同一个理由拒回**，
   且重试多少次都一样；而本平台的测试对象是**流水号命名**（`测试09-01/02/03`），
@@ -547,13 +581,13 @@
   这条链一次抓到两个**单元测试照不到**的缺陷（`_pending` 永不绑定 / 这一轮的消息绕过扼流点，
   当时 pytest 23 passed 全绿）——记在 [PITFALLS #86](docs/PITFALLS.md)，判据也补进了测试。
 
-- **对象不存在时不许静默新建**（2026-09-22，用户定稿；ADR-0018 —— **已随配置工厂移除**）：
+- **对象不存在时不许静默新建**（2026-09-22，用户定稿； —— **已随配置工厂移除**）：
   工厂的对象步骤是**幂等**的（code 存在→复用、不存在→**新建**），于是"code 打错一个字"的后果
   **不是报错，而是静默多出一个空对象**。现在三层拦：① 规格文本要求先确认；
   ② 新增只读工具 **`factory_resolve_object`**（查不到就回**相近对象清单** + 给用户的话术）；
   ③ 预检发现"不存在但存在相近对象"时，`run_full_workflow` **拒绝写入**并回候选清单。
   相近对象由**机械变体 + 逐个真机探测**得到（后缀/下划线/大小写 + **末位数字 ±1/±2**）——
-  因为平台**没有可枚举对象的端点**（14 个候选路径实测 404），这一限制写进了 ADR 的「诚实边界」。
+  因为平台**没有可枚举对象的端点**（14 个候选路径实测 404），这一限制写进了决策记录的「诚实边界」。
 
 - **`factory-tuning/`：配置工厂调优用的平台操作采集与分析（⭐ 不属于产品）**（2026-09-20，
   用户定稿："监听功能本不属于本项目的功能，只是为了优化而做，请单独起文件夹"）。
@@ -593,8 +627,8 @@
 
 
 - **模型可以主动"先问再做"：新工具 `request_user_confirmation`（请求用户确认）**
-  （2026-09-20，[ADR-0016](docs/adr/0016-model-initiated-confirmation.md)）。
-  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0016 **已退役**，内容并入 [ADR-0007](docs/adr/0007-credentials-sandbox-and-trust.md)（取回原文：`git show 9b97ef0:docs/adr/0016-model-initiated-confirmation.md`）。
+  （2026-09-20）。
+
 
   用户的原话是"当 Agent 准备执行修改权限、提交表单等敏感、高风险或不可逆操作前，
   调用该工具向用户弹出确认框"。落地形态经过两个决策点：**工具形态选 B**
@@ -683,9 +717,9 @@
   （前缀 / 日志 / 审批 + 敏感表）**收成一张 `CASES` 表**——三份复制品就是三个会各自漂的事实源，
   正是本仓 2026-09-15「两套工具表」与 2026-09-20「两张敏感表」的同一种错误。加一条反证 = 加一行。
 
-- **`docs/adr/0000-template.md`（新增 ADR 模板）：比历史 ADR 多一栏「外部参照」**（2026-09-20）。
+- **决策记录新增「外部参照」一栏**（2026-09-20）。
 
-  历史 ADR 记了"我们决定什么"，但没记"**谁解决过同一问题、他们怎么做、我们为何不同**"。
+  历史决策记录记了"我们决定什么"，但没记"**谁解决过同一问题、他们怎么做、我们为何不同**"。
   那部分权衡在写下决策时**确实存在过**（在脑子里），只是没落纸——于是半年后没人能重建它。
 
   模板要求：一致的地方 = 行业共识，写一句"我们跟随"即可；**分歧的地方 = 真权衡，
@@ -726,23 +760,23 @@
 
 - **`AGENTS.md`（新增，仓库根目录）：给 AI 协作者的规则入口**（2026-09-20）。
 
-  本仓已有 ADR / `PITFALLS.md` / `CODEBASE_OVERVIEW.md`，但那些**都是写给人看的**。
+  本仓已有决策记录 / `PITFALLS.md` / `CODEBASE_OVERVIEW.md`，但那些**都是写给人看的**。
   用 AI 助手改这个仓库时会出现一类特定的失败：它会把我**没写下来的约定**当成
   **不存在这个约定**，然后用**看起来完全正常**的代码违反它。已有的失效证据不止一条——
   `cache.py` 的 append-only 前缀靠一句文档串警告守着，而 PITFALLS #41 / #42 记的正是
   "约定在纸上、没在代码里"造成的静默故障。
 
-  内容：**25 条铁律**（每条注明出处 ADR/PITFALLS 编号）+ 门禁矩阵（改哪跑哪）+
+  内容：**25 条铁律**（每条注明出处 PITFALLS 编号）+ 门禁矩阵（改哪跑哪）+
   本机环境速查 + "不要做的事" + 留痕纪律。格式遵循
   [agents.md](https://agents.md) 约定——它与 MCP 同属 Linux Foundation 旗下
   **AAIF（Agentic AI Foundation）的创始项目**，即"仓库根目录的该文件就是 AI 的规则入口"。
 
   与 `CONTRIBUTING.md` 的分工是刻意的：**这里只写"做与不做"**（规则形状、可执行、带判据），
-  "为什么与怎么做"留在 CONTRIBUTING 与 ADR。两份不重复。
+  "为什么与怎么做"留在 CONTRIBUTING 与 CORE-ARCHITECTURE。两份不重复。
 
-- **`docs/adr/0000-template.md`（新增 ADR 模板）：比历史 ADR 多一栏「外部参照」**（2026-09-20）。
+- **决策记录新增「外部参照」一栏**（2026-09-20）。
 
-  历史 ADR 记了"我们决定什么"，但没记"**谁解决过同一问题、他们怎么做、我们为何不同**"。
+  历史决策记录记了"我们决定什么"，但没记"**谁解决过同一问题、他们怎么做、我们为何不同**"。
   那部分权衡在写下决策时**确实存在过**（在脑子里），只是没落纸——于是半年后没人能重建它。
 
   模板要求：一致的地方 = 行业共识，写一句"我们跟随"即可；**分歧的地方 = 真权衡，
@@ -848,10 +882,10 @@
   （`1 failed`），随后字节级还原。
   文档同步：[USER-MANUAL](docs/USER-MANUAL.md)（§2 表 + §5/§6 标题 + FAQ + 数据位置）、
   [README](README.md)（含**改名记录**一节，说明旧名出现在 `docs/INSIGHT-SPEC.md`（**该文件已于 2026-09-29 删除**） /
-  [ADR](docs/adr/) / 坑清单里是正常的）、[API.md](docs/API.md) §6/§7 标题、
+   / 坑清单里是正常的）、[API.md](docs/API.md) §6/§7 标题、
   `docs/PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） 插件表、[SCHEMA.md](docs/SCHEMA.md) §3.6/§3.7、
   [CONFIG.md](docs/CONFIG.md) 的 `insight_workspace_root`、`docs/TOOLS.md`（`gen_tools_doc.py --write`）。
-  ⚠️ **没动**（有意）：`INSIGHT-SPEC.md`、`FACTORY-*.md`、`docs/adr/**`、`docs/PITFALLS.md`
+  ⚠️ **没动**（有意）：`INSIGHT-SPEC.md`、`FACTORY-*.md`，`docs/PITFALLS.md`
   等**领域/历史文档**——它们记的是能力与决策，不是界面标签。
 
 - **输入框那一行重排：模型名挪到发送键旁，下方常驻「缓存命中 / 命中率 / 上下文」三个数字**
@@ -954,7 +988,7 @@
 
 
 - **配置工厂 × Agent 的接口改造：四条实测问题一次收口**（2026-09-20，
-  ADR-0017 —— **已随配置工厂移除**；取证过程见 FACTORY-AGENT-GAP.md，**同已移除**）。
+   —— **已随配置工厂移除**；取证过程见 FACTORY-AGENT-GAP.md，**同已移除**）。
 
   用户在真机跑配置工厂后报了四条问题。逐条取证后发现**共同根因**：这条能力链是**照着
   "人在网页上点按钮"设计的**，接上对话 Agent 之后只补了"读"与"写"两端。
@@ -982,8 +1016,8 @@
   `services/egmp/generate.py`、`services/egmp/complexity.py` 一并删除。它的输入只有一个
   `requirement` 字符串，是对话链路的**降级复制品**。**执行引擎一个字都没删**：
   8 步管道、拓扑排序、幂等、断点续跑、回读验证全部保留——判据是"确定性 vs 非确定性"
-  与"不可回滚 vs 可重做"（ADR-0017 §D-2 —— **该 ADR 已随配置工厂一并移除**，
-原文可取回：`git show 1fa2301:docs/adr/0017-factory-agent-interface.md`）。手工上传 `blueprint.json` 那条路保留。
+  与"不可回滚 vs 可重做"（**该决策文档已随配置工厂一并移除**，
+原文可取回：`git show 1fa2301:）。手工上传 `blueprint.json` 那条路保留。
 
   **① 可对话轮次非常少**：`AgentConfig.max_steps` 默认 **12 → 40**，并接通设置页
   （`settings` 表的 `maxSteps` 键，范围 4~200，越界夹住、坏值回默认）。
@@ -1036,27 +1070,27 @@
   在于**把一个会漂的环境事实固化成了散文**。故记为 PITFALLS #50，其"推广"给出三种正确形态：
   探一次再决定 / 写成按角色断言的机检（如 P8/P8b）/ 干脆别写进文档。
 
-- **4 份关键 ADR 追加「外部参照」栏**（2026-09-20）：[ADR-0004](docs/adr/0004-extension-as-execution-plane.md)（扩展=执行面）、
-  [ADR-0006](docs/adr/0006-browser-pool-single-thread.md)（浏览器池单线程）、
-  [ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md)（沙箱）、
-  [ADR-0015](docs/adr/0015-extension-access-token.md)（访问令牌）。
-  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0004 **已退役**，内容并入 [ADR-0002](docs/adr/0002-browser-allocation-policy.md)（取回原文：`git show 9b97ef0:docs/adr/0004-extension-as-execution-plane.md`）；ADR-0006 **已退役**，内容并入 [ADR-0002](docs/adr/0002-browser-allocation-policy.md)（取回原文：`git show 9b97ef0:docs/adr/0006-browser-pool-single-thread.md`）；ADR-0014 **已退役**，内容并入 [ADR-0007](docs/adr/0007-credentials-sandbox-and-trust.md)（取回原文：`git show 9b97ef0:docs/adr/0014-sandbox-for-untrusted-code.md`）；ADR-0015 **已退役**，内容并入 [ADR-0002](docs/adr/0002-browser-allocation-policy.md)（取回原文：`git show 9b97ef0:docs/adr/0015-extension-access-token.md`）。
-  均**显式标注"本栏为后补"**，正文一字未改（遵循本仓 ADR 纪律：改已采纳的决策 = 新增一篇取代它）。
+- **4 份关键决策文档追加「外部参照」栏**（2026-09-20）：（扩展=执行面）、
+  （浏览器池单线程）、
+  （沙箱）、
+  （访问令牌）。
+
+  均**显式标注"本栏为后补"**，正文一字未改（遵循本仓决策纪律：改已采纳的决策 = 在原处标注取代关系）。
 
   其中两条对照推出了**可执行的认知**，不只是记录：
 
-  - **ADR-0014**：OpenAI Codex 的 Windows 沙箱**完全不用 Job Object**，用的是受限令牌 +
+  - **沙箱设计参照**：OpenAI Codex 的 Windows 沙箱**完全不用 Job Object**，用的是受限令牌 +
     独立低权限沙箱用户 + ACL + 防火墙。⇒ 若要把"限损层"升级为"权限边界"，
     下一个原语是**受限令牌 / AppContainer + ACL，而不是继续加固 Job Object**——
-    并据此给该 ADR §5 触发器补了一条（产品开始面向"用户会装陌生来源 Skill"的场景时再评估）。
-  - **ADR-0006**：主流浏览器 agent（browser-use / Skyvern / Stagehand）一律用 **async API**，
+    并据此给该决策的 §5 触发器补了一条（产品开始面向"用户会装陌生来源 Skill"的场景时再评估）。
+  - **浏览器池设计参照**：主流浏览器 agent（browser-use / Skyvern / Stagehand）一律用 **async API**，
     因此不需要专职线程。本项目用 sync + 单线程队列是**与主流相反的选择**——
-    代价（全局串行、事件回调纪律）集中体现在该 ADR 的"代价（已接受）"表里。
+    代价（全局串行、事件回调纪律）集中体现在该决策的"代价（已接受）"表里。
     对照栏的作用**不是证明我们错了，是让代价可见**。
 
-- **`CONTRIBUTING.md`**：新增 §5.1 说明「外部参照」栏为什么存在、怎么填、历史 ADR 如何后补；
+- **`CONTRIBUTING.md`**：新增 §5.1 说明「外部参照」栏为什么存在、怎么填、历史决策如何后补；
   开头加一段指向 `AGENTS.md`（含"AI 会把没写下来的约定当成不存在"的动因）；
-  ADR 流程改为**必须用模板**；§1 与 §7 的 lint 命令按上述实测订正。
+  决策记录流程改为**必须写「外部参照」**；§1 与 §7 的 lint 命令按上述实测订正。
 
 ### Fixed
 
@@ -1360,8 +1394,8 @@
 > `git add` 要落到**文件**而不是目录——目录会把"同目录下的另一个主题"一起吞掉。
 
 - **`/extension/*` 无鉴权：本机任意进程一次 GET 拿到全部账号明文（P0-1 / R1）**
-  （2026-09-17，[ADR-0015](docs/adr/0015-extension-access-token.md)）。
-  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0015 **已退役**，内容并入 [ADR-0002](docs/adr/0002-browser-allocation-policy.md)（取回原文：`git show 9b97ef0:docs/adr/0015-extension-access-token.md`）。
+  （2026-09-17）。
+
 
   `GET /extension/snapshot` 会**同时**下发 `fernetKey`（密钥本体）与每个账号的 `passwordEnc`——
   密钥与密文一起给出去，**等于明文口令**。而整条 `/extension/*` 此前**没有任何鉴权**，
@@ -1587,9 +1621,9 @@
 ### Added
 
 > ⚠️ **本节的端口协商/顺延条目已于同日被撤回**——见下方 `### Changed` 的
-> [ADR-0012](docs/adr/0012-fixed-ports.md) 条目。保留原文是为了留痕；
+> 条目。保留原文是为了留痕；
 > **现行行为是端口固定、不顺延**，读本条时勿把"顺延"当成现状。
-> ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0012 **已退役**，内容并入 [ADR-0011](docs/adr/0011-port-governance.md)（取回原文：`git show 9b97ef0:docs/adr/0012-fixed-ports.md`）。
+>
 
 - **脚本式 Skill：上传的脚本在沙箱里跑起来**（2026-09-17，同日接在"共享库 + 声明式工具"之后）。
 
@@ -1659,7 +1693,7 @@
   > `sandbox/audit.py` 实现完整、`_sandbox_setup()` 也老实注入了写入器，
   > 但 `runner.run()` 的 7 条 `return` 路径没有一条调用 `record`；
   > 而既有的三条审计测试**全部**是直接调 `audit.record(...)`——**测的是函数，不是链路**。
-  > ADR-0014 D-2 的 **E4「可观测」因此在文档上写着"已实现"、实际空转**（PITFALLS #42）。
+  > D-2 的 **E4「可观测」因此在文档上写着"已实现"、实际空转**（PITFALLS #42）。
   > 修法：`audit.record` 移到 `run()` 这个**唯一执行入口**（原主体改名 `_run`），
   > 于是没有一条返回路径能绕过，且**被拒的执行也留痕**（被拒同样是执行尝试）；
   > 补两条回归（被拒路径 + 成功路径，后者还钉住"审计只存长度不存正文"）。
@@ -1692,7 +1726,7 @@
   | 层 | 作用 | 是否安全边界 |
   |---|---|---|
   | `security.inspect_zip` | 上传期结构校验 + 可疑模式扫描 | ❌ **准入闸门**（挡坏形状、摊开可疑处） |
-  | 沙箱（ADR-0014） | 执行期凭据不注入 / 目录不越界 / 进程树可终止 | ✅ 真正的强制层 |
+  | 沙箱 | 执行期凭据不注入 / 目录不越界 / 进程树可终止 | ✅ 真正的强制层 |
   | 确认门（approvals） | 写/危险操作需人放行 | ✅ |
   - 结构规则抄自 ADP 的公开规范：ZIP ≤10 MB、≤300 文件、**禁一切二进制**、
     `SKILL.md` 必须在**根目录**；路径穿越一律拒（`../`、盘符、绝对路径）。
@@ -1720,8 +1754,8 @@
   **一个 YAML 反直觉点（记下来免得再查一遍）**：`version: 1.0` 会被 YAML 解析成 **float**
   而非字符串，于是报错是"缺少字段 version"而不是"格式不对"。不是 bug，是类型推断。
 
-- **沙箱：不受信代码的唯一执行底座**（2026-09-17，决策见 **[ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md)**）。
-  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0014 **已退役**，内容并入 [ADR-0007](docs/adr/0007-credentials-sandbox-and-trust.md)（取回原文：`git show 9b97ef0:docs/adr/0014-sandbox-for-untrusted-code.md`）。
+- **沙箱：不受信代码的唯一执行底座**（2026-09-17，详见 [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) §3.4 与 §7.10）。
+
   用户定的路线是「**先构建沙箱，优先补充整个项目的沙箱管理，再考虑接入 skill**」——所以本期只做底座，
   Skill 与 MCP 是它的下一期消费方（MCP 用户明确暂缓）。
 
@@ -1751,7 +1785,7 @@
     于是"跑一个脚本"本身占 2 个进程槽。取 1 的实测结果是**脚本根本起不来**（rc=101 + launcher 乱码报错），
     比不限制更糟。取 10 仍挡得住失控派生，而"杀整棵树"的保证本就不依赖它。
 
-  **诚实边界（写进代码、API 与界面三处，见 ADR-0014 §D-3）**：这**不是**安全边界。
+  **诚实边界（写进代码、API 与界面三处）**：这**不是**安全边界。
   它保证"整棵树能停 / 凭据不注入 / 目录不越界 / 输出可截断 / 每次留痕 / 失败即拒"，
   **不提供**内核级隔离。故界面把「✅ 代码强制」与「⚠️ 只是声明」**分两栏**显示，
   `/api/sandbox/policies` 单列 `enforced` 字段——避免任何人（包括将来的我）把它读成"跑了就安全"。
@@ -1768,7 +1802,7 @@
   > **推翻的既有结论**：`PLUGIN-UPSTREAM-RESEARCH.md:189` 与
   > `core-plugin-separation-research.md:126` 都写着"**不值得做**：进程沙箱"。
   > 那两条的**前提**是"插件作者只有你自己、全是可信代码"——用户要的"上传 skill"换掉了这个前提。
-  > 所以不是它们错了，是适用范围变了；按本仓 ADR 纪律新增 ADR-0014 **显式取代**，历史结论一字未改。
+  > 所以不是它们错了，是适用范围变了；按本仓决策纪律新增**显式取代**，历史结论一字未改。
 
 - **工具插件层：Agent 核心有了唯一的能力扩展面，三大业务以插件形式接入**（用户定稿：先提升核心中枢，
   再把三个工具做成插件与 Agent 关联）。契约见 **`docs/PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**）**。
@@ -1791,8 +1825,8 @@
   - **插件 API 就是 `ToolHub`**（`workbench/plugin_api.py`）。不做 entry_points 自动发现 / 独立进程 /
     热插拔 / 版本矩阵——研究结论是"插件作者只有你自己时，那些是为第三方生态付的成本"
     （`docs/research/core-plugin-separation-research.md` §A5；**该文件已于 2026-09-29 删除**，
-    论证已并入 [ADR-0014](docs/adr/0014-sandbox-for-untrusted-code.md) 的「外部参照」栏）。
-  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0014 **已退役**，内容并入 [ADR-0007](docs/adr/0007-credentials-sandbox-and-trust.md)（取回原文：`git show 9b97ef0:docs/adr/0014-sandbox-for-untrusted-code.md`）。
+    论证已并入 的「外部参照」栏）。
+
   - **装配纪律**：插件清单显式（`plugins/__init__.py::_MODULES`），单个插件抛异常只记一条 failure
     **并跳过**，绝不阻断启动；依赖方向 `plugins → plugin_api` **单向**，`plugin_api` 里不出现任何
     平台术语（连 `db` 都不 import，审计与确认门是注入的）。
@@ -1993,7 +2027,7 @@
   |---|---|---|
   | `README.md` / `CODEBASE_OVERVIEW.md` / `PLUGIN-SDK.md` / `API.md` | 4 插件 19 工具 | **5 插件 20 工具**（漏 `websearch`） |
   | `README.md` / `CODEBASE_OVERVIEW.md` | 迁移 1–13 | **迁移 1–18**（`SCHEMA.md` 一直是对的，是这两份没跟上） |
-  | `README.md` | 10 篇 ADR | **12 篇**（漏 ADR-0011、ADR-0012） |
+  | `README.md` | 10 篇决策记录 | **12 篇** |
   | `README.md` | 22 条环境坑 | **35 条**（`PITFALLS.md` 本身一直是对的） |
   | `README.md` | "60+ 端点" | 改为不写死数目（实测 84 个） |
   | `CODEBASE_OVERVIEW.md` 验收基线 | "63 passed, 1 failed"（2026-09-13） | **378 passed, 0 failed**（2026-09-17）；旧基线移入"历史验收基线"留痕 |
@@ -2006,8 +2040,8 @@
 
 - **品牌中立化：`AksoWorkbench` → `Workbench`**（用户定稿 2026-09-16：「更名，剥离 akso 的信息，
   按照 workbench 进行后续发展（逐渐将项目转变成可复用的工作台，核心差距就在于插件/tools 功能）」）。
-  完整决策、改动面与"刻意不改"清单见 **[ADR-0013](docs/adr/0013-brand-neutralization-workbench.md)**。
-  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0013 **已退役**，内容并入 [ADR-0003](docs/adr/0003-electron-desktop-shell.md)（取回原文：`git show 9b97ef0:docs/adr/0013-brand-neutralization-workbench.md`）。
+  完整决策、改动面与"刻意不改"清单见 [CHANGELOG](CHANGELOG.md) 与 [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md)。
+
   - **改动面**：58 个文件 / 200 处。包名 `akso-workbench`→`workbench`、产品名与 appId
     （`AksoWorkbench`/`com.akso.workbench`→`Workbench`/`com.workbench.app`）、安装包
     `Workbench-<版本>-setup.exe`、sidecar 产物 `dist/WorkbenchServer/`、
@@ -2023,7 +2057,7 @@
   - **刻意不改**：上游项目名（`akso-cc` / `akso-auto` / 仓库名 `akso-mogul` / `adapters/akso-*.json`
     / `AKSO_CC_REPO` / `AKSO_AUTO_REPO`）、平台适配层目录 `services/egmp/`、
     扩展内部存储键 `akso:*`（改名会让指令游标复位 → [PITFALLS](docs/PITFALLS.md) #15）、
-    历史 ADR/archive/CHANGELOG 条目。仓库名本次**不改**（用户决定），故 `publish.repo` 仍指向 `akso-mogul`。
+    历史决策/archive/CHANGELOG 条目。仓库名本次**不改**（用户决定），故 `publish.repo` 仍指向 `akso-mogul`。
   - **升级注意**：`productName` 变了 → NSIS 安装目录与卸载项是新的一套，**旧版不会被覆盖安装**，请先卸载旧版；
     发布产物更名后旧客户端的 `latest.yml` 检查会断（自动更新默认已关闭，影响面小）。
   - 经验固化：[PITFALLS](docs/PITFALLS.md) #36「改名真正会坏的是协议与持久化标识」。
@@ -2129,8 +2163,8 @@
     节点/连线计数、多页切页、零 JS 错误）。夹具不用手写 md，而是**拿回放夹具离线跑一遍真 spider**
     再验它的产物——否则只能证明"渲染器能渲染我以为的形状"。
 
-- **端口协商与公布（[ADR-0011](docs/adr/0011-port-and-session-negotiation.md)，用户提出的"端口好几个，是不是该控制平衡一下"）**。
-  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0011 **已退役**，内容并入 [ADR-0011](docs/adr/0011-port-governance.md)（该篇即本编号的合订本，**文件已改名**）（取回原文：`git show 9b97ef0:docs/adr/0011-port-and-session-negotiation.md`）。
+- **端口协商与公布（用户提出的"端口好几个，是不是该控制平衡一下"）**。
+
   改造前 18765/18766/18767 被**壳、Python 服务端、浏览器扩展三方各自硬编码**，且没有任何一方
   负责裁决"谁在用这个口"。**壳现在是唯一仲裁者**：优先取基准端口，被占则顺延（每端口最多 +8，
   不做全局随机——固定端口对书签/扩展更友好），然后把实际值
@@ -2142,7 +2176,7 @@
   - **扩展不再把桌面地址当编译期常量**：新增 `background/core/desktop-endpoint.ts`
     （缓存 → 问 `/whoami` → 回退固定 18765），`parallel-session` 的"桌面同步口"白名单也随之
     从"一个数字"变成"已知端口集合"。扩展已有 `host_permissions: ["<all_urls>"]`，发现无需新增权限。
-  - **顺带修掉 ADR-0002 的一半没生效**：`WORKBENCH_SESSION_MODE` 此前**从没被壳设置过**，
+  - **顺带修掉 的一半没生效**：`WORKBENCH_SESSION_MODE` 此前**从没被壳设置过**，
     托管会话实际一直跑原生 Chromium 而不是壳的 Chromium；现在随端口一起下发。
   - 端口值单点声明进 `config.py`（`PORT`/`CDP_PORT`/`CONTROL_PORT`），
     `routes_update` / `routes_extension` / `browser_pool` 一律读它，不再各自持常量。
@@ -2328,11 +2362,11 @@
     排障时能自己开 DevTools 看 Network/Console，不必再靠"服务端实吐字节数"间接判断。
   - 与全局热键 `Alt+Q`（账号轮盘）不冲突：那个走 `globalShortcut`，菜单只在窗口聚焦时生效。
 
-- **端口改为固定：撤回"壳当仲裁者、被占则顺延"（[ADR-0012](docs/adr/0012-fixed-ports.md) 取代
-  [ADR-0011](docs/adr/0011-port-and-session-negotiation.md) §D-1）**。用户定稿原话：
-  ★ **2026-10-07 退役说明（仅追加，上文一字未改）**：ADR-0012 **已退役**，内容并入 [ADR-0011](docs/adr/0011-port-governance.md)（取回原文：`git show 9b97ef0:docs/adr/0012-fixed-ports.md`）；ADR-0011 **已退役**，内容并入 [ADR-0011](docs/adr/0011-port-governance.md)（该篇即本编号的合订本，**文件已改名**）（取回原文：`git show 9b97ef0:docs/adr/0011-port-and-session-negotiation.md`）。
+- **端口改为固定：撤回"壳当仲裁者、被占则顺延"（取代
+   §D-1）**。用户定稿原话：
+
   「我建议还是固定端口号吧，别拿所谓的桌面壳引导去调整，就固定端口号」。
-  - **为什么推翻**：ADR-0011 要治的病（旧实例占端口 → 新壳认错服务）是真的，但**解法选错了**——
+  - **为什么推翻**： 要治的病（旧实例占端口 → 新壳认错服务）是真的，但**解法选错了**——
     它把"端口漂移"当成常规能力，于是引入协商窗口、实际端口公布、扩展按窗口探测、书签失效
     一整套活动部件；而本机端口冲突的唯一现实来源就是**工作台自己的旧实例**，
     这种情况**应该说清是谁占的**，而不是换号偷偷跑起来（用户不知道自己在 18768 上）。
@@ -2343,7 +2377,7 @@
     并**不再提"可用 WORKBENCH_* 换端口重试"**（那等于教用户制造漂移）。
   - **结构上变成单实例**：端口固定后"活着的实例必然占着 18765"，原来那条
     「仍然启动 / 退出」的询问分支成了**永远走不到的死代码**，已删除。顺带消灭了
-    ADR-0011 §6.2 的两个待办与 [PITFALLS](docs/PITFALLS.md) #23 的"两个实例共用同一份数据目录、
+     的两个待办与 [PITFALLS](docs/PITFALLS.md) #23 的"两个实例共用同一份数据目录、
     凭据互相解密"那一族问题；`app.requestSingleInstanceLock()` 因此**明确不做**（端口占用已挡住）。
   - **扩展侧简化**：`desktop-endpoint.ts` 取消"按窗口探测控制端口"（那是为跟顺延而生的），
     只剩**一次** `GET /whoami` 身份确认 + 回退固定 18765。这一步保留的理由不是"跟上换端口"，
@@ -2422,10 +2456,10 @@
   - **该脚本另补前置检查**：它靠"真占住基准端口"验顺延，所以**必须先确认基准端口空闲**。
     实测在"边跑着工作台边验收"时会先误判顺延、再抛未捕获的 `EADDRINUSE` 直接崩（报出来的是
     栈而不是结论）。现在会先给出人话提示并指明怎么退出工作台后重跑。
-- **占用提示报错端口号（顺着 ADR-0011 的病根，在文案里复现了一次）**。
+- **占用提示报错端口号（顺着 的病根，在文案里复现了一次）**。
   `describeOccupant()` 硬编码 `端口 ${BASE[key]}`（恒为 18765），而实例**实际**可能在
-  18766+（端口顺延是 ADR-0011 的核心机制）。用户照对话框去查 18765 只会查到空气，
-  正是 ADR-0011 要根治的「端口信息不可信」。现改为报 `prev.ports` 里的**实际端口**，
+  18766+（端口顺延是 的核心机制）。用户照对话框去查 18765 只会查到空气，
+  正是 要根治的「端口信息不可信」。现改为报 `prev.ports` 里的**实际端口**，
   顺延时附「（基准 18765 被占后顺延至此）」说明来由；公布文件缺端口信息时回落到基准号。
   `bootstrapPorts()` 里另一处 `另占一组端口（server=${ports.server}）` 同样改为不谎报具体值。
 - **平台洞察页头副标题没跟着命令下线走（用户实测发现：界面上看着像四个功能都还在）**。
@@ -2665,14 +2699,14 @@
   - **新建** `docs/EXTENSION-PLANE.md`（**该文件已于 2026-09-29 删除**）：扩展侧权威文档——六平面隔离原理、
     与上游的差异对照、桌面↔扩展三面协议（数据面/指令面/状态面）及**四条必读护栏**、
     私有改造史、验证基线、安全边界（含平台侧不可根治的越权方向）。
-  - **新建** 10 篇 ADR [`docs/adr/`](docs/adr/)：SQLite 选型（承接原 `docs/数据层决策.md`）、
+  - **新建** 10 篇决策记录：SQLite 选型（承接原 `docs/数据层决策.md`）、
     浏览器分配政策、Electron 壳、扩展=执行面、四项目原生化、browser_pool 单线程、
     凭据不落明文、更新通道与代理、NSIS 分发、Monitor 不回放危险操作。
     每篇含**背景 / 决策 / 取舍（含被放弃的方案）/ 后果 / 复核触发器**。
 
 ### Changed
 
-- **全仓 `AGENT.md` 引用重指**：原 **59 处 / 21 个文件**（7 篇 ADR、`docs/API.md` 7 处、`docs/CONFIG.md`、
+- **全仓 `AGENT.md` 引用重指**：原 **59 处 / 21 个文件**（7 篇决策记录、`docs/API.md` 7 处、`docs/CONFIG.md`、
   `docs/SCHEMA.md`、`docs/USER-MANUAL.md`、`docs/EXTENSION-PLANE.md`、`extensions/quick-login/README.md`、
   `docs/archive/`）。重指后全仓指向 `AGENT.md` 的 markdown 链接为 **0**；`CHANGELOG.md` 内的两处历史记录
   **保留原文不改写**，仅把链接语法降级为代码体，避免留下死链。
@@ -2709,23 +2743,23 @@
   删除后按变更频率重新落位：
   - **§5 环境坑 22 条 → 新建 [`docs/PITFALLS.md`](docs/PITFALLS.md)**（只增不改，机构记忆）；
   - **§2 代码地图 / §3 六条红线 / §4 已知问题台账 → `docs/CODEBASE_OVERVIEW.md`（**该文件已于 2026-09-29 删除**）**
-    ——台账编号 **C/S/T/B/D 原样保留**，以免打断 `docs/API.md`、`docs/SCHEMA.md` 与 7 篇 ADR 中按编号的既有引用；
+    ——台账编号 **C/S/T/B/D 原样保留**，以免打断 `docs/API.md`、`docs/SCHEMA.md` 与 7 篇决策记录中按编号的既有引用；
   - §7 验收基线 → 同文件「验收基线实测」与 [`CONTRIBUTING.md`](CONTRIBUTING.md) §7；
   - §6 数据与运行时目录 → [`docs/SCHEMA.md`](docs/SCHEMA.md) / [`docs/CONFIG.md`](docs/CONFIG.md)（原本已在那里）。
 - `docs/架构分析.md`、`docs/SESSION-DIGEST.md`、`docs/数据层决策.md` 移入 `docs/archive/`
   （分别改名 `ARCHITECTURE-2026-09-10.md` / `SESSION-DIGEST-2026-09-10.md` / `DATA-LAYER-DECISION.md`，
   加归档抬头并写明内容去向）。原因：前两份自述版本为 v0.2.2 且与现状有实质偏差
-  （迁移账、测试项数、依赖口径、桌面分发方式都已变）；第三份已完整并入 ADR-0001。
+  （迁移账、测试项数、依赖口径、桌面分发方式都已变）；第三份已完整并入。
 
 ### 说明
 
 - 本轮**以文档为主，仅附带清掉三处已失效的引用**（均为零行为变更）：
   ① 6 个服务端模块的文档字符串原先指向**已删除**的 `docs/模块契约.md` / `docs/迁移台账.md`，
-  已改指 `docs/API.md` / `docs/CONFIG.md` / `docs/adr/`；
+  已改指 `docs/API.md` / `docs/CONFIG.md` /；
   ② `api/routes_agent.py` 的 `run_insight` 工具描述仍写「子进程封装」，已改「egmp.insight 原生实现」；
   ③ `adapters/*.json` 的 `$schema` 由死链 `docs/模块契约.md#adapters` 改为 `docs/SCHEMA.md`（仅此字段）。
   另把 `tools/setup.ps1` 的 Node 检查从**必检项降为 INFO 信息项**并改写文案（原文案「洞察/工厂功能不可用」
-  与 [原生化决策](docs/adr/0005-native-internalization-of-four-projects.md) 矛盾）。
+  与 矛盾）。
   修完已复跑：`pytest` **64 passed**、`verify_packaging.py` **8/8 PASS**、两个 `.ps1` 语法检查通过
   （`setup.ps1` 编辑后重补了 UTF-8 BOM）。
 - 盘点中发现的其余代码缺陷与安全风险一律以

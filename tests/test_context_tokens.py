@@ -187,7 +187,7 @@ def test_the_hard_limit_deliberately_excludes_the_schema() -> None:
 
     ★ 本判据的作用是**把这条决策钉住**：谁"顺手"把它也改成含 schema，
     这条会红，而红的时候他会看到这段说明 —— 而不是以为自己在修一个 bug。
-    ★ 真要改这个口径，按本仓纪律要**新增一篇 ADR** 记录被取代的决策。
+    ★ 真要改这个口径，按本仓纪律要**同步更新 `CORE-ARCHITECTURE.md` 里那条已决策**。
     """
     import inspect
 
@@ -197,7 +197,7 @@ def test_the_hard_limit_deliberately_excludes_the_schema() -> None:
     assert "estimate_messages_tokens" in src
     assert "estimate_request_tokens" not in src, (
         "硬上限改成含 schema 了 —— 那会取代一条已决策（见 _over_hard_limit 的文档串），"
-        "请先补一篇 ADR 再改"
+        "请先更新 CORE-ARCHITECTURE.md 的已决策条目再改"
     )
 
 

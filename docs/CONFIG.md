@@ -8,7 +8,7 @@
 > ⑤ 前端硬编码常量。
 >
 > 相关文档：[API.md](API.md)（端口与端点）、[SCHEMA.md](SCHEMA.md)（表结构）、
-> [ADR-0008](adr/0003-electron-desktop-shell.md)（代理与更新）、[PITFALLS.md](PITFALLS.md)（环境坑清单）。
+> （代理与更新）、[PITFALLS.md](PITFALLS.md)（环境坑清单）。
 
 ## 1. 端口与进程（先看这张表）
 
@@ -39,7 +39,7 @@
 
 | 变量 | 默认 | 改了会怎样 |
 |---|---|---|
-| `WORKBENCH_DATA` | `%APPDATA%\Workbench`（Win）/ `~/.workbench` | 整个数据目录（DB、runtime、storage_state、token 缓存）一起迁移。**旧数据不会自动搬**——空目录意味着账号全空。⚠️ 例外：2026-09-16 更名前的 `%APPDATA%\AksoWorkbench` 会在首次启动时被**自动接管**（复制、不覆盖现有库；见 [ADR-0013](adr/0003-electron-desktop-shell.md) §D-2） |
+| `WORKBENCH_DATA` | `%APPDATA%\Workbench`（Win）/ `~/.workbench` | 整个数据目录（DB、runtime、storage_state、token 缓存）一起迁移。**旧数据不会自动搬**——空目录意味着账号全空。⚠️ 例外：2026-09-16 更名前的 `%APPDATA%\AksoWorkbench` 会在首次启动时被**自动接管**（复制、不覆盖现有库）。★ **显式设置 `WORKBENCH_DATA` / `WORKBENCH_DB` 时不接管**——"用这个目录"就是"别自己找"（测试与验收脚本依赖此语义） |
 | `MOGUL_DATA` | — | `WORKBENCH_DATA` 的兼容别名（**仅当 `WORKBENCH_DATA` 未设时生效**） |
 | `WORKBENCH_DB` | `<数据目录>/workbench.db` | 单文件指向。测试用（`conftest.py` 指向临时目录）。**指向不存在的路径会新建空库**，表现为「账号全没了」 |
 | `MOGUL_DB` | — | `WORKBENCH_DB` 的兼容别名 |
@@ -47,7 +47,7 @@
 | `WORKBENCH_PORT` | `18765`（仅 Web 模式） | 服务端业务面 + 静态页。**Tauri 会把它设成动态端口**；手工启动时可用它指定端口。 |
 | `MOGUL_HOST` / `MOGUL_PORT` | — | 上一对的兼容别名 |
 | `WORKBENCH_ADAPTERS` | `<项目根>/adapters` | 模块体检读取的适配器目录。测试用（指向仓库 `adapters/`，因为测试数据目录里没有） |
-| `AKSO_CC_REPO` / `AKSO_AUTO_REPO` | 见 `adapters/akso-cc.json` 的 `repoPath` / `D:\ai_assistant\akso-auto`（写死在 `services/accounts.py`） | **只影响两件事**：模块体检的 `source-reference` 提示（只有 `AKSO_CC_REPO` 走这条，它是 `adapters/akso-cc.json` 的 `repoPathEnv`）、「原项目 env 导入」去哪里扫 `env.json`（`accounts.scan_original_env_files` 仍同时扫 akso-cc 与 akso-auto 两处，**只读**）。**不影响任何业务功能**（能力已原生化，见 [ADR-0005](adr/0005-native-internalization-of-four-projects.md)） |
+| `AKSO_CC_REPO` / `AKSO_AUTO_REPO` | 见 `adapters/akso-cc.json` 的 `repoPath` / `D:\ai_assistant\akso-auto`（写死在 `services/accounts.py`） | **只影响两件事**：模块体检的 `source-reference` 提示（只有 `AKSO_CC_REPO` 走这条，它是 `adapters/akso-cc.json` 的 `repoPathEnv`）、「原项目 env 导入」去哪里扫 `env.json`（`accounts.scan_original_env_files` 仍同时扫 akso-cc 与 akso-auto 两处，**只读**）。**不影响任何业务功能**（能力已原生化） |
 | `NODE_COMMAND` | `node` | 遗留（`services/proc.py` 的 Node 子进程封装，仅被 `tests/test_proc.py` 使用）。**运行时链路不再依赖 Node** |
 | `WORKBENCH_SKILL_PYTHON` | （空） | **脚本式 Skill 用的 Python 解释器**（`workbench/skills/script_runner.py`）。留空 = 用 `sys.executable`（开发态正确）。⚠️ **打包态必须显式设置**：冻结态下 `sys.executable` 是 `WorkbenchServer.exe`、**不是解释器**，拿它跑脚本必然失败——所以 `find_python()` 在"冻结态 + 本变量为空"时**直接报错并说清怎么配**（不做"试一下再说"，因为这条报错会出现在用户现场，必须自解释）。给的路径**必须是真实存在的文件**，否则同样报错。用户视角见 [USER-MANUAL.md](USER-MANUAL.md) §10 |
 
@@ -121,7 +121,8 @@
 | `apiKey` | DeepSeek API Key 明文 | 空 → `ready=false`，对话直接回「请先在设置中配置」 | 换 Key 即换计费账号；**明文存库**是本机信任边界内的既有契约 |
 | `model` | 模型 id 字符串 | `deepseek-v4-flash`（`deepseek.DEFAULT_MODEL`） | 见 §5 模型清单；**写错模型名会让对话整体 502/报错** |
 | `temperature` | 十进制字符串 | `0.7` | 解析失败回落 0.7 |
-| `account_fernet_key` | urlsafe base64 32 字节 | **首次使用时生成** | ⚠️ **改它 = 全部已存口令不可解密**（接口仍能列出账号，但口令再也解不开）。见 [ADR-0007](adr/0007-credentials-sandbox-and-trust.md) |
+| `permissions` | JSON 对象字符串 | `{"mode":"ask","allow":[],"ask":[],"deny":[]}` | 工具权限策略：`deny > ask > allow`，`mode` 为 `ask`/`auto`。**非法配置会让所有工具调用被拒（Fail-Closed）**；改前先 `GET /api/settings/permissions` |
+| `account_fernet_key` | urlsafe base64 32 字节 | **首次使用时生成** | ⚠️ **改它 = 全部已存口令不可解密**（接口仍能列出账号，但口令再也解不开）。 |
 | `disabled_boxes` | JSON 数组字符串 | `[]` | 禁用盒在账号中心的默认视图里被跳过（管理不受影响） |
 | `rememberedBoxes` | JSON 数组字符串 | `[]` | 记忆盒子清单（含空盒）。**重命名走原位替换**，手工追加会让盒名顺序错乱 |
 | `defaultBoxName` | 字符串 | 空 → 显示「默认盒子」 | 只改默认盒的**显示名**（`box=''` 是存储值，不变） |

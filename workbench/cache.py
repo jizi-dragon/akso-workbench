@@ -244,7 +244,7 @@ def _over_budget(messages: list[dict], window_tokens: int, threshold: float,
     ⚠️ `tools_tokens` **缺省 0**：没有工具面的调用方行为与从前**逐字相同**，
     不需要知道这个参数存在。
 
-    ★ `factor` 是**校准系数**（计划 §7.1(b)，见 [ADR-0024](../docs/adr/0019-in-turn-context-and-budget-governance.md)）：
+    ★ `factor` 是**校准系数**（计划 §7.1(b)）：
     字数估算与真实分词**永远有偏差**，而 API 每次都回报真值。
     用它把估算放大/缩小到接近真值，折叠判定才不会"该折的时候不折"。
     ⚠️ **缺省 1.0** —— 没有样本时行为与从前逐字相同；调用方不该被迫知道这个参数存在。

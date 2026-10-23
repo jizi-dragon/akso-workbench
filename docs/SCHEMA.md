@@ -3,7 +3,7 @@
 > **本文档的读者**：要加表/改表的人、要写 SQL 的人、要理解「为什么代码删了表还在」的人。
 > 变更频率 O(迁移)，且**数据库迁移只增不改**——改表必须新增一条迁移，历史迁移不可变。
 >
-> 相关文档：[ADR-0001](adr/0001-data-layer.md)（为何是 SQLite）、
+> 相关文档：（为何是 SQLite）、
 > [CONFIG.md](CONFIG.md)（settings 表键清单）、[API.md](API.md)（表 → 接口的映射）、
 > [CONFIG.md](CONFIG.md)（数据目录与维护工具）。
 
@@ -17,11 +17,11 @@
 | 访问层 | `workbench/db.py` **唯一入口**（`query` / `query_one` / `execute`），单连接 + `threading.RLock` |
 | 连接参数 | `check_same_thread=False`、`row_factory=sqlite3.Row` |
 | PRAGMA | `journal_mode = WAL`、`foreign_keys = ON`（收拢在 `db._PRAGMAS`） |
-| 旧库接管 | `config.bootstrap_database()`：仅当 `workbench.db` **不存在**时，按序尝试 `%APPDATA%\AksoWorkbench\workbench.db`（**2026-09-16 更名前的数据目录**，优先级最高）→ `%APPDATA%\MogulWorkbench\mogul.db` → `com.example.mogulsimulator`。**复制不移动、不覆盖**，连 `-wal`/`-shm` 一起（见 [ADR-0013](adr/0003-electron-desktop-shell.md) §D-2） |
+| 旧库接管 | `config.bootstrap_database()`：仅当 `workbench.db` **不存在**时，按序尝试 `%APPDATA%\AksoWorkbench\workbench.db`（**2026-09-16 更名前的数据目录**，优先级最高）→ `%APPDATA%\MogulWorkbench\mogul.db` → `com.example.mogulsimulator`。**复制不移动、不覆盖**，连 `-wal`/`-shm` 一起 |
 
 **为什么是单连接**：交付形态是单机单人（Tauri 壳 + 本机 sidecar，`uvicorn workers=1`），
 单写入进程下 MySQL 相对 SQLite WAL 没有优势。完整论证（含 Redis/MySQL 排除理由与换库触发器）见
-[ADR-0001](adr/0001-data-layer.md)。
+。
 
 ## 二、迁移机制
 
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
   逐列适配并对未知 `NOT NULL` 无默认值列填中性值，避免接管旧库时 IntegrityError。
 - `checksum` 按 sqlx 语义取迁移 SQL 的 SHA-384 摘要。
 
-### 迁移账（1–25，全部已应用）
+### 迁移账（1–26，全部已应用）
 
 | # | 名称 | 内容 | 血统 |
 |---|---|---|---|
@@ -66,12 +66,12 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | 16 | `tool_plugin_layer` | `agent_audit` 增 `plugin` / `risk` / `meta`；新建 `pending_action`（危险操作确认门留痕）+ 索引 | 工具插件层 |
 | 17 | `agent_cache_layer` | 新建 `conversation_context`（冻结的历史摘要，`summarized_upto` 只前进）与 `deepseek_usage`（token 用量与**缓存命中量**）+ 索引 | Agent 缓存层 |
 | 18 | `rename_factory_module_id` | 数据行改写：`blueprint_jobs.module` 由 `akso-auto` / `egmp-native` 统一为 `factory` | 模块 id 改名 |
-| 19 | `sandbox_run_audit` | 新建 `sandbox_run`（沙箱执行审计：策略/退出码/耗时/**树杀手段**/输出摘要）+ 索引 | 沙箱（[ADR-0014](adr/0007-credentials-sandbox-and-trust.md)） |
+| 19 | `sandbox_run_audit` | 新建 `sandbox_run`（沙箱执行审计：策略/退出码/耗时/**树杀手段**/输出摘要）+ 索引 | 沙箱 |
 | 20 | `skill_audit` | 新建 `skill_audit`（**能力供给链**留痕：上传/安装/卸载/删除）+ 索引 | Skill 共享库 |
 | 21 | `attachments` | 新建 `attachments`（用户交给 agent 的**文件/图片**：名字/mime/字节/sha256/解析状态/正文长度/坐标 JSON）+ 索引 | `AGENT-FILE-INPUT-PLAN.md`（**该文件已于 2026-09-29 删除**） |
-| 22 | `summary_boundary_excludes_system` | 数据行改写：`conversation_context.summarized_upto` 整体减 1 —— 摘要边界改为**不含首条 system**计数（I15：折叠永不吞 system） | [ADR-0019](adr/0019-in-turn-context-and-budget-governance.md) |
-| 23 | `messages_kind` | `messages` 增 `kind`（`message` / `error` / `tool`）；并把历史里 `role='assistant' AND content LIKE '错误：%'` 的行标成 `error`（**启发式**，边界写在迁移注释里） | [ADR-0019](adr/0019-in-turn-context-and-budget-governance.md) §5.4b |
-| 24 | `agent_run_and_span` | 新建 `agent_run`（一次用户回合：状态/步数/用量/耗时）与 `agent_span`（该回合每一步：model/tool/sandbox/confirm + 耗时/状态/attrs）+ 索引 | [ADR-0021](adr/0019-in-turn-context-and-budget-governance.md) |
+| 22 | `summary_boundary_excludes_system` | 数据行改写：`conversation_context.summarized_upto` 整体减 1 —— 摘要边界改为**不含首条 system**计数（I15：折叠永不吞 system） | |
+| 23 | `messages_kind` | `messages` 增 `kind`（`message` / `error` / `tool`）；并把历史里 `role='assistant' AND content LIKE '错误：%'` 的行标成 `error`（**启发式**，边界写在迁移注释里） | §5.4b |
+| 24 | `agent_run_and_span` | 新建 `agent_run`（一次用户回合：状态/步数/用量/耗时）与 `agent_span`（该回合每一步：model/tool/sandbox/confirm + 耗时/状态/attrs）+ 索引 | |
 | 25 | `transcript_columns` | `messages` 增 `tool_calls` / `tool_call_id` / `seq`（**工具轨迹落库 + 定序**）；`seq` 由 `rowid` 回填；建 `idx_messages_conv_seq(conversation_id, seq)` | 核心 Agent 计划 §7.3 |
 
 > **迁移 1–6 为 fork 历史，按不可变纪律保留**。其中 `documents` / `doc_chunks` / `qa_metrics`
@@ -233,7 +233,7 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 | `created_at` | INTEGER | NOT NULL |
 
 > ⚠️ **本表建了索引却零处写入**。运行日志走磁盘文件（`log_path`），
-> 因此日志增长不落在数据库里——**这是对的设计，不要「顺手」改成入库**（见 [ADR-0001](adr/0001-data-layer.md) §一附带结论）。
+> 因此日志增长不落在数据库里——**这是对的设计，不要「顺手」改成入库**。
 > 它是迁移 8 中唯一使用 `INTEGER PRIMARY KEY AUTOINCREMENT` 的表（迁移历史不可变故保留）；
 > **新表不要再用 AUTOINCREMENT，一律 `TEXT PRIMARY KEY`**（UUID 文本主键与方言无关）。
 
@@ -421,7 +421,25 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 同时认空串与它；且绑定要**连文件一起搬**到会话目录——路径是从 `conversation_id` 推出来的，
 只改库不搬文件就会去新目录找一个还在旧目录的文件（表现：`No such file or directory`）。
 
-### 3.16 已下线但表仍在（勿恢复业务代码）
+### 3.16 `agent_memory` — Agent 长期记忆（迁移 26）
+
+| 列 | 类型 | 默认 | 语义 |
+|---|---|---|---|
+| `id` | TEXT | — | UUID 前 16 位 |
+| `scope` | TEXT | — | `global` / `project` |
+| `type` | TEXT | — | `reference` / `project` / `user` / `feedback` |
+| `title` | TEXT | — | 一句话标题（≤120） |
+| `body` | TEXT | — | 事实正文（≤4000）；**不存指令** |
+| `keywords` | TEXT | `''` | 别名/翻译，帮助检索（≤500） |
+| `revision` | INTEGER | `1` | 单调递增（v1 只增不重写） |
+| `created_at` / `updated_at` | INTEGER | — | 毫秒时间戳 |
+| `expires_at` | INTEGER | NULL | 硬过期边界；NULL = 不过期 |
+
+索引：`idx_agent_memory_scope_updated(scope, updated_at DESC)`、`idx_agent_memory_expires(expires_at)`。
+检索：`workbench/memory.py::search` 用词元重叠排序（英文词 + 中文单字/双字），只返回未过期行；
+`list_memories` 不过滤过期（便于清理）。
+
+### 3.17 已下线但表仍在（勿恢复业务代码）
 
 | 表 | 来源迁移 | 现状 |
 |---|---|---|

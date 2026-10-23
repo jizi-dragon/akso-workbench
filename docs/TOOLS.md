@@ -33,7 +33,7 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 > 手改会在下一次 `--check` 时被判为不一致——这正是设计意图（清单只能来自代码）。
 
 <!-- TOOLS-TABLE:BEGIN —— 由 tools/gen_tools_doc.py 生成，勿手改；改插件后跑 --write -->
-> 实测（由运行期工具中枢生成）：**4 个插件 / 15 个工具**。风险分布：15 read · 0 write · 0 dangerous；装配失败：无。
+> 实测（由运行期工具中枢生成）：**5 个插件 / 18 个工具**。风险分布：16 read · 2 write · 0 dangerous；装配失败：无。
 
 | 插件 | 标题 | 版本 | 工具数 | 负责什么 |
 |---|---|---|---|---|
@@ -41,6 +41,7 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `websearch` | 联网检索 | 1.1.0 | 1 | 自建联网检索（DeepSeek API 不支持内置 web_search，故由本工作台实现） |
 | `insight` | 对象分析 | 1.0.0 | 6 | 读平台对象元数据、跑五步织网洞察、取回产物（akso-cc 能力原生化） |
 | `accounts` | 快捷登录 | 1.0.0 | 2 | 账号库清单与平台登录验证（quick-login 能力内化 |
+| `memory` | 长期记忆 | 0.0.0 | 3 | 按需检索/记录事实（不自动注入，不存指令） |
 
 | 工具 | 插件 | 风险 | 需确认门 | 超时 | 干什么 | 参数 |
 |---|---|---|---|---|---|---|
@@ -58,12 +59,15 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `insight_read_config` | insight | read | — | 60s | 只读读取某个 eGMP 对象的元数据（对象结构/基本信息） | `account_id`、`code` |
 | `insight_run` | insight | read | — | 300s | 跑一次平台洞察：login=只验证登录连通 | `account_id`、`objects`、`command` |
 | `insight_runs` | insight | read | — | 15s | 最近的洞察任务列表（状态/覆盖度/工作区），用于确认上次是否跑成 | `limit` |
+| `memory_search` | memory | read | — | 60s | 检索长期记忆里的事实（发布分支、服务约束、用户偏好等）。**在需要跨会话背景时先查** | `query`、`scope`、`limit` |
+| `memory_add` | memory | **write** | ✅ 宿主拦下 | 60s | 记录一条**事实**（不是指令）。指令写进 AGENTS/CORE-ARCHITECTURE，不要写这里。会改持久状态，需用户确认。 | `title`、`body`、`scope`、`type`、`keywords`、`expiresAt` |
+| `memory_delete` | memory | **write** | ✅ 宿主拦下 | 60s | 删除一条长期记忆（按 id）。会改持久状态，需用户确认。 | `memory_id` |
 | `web_search` | websearch | read | — | 120s | 联网检索网页（返回标题/链接/摘要）。适合查法规更新、官方公告、报错与版本信息这类训练数据里没有或已过时的内容 | `query`、`count`、`freshness` |
 <!-- TOOLS-TABLE:END -->
 
 ### 2.1 运行期工具（installed 层）
 
-上表只承诺**产品自带**的 15 个工具（`core_specs()`）。运行期还会有两类工具进入同一个
+上表只承诺**产品自带**的 18 个工具（`core_specs()`）。运行期还会有两类工具进入同一个
 `ToolHub`，它们**不计入**上面的数字，也**不写入**生成块：
 
 | 来源 | 谁注册 | 命名 | 默认风险 |
