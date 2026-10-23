@@ -22,7 +22,7 @@
 > | 想了解 | 去哪 |
 > |---|---|
 > | ★ **核心 Agent 架构与分层契约 ＋ 不变量 I1–I18（地基）** | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
-> | 真机环境坑（**134 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
+> | 真机环境坑（**135 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
 > | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
 > | 怎么接外部 MCP server、安全默认是什么 | [docs/MCP.md](docs/MCP.md) |
 > | **和 WorkBuddy 差在哪、还剩哪些缺陷** | [docs/AGENT-BENCHMARK.md](docs/AGENT-BENCHMARK.md) |

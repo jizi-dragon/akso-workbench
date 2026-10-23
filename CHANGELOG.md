@@ -95,6 +95,13 @@
   设置页「加载」或 `POST /api/mcp/servers/{name}/activate` 后才进入工具面。
   `tests/test_mcp.py` 增加 lazy 反证 + UI wiring。
 
+### Added
+
+- **workspace-write 真隔离接缝（2026-10-23）**：`WORKBENCH_WINDOWS_ACL_RUNNER` 指向 DSH
+  `sandbox-windows-acl` 的 `runner.js` 时，`workspace-write` 由原生 runner 强制
+  （capability SID + Low label + deny DELETE_CHILD）；未配置时保持原声明路径。
+  `tests/test_sandbox_acl_runner.py` 2 条配置/包装判据；真实 runner 的端到端在手动验收中执行。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

@@ -49,6 +49,8 @@
 | `WORKBENCH_ADAPTERS` | `<项目根>/adapters` | 模块体检读取的适配器目录。测试用（指向仓库 `adapters/`，因为测试数据目录里没有） |
 | `AKSO_CC_REPO` / `AKSO_AUTO_REPO` | 见 `adapters/akso-cc.json` 的 `repoPath` / `D:\ai_assistant\akso-auto`（写死在 `services/accounts.py`） | **只影响两件事**：模块体检的 `source-reference` 提示（只有 `AKSO_CC_REPO` 走这条，它是 `adapters/akso-cc.json` 的 `repoPathEnv`）、「原项目 env 导入」去哪里扫 `env.json`（`accounts.scan_original_env_files` 仍同时扫 akso-cc 与 akso-auto 两处，**只读**）。**不影响任何业务功能**（能力已原生化） |
 | `NODE_COMMAND` | `node` | 遗留（`services/proc.py` 的 Node 子进程封装，仅被 `tests/test_proc.py` 使用）。**运行时链路不再依赖 Node** |
+| `WORKBENCH_WINDOWS_ACL_RUNNER` | （空） | **可选：DSH Windows ACL runner 的 `lib/runner.js` 路径**。设置后 `workspace-write` 策略由 DSH runner 真正强制（capability SID + Low label），未设置则退回原“声明”路径；runner 缺失/失败 → 拒绝执行 |
+| `WORKBENCH_NODE` | PATH 上的 `node` | 上一条 runner 使用的 Node 可执行文件；打包/多 Node 环境可显式指定。**这两个变量只影响 sandbox，不影响其他功能** |
 | `WORKBENCH_SKILL_PYTHON` | （空） | **脚本式 Skill 用的 Python 解释器**（`workbench/skills/script_runner.py`）。留空 = 用 `sys.executable`（开发态正确）。⚠️ **打包态必须显式设置**：冻结态下 `sys.executable` 是 `WorkbenchServer.exe`、**不是解释器**，拿它跑脚本必然失败——所以 `find_python()` 在"冻结态 + 本变量为空"时**直接报错并说清怎么配**（不做"试一下再说"，因为这条报错会出现在用户现场，必须自解释）。给的路径**必须是真实存在的文件**，否则同样报错。用户视角见 [USER-MANUAL.md](USER-MANUAL.md) §10 |
 
 ### 2.2 Tauri 壳（`src-tauri/src/main.rs`）

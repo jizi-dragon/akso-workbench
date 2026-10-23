@@ -282,15 +282,16 @@ Windows 上绑定用挂起创建消除竞态；但在宿主嵌套 Job 里补绑�
 
 **这一层不是安全边界，是限损层。** 不是措辞问题，是事实：
 
-1. **read-only 已有受限令牌，workspace-write 仍与宿主同用户同权限**：Windows 上
-   `strict-readonly` 会附加 `WRITE_RESTRICTED` 令牌（限制 SID 只有 logon + Everyone），
-   运行时写检查按限制列表走；**workspace-write 的 capability SID 尚未落地**，
-   脚本式 Skill 仍按当前用户权限写工作区。没有独立账户/AppContainer/容器。
+1. **read-only 已有受限令牌；workspace-write 在配置 DSH runner 后才是真强制**：Windows 上
+   `strict-readonly` 会附加 `WRITE_RESTRICTED` 令牌；`workspace-write` 若设置
+   `WORKBENCH_WINDOWS_ACL_RUNNER`，由 DSH `sandbox-windows-acl` runner 执行
+   capability SID + Low label + deny DELETE_CHILD 的完整编排（工作区可写、外部拒绝）；
+   **未配置时仍按当前用户权限写工作区**（声明而非强制）。没有独立账户/AppContainer/容器。
 2. **启动前校验 + read-only 的运行时写限制**：`cwd` 在沙箱根内、可执行文件在白名单、
    环境变量白名单、`cwd` 不命中敏感路径；read-only 额外由令牌拒绝写（Everyone 的环境授予
    仍可能放行，属 **partial**）。**读、网络、注册表仍不拦截**。
-3. **`allow_network` 是声明**；`writes` 只在 read-only 策略上被令牌部分强制，
-   workspace-write 仍是声明（真强制需要 capability SID/AppContainer + 文件系统 ACL）。
+3. **`allow_network` 是声明**；`writes` 的强制分两档：read-only 由令牌部分强制，
+   workspace-write **配置 DSH runner 后**由原生 ACL 强制；未配置时是声明。
 4. **默认沙箱根就在数据目录下**（`<数据目录>/sandbox/runs/<id>`），而 `APPDATA` 必须在环境白名单里
    （否则子进程连临时目录都找不到）。一段脚本用 `Path.cwd()` 往上走两级就能读到 `workbench.db`，
    连同 `account_fernet_key` 与全部口令密文 —— 这不需要漏洞，只需要 `open()`。

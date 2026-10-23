@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+from . import win_acl_runner
 from .job import IS_WINDOWS, MAX_ACTIVE_PROCESSES
 from .job import stats as job_stats
 from .layout import (
@@ -72,13 +73,15 @@ def capability_matrix() -> dict:
     if IS_WINDOWS:
         enforced.append(f"Job Object 后代补绑 + IsProcessInJob 校验；活动进程上限 {MAX_ACTIVE_PROCESSES}")
         enforced.append("read-only 策略附加 WRITE_RESTRICTED 受限令牌（logon + Everyone；partial）")
+        if win_acl_runner.available():
+            enforced.append("workspace-write 由 DSH ACL runner 强制（capability SID + Low label）")
     return {
         "platform": "windows" if IS_WINDOWS else "posix",
         "enforced": enforced,
         "not_enforced": not_enforced,
         "job_object": IS_WINDOWS,
         "read_only_token": IS_WINDOWS,
-        "workspace_write_token": False,
+        "workspace_write_token": IS_WINDOWS and win_acl_runner.available(),
         "max_active_processes": MAX_ACTIVE_PROCESSES,
         "honest_limit": "这是限损层，不是安全边界；除 enforced 外的字段都只是声明。",
     }

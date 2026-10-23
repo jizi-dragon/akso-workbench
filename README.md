@@ -130,7 +130,7 @@
 | **[docs/AGENT-BENCHMARK.md](docs/AGENT-BENCHMARK.md)** | 想知道"和 WorkBuddy 差在哪"的人 | 基础五件套对标矩阵、仍存在的缺陷清单、下一步优先级 |
 | **[docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md)** | 要动 Agent 核心的人 | 八层结构、不变量 I1–I18、与行业做法的差异 |
 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) | 接手维护的人（含 AI 助手） | 代码地图、模块职责、风险索引（2026-10-19 精简重写） |
-| [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **134 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改） |
+| [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **135 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发者 | 环境搭建、版本与发布（§3）、代码规约、验收纪律 |
 | [CHANGELOG.md](CHANGELOG.md) | 所有人 | 版本变更明细（含每次事故的根因） |
 

@@ -35,7 +35,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import job
+from . import job, win_acl_runner
 from .job import IS_WINDOWS
 from .policy import (
     SandboxError,
@@ -295,10 +295,21 @@ def _run(req: ExecRequest) -> ExecResult:
         else:
             notes.append(f"已创建工作区快照：{cap.id}（{len(cap.files)} 文件）")
 
+    run_argv = argv
+    if IS_WINDOWS and policy.writes and win_acl_runner.available():
+        try:
+            run_argv = win_acl_runner.wrap(
+                argv, workspace_root=root, temp_dir=cwd / ".workbench-temp")
+            notes.append("workspace-write 由 DSH Windows ACL runner 强制（外部写入拒绝）")
+        except Exception as exc:  # noqa: BLE001 —— 配置坏了必须拒绝，不回落到声明
+            return _reject(
+                f"DSH Windows ACL runner 配置失败：{type(exc).__name__}: {exc}",
+                policy_name=policy.name, policy_fingerprint=policy.fingerprint())
+
     flags = job.create_flags(allow_subprocesses=policy.allow_subprocesses)
     try:
         proc = subprocess.Popen(
-            argv,
+            run_argv,
             cwd=str(cwd),
             env=env,
             stdin=subprocess.PIPE if req.stdin_text is not None else subprocess.DEVNULL,
