@@ -43,6 +43,7 @@ _OPTIONAL_ROUTERS: tuple[tuple[str, str], ...] = (
     ("skills", "routes_skills"),
     ("checkpoints", "routes_checkpoints"),
     ("schedules", "routes_schedules"),
+    ("goals", "routes_goals"),
     ("vault", "routes_vault"),
 )
 

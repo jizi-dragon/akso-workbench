@@ -606,6 +606,23 @@ CREATE TABLE IF NOT EXISTS scheduled_task (
 CREATE INDEX IF NOT EXISTS idx_scheduled_task_due
     ON scheduled_task(enabled, next_run_at);
 """),
+    (28, "agent_goal", """
+-- 长期目标（v1 tracker）：记录目标、状态与轮次，供设置页与后续自动续跑使用。
+-- 本期**不自动执行**：自动续跑要等 goal loop（轮次预算/完成判定）落地。
+CREATE TABLE IF NOT EXISTS agent_goal (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    objective   TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'active',
+    rounds      INTEGER NOT NULL DEFAULT 0,
+    max_rounds  INTEGER NOT NULL DEFAULT 10,
+    conversation_id TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_status_updated
+    ON agent_goal(status, updated_at DESC);
+"""),
 ]
 
 

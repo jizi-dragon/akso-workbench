@@ -67,8 +67,88 @@ export function initSettings() {
   initPromptEditor();
   initToolScope();
   initSchedules();
+  initGoals();
   initCachePanel();
   initMcpPanel();
+}
+
+/* ---------------------------------------------------------------- 长期目标 */
+
+function initGoals() {
+  const list = document.getElementById("goal-list");
+  const meta = document.getElementById("goal-meta");
+  if (!list) return;
+
+  const render = (items) => {
+    if (!items.length) {
+      list.innerHTML = '<div class="hint" style="padding:8px">还没有长期目标</div>';
+      return;
+    }
+    list.innerHTML = items.map((goal) => `
+      <div class="schedule-row">
+        <div class="schedule-main">
+          <b>${esc(goal.title)}</b>
+          <small>${esc(goal.objective)}</small>
+          <small>${esc(goal.status)} · ${goal.rounds}/${goal.maxRounds} 轮</small>
+        </div>
+        ${goal.status === "active"
+          ? `<button class="btn-ghost btn-sm" type="button" data-goal-status="paused" data-id="${esc(goal.id)}">暂停</button>`
+          : goal.status === "paused"
+            ? `<button class="btn-ghost btn-sm" type="button" data-goal-status="active" data-id="${esc(goal.id)}">恢复</button>`
+            : ""}
+        ${goal.status !== "done"
+          ? `<button class="btn-ghost btn-sm" type="button" data-goal-status="done" data-id="${esc(goal.id)}">完成</button>`
+          : ""}
+        <button class="btn-ghost btn-sm" type="button" data-goal-del="${esc(goal.id)}">删除</button>
+      </div>`).join("");
+  };
+
+  const load = async () => {
+    try {
+      const data = await api.listGoals();
+      render(data.goals || []);
+    } catch (err) {
+      list.innerHTML = `<div class="hint" style="color:#f85149;padding:8px">加载失败：${esc(err.message)}</div>`;
+    }
+  };
+
+  document.getElementById("btn-goal-create").addEventListener("click", async () => {
+    const title = document.getElementById("goal-title").value.trim();
+    const objective = document.getElementById("goal-objective").value.trim();
+    const maxRounds = Number(document.getElementById("goal-max-rounds").value);
+    if (!title || !objective) {
+      meta.textContent = "标题和目标描述都不能为空";
+      return;
+    }
+    try {
+      await api.createGoal({ title, objective, maxRounds });
+      document.getElementById("goal-title").value = "";
+      document.getElementById("goal-objective").value = "";
+      meta.textContent = "✓ 已创建";
+      await load();
+    } catch (err) {
+      meta.textContent = `✗ 创建失败：${err.message}`;
+    }
+  });
+
+  list.addEventListener("click", async (event) => {
+    const statusBtn = event.target.closest("[data-goal-status]");
+    const delBtn = event.target.closest("[data-goal-del]");
+    try {
+      if (statusBtn) {
+        await api.patchGoal(statusBtn.dataset.id, { status: statusBtn.dataset.goalStatus });
+        await load();
+      } else if (delBtn) {
+        if (!window.confirm("删除这个长期目标？")) return;
+        await api.deleteGoal(delBtn.dataset.goalDel);
+        await load();
+      }
+    } catch (err) {
+      meta.textContent = `✗ 操作失败：${err.message}`;
+    }
+  });
+
+  load();
 }
 
 /* ---------------------------------------------------------------- 定时任务 */

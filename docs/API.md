@@ -648,6 +648,18 @@ Python 不再代理 `/update-check` / `/update-install`。
 - 每次执行新建一个会话，结果在左栏会话记录里回看；
 - 固定间隔，不支持 cron；调度器每 30 秒轮询（`WORKBENCH_DISABLE_SCHEDULER=1` 可关）。
 
+### 17.5 长期目标 `/api/goals`（`routes_goals.py`，2026-10-23 引入）
+
+| 方法 | 路径 | 请求 | 说明 |
+|---|---|---|---|
+| GET | `/api/goals` | — | `{goals:[{id,title,objective,status,rounds,maxRounds,conversationId,...}]}` |
+| POST | `/api/goals` | `{title,objective,maxRounds=10,conversationId=""}` | 创建；`maxRounds` 1–100，非法 **400** |
+| PATCH | `/api/goals/{id}` | `{title?,objective?,status?,rounds?,maxRounds?}` | 局部更新；`status` ∈ active/paused/done；不存在 **404** |
+| DELETE | `/api/goals/{id}` | — | 删除；不存在 **404** |
+
+- v1 **只做 tracker**：不自动续跑、不自动判定完成；
+- 设置页可创建、暂停/恢复、标记完成、删除。
+
 ## 18. 运行日志 `/api/logs`（`routes_logs.py`，2026-09-20 引入）
 
 **定位**：这是**运维面**，不是业务域。它回答"刚才发生了什么"。

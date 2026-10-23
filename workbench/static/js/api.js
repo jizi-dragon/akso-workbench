@@ -51,6 +51,13 @@ export const api = {
   getPrompt: () => jsonFetch("/api/settings/prompt"),
   getToolScope: () => jsonFetch("/api/settings/tools"),
   listSchedules: () => jsonFetch("/api/schedules"),
+  listGoals: () => jsonFetch("/api/goals"),
+  createGoal: (body) =>
+    jsonFetch("/api/goals", { method: "POST", body: JSON.stringify(body) }),
+  patchGoal: (id, body) =>
+    jsonFetch(`/api/goals/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteGoal: (id) =>
+    jsonFetch(`/api/goals/${encodeURIComponent(id)}`, { method: "DELETE" }),
   createSchedule: (body) =>
     jsonFetch("/api/schedules", { method: "POST", body: JSON.stringify(body) }),
   patchSchedule: (id, body) =>

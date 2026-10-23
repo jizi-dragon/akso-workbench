@@ -72,6 +72,12 @@
   调度器每 30 秒轮询，在独立线程里以 `plan_mode + core READ 工具白名单` 执行一次只读回合，
   结果落新会话。设置页新增创建/暂停/运行/删除卡片。`tests/test_schedules.py` 4 条。
 
+### Added
+
+- **长期目标 tracker v1（2026-10-23）**：迁移 28 `agent_goal`；`/api/goals` CRUD；
+  设置页创建/暂停/恢复/完成/删除。v1 **只记录与展示**，不自动续跑（自动 goal loop 未落地）。
+  `tests/test_goals.py` 4 条。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

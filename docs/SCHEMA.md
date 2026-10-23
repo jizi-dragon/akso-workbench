@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
   逐列适配并对未知 `NOT NULL` 无默认值列填中性值，避免接管旧库时 IntegrityError。
 - `checksum` 按 sqlx 语义取迁移 SQL 的 SHA-384 摘要。
 
-### 迁移账（1–27，全部已应用）
+### 迁移账（1–28，全部已应用）
 
 | # | 名称 | 内容 | 血统 |
 |---|---|---|---|
@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | 25 | `transcript_columns` | `messages` 增 `tool_calls` / `tool_call_id` / `seq`（**工具轨迹落库 + 定序**）；`seq` 由 `rowid` 回填；建 `idx_messages_conv_seq(conversation_id, seq)` | 核心 Agent 计划 §7.3 |
 | 26 | `agent_memory` | 新建 `agent_memory`（长期记忆：scope/type/title/body/keywords/revision/expires_at）+ 两个索引 | 记忆 v1 |
 | 27 | `scheduled_task` | 新建 `scheduled_task`（定时只读任务：prompt/interval/next_run/status/last_conversation）+ `idx_scheduled_task_due` | goal/定时任务 v1 |
+| 28 | `agent_goal` | 新建 `agent_goal`（长期目标 tracker：title/objective/status/rounds/max_rounds/conversation）+ `idx_agent_goal_status_updated` | goal v1 |
 
 > **迁移 1–6 为 fork 历史，按不可变纪律保留**。其中 `documents` / `doc_chunks` / `qa_metrics`
 > 的知识库相关功能**源码已删**（表仅留存、不再读写）；`knowledge_nodes` / `knowledge_edges` /
@@ -452,7 +453,18 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 
 索引：`idx_scheduled_task_due(enabled, next_run_at)`。
 
-### 3.18 已下线但表仍在（勿恢复业务代码）
+### 3.18 `agent_goal` — 长期目标 tracker（迁移 28）
+
+字段：`id` / `title` / `objective` / `status`（active/paused/done）/ `rounds` / `max_rounds` /
+`conversation_id` / `created_at` / `updated_at`。
+
+- v1 **只记录与展示**：不自动续跑、不自动判定完成；自动 goal loop 需要“完成判定 + 轮次预算 + 上下文重置”三件事，尚未落地；
+- `max_rounds` 1–100，`rounds` 0–100；
+- 设置页可创建、暂停/恢复、标记完成、删除。
+
+索引：`idx_agent_goal_status_updated(status, updated_at DESC)`。
+
+### 3.19 已下线但表仍在（勿恢复业务代码）
 
 | 表 | 来源迁移 | 现状 |
 |---|---|---|

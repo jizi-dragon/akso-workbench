@@ -284,6 +284,34 @@
               </section>
 
               <section class="settings-section">
+                <h2 class="settings-section-title">⚡ 长期目标</h2>
+                <div class="settings-card">
+                  <p class="settings-hint">
+                    记录跨多轮的长期目标与轮次预算。v1 只做<b>追踪</b>，不自动续跑；
+                    达到上限后在这里标记完成或调整预算。
+                  </p>
+                  <label class="field">
+                    <span>标题</span>
+                    <input id="goal-title" type="text" maxlength="120" placeholder="例如：完成 2026 年偏差报告模板库" />
+                  </label>
+                  <label class="field">
+                    <span>目标描述</span>
+                    <textarea id="goal-objective" rows="2" maxlength="4000"
+                              placeholder="可验收的完成条件，越具体越好"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>轮次预算</span>
+                    <input id="goal-max-rounds" type="number" min="1" max="100" value="10" />
+                  </label>
+                  <div class="prompt-actions">
+                    <button class="btn-primary" id="btn-goal-create" type="button">创建目标</button>
+                    <small id="goal-meta"></small>
+                  </div>
+                  <div id="goal-list" class="tool-scope-list"></div>
+                </div>
+              </section>
+
+              <section class="settings-section">
                 <h2 class="settings-section-title">⚡ MCP 服务器</h2>
                 <div class="settings-card">
                   <p class="settings-hint">
