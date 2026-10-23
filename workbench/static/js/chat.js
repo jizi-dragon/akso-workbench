@@ -16,6 +16,7 @@ import { state } from "./app.js";
 
 const messagesEl = () => document.getElementById("messages");
 let isRunning = false;
+let planMode = false;
 let chatInitialized = false;
 let pickingAccount = false;
 
@@ -140,6 +141,16 @@ export function initChat() {
     void sendMessage(text || "（见附件）", tray.ids(), () => tray.clear());
   };
   send.addEventListener("click", submit);
+  const planBtn = document.getElementById("btn-plan-mode");
+  if (planBtn) {
+    planBtn.addEventListener("click", () => {
+      planMode = !planMode;
+      planBtn.setAttribute("aria-pressed", String(planMode));
+      planBtn.title = planMode
+        ? "计划模式已开启：只允许只读工具；写操作会被跳过"
+        : "计划模式：只允许只读工具；写操作会被跳过，先给计划";
+    });
+  }
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -575,7 +586,7 @@ async function sendMessage(text, attachmentIds = [], onSent = null) {
   };
 
   try {
-    await api.streamChat({ conversationId, message: text, attachmentIds }, (event) => {
+    await api.streamChat({ conversationId, message: text, attachmentIds, plan: planMode }, (event) => {
       if (event.type === "start") {
         conversationId = event.conversationId;
         state.currentConversationId = conversationId;

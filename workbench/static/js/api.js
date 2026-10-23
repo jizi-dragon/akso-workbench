@@ -143,11 +143,11 @@ export const api = {
     jsonFetch("/api/chat/stop", { method: "POST", body: { conversationId } }),
 
   /** SSE 流式对话：onEvent(event) 回调每个事件 */
-  async streamChat({ conversationId, message, attachmentIds = [] }, onEvent) {
+  async streamChat({ conversationId, message, attachmentIds = [], plan = false }, onEvent) {
     const res = await fetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversationId, message, attachmentIds }),
+      body: JSON.stringify({ conversationId, message, attachmentIds, plan }),
     });
     if (!res.ok || !res.body) {
       throw new Error(`对话请求失败（${res.status}）`);

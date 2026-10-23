@@ -59,6 +59,7 @@ from .context import (
     estimate_tools_tokens,
 )
 from .safety import SafetyGate
+from .tool_scope import skipped_observation, visible_tool_specs
 from .types import AgentConfig, make_event
 
 logger = logging.getLogger("workbench.harness")
@@ -339,7 +340,7 @@ async def run_agent_loop(
     # ★ 工具 schema 是**每一轮都发**的常量（实测 18 个工具约 2,104 token），
     # 而它不在 messages 里 —— 所以折叠判定要单独把它算进去（计划 §7.1）。
     # 在这里算一次就够：`plugins` 在整个回合里不变，schema 也就不变。
-    _tools_tokens = estimate_tools_tokens(registry.list_api_for(plugins))
+    _tools_tokens = estimate_tools_tokens(visible_tool_specs(registry, plugins, config.plan_mode))
     # ★ 校准系数（计划 §7.1(b)）：
     # 拿**API 自报的 `prompt_tokens`** 反过来校准字数估算。
     #
@@ -609,28 +610,10 @@ def _cancel_events(context: list[dict], calls: list[dict], index: int, reason: s
     _fill_unexecuted(context, remainder, reason)
     if recorder is not None:
         recorder.abort()
-    events = [_skipped_observation(pending, reason) for pending in remainder]
+    events = [skipped_observation(pending, reason) for pending in remainder]
     events.append(make_event("cancelled", reason="user_stop",
                              message=_cancelled_message(steps_used)))
     return events
-
-
-def _skipped_observation(call: dict, reason: str) -> dict:
-    """未执行调用的 `observation` 事件（前端据此把那张卡画成"已跳过"而不是转圈）。"""
-    return make_event(
-        "observation",
-        result={"ok": False, "summary": f"未执行：{reason}", "status": "skipped"},
-        invocation={
-            "toolCallId": call.get("id") or "",
-            "tool": str(call.get("name") or ""),
-            "auditId": "",
-            "durationMs": 0,
-            "risk": Risk.READ.value,
-            "plugin": "",
-            "status": "skipped",
-            "isError": True,
-        },
-    )
 
 
 def _with_system_prompt(messages: list[dict], system_prompt: str) -> list[dict]:
@@ -707,7 +690,7 @@ async def _one_model_turn(
     ended = False
     async for event in client.stream_chat(
         context,
-        tools=registry.list_api_for(plugins),
+        tools=visible_tool_specs(registry, plugins, config.plan_mode),
         temperature=config.temperature,
         max_tokens=config.max_tokens,
     ):
@@ -800,7 +783,7 @@ async def _one_model_turn(
                     # 未执行的每一条都要留下痕迹（I16）：少了它们，这段历史对平台是非法的
                     _fill_unexecuted(context, remaining, reason)
                     for pending in remaining:
-                        yield _skipped_observation(pending, reason)
+                        yield skipped_observation(pending, reason)
                     logger.warning("步数预算在工具批次内用尽（max_steps=%d，已用 %d），"
                                    "本批 %d 个调用只有前 %d 个执行了",
                                    config.max_steps, safety.steps_used,
@@ -819,11 +802,15 @@ async def _one_model_turn(
                     remainder = assistant["tool_calls"][index:]
                     _fill_unexecuted(context, remainder, "检测到重复调用，本轮已终止")
                     for pending in remainder:
-                        yield _skipped_observation(pending, "检测到重复调用，本轮已终止")
+                        yield skipped_observation(pending, "检测到重复调用，本轮已终止")
                     yield make_event("error", message="检测到重复的工具调用，已终止本轮")
                     return
 
                 spec = registry.get(str(call.get("name") or ""))
+                if config.plan_mode and spec is not None and spec.risk is not Risk.READ:
+                    _fill_unexecuted(context, [call], "计划模式禁止执行写工具")
+                    yield skipped_observation(call, "计划模式禁止执行写工具")
+                    continue
                 audit_id = uuid.uuid4().hex[:12]
                 yield make_event(
                     "action",

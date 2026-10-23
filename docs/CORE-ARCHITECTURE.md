@@ -398,6 +398,12 @@ Fail-Closed 比"看起来装上了"好。
 
 **循环**：`call → tool → observe → repeat`，逐事件 yield。
 
+**计划模式**（2026-10-23）：`AgentConfig.plan_mode=True` 时，
+`_visible_tool_specs()` 只把 `Risk.READ` 的 schema 发给模型；写/危险工具即使被模型点名，
+循环也不执行，而是 `_fill_unexecuted + _skipped_observation` 回填一条“未执行”，
+保证 assistant(tool_calls) 不悬空（I16）。它买的是“先给计划”，不是新的安全边界——
+真正的写保护仍是风险门/确认门与沙箱。
+
 **事件契约**（与前端 SSE 一一对应，改这里必须同步 `chat.js`）：
 
 | 事件 | 载荷 | 何时发 |

@@ -41,6 +41,8 @@ class AgentConfig(BaseModel):
     temperature: float = 0.7
     max_tokens: int | None = None
     max_steps: int = DEFAULT_MAX_STEPS
+    plan_mode: bool = False
+    """计划模式：只向模型暴露 READ 工具；写/危险工具即使被点名也按"未执行"回填。"""
     context_window_tokens: int = 1_048_576
     """模型上下文窗口（token）。**默认取满 `deepseek-flash` 的上限**（用户 2026-09-24 下达）。
 

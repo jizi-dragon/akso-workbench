@@ -131,7 +131,8 @@ DeepSeek 的上下文缓存按"**完整匹配**一个缓存前缀单元"命中�
 ```
 POST /api/chat/stream   Content-Type: application/json
 { "conversationId": "可选，缺省则新建", "message": "用户问题",
-  "attachmentIds": ["att-1a2b3c4d"] }   ← 可选：这一轮带的附件（见 §3.1）
+  "attachmentIds": ["att-1a2b3c4d"],   ← 可选：这一轮带的附件（见 §3.1）
+  "plan": false }                      ← 可选：计划模式；只暴露 READ 工具，写工具被跳过
 → 200 text/event-stream（无 Cache-Control 缓存；X-Accel-Buffering: no）
 ```
 

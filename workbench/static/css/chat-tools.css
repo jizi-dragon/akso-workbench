@@ -753,6 +753,11 @@ dialog.tk-decision {
   border-color: rgba(7, 108, 224, 0.45);
   background: var(--teal-dim);
 }
+.tool-palette-btn[aria-pressed="true"] {
+  color: var(--teal);
+  border-color: rgba(7, 108, 224, 0.45);
+  background: var(--teal-dim);
+}
 
 .tool-palette {
   position: absolute;

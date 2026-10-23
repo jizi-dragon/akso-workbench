@@ -85,6 +85,9 @@ class ChatBody(BaseModel):
     而不是 `None`（漏传与传空必须同义，否则每个消费方都要写一遍兜底）。
     """
 
+    plan: bool = False
+    """计划模式：只允许 READ 工具；写/危险工具按"未执行"回填。"""
+
     plugins: list[str] | None = None
     """本轮允许模型看到的**插件白名单**（计划 §7.2）。`None` = 全部。
 
@@ -368,7 +371,7 @@ async def _chat_events(body: ChatBody) -> AsyncIterator[str]:
     stop_token = _register_stop(conversation_id)
     try:
         async for sse in _stream_agent(history, cfg, result, conversation_id, stop_token,
-                                       body.plugins):
+                                       body.plugins, body.plan):
             yield sse
         completed = True
     finally:
@@ -449,6 +452,7 @@ async def _stream_agent(
     conversation_id: str = "",
     should_stop=None,
     plugins: list[str] | None = None,
+    plan: bool = False,
 ) -> AsyncIterator[str]:
     """跑 Agent 循环并逐事件转发 SSE；把最终内容/错误写入 result 供调用方收尾。
 
@@ -459,7 +463,12 @@ async def _stream_agent(
     client = DeepSeekClient(cfg.api_key, model=cfg.model)
     agent_config = AgentConfig(
         temperature=cfg.temperature,
-        system_prompt=_system_prompt(),
+        system_prompt=_system_prompt() + (
+            "\n\n## 计划模式\n你当前处于计划模式：只允许调用只读工具。"
+            "先给出清晰的执行计划与风险，等用户确认后再执行；不要调用写工具。"
+            if plan else ""
+        ),
+        plan_mode=plan,
         # 步数预算从设置读（默认 40）。**这里曾经什么都不传** —— 于是 `max_steps`
         # 永远是 `AgentConfig` 里的类默认值，用户没有任何手段调大它，
         # 而"稍微长一点的多步任务"必然撞上限并**整轮被砍掉**。

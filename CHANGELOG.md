@@ -43,6 +43,12 @@
   `tests/test_sandbox.py` 增加 slow 反证。workspace-write 的 capability SID 仍未通过
   访问检查，继续保持“声明而非强制”。
 
+### Added
+
+- **计划模式（2026-10-23）**：对话输入区新增「计划」开关；开启后只向模型暴露 READ 工具，
+  写/危险工具即使被点名也按"未执行"回填（`plan_mode`，`AgentConfig` + `/api/chat/stream`）。
+  UI 入口与前后端 wiring 有静态判据；`tests/test_plan_mode.py` 2 条。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式
