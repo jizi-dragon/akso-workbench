@@ -7,7 +7,7 @@
 - 迁移 1-6 为 fork 历史（含已下线的知识库表结构），按不可变纪律保留；
   迁移 7-9 为 Workbench 新增（账号库/任务台账/Agent 审计）；
   迁移 10-12 为账号中心扩展（分配池/盒子/页签名）；迁移 13 为列表查询索引。
-- 交付形态为单机单人，故不引入 MySQL/Redis（详见 docs/adr/0001-sqlite-over-mysql-redis.md）；
+- 交付形态为单机单人，故不引入 MySQL/Redis（详见 docs/SCHEMA.md 的「方言边界」）；
   SQLite 特有构造收拢在下方「方言边界」一节
 """
 
@@ -301,7 +301,7 @@ CREATE INDEX IF NOT EXISTS idx_deepseek_usage_conversation ON deepseek_usage(con
 UPDATE blueprint_jobs SET module = 'factory' WHERE module IN ('akso-auto', 'egmp-native');
 """),
     (19, "sandbox_run_audit", """
--- 沙箱执行审计（2026-09-17，决策见 docs/adr/0014-sandbox-for-untrusted-code.md）。
+-- 沙箱执行审计（2026-09-17）。
 --
 -- ## 为什么单独一张表，而不是并进 agent_audit
 --
@@ -463,7 +463,7 @@ UPDATE messages SET kind = 'error'
  WHERE role = 'assistant' AND content LIKE '错误：%';
 """),
     (24, "agent_run_and_span", """
--- Agent 运行记录（计划 §6.1 / ADR-0021）：把**一次用户回合**记成一个实体，把里面每一步记成 span。
+-- Agent 运行记录（计划 §6.1 /）：把**一次用户回合**记成一个实体，把里面每一步记成 span。
 --
 -- ## 修的是什么
 --
@@ -560,6 +560,30 @@ ALTER TABLE messages ADD COLUMN seq INTEGER;
 UPDATE messages SET seq = rowid;
 CREATE INDEX IF NOT EXISTS idx_messages_conv_seq ON messages(conversation_id, seq);
 """),
+    (26, "agent_memory", """
+-- Agent 长期记忆（v1）：只存"事实"，不存指令。
+--
+-- 为什么与指令分开：指令是每轮都在的（AGENTS/CORE-ARCHITECTURE），事实是"检索到了
+-- 才用"；两者混在一张表会让"一条过期的发布分支"看起来像一条必须遵守的规则。
+--
+-- `revision` 单调递增；`expires_at` 是硬边界（NULL = 不过期）。检索只返回未过期的。
+CREATE TABLE IF NOT EXISTS agent_memory (
+    id          TEXT PRIMARY KEY,
+    scope       TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    keywords    TEXT NOT NULL DEFAULT '',
+    revision    INTEGER NOT NULL DEFAULT 1,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    expires_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_scope_updated
+    ON agent_memory(scope, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_expires
+    ON agent_memory(expires_at);
+"""),
 ]
 
 
@@ -600,6 +624,21 @@ def connect() -> sqlite3.Connection:
                 _conn.execute(pragma)
             _migrate(_conn)
         return _conn
+
+
+def close() -> None:
+    """关闭缓存的连接（幂等）。测试会话结束/退出前调用。
+
+    Windows 上 SQLite 连接会占住文件句柄：不关就删不掉临时数据目录
+    （`TemporaryDirectory.cleanup()` 会失败并留下 `workbench-test-*`）。
+    """
+    global _conn
+    with _lock:
+        if _conn is not None:
+            try:
+                _conn.close()
+            finally:
+                _conn = None
 
 
 def _migrate(conn: sqlite3.Connection) -> None:

@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "Workbench"
-LEGACY_APP_NAME = "AksoWorkbench"  # 2026-09-16 更名前的自有数据目录（自动接管，见 docs/adr/0013）
+LEGACY_APP_NAME = "AksoWorkbench" # 2026-09-16 更名前的自有数据目录（自动接管，见 docs/SCHEMA.md §一）
 LEGACY_IDENTIFIER = "com.example.mogulsimulator"  # 旧 Tauri 版
 LEGACY_PY_NAME = "MogulWorkbench"  # 旧 Python 版（mogul_simulator）
 
@@ -42,7 +42,7 @@ def legacy_db_candidates() -> list[Path]:
     """旧数据库的可能位置，**按「越可能是真数据」排序**（先命中者胜）。
 
     1. `%APPDATA%/AksoWorkbench/workbench.db` —— **本工作台更名前**（2026-09-16 之前）的数据目录。
-       里面有账号库 + Fernet 密钥，**不接管就等于让用户看到「账号全没了」**（见 docs/adr/0013）。
+       里面有账号库 + Fernet 密钥，**不接管就等于让用户看到「账号全没了」**（见 docs/SCHEMA.md §一）。
     2. 更早的两版 mogul（Python 版 / Tauri 版）。
     """
     candidates: list[Path] = []
@@ -55,10 +55,26 @@ def legacy_db_candidates() -> list[Path]:
     return candidates
 
 
+def has_explicit_data_dir() -> bool:
+    """调用方是否**显式**指定了数据目录/数据库。
+
+    `WORKBENCH_DATA` / `WORKBENCH_DB`（以及旧名 `MOGUL_*`）一旦出现，语义就是
+    "用这个目录，别自己找"——测试、端到端脚本、隔离开发环境都靠它。
+    因此此时**不接管**遗留库：否则一次测试会把用户的真实账号/会话复制进来
+    （2026-10-22 实测：`%TEMP%` 里 102 份可解密的凭据库副本）。
+    """
+    return any(os.environ.get(key) for key in
+               ("WORKBENCH_DATA", "WORKBENCH_DB", "MOGUL_DATA", "MOGUL_DB"))
+
+
 def bootstrap_database() -> Path:
-    """确保数据库就绪：优先复用旧库数据。返回最终 DB 路径。"""
+    """确保数据库就绪：优先复用旧库数据。返回最终 DB 路径。
+
+    ★ 显式指定数据目录时**不接管旧库**（见 `has_explicit_data_dir`）。
+    接管只服务"用户首次启动"，不服务测试与验收脚本。
+    """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if not DB_PATH.exists():
+    if not DB_PATH.exists() and not has_explicit_data_dir():
         for legacy in legacy_db_candidates():
             if legacy.exists():
                 shutil.copy2(legacy, DB_PATH)

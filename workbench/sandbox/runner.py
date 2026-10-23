@@ -1,6 +1,6 @@
 """受控执行器：**不受信代码唯一被允许的入口**。
 
-对照 [ADR-0014](../../docs/adr/0007-credentials-sandbox-and-trust.md) 的四层强制：
+对照 的四层强制：
 
 | 层 | 本模块怎么强制 |
 |---|---|
@@ -19,7 +19,7 @@
   否则调用方会把"被截断的日志"当成"完整日志"——本仓在工具结果上已有同类纪律：
   `plugin_api.MAX_RESULT_CHARS` 的显式告知）。
 
-## 诚实边界（ADR-0014 §D-3）
+## 诚实边界
 
 它**不是**安全边界：跑起来的代码仍能读它有权读的一切（除我们主动拒掉的路径）。
 本模块保证的是"整棵树能停 / 凭据不自动喂进去 / 目录不越界 / 每次都留痕"。
@@ -207,7 +207,7 @@ def run(req: ExecRequest) -> ExecResult:
     cwd 越界、启动失败）。`_run` 里有 7 处 `return`，靠调用方逐个记得写审计，
     迟早漏一个：**实测就漏了全部**——`audit.record` 一度没有任何调用方，
     于是 `/api/sandbox/runs` 永远是空表、管理页的"执行审计"永远没内容，
-    而 ADR-0014 D-2 的 E4 层在文档上写着"已实现"。放在扼流点上，这类"漏"在结构上不可能发生。
+    而 D-2 的 E4 层在文档上写着"已实现"。放在扼流点上，这类"漏"在结构上不可能发生。
 
     审计失败**绝不影响执行结果**（`audit.record` 自己吞异常），
     这与 `plugin_api` / `skills.library` 的留痕纪律一致：
@@ -282,6 +282,18 @@ def _run(req: ExecRequest) -> ExecResult:
 
     # ── 5) 起进程 + 绑 Job
     started = time.perf_counter()
+    # 可选的工作区快照：默认关（每次执行都扫工作区太贵），显式开关才做。
+    # 它只覆盖"调用时存在的文件"，脚本的 shell 副作用撤不了——与 Reasonix 同一口径。
+    if os.environ.get("WORKBENCH_SANDBOX_CHECKPOINTS") == "1" and policy.writes:
+        from .. import checkpoints
+
+        try:
+            cap = checkpoints.capture(workspace_root())
+        except Exception as exc:  # noqa: BLE001 —— 快照失败不阻断执行，但必须留痕
+            notes.append(f"⚠ 工作区快照失败：{type(exc).__name__}: {exc}")
+        else:
+            notes.append(f"已创建工作区快照：{cap.id}（{len(cap.files)} 文件）")
+
     flags = job.create_flags(allow_subprocesses=policy.allow_subprocesses)
     try:
         proc = subprocess.Popen(
@@ -301,73 +313,125 @@ def _run(req: ExecRequest) -> ExecResult:
         return _reject(f"启动失败：{argv[0]} → {exc}",
                        policy_name=policy.name, policy_fingerprint=policy.fingerprint())
 
-    binding = job.assign(proc, allow_subprocesses=policy.allow_subprocesses)
+    try:
+        binding = job.assign(proc, allow_subprocesses=policy.allow_subprocesses)
+    except Exception as exc:  # noqa: BLE001 —— 执行器不向调用方抛
+        proc.kill()
+        return _reject(f"绑定 Job 失败：{type(exc).__name__}: {exc}",
+                       policy_name=policy.name, policy_fingerprint=policy.fingerprint())
     if binding.ok:
-        notes.append("已绑定 Job Object（超时可杀整棵树）")
+        if binding.verified:
+            notes.append(
+                f"已绑定 Job Object 并校验 {len(binding.bound_pids)} 个进程（超时可杀整棵树）")
+        else:
+            # 绑定成功但校验没全过：**必须让它在审计里可见**，不能假装"整棵树都绑上了"。
+            notes.append(f"⚠ 已绑定 Job Object，但部分进程未校验：{binding.note}")
     else:
         # 刻意不因此拒绝执行：部分受限环境确实绑不上，而"绑不上就不让跑"会让功能在这些机器上
         # 完全不可用。**但必须让它在审计里可见**，不能静默降级。
         notes.append(f"⚠ 未绑定 Job Object：{binding.note}")
 
-    readers = {
-        "out": _CappedReader(proc.stdout, policy.max_output_bytes),
-        "err": _CappedReader(proc.stderr, policy.max_output_bytes),
-    }
-    threads = [threading.Thread(target=r.pump, daemon=True) for r in readers.values()]
-    for t in threads:
-        t.start()
+    # ★ Windows 上进程是 CREATE_SUSPENDED 创建的：绑定完成后必须恢复。
+    #   恢复失败 ⇒ 终止并 Fail-Closed，绝不留一个永远挂着的进程。
+    resumed, resume_note = job.resume(proc)
+    if not resumed:
+        tree_kill = job.terminate(proc, binding)
+        return _reject(
+            f"无法恢复被挂起的进程：{resume_note}（已终止：{tree_kill}）",
+            policy_name=policy.name, policy_fingerprint=policy.fingerprint())
+    if resume_note:
+        notes.append(f"已恢复挂起进程（{resume_note}）")
 
-    if req.stdin_text is not None and proc.stdin is not None:
-        def _feed() -> None:
-            try:
-                proc.stdin.write(req.stdin_text)  # type: ignore[arg-type]
-                proc.stdin.flush()
-            except (OSError, ValueError):
-                pass
-            finally:
+    readers: dict[str, _CappedReader] = {}
+    threads: list[threading.Thread] = []
+
+    # ★ 从构造 reader 到 wait 结束，整段包在 try/finally 里：
+    #   这段里的任何异常（reader 构造失败、线程起不来、stdin 写失败、join 被打断）
+    #   都必须先终止进程树再返回，否则会留下一个"没人管、还在跑"的子进程。
+    try:
+        readers = {
+            "out": _CappedReader(proc.stdout, policy.max_output_bytes),
+            "err": _CappedReader(proc.stderr, policy.max_output_bytes),
+        }
+        threads = [threading.Thread(target=r.pump, daemon=True) for r in readers.values()]
+        for t in threads:
+            t.start()
+
+        if req.stdin_text is not None and proc.stdin is not None:
+            def _feed() -> None:
                 try:
-                    proc.stdin.close()  # type: ignore[union-attr]
+                    proc.stdin.write(req.stdin_text)  # type: ignore[arg-type]
+                    proc.stdin.flush()
                 except (OSError, ValueError):
                     pass
+                finally:
+                    try:
+                        proc.stdin.close()  # type: ignore[union-attr]
+                    except (OSError, ValueError):
+                        pass
 
-        threading.Thread(target=_feed, daemon=True).start()
+            threading.Thread(target=_feed, daemon=True).start()
 
-    # ── 6) 等 / 超时
-    timed_out = False
-    try:
-        code = proc.wait(timeout=timeout)
-        tree_kill = ""
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        tree_kill = job.terminate(proc, binding)
+        # ── 6) 等 / 超时
+        timed_out = False
         try:
-            code = proc.wait(timeout=30)
+            code = proc.wait(timeout=timeout)
+            tree_kill = ""
         except subprocess.TimeoutExpired:
-            code = -1
-        readers["err"].lines.append(f"[timeout] 超过 {timeout:g}s，已终止：{tree_kill}")
+            timed_out = True
+            tree_kill = job.terminate(proc, binding)
+            try:
+                code = proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                code = -1
+            readers["err"].lines.append(f"[timeout] 超过 {timeout:g}s，已终止：{tree_kill}")
 
-    for t in threads:
-        t.join(timeout=5)
-    if not timed_out:
+        for t in threads:
+            t.join(timeout=5)
+
+        duration = time.perf_counter() - started
+        out_r, err_r = readers["out"], readers["err"]
+        if out_r.truncated or err_r.truncated:
+            notes.append("输出被上限截断（已显式标记，不是静默丢弃）")
+
+        return ExecResult(
+            ok=(code == 0 and not timed_out),
+            code=code,
+            duration_s=duration,
+            stdout=out_r.text,
+            stderr=err_r.text,
+            stdout_truncated=out_r.truncated,
+            stderr_truncated=err_r.truncated,
+            timed_out=timed_out,
+            policy_name=policy.name,
+            policy_fingerprint=policy.fingerprint(),
+            tree_kill=tree_kill,
+            cwd=str(cwd),
+            notes=notes,
+        )
+    except Exception as exc:  # noqa: BLE001 —— 兑现"不向调用方抛"
+        tree_kill = job.terminate(proc, binding)
+        duration = time.perf_counter() - started
+        out_r, err_r = readers.get("out"), readers.get("err")
+        return ExecResult(
+            ok=False,
+            code=-1,
+            duration_s=duration,
+            stdout=out_r.text if out_r else "",
+            stderr=err_r.text if err_r else "",
+            stdout_truncated=out_r.truncated if out_r else False,
+            stderr_truncated=err_r.truncated if err_r else False,
+            policy_name=policy.name,
+            policy_fingerprint=policy.fingerprint(),
+            tree_kill=tree_kill,
+            cwd=str(cwd),
+            notes=notes + [f"执行器异常（进程树已终止）：{type(exc).__name__}: {exc}"],
+            error=f"执行器异常：{type(exc).__name__}: {exc}",
+        )
+    finally:
+        for t in threads:
+            try:
+                t.join(timeout=1)
+            except RuntimeError:
+                pass
         job.close(proc)
-
-    duration = time.perf_counter() - started
-    out_r, err_r = readers["out"], readers["err"]
-    if out_r.truncated or err_r.truncated:
-        notes.append("输出被上限截断（已显式标记，不是静默丢弃）")
-
-    return ExecResult(
-        ok=(code == 0 and not timed_out),
-        code=code,
-        duration_s=duration,
-        stdout=out_r.text,
-        stderr=err_r.text,
-        stdout_truncated=out_r.truncated,
-        stderr_truncated=err_r.truncated,
-        timed_out=timed_out,
-        policy_name=policy.name,
-        policy_fingerprint=policy.fingerprint(),
-        tree_kill=tree_kill,
-        cwd=str(cwd),
-        notes=notes,
-    )

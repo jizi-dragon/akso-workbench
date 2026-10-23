@@ -1,6 +1,6 @@
 """沙箱管理面：策略清单 / 运行期状态 / 执行审计。
 
-决策见 [ADR-0014](../../docs/adr/0007-credentials-sandbox-and-trust.md) §D-5：
+决策：
 "沙箱策略是**声明**，运行期必须能看能停"——本模块就是那个"能看"。
 
 ## 本模块**不提供**"执行一段任意代码"的端点
@@ -19,7 +19,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import db
-from ..sandbox import IS_WINDOWS, describe_policies, job_stats, layout
+from ..sandbox import (
+    IS_WINDOWS,
+    capability_matrix,
+    describe_policies,
+    job_stats,
+    layout,
+)
 from ..sandbox.runner import ALLOWED_EXECUTABLES
 
 router = APIRouter(prefix="/api/sandbox", tags=["sandbox"])
@@ -45,7 +51,7 @@ def policies() -> dict:
         "policies": describe_policies(),
         "enforced_note": (
             "本沙箱**不是安全边界**：只保证进程树可终止、凭据不注入、目录不越界、"
-            "输出可截断、执行可审计；不提供内核级隔离（见 ADR-0014 §D-3）。"
+            "输出可截断、执行可审计；不提供内核级隔离。"
             "除 /policies 里 enforced 列出的项外，其余字段只是**声明**。"
         ),
     }
@@ -57,6 +63,7 @@ def status() -> dict:
     return {
         "platform": "windows" if IS_WINDOWS else "posix",
         "job": job_stats(),
+        "capabilities": capability_matrix(),
         "layout": layout.describe(),
         "workspace": layout.describe_workspace(),
         "executables_allowed": sorted(ALLOWED_EXECUTABLES),

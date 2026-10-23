@@ -15,8 +15,11 @@ CI 里应显式跑一次 `-m slow`（见 `.github/workflows/ci.yml`）。
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import time
+import types
 
 import pytest
 
@@ -27,6 +30,7 @@ from workbench.sandbox import (
     SandboxPolicy,
     Severity,
     build_env,
+    capability_matrix,
     describe_policies,
     get_policy,
     is_sensitive_path,
@@ -34,6 +38,7 @@ from workbench.sandbox import (
     run,
     within_root,
 )
+from workbench.sandbox import runner as sandbox_runner
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 纯逻辑层
@@ -50,6 +55,28 @@ def test_policies_are_enumerable_and_self_valid() -> None:
                                "fingerprint", "enforced"}
         assert policy["enforced"], f"{policy['name']} 没有声明任何强制项"
         assert policy["fingerprint"]
+
+
+def test_enforced_text_does_not_hardcode_a_stale_process_limit() -> None:
+    """`enforced` 里的进程数上限不能再写死（旧值是 1，代码实际是 10）。"""
+    texts = [line for policy in describe_policies() for line in policy["enforced"]]
+    assert not any("上限 = 1" in line for line in texts), texts
+    assert any("子进程数上限" in line for line in texts), texts
+
+
+def test_capability_matrix_separates_enforced_from_declared() -> None:
+    """能力矩阵必须**同时**给出 `enforced` 与 `not_enforced`。
+
+    这是"沙箱能拦什么"的单一事实源：只列 enforced 的项，并把
+    `allow_network` 之类的声明放进 not_enforced，界面才不会把声明当保证。
+    """
+    matrix = capability_matrix()
+    assert matrix["enforced"], "没有 enforced 项"
+    assert matrix["not_enforced"], "没有 not_enforced 项 —— 会把声明读成保证"
+    assert matrix["max_active_processes"] >= 1
+    assert matrix["job_object"] is (sys.platform == "win32")
+    assert any("网络" in item for item in matrix["not_enforced"])
+    assert "不是安全边界" in matrix["honest_limit"]
 
 
 def test_unknown_policy_fails_closed() -> None:
@@ -207,6 +234,61 @@ def test_executes_and_captures_output() -> None:
 
 
 @pytest.mark.slow
+def test_suspended_start_is_bound_before_resume() -> None:
+    """Windows：进程以 `CREATE_SUSPENDED` 创建 → 绑定 → 恢复，审计必须写明。"""
+    layout.ensure_dirs()
+    work = layout.run_dir(layout.new_run_id())
+    result = run(ExecRequest(argv=[sys.executable, "-c", "print('resumed')"],
+                             policy_name="skill-script", cwd=work))
+    assert result.ok, f"未成功：{result.error} {result.stderr}"
+    if sys.platform == "win32":
+        assert any("已恢复挂起进程" in note for note in result.notes), result.notes
+        assert any("已绑定 Job Object 并校验" in note for note in result.notes), result.notes
+    else:
+        assert any("POSIX" in note for note in result.notes), result.notes
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(sys.platform != "win32", reason="Job Object / CREATE_SUSPENDED 是 Windows 行为")
+def test_runner_exception_still_kills_the_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    """执行器内部异常（这里是 reader 线程起不来）也必须先杀进程再返回。
+
+    反证：把 `try/except/finally` 拆掉 ⇒ 子进程残留、`run()` 抛异常。
+    """
+    layout.ensure_dirs()
+    work = layout.run_dir(layout.new_run_id())
+    pid_file = work / "child.pid"
+    code = (
+        "import os,pathlib,time;"
+        f"pathlib.Path(r'{pid_file}').write_text(str(os.getpid()));"
+        "time.sleep(300)"
+    )
+
+    class _BoomThread:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def start(self) -> None:
+            time.sleep(0.8)  # 让子进程先写出自己的 pid
+            raise RuntimeError("boom")
+
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
+    monkeypatch.setattr(sandbox_runner, "threading", types.SimpleNamespace(Thread=_BoomThread))
+    result = run(ExecRequest(argv=[sys.executable, "-c", code],
+                             policy_name="skill-script", cwd=work, timeout_s=30))
+    assert not result.ok
+    assert "执行器异常" in result.error
+    assert result.tree_kill, "异常路径也必须记录终止手段"
+    assert pid_file.exists(), "子进程没来得及写 pid，用例失去判据"
+    pid = int(pid_file.read_text(encoding="utf-8").strip())
+    listing = subprocess.run(["tasklist", "/FI", f"PID eq {pid}"],
+                             capture_output=True, text=True, timeout=30)
+    assert str(pid) not in listing.stdout, f"子进程 {pid} 在异常路径后仍然活着"
+
+
+@pytest.mark.slow
 def test_timeout_kills_the_whole_process_tree() -> None:
     """**本模块存在的理由**：超时必须杀掉整棵树（含孙进程）。
 
@@ -256,7 +338,6 @@ def test_credentials_not_visible_inside_sandbox() -> None:
     """端到端确认：宿主设一个凭据变量，沙箱里的进程**读不到**。"""
     layout.ensure_dirs()
     work = layout.run_dir(layout.new_run_id())
-    import os
 
     os.environ["WORKBENCH_SANDBOX_PROBE_TOKEN"] = "must-not-leak"
     try:
@@ -349,7 +430,7 @@ def test_run_records_audit_even_when_rejected() -> None:
     这条钉的是**调用链**而不是函数：`audit.record` 一度**没有任何调用方**
     （三条既有审计测试全是直接调 `audit.record(...)` / `audit.install(...)`，
     函数级全绿、链路级全空），后果是 `/api/sandbox/runs` 永远是空表、
-    管理页的"执行审计"永远没内容，而 ADR-0014 的 E4 层在文档上写着"已实现"。
+    管理页的"执行审计"永远没内容，而 的 E4 层在文档上写着"已实现"。
     修法是把 `audit.record` 放进 `run()` 这个**唯一执行入口**，于是 7 条
     `return` 路径没有一条能绕过它。这条测试就是那个修法的回归。
     """

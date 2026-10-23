@@ -1,6 +1,6 @@
 """沙箱：不受信代码的**唯一执行底座**。
 
-决策依据见 [ADR-0014](../../docs/adr/0007-credentials-sandbox-and-trust.md)。
+安全姿态与「挡不住什么」写在 `docs/CORE-ARCHITECTURE.md` §3.4.1。
 
 ## 模块分工（依赖方向单向，不允许反向）
 
@@ -16,12 +16,12 @@
 ## 这个包**不是**安全边界
 
 它保证：整棵进程树能停 · 凭据不自动喂进去 · 工作目录不越界 · 每次都留痕 · 失败即拒。
-它**不**保证：跑恶意代码也安全（无内核级隔离，见 ADR-0014 §D-3）。
+它**不**保证：跑恶意代码也安全（无内核级隔离）。
 """
 
 from __future__ import annotations
 
-from .job import IS_WINDOWS
+from .job import IS_WINDOWS, MAX_ACTIVE_PROCESSES
 from .job import stats as job_stats
 from .layout import (
     SANDBOX_ROOT,
@@ -46,17 +46,53 @@ from .policy import (
 )
 from .runner import ALLOWED_EXECUTABLES, ExecRequest, ExecResult, run
 
+
+def capability_matrix() -> dict:
+    """平台能力矩阵：**只列被强制的项**，并显式列出不强制项。
+
+    这是给界面与审计读的单一事实源——"沙箱能拦什么"不要再由各处文案各写一遍。
+    每一项要么指向 enforcement primitive，要么进 `not_enforced`。
+    """
+    enforced = [
+        "cwd 必须在工作区根内（启动前校验）",
+        "cwd 不得命中敏感路径（启动前校验）",
+        "可执行文件必须在解释器白名单内",
+        "环境变量白名单",
+        "输出字节上限（显式截断标记）",
+        "超时终止整棵进程树（Job Object / 进程组）",
+        "每次执行落审计",
+    ]
+    not_enforced = [
+        "运行时文件系统读写（脚本仍以当前用户权限运行）",
+        "网络访问（allow_network 是声明，不是强制）",
+        "文件删除 / 重命名的隔离",
+        "内核级权限降级（无受限令牌 / AppContainer / 容器）",
+    ]
+    if IS_WINDOWS:
+        enforced.append(f"Job Object 后代补绑 + IsProcessInJob 校验；活动进程上限 {MAX_ACTIVE_PROCESSES}")
+    return {
+        "platform": "windows" if IS_WINDOWS else "posix",
+        "enforced": enforced,
+        "not_enforced": not_enforced,
+        "job_object": IS_WINDOWS,
+        "max_active_processes": MAX_ACTIVE_PROCESSES,
+        "honest_limit": "这是限损层，不是安全边界；除 enforced 外的字段都只是声明。",
+    }
+
+
 __all__ = [
     "ALLOWED_EXECUTABLES",
     "ExecRequest",
     "ExecResult",
     "IS_WINDOWS",
+    "MAX_ACTIVE_PROCESSES",
     "POLICIES",
     "SANDBOX_ROOT",
     "SandboxError",
     "SandboxPolicy",
     "Severity",
     "build_env",
+    "capability_matrix",
     "describe_policies",
     "describe_workspace",
     "ensure_dirs",

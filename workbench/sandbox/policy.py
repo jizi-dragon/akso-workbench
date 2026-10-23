@@ -1,6 +1,6 @@
 """沙箱策略：**声明**一份"这段不受信代码被允许做什么"。
 
-设计要点（完整决策见 [ADR-0014](../../docs/adr/0007-credentials-sandbox-and-trust.md)）：
+设计要点（完整决策）：
 
 1. **策略是有限枚举的具名集合**，不是"用户随便填的一组开关"。
    理由与本仓既有的"`_MODULES` 是显式清单"一致：**可枚举的东西才能被 review、被测试、被审计引用**。
@@ -9,7 +9,7 @@
 3. 本层是**纯数据 + 纯校验**：不 import `db`、不 import `services`、不 import 插件。
    这样它能在**没装依赖的机器上**被测试，也守住了依赖方向。
 
-## 诚实边界（ADR-0014 §D-3）
+## 诚实边界
 
 这里的 `allow_network` 之类字段是**声明**，不是强制。除下列已强制项外，其余是给执行器与审计用的意图记录。
 **别把它当安全边界读**——真正的强制项在 `SandboxPolicy.enforced` 里逐条列出。
@@ -98,7 +98,7 @@ class SandboxPolicy:
     #: 是否**声明会写工作区**。`read-only` 工作区会拒绝这类策略（见 `layout.permission_error`）。
     #: 注意：这是意图声明，不是内核级只读——脚本仍以当前用户权限运行。
     writes: bool = False
-    #: 声明：是否允许联网。**本期不强制**（强制需 WFP/防火墙，见 ADR-0014 §3）。
+    #: 声明：是否允许联网。**本期不强制**（强制需 WFP/防火墙）。
     allow_network: bool = False
     #: 额外允许注入的环境变量（**显式列出**；不得含凭据，`validate()` 会拒）。
     extra_env: tuple[str, ...] = ()
@@ -112,7 +112,7 @@ class SandboxPolicy:
                     "工作区权限预检（只读/联网/派生进程）",
                     "敏感路径拒绝", "输出字节上限", "执行审计留痕"]
         if not self.allow_subprocesses:
-            enforced.append("子进程数上限 = 1（Job Object）")
+            enforced.append("子进程数上限（Job Object，值见 job.MAX_ACTIVE_PROCESSES）")
         return tuple(enforced)
 
     def fingerprint(self) -> str:
