@@ -5,7 +5,7 @@
   "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
   "interactions": [
     {
-      "key": "7d9017546e3ea9b92e57704a61dbef20223b0aafc554cd40425004a82c7903f0",
+      "key": "7262b0e5aa69b4b0339718c939294b74353f92fb5f7d99d515bc8902eb0d953d",
       "kind": "stream",
       "label": "stream |  2 msgs | 20 tools | 用监管报告技能帮我写一份偏差报告",
       "event": {
@@ -28,7 +28,7 @@
       }
     },
     {
-      "key": "dd0ed1999ebc5b02f573f3d74fd045a1f24d6efd2fa0c4f3022e0d4517010ada",
+      "key": "3287bd988969be7b098e05ac0e6789e67e4e429da59f86b38857825f4a286bf3",
       "kind": "stream",
       "label": "stream |  4 msgs | 20 tools | 用监管报告技能帮我写一份偏差报告",
       "event": {
@@ -51,7 +51,7 @@
       }
     },
     {
-      "key": "cc43e6424d129db61ea7df76f6831ad712bdd6566ec65c8edd0797f1f6054ffa",
+      "key": "89fe1cd7cfb4c4ccb28ddece9039b864ea187b5215fc1034b0fbc3ea16e2ce7a",
       "kind": "stream",
       "label": "stream |  6 msgs | 20 tools | 用监管报告技能帮我写一份偏差报告",
       "event": {

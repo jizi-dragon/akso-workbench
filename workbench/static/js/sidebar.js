@@ -54,8 +54,32 @@
         ${item("账号中心", "/static/pages/accounts.html", "accounts", "accounts", active.accounts)}
       </nav>
     </div>
-    <div class="sidebar-footer"><span class="engine-dot"></span><span>本地服务</span></div>`;
+    <div class="sidebar-footer">
+      <span class="engine-dot"></span><span>本地服务</span>
+      <button id="vault-chip" class="sidebar-account" type="button" title="登录 / 打开云端账号库">登录云端账号</button>
+    </div>`;
   document.body.prepend(aside);
+
+  // 全局登录入口：未登录显示「登录云端账号」；已登录显示邮箱前缀。
+  // 点它统一进账号中心（那里有设备流遮罩；登录与同步是同一页，不再多一个入口）。
+  (async () => {
+    const chip = document.getElementById("vault-chip");
+    if (!chip) return;
+    try {
+      const res = await fetch("/api/vault/status", { cache: "no-store" });
+      const status = await res.json();
+      if (status.loggedIn) {
+        chip.textContent = status.displayName || status.email || "已登录";
+        chip.title = `云端账号：${status.email || status.displayName || ""}`;
+        chip.classList.add("is-in");
+      } else {
+        chip.textContent = "登录云端账号";
+      }
+    } catch { /* 状态读不到就保留“登录”入口，不阻断页面 */ }
+    chip.addEventListener("click", () => {
+      location.href = "/static/pages/accounts.html";
+    });
+  })();
 
   const floating = document.createElement("button");
   floating.className = "app-sidebar-floating-toggle";

@@ -218,7 +218,7 @@ async function afterLogin() {
   state.status = await api.getVaultStatus();
   paintIdentity(state.status);
   setOverlay(false);
-  await loadLibrary(false);
+  await loadLibrary(true);
 }
 
 function setLoginProgress(text, isError = false) {
@@ -317,5 +317,20 @@ $("acc-search")?.addEventListener("input", (event) => {
   state.search = event.target.value || "";
   renderAccounts();
 });
+
+/* 自动同步：页面可见时每 60 秒拉一次；窗口重新聚焦也拉一次。
+   ★ 只在已登录且页面可见时打网络；未登录/正在登录不打扰设备流。 */
+async function autoSync() {
+  if (document.visibilityState !== "visible") return;
+  if (state.loginBusy || !state.status?.loggedIn) return;
+  try {
+    await loadLibrary(true);
+  } catch { /* 401 已由 loadLibrary 切回登录遮罩 */ }
+}
+setInterval(autoSync, 60_000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void autoSync();
+});
+window.addEventListener("focus", () => void autoSync());
 
 boot().catch((error) => setLoginProgress(`初始化失败：${error.message}`, true));

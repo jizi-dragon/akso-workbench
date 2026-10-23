@@ -5,7 +5,7 @@
   "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
   "interactions": [
     {
-      "key": "fd59f1ecd9ea87e92797baf1b5d83914663a7d07ea09e0288096471b14c8231d",
+      "key": "c80e96f261814ba28a58da31ac56c427aa7ba4800354b49be869430952ed5dc4",
       "kind": "stream",
       "label": "stream |  2 msgs | 20 tools | 连着做三件事",
       "event": {

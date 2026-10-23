@@ -84,7 +84,24 @@ async function bootstrap() {
   }
   const splashTimer = seen ? null : cycleSplash();
   try {
-    const data = await api.bootstrap();
+    const data = await api.async function initVaultChip() {
+  const chip = document.getElementById("vault-chip-main");
+  if (!chip) return;
+  try {
+    const status = await api.getVaultStatus();
+    if (status.loggedIn) {
+      chip.textContent = status.displayName || status.email || "已登录";
+      chip.title = `云端账号：${status.email || status.displayName || ""}`;
+      chip.classList.add("is-in");
+    }
+  } catch { /* 状态读不到就保留登录入口 */ }
+  chip.addEventListener("click", () => {
+    location.href = "/static/pages/accounts.html";
+  });
+}
+
+initVaultChip();
+bootstrap();
     state.conversations = data.conversations;
     state.stats = data.stats;
     state.settings = data.settings;

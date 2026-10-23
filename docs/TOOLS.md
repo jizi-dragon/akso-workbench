@@ -40,12 +40,12 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `builtin` | 内置工具 | 1.2.0 | 8 | 与业务无关的通用能力：时间、读本地文件、读网页正文、读用户交的附件、请求用户确认 |
 | `websearch` | 联网检索 | 1.1.0 | 1 | 自建联网检索（DeepSeek API 不支持内置 web_search，故由本工作台实现） |
 | `insight` | 对象分析 | 1.0.0 | 6 | 读平台对象元数据、跑五步织网洞察、取回产物（akso-cc 能力原生化） |
-| `accounts` | 快捷登录 | 1.0.0 | 2 | 账号库清单与平台登录验证（quick-login 能力内化 |
+| `accounts` | 快捷登录 | 1.0.0 | 2 | 账号库清单与平台登录验证（云端优先、本地回落 |
 | `memory` | 长期记忆 | 0.0.0 | 3 | 按需检索/记录事实（不自动注入，不存指令） |
 
 | 工具 | 插件 | 风险 | 需确认门 | 超时 | 干什么 | 参数 |
 |---|---|---|---|---|---|---|
-| `accounts_list` | accounts | read | — | 15s | 列出工作台账号库里的账号（id/用户名/环境/分配池） | — |
+| `accounts_list` | accounts | read | — | 15s | 列出账号库的账号（已登录云端时列云端 | — |
 | `accounts_login` | accounts | read | — | 90s | 用账号库的账号验证平台登录连通并预热 token（httpx 直连，不开浏览器） | `account_id` |
 | `attachment_list` | builtin | read | — | 15s | **用户在对话里交给你的文件/图片**有哪些（id、名字、类型、规模、解析状态、坐标目录） | — |
 | `attachment_read` | builtin | read | — | 30s | 按坐标读附件正文：`unit=page/sheet/table/line/chars`。**长文件必须用它按需取**（内联在上下文里的只有开头一段） | `attachment_id`、`unit`、`index`、`name`、`start`、`max_chars` |

@@ -5,7 +5,7 @@
   "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
   "interactions": [
     {
-      "key": "a85bc730a7300d1baa10a01324b70ce68c2ee8f3d013ddbd0dc25d80f6e13998",
+      "key": "bc7db1878f06048be1d974e22ffc8b28d6d9eb8a563de90b2adcf3ff4ea0d55f",
       "kind": "stream",
       "label": "stream |  2 msgs | 20 tools | 帮我查天气",
       "event": {
@@ -28,7 +28,7 @@
       }
     },
     {
-      "key": "ac31215d99ee970787c14a45e0757f63ba5f57cd99b4f5d06a2c65da28546fd5",
+      "key": "91b259288e45e09f654d65e33443629be796a865c82275790f479b019a7468dd",
       "kind": "stream",
       "label": "stream |  4 msgs | 20 tools | 帮我查天气",
       "event": {
@@ -51,7 +51,7 @@
       }
     },
     {
-      "key": "5044430590063dd44422814c8001b05318d24130b4d7a803aaf0b11069d46a02",
+      "key": "8cd7541c7c12c9cf35a6df0c25a353ea9451a42862e46b10d402ab67aba04557",
       "kind": "stream",
       "label": "stream |  6 msgs | 20 tools | 帮我查天气",
       "event": {

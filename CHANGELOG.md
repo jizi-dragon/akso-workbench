@@ -102,6 +102,12 @@
   （capability SID + Low label + deny DELETE_CHILD）；未配置时保持原声明路径。
   `tests/test_sandbox_acl_runner.py` 2 条配置/包装判据；真实 runner 的端到端在手动验收中执行。
 
+### Added
+
+- **账号登录链路（2026-10-23）**：akso-cloud 个人页显示 Akso Workbench / Akso Pass 的登录与最近活跃；
+  Workbench 左栏常驻登录入口，账号中心每 60 秒/聚焦自动同步；`accounts_list` 云端优先，
+  `accounts_login` 支持云端账号 id（密码只在内存解密，不回传）。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

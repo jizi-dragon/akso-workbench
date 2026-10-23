@@ -5,7 +5,7 @@
   "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
   "interactions": [
     {
-      "key": "8c346ac2b8451ccc0f8411642d732b72eb8450021813532faef5bd755331fdd8",
+      "key": "b17e9faeb5e933d99b1175e7b1315549e1115e43a19ade949ea5f22523724f2d",
       "kind": "stream",
       "label": "stream |  2 msgs | 20 tools | 先看时间，再看有哪些账号",
       "event": {
@@ -28,7 +28,7 @@
       }
     },
     {
-      "key": "c8566bfe52a0fc2ad01df7a10f9ab8220e35e79f67a0320ce2b5a0f405192acb",
+      "key": "15d37460ccdc8093e0f701cdbcaee1e59ddeed239aba6162b14c17e27040f6f4",
       "kind": "stream",
       "label": "stream |  4 msgs | 20 tools | 先看时间，再看有哪些账号",
       "event": {
@@ -51,7 +51,7 @@
       }
     },
     {
-      "key": "f5cc5b37f7edafd01ba499f4689a75c7efee6fc1e9bbb9d051120f4741a4b7f4",
+      "key": "9d753a8b2feebc6059de95e199f804c73c796b5a6d5f7f057f52e6e0b96e4408",
       "kind": "stream",
       "label": "stream |  6 msgs | 20 tools | 先看时间，再看有哪些账号",
       "event": {

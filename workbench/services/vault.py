@@ -31,6 +31,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .. import __version__
 from . import accounts, storage
 
 #: 云端地址。默认指向正式环境；`AKSO_VAULT_URL` 可以覆盖（本地联调时用）。
@@ -95,6 +96,9 @@ def _request(method: str, path: str, *, body: dict | None = None, token: str | N
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Content-Type", "application/json")
+    # 云端个人页靠这个头显示“Workbench 是否已登录/最近活跃”；只作展示，不参与鉴权。
+    req.add_header("X-Akso-Client", "akso-workbench")
+    req.add_header("X-Akso-Client-Version", __version__)
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     try:
@@ -299,6 +303,45 @@ def _snapshot() -> dict:
         if not isinstance(data.get(key), list):
             raise VaultError(f"云端快照缺少数组字段：{key}", kind="format")
     return data
+
+
+def cloud_credentials(account_id: str) -> dict:
+    """取云端账号的登录要素（**只在内存里解密，不落库、不返回给模型**）。
+
+    `accounts_login` 用它把"云端账号 id"变成一次平台登录；密码不进入工具
+    返回值（只回 token 前 8 位），也不写日志。
+    """
+    from cryptography.fernet import Fernet, InvalidToken
+
+    wanted = str(account_id or "").strip()
+    if not wanted:
+        raise VaultError("account_id 不能为空", kind="validation")
+    data = _snapshot()
+    key = _str(data.get("fernetKey"))
+    if not key:
+        raise VaultError("云端快照没有 fernetKey，无法解密账号密码", kind="format")
+    account = next(
+        (row for row in data.get("accounts") or []
+         if isinstance(row, dict) and _str(row.get("id")) == wanted),
+        None,
+    )
+    if account is None:
+        raise VaultError(f"云端账号不存在：{wanted}", kind="validation")
+    enc = _str(account.get("passwordEnc"))
+    if not enc:
+        raise VaultError(f"云端账号 {wanted} 没有存密码", kind="validation")
+    try:
+        password = Fernet(key.encode()).decrypt(enc.encode()).decode("utf-8")
+    except (InvalidToken, ValueError) as exc:
+        raise VaultError("云端密码解密失败（fernetKey 不匹配）", kind="format") from exc
+    return {
+        "account_id": wanted,
+        "username": _str(account.get("username")),
+        "password": password,
+        "base_url": _str(account.get("baseUrl")),
+        "env_name": _str(account.get("siteName")),
+        "env_id": _str(account.get("siteId")),
+    }
 
 
 def _safe_library(data: dict) -> dict:

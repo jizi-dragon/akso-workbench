@@ -1293,3 +1293,22 @@
 .app-sidebar .sidebar-section-title { padding: 13px 11px 6px; }
 .sidebar-footer,
 .app-sidebar .sidebar-footer { padding: 11px 11px; }
+
+
+/* 侧边栏全局登录入口 */
+.sidebar-account {
+  margin-left: auto;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+}
+.sidebar-account:hover { color: var(--text-1); border-color: var(--accent); }
+.sidebar-account.is-in { color: var(--accent); border-color: rgba(80, 160, 255, .35); }

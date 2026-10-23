@@ -252,3 +252,43 @@ def test_library_route_maps_errors(ready, monkeypatch: pytest.MonkeyPatch) -> No
     with pytest.raises(HTTPException) as ei2:
         asyncio.run(routes_vault.vault_library())
     assert ei2.value.status_code == 502
+
+
+def test_cloud_requests_identify_workbench(ready, monkeypatch: pytest.MonkeyPatch) -> None:
+    """云端个人页靠 X-Akso-Client 显示客户端状态；每次云端请求都要带上。"""
+    captured: dict[str, object] = {}
+
+    class Resp:
+        def read(self) -> bytes:
+            return b"{}"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    def fake_urlopen(req, timeout):  # noqa: ANN001
+        captured["req"] = req
+        return Resp()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    vault._request("GET", "/api/auth/profile", token="t")
+    headers = {key.lower(): value for key, value in captured["req"].headers.items()}
+    assert headers["x-akso-client"] == "akso-workbench"
+    assert headers["x-akso-client-version"] == __import__("workbench").__version__
+
+
+def test_cloud_credentials_decrypt_only_for_tool_use(ready, monkeypatch: pytest.MonkeyPatch) -> None:
+    from cryptography.fernet import Fernet
+    key = Fernet.generate_key()
+    enc = Fernet(key).encrypt(b"pw-cloud").decode()
+    monkeypatch.setattr(vault, "_snapshot", lambda: {
+        "fernetKey": key.decode(),
+        "accounts": [{"id": "a1", "username": "alice", "passwordEnc": enc,
+                      "baseUrl": "https://a.test", "siteName": "生产", "siteId": "s1"}],
+    })
+    creds = vault.cloud_credentials("a1")
+    assert creds["password"] == "pw-cloud"
+    assert creds["username"] == "alice"
+    assert creds["base_url"] == "https://a.test"

@@ -5,7 +5,7 @@
   "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
   "interactions": [
     {
-      "key": "bddb3597d8f17128d6310218819e43a278550a9b9ece2b920aeab82e7ef90f78",
+      "key": "74c73b6e1dee2723da61b766b852ca3b29d8168a5eaf268b0e22547cce847d77",
       "kind": "stream",
       "label": "stream |  2 msgs | 20 tools | 偏差处理对象有哪些生命周期状态？",
       "event": {
@@ -28,7 +28,7 @@
       }
     },
     {
-      "key": "c56e73b4e79e5329bba7da35da523f92cd31d07c447f9789e199c131dca20674",
+      "key": "bc9343be2c4df8d906be5bfb939772e727bbd12c5605eaef26afa9e45e4d4d3e",
       "kind": "stream",
       "label": "stream |  4 msgs | 20 tools | 偏差处理对象有哪些生命周期状态？",
       "event": {

@@ -5,7 +5,7 @@
   "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
   "interactions": [
     {
-      "key": "357c6782801f6d0f4d5f68f74d7c45d36740c7740354aae48c21e94279ea2eaf",
+      "key": "7fb39c63eff3ed66d57c68f8f27f31bbb607188fa7382512f13460b719e75ff3",
       "kind": "stream",
       "label": "stream |  2 msgs | 20 tools | 这份 PDF 第 2 页的结论是什么？",
       "event": {
@@ -28,7 +28,7 @@
       }
     },
     {
-      "key": "dd8cefc8ec8c88abcffc3a9e3f31f9670a9d567eea947c02ddad75d8e1c7afb0",
+      "key": "06b9055f1bb7bd2283b0ff84f7986fb77c7aabfbb63f4f94b5baacc4937c9043",
       "kind": "stream",
       "label": "stream |  4 msgs | 20 tools | 这份 PDF 第 2 页的结论是什么？",
       "event": {
@@ -51,7 +51,7 @@
       }
     },
     {
-      "key": "119d18840704fb68f7234492ab18a5f1d8118b1795d53bb64d4ffe867efe7ad0",
+      "key": "bb5aec4130f52d9f1c69d16fd8a0b8f07aff1feee6df93bb2cbe01f635c4acf8",
       "kind": "stream",
       "label": "stream |  6 msgs | 20 tools | 这份 PDF 第 2 页的结论是什么？",
       "event": {
