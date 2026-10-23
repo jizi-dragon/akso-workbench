@@ -1,0 +1,72 @@
+{
+  "formatVersion": 1,
+  "name": "domain_skill_catalog",
+  "model": "deepseek-flash",
+  "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
+  "interactions": [
+    {
+      "key": "7d9017546e3ea9b92e57704a61dbef20223b0aafc554cd40425004a82c7903f0",
+      "kind": "stream",
+      "label": "stream |  2 msgs | 20 tools | 用监管报告技能帮我写一份偏差报告",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "d2",
+            "name": "list_skills",
+            "arguments": "{}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "dd0ed1999ebc5b02f573f3d74fd045a1f24d6efd2fa0c4f3022e0d4517010ada",
+      "kind": "stream",
+      "label": "stream |  4 msgs | 20 tools | 用监管报告技能帮我写一份偏差报告",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "d3",
+            "name": "read_skill",
+            "arguments": "{\"name\": \"gxp-report\"}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "cc43e6424d129db61ea7df76f6831ad712bdd6566ec65c8edd0797f1f6054ffa",
+      "kind": "stream",
+      "label": "stream |  6 msgs | 20 tools | 用监管报告技能帮我写一份偏差报告",
+      "event": {
+        "ok": true,
+        "content": "已按 GxP 报告技能整理：先列事实，再写结论。",
+        "tool_calls": [],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ],
+  "case": "domain_skill_catalog"
+}

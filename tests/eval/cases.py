@@ -262,6 +262,38 @@ CASES: list[Case] = [
              "它必须留下观测让模型自己发现错了（I13）。",
     ),
     Case(
+        id="domain_object_config",
+        title="垂直场景：先读对象配置，再回答生命周期问题",
+        user="偏差处理对象有哪些生命周期状态？",
+        script=[
+            {"content": "", "tool_calls": [_call("insight_read_config", {"object_code": "DEV"}, call_id="d1")]},
+            {"content": "偏差处理对象的生命周期包含：新建、调查中、审批中、关闭。"},
+        ],
+        expect_tools=["insight_read_config"],
+        expect_content=["偏差处理对象", "生命周期"],
+        expect_events=["action", "observation", "final"],
+        stub_returns={"insight_read_config": "{\"statuses\":[\"新建\",\"调查中\",\"审批中\",\"关闭\"]}"},
+        note="垂直评测：锁的是“先查平台配置、再给结论”的形状，不是模型措辞。",
+    ),
+    Case(
+        id="domain_skill_catalog",
+        title="垂直场景：标准 SKILL.md 技能目录 → 按需读正文",
+        user="用监管报告技能帮我写一份偏差报告",
+        script=[
+            {"content": "", "tool_calls": [_call("list_skills", call_id="d2")]},
+            {"content": "", "tool_calls": [_call("read_skill", {"name": "gxp-report"}, call_id="d3")]},
+            {"content": "已按 GxP 报告技能整理：先列事实，再写结论。"},
+        ],
+        expect_tools=["list_skills", "read_skill"],
+        expect_content=["GxP", "结论"],
+        expect_events=["action", "observation", "final"],
+        stub_returns={
+            "list_skills": '{"skills":[{"name":"gxp-report","description":"GxP 报告"}]}',
+            "read_skill": "# gxp-report\n\n先列事实，再写结论。",
+        },
+        note="垂直评测：验证标准 Skill 的“目录 → 正文”渐进披露链路。",
+    ),
+    Case(
         id="tool_error_is_observation",
         title="工具抛异常 ⇒ 观测，不是打断循环",
         user="读一个不存在的文件",

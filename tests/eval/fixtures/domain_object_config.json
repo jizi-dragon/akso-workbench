@@ -1,0 +1,49 @@
+{
+  "formatVersion": 1,
+  "name": "domain_object_config",
+  "model": "deepseek-flash",
+  "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
+  "interactions": [
+    {
+      "key": "bddb3597d8f17128d6310218819e43a278550a9b9ece2b920aeab82e7ef90f78",
+      "kind": "stream",
+      "label": "stream |  2 msgs | 20 tools | 偏差处理对象有哪些生命周期状态？",
+      "event": {
+        "ok": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "d1",
+            "name": "insight_read_config",
+            "arguments": "{\"object_code\": \"DEV\"}"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "key": "c56e73b4e79e5329bba7da35da523f92cd31d07c447f9789e199c131dca20674",
+      "kind": "stream",
+      "label": "stream |  4 msgs | 20 tools | 偏差处理对象有哪些生命周期状态？",
+      "event": {
+        "ok": true,
+        "content": "偏差处理对象的生命周期包含：新建、调查中、审批中、关闭。",
+        "tool_calls": [],
+        "usage": {
+          "prompt_tokens": 100,
+          "prompt_cache_hit_tokens": 60,
+          "prompt_cache_miss_tokens": 40,
+          "completion_tokens": 10
+        },
+        "finish_reason": "stop"
+      }
+    }
+  ],
+  "case": "domain_object_config"
+}
