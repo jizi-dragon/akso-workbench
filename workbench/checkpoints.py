@@ -85,8 +85,6 @@ def capture(root: str | Path, *, max_files: int = MAX_FILES,
 
     capture = Capture(id=capture_id, root=str(base))
     for path in sorted(base.rglob("*")):
-        if capture.truncated:
-            break
         if path.is_symlink() or not path.is_file():
             continue
         size = path.stat().st_size

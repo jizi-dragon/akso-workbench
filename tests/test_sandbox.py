@@ -34,6 +34,7 @@ from workbench.sandbox import (
     describe_policies,
     get_policy,
     is_sensitive_path,
+    job,
     layout,
     run,
     within_root,
@@ -488,3 +489,20 @@ def test_run_records_audit_on_success_and_keeps_label() -> None:
     # 只存长度不存正文（输出可能含敏感内容，且会让审计表变成体积主因）
     assert row["stdout_chars"] == len(body)
     assert body not in json.dumps(row, ensure_ascii=False), "审计表里存了输出正文"
+
+
+def test_win32_init_survives_missing_ntdll(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not job.IS_WINDOWS:
+        pytest.skip("仅 Windows")
+    import ctypes
+
+    real = ctypes.WinDLL
+
+    def fake(name, *args, **kwargs):
+        if name == "ntdll":
+            raise OSError("ntdll unavailable")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(ctypes, "WinDLL", fake)
+    api = job._Win32()
+    assert api.ntdll is None

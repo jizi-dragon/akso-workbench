@@ -75,3 +75,45 @@ def test_sandbox_captures_workspace_when_enabled(monkeypatch: pytest.MonkeyPatch
                              policy_name="skill-script", cwd=work))
     assert result.ok, result.error
     assert any("已创建工作区快照" in note for note in result.notes), result.notes
+
+
+def test_capture_rejects_bad_root_and_limits(tmp_path) -> None:
+    with pytest.raises(checkpoints.CheckpointError, match="不是目录"):
+        checkpoints.capture(tmp_path / "missing")
+    with pytest.raises(checkpoints.CheckpointError, match="max_files"):
+        checkpoints.capture(tmp_path, max_files=0)
+
+
+def test_capture_breaks_on_next_iteration_after_truncation(work) -> None:
+    (work / "c.txt").write_text("C", encoding="utf-8")
+    cap = checkpoints.capture(work, max_files=1)
+    assert cap.truncated is True
+    assert len(cap.files) == 1
+
+
+def test_load_rejects_bad_and_missing_ids(work) -> None:
+    with pytest.raises(checkpoints.CheckpointError, match="非法快照 id"):
+        checkpoints.load("../evil")
+    with pytest.raises(checkpoints.CheckpointError, match="快照不存在"):
+        checkpoints.load("does-not-exist")
+
+
+def test_restore_fails_when_root_or_file_is_gone(work) -> None:
+    cap = checkpoints.capture(work)
+    (work / "a.txt").unlink()
+    (checkpoints.checkpoints_dir() / cap.id / "files" / "a.txt").unlink()
+    with pytest.raises(checkpoints.CheckpointError, match="快照文件缺失"):
+        checkpoints.restore(cap.id)
+
+    cap2 = checkpoints.capture(work)
+    work.rename(work.parent / "workspace-gone")
+    with pytest.raises(checkpoints.CheckpointError, match="工作区已不存在"):
+        checkpoints.restore(cap2.id)
+
+
+def test_list_captures_skips_corrupt_manifest(work) -> None:
+    checkpoints.capture(work)
+    bad = checkpoints.checkpoints_dir() / "broken"
+    bad.mkdir()
+    (bad / "manifest.json").write_text("{not json", encoding="utf-8")
+    assert all(item.get("id") != "broken" for item in checkpoints.list_captures())
