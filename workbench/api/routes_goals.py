@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -47,6 +49,16 @@ def patch_goal(goal_id: str, body: GoalPatch) -> dict:
                             max_rounds=body.maxRounds)
     except goals.GoalError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/{goal_id}/continue")
+async def continue_goal(goal_id: str) -> dict:
+    try:
+        return await asyncio.to_thread(goals.execute_round, goal_id)
+    except goals.GoalError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 —— 一轮失败要可读
+        raise HTTPException(502, f"目标推进失败：{exc}") from exc
 
 
 @router.delete("/{goal_id}")

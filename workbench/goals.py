@@ -109,3 +109,80 @@ def update(goal_id: str, *, status: str | None = None, rounds: int | None = None
 def delete(goal_id: str) -> None:
     if db.execute("DELETE FROM agent_goal WHERE id = ?", (goal_id,)) == 0:
         raise GoalError(f"目标不存在：{goal_id}")
+
+
+def execute_round(goal_id: str) -> dict:
+    """手动推进一步（只读）：在目标绑定的会话里跑一个 Agent 回合。
+
+    v1 **不自动循环**：由用户点「继续一轮」；达到 `max_rounds` 后拒绝继续。
+    无人值守不成立，所以只给 READ 工具（与定时任务同一边界）。
+    """
+    import asyncio
+
+    current = get(goal_id)
+    if current is None:
+        raise GoalError(f"目标不存在：{goal_id}")
+    if current["status"] != "active":
+        raise GoalError("只有 active 目标可以继续")
+    if current["rounds"] >= current["maxRounds"]:
+        raise GoalError(f"目标已达到轮次上限 {current['maxRounds']}，请调整预算或标记完成")
+
+    from .harness.loop import run_agent_loop
+    from .harness.prompts import build_system_prompt
+    from .harness.tools import default_registry
+    from .harness.types import AgentConfig
+    from .plugin_api import Risk
+    from .services import storage
+    from .services.deepseek import DeepSeekClient
+    from .services.settings import load_deepseek, load_max_steps
+
+    cfg = load_deepseek()
+    if not cfg.api_key:
+        raise GoalError("未配置 DeepSeek API Key，无法推进目标")
+
+    conv_id = current["conversationId"]
+    if not conv_id:
+        conv_id = storage.create_conversation(current["title"][:60])["id"]
+        db.execute("UPDATE agent_goal SET conversation_id=?, updated_at=? WHERE id=?",
+                   (conv_id, _now_ms(), goal_id))
+
+    history = storage.model_transcript(conv_id)
+    prompt = (current["objective"]
+              + "\n\n（这是长期目标的一轮推进；只允许只读工具。"
+                "如果目标已经完成，请明确说「目标完成」；否则给出下一步。）")
+    history.append({"role": "user", "content": prompt})
+    storage.insert_message(conv_id, "user", prompt)
+    read_tools = tuple(spec.name for spec in default_registry().core_specs()
+                       if spec.risk is Risk.READ)
+    client = DeepSeekClient(cfg.api_key, model=cfg.model)
+    config = AgentConfig(
+        temperature=cfg.temperature,
+        system_prompt=build_system_prompt() + (
+            "\n\n## 长期目标\n当前目标：" + current["objective"]
+            + "\n只使用只读工具；每轮给出可验证的进展与下一步。"
+        ),
+        max_steps=load_max_steps(),
+        plan_mode=True,
+        allowed_tools=read_tools,
+        approval_wait_s=0.0,
+    )
+    content = ""
+    error = ""
+
+    async def _run() -> None:
+        nonlocal content, error
+        async for event in run_agent_loop(history, client, default_registry(), config,
+                                          conversation_id=conv_id):
+            if event["type"] == "token":
+                content += event["text"]
+            elif event["type"] == "final":
+                content = event["content"]
+            elif event["type"] == "error":
+                error = str(event.get("message") or "Agent 回合失败")
+
+    asyncio.run(_run())
+    if content:
+        storage.insert_message(conv_id, "assistant", content)
+    updated = update(goal_id, rounds=current["rounds"] + 1)
+    return {"goal": updated, "content": content, "error": error,
+            "conversationId": conv_id}

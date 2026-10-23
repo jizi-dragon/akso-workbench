@@ -54,6 +54,8 @@ export const api = {
   listGoals: () => jsonFetch("/api/goals"),
   createGoal: (body) =>
     jsonFetch("/api/goals", { method: "POST", body: JSON.stringify(body) }),
+  continueGoal: (id) =>
+    jsonFetch(`/api/goals/${encodeURIComponent(id)}/continue`, { method: "POST" }),
   patchGoal: (id, body) =>
     jsonFetch(`/api/goals/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteGoal: (id) =>

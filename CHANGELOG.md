@@ -78,6 +78,12 @@
   设置页创建/暂停/恢复/完成/删除。v1 **只记录与展示**，不自动续跑（自动 goal loop 未落地）。
   `tests/test_goals.py` 4 条。
 
+### Added
+
+- **长期目标手动推进（2026-10-23）**：`POST /api/goals/{id}/continue` 在绑定会话里跑一个
+  只读 Agent 回合，`rounds+1`；达到 `max_rounds` 或非 active 时拒绝；设置页新增「继续一轮」。
+  仍不自动续跑（自动 goal loop 未落地）。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

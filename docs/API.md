@@ -655,9 +655,10 @@ Python 不再代理 `/update-check` / `/update-install`。
 | GET | `/api/goals` | — | `{goals:[{id,title,objective,status,rounds,maxRounds,conversationId,...}]}` |
 | POST | `/api/goals` | `{title,objective,maxRounds=10,conversationId=""}` | 创建；`maxRounds` 1–100，非法 **400** |
 | PATCH | `/api/goals/{id}` | `{title?,objective?,status?,rounds?,maxRounds?}` | 局部更新；`status` ∈ active/paused/done；不存在 **404** |
+| POST | `/api/goals/{id}/continue` | — | **手动**推进一轮（只读 Agent 回合，新建/复用绑定会话）；达到上限或非 active → **400** |
 | DELETE | `/api/goals/{id}` | — | 删除；不存在 **404** |
 
-- v1 **只做 tracker**：不自动续跑、不自动判定完成；
+- 不自动续跑、不自动判定完成；用户点「继续一轮」手动推进，**只读工具**可用；
 - 设置页可创建、暂停/恢复、标记完成、删除。
 
 ## 18. 运行日志 `/api/logs`（`routes_logs.py`，2026-09-20 引入）

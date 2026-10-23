@@ -458,7 +458,7 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 字段：`id` / `title` / `objective` / `status`（active/paused/done）/ `rounds` / `max_rounds` /
 `conversation_id` / `created_at` / `updated_at`。
 
-- v1 **只记录与展示**：不自动续跑、不自动判定完成；自动 goal loop 需要“完成判定 + 轮次预算 + 上下文重置”三件事，尚未落地；
+- 支持**手动**「继续一轮」：只读 Agent 回合，`rounds+1`；不自动续跑、不自动判定完成；自动 goal loop 仍需“完成判定 + 轮次预算 + 上下文重置”；
 - `max_rounds` 1–100，`rounds` 0–100；
 - 设置页可创建、暂停/恢复、标记完成、删除。
 
