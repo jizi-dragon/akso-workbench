@@ -506,3 +506,35 @@ def test_win32_init_survives_missing_ntdll(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(ctypes, "WinDLL", fake)
     api = job._Win32()
     assert api.ntdll is None
+
+
+@pytest.mark.slow
+def test_strict_readonly_actually_denies_workspace_write() -> None:
+    """read-only 不是声明：受限令牌下写工作区必须失败。"""
+    if not job.IS_WINDOWS:
+        pytest.skip("受限制令牌仅 Windows")
+    work = layout.run_dir(layout.new_run_id())
+    target = work / "out.txt"
+    code = f"open(r'{target}', 'w').write('x')"
+    result = run(ExecRequest(argv=[sys.executable, "-c", code],
+                             policy_name="strict-readonly", cwd=work))
+    assert not result.ok, f"read-only 竟然写成功了：{result.stdout} {result.stderr}"
+    assert not target.exists(), "read-only 策略下工作区出现了新文件"
+    assert "read-only 受限令牌已附加" in " ".join(result.notes)
+
+
+@pytest.mark.slow
+def test_readonly_token_failure_is_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not job.IS_WINDOWS:
+        pytest.skip("受限制令牌仅 Windows")
+    from workbench.sandbox import win_token
+
+    monkeypatch.setattr(win_token, "restrict_readonly",
+                        lambda _pid: (False, "simulated token failure"))
+    work = layout.run_dir(layout.new_run_id())
+    result = run(ExecRequest(argv=[sys.executable, "-c", "print('should-not-run')"],
+                             policy_name="strict-readonly", cwd=work))
+    assert not result.ok
+    assert "受限令牌附加失败" in result.error
+    assert "simulated token failure" in result.error
+    assert "已终止" in result.error

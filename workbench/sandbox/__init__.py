@@ -66,15 +66,19 @@ def capability_matrix() -> dict:
         "运行时文件系统读写（脚本仍以当前用户权限运行）",
         "网络访问（allow_network 是声明，不是强制）",
         "文件删除 / 重命名的隔离",
-        "内核级权限降级（无受限令牌 / AppContainer / 容器）",
+        "workspace-write 的内核级写隔离（capability SID 尚未落地）",
+        "网络访问的内核级强制（WFP/防火墙）",
     ]
     if IS_WINDOWS:
         enforced.append(f"Job Object 后代补绑 + IsProcessInJob 校验；活动进程上限 {MAX_ACTIVE_PROCESSES}")
+        enforced.append("read-only 策略附加 WRITE_RESTRICTED 受限令牌（logon + Everyone；partial）")
     return {
         "platform": "windows" if IS_WINDOWS else "posix",
         "enforced": enforced,
         "not_enforced": not_enforced,
         "job_object": IS_WINDOWS,
+        "read_only_token": IS_WINDOWS,
+        "workspace_write_token": False,
         "max_active_processes": MAX_ACTIVE_PROCESSES,
         "honest_limit": "这是限损层，不是安全边界；除 enforced 外的字段都只是声明。",
     }

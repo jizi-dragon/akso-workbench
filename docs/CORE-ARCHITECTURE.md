@@ -251,13 +251,13 @@ Agent 循环里工具异常必须是**可自我纠正的观测**，而不是终�
 策略门由宿主注入（`approvals.install` → `hub.set_permission_gate`），`plugin_api` 仍不 import
 `db`/`services` —— 与确认门、审计写入器同一注入方向。
 
-### 3.4 L4 沙箱执行层（`sandbox/`，6 文件 1,551 行）
+### 3.4 L4 沙箱执行层（`sandbox/`，7 文件 ≈1,700 行）
 
 **唯一被允许执行不受信代码的入口**。对照 的四层：
 
 | 层 | 强制手段 |
 |---|---|
-| **E1 生命周期** | Windows：`CREATE_SUSPENDED` 创建 → **Job Object** 绑定 → `NtResumeProcess` 恢复；绑定后枚举并补绑已存在的后代，`IsProcessInJob` 校验。超时/取消 → `taskkill /T` + `TerminateJobObject` 杀**整棵进程树**（`job.terminate`） |
+| **E1 生命周期** | Windows：`CREATE_SUSPENDED` 创建 → **Job Object** 绑定 →（read-only 策略）附加 `WRITE_RESTRICTED` 受限令牌 → `NtResumeProcess` 恢复；绑定后枚举并补绑已存在的后代，`IsProcessInJob` 校验。超时/取消 → `taskkill /T` + `TerminateJobObject` 杀**整棵进程树**（`job.terminate`） |
 | **E2 环境** | `build_env()` **白名单**筛环境变量（`ENV_ALLOW_EXACT` 20 项 + `LC_` 前缀）。**默认什么都不给** |
 | **E3 文件系统** | `cwd` 必须在**沙箱根**内（`Path.resolve()` 后比较，防 `..` 与符号链接）+ 敏感路径拒绝表 |
 | **E4 可观测** | 返回体带 `policy` / `policy_fingerprint` / `tree_kill` / `output_truncated` |
@@ -282,11 +282,15 @@ Windows 上绑定用挂起创建消除竞态；但在宿主嵌套 Job 里补绑�
 
 **这一层不是安全边界，是限损层。** 不是措辞问题，是事实：
 
-1. **与宿主同用户同权限**：没有独立账户、受限令牌、AppContainer 或容器。文件、网络、注册表
-   全按当前 Windows 用户的权限走。
-2. **只做启动前校验**：`cwd` 在沙箱根内、可执行文件在白名单、环境变量白名单、`cwd` 不命中敏感路径。
-   **运行时的系统调用一概不拦截** —— 脚本 `open()` 任意文件、`socket` 直连外网，都不经过这一层。
-3. **`allow_network` / `writes` 是声明，不是强制**（真强制需要 WFP/防火墙与文件系统 ACL）。
+1. **read-only 已有受限令牌，workspace-write 仍与宿主同用户同权限**：Windows 上
+   `strict-readonly` 会附加 `WRITE_RESTRICTED` 令牌（限制 SID 只有 logon + Everyone），
+   运行时写检查按限制列表走；**workspace-write 的 capability SID 尚未落地**，
+   脚本式 Skill 仍按当前用户权限写工作区。没有独立账户/AppContainer/容器。
+2. **启动前校验 + read-only 的运行时写限制**：`cwd` 在沙箱根内、可执行文件在白名单、
+   环境变量白名单、`cwd` 不命中敏感路径；read-only 额外由令牌拒绝写（Everyone 的环境授予
+   仍可能放行，属 **partial**）。**读、网络、注册表仍不拦截**。
+3. **`allow_network` 是声明**；`writes` 只在 read-only 策略上被令牌部分强制，
+   workspace-write 仍是声明（真强制需要 capability SID/AppContainer + 文件系统 ACL）。
 4. **默认沙箱根就在数据目录下**（`<数据目录>/sandbox/runs/<id>`），而 `APPDATA` 必须在环境白名单里
    （否则子进程连临时目录都找不到）。一段脚本用 `Path.cwd()` 往上走两级就能读到 `workbench.db`，
    连同 `account_fernet_key` 与全部口令密文 —— 这不需要漏洞，只需要 `open()`。
@@ -297,12 +301,13 @@ Windows 上绑定用挂起创建消除竞态；但在宿主嵌套 Job 里补绑�
 执行前一定会弹确认。沙箱买的是"同意之后，损失有上限"，不是"这段代码跑不出圈"。
 
 ⇒ **行业里叫 sandbox 的东西**（浏览器渲染进程、iOS App Sandbox、容器 + seccomp）都靠**内核/虚拟机层的
-权限隔离**：内核替它挡住系统调用，即使代码有漏洞也逃不出去。本层没有那一层，所以：
+权限隔离**：内核替它挡住系统调用，即使代码有漏洞也逃不出去。本层现在只做到
+**Windows read-only 的受限令牌（partial）**，workspace-write 没有那一层，所以：
 
 - **不要**在 UI、文档或错误提示里把它描述成"安全隔离"；
 - **不要**用它跑"来源不明、你会拒绝在自己终端里执行"的代码；
-- 若产品将来面向"用户会装陌生来源 Skill"的场景，先做 §7.10 的升级（受限令牌/AppContainer +
-  数据目录 ACL + 网络隔离），**再**启用那条分发路径。
+- 若产品将来面向"用户会装陌生来源 Skill"的场景，先补齐 workspace-write 的受限令牌/AppContainer
+  + 数据目录 ACL + 网络隔离，**再**启用那条分发路径；read-only 已可先用。
 
 **诚实边界**：`allow_network` 是**声明不是强制**。`SandboxPolicy.enforced` 属性把
 **真正被代码强制**的项逐条列出，就是为了让"声明"与"强制"不被读混。

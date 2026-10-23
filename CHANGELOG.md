@@ -35,6 +35,14 @@
   文件夹 Skill **不执行代码**。ZIP 工具包继续用于需要 `wraps`/`script` 的场景。
   `tests/test_skill_folders.py`（6 条）；eval 夹具已按新工具面重录。
 
+### Added
+
+- **Windows read-only 真限制（2026-10-23）**：`strict-readonly` 在 `CREATE_SUSPENDED`
+  阶段附加 `WRITE_RESTRICTED` 受限令牌（logon + Everyone），写工作区被运行时拒绝；
+  附加失败终止并 fail-closed。能力矩阵新增 `read_only_token` / `workspace_write_token`；
+  `tests/test_sandbox.py` 增加 slow 反证。workspace-write 的 capability SID 仍未通过
+  访问检查，继续保持“声明而非强制”。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

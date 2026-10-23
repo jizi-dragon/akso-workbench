@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import job
+from .job import IS_WINDOWS
 from .policy import (
     SandboxError,
     SandboxPolicy,
@@ -331,6 +332,20 @@ def _run(req: ExecRequest) -> ExecResult:
         # 完全不可用。**但必须让它在审计里可见**，不能静默降级。
         notes.append(f"⚠ 未绑定 Job Object：{binding.note}")
 
+    # ★ read-only 策略：在挂起阶段附加受限令牌（只有 logon + Everyone 限制 SID）。
+    #   这是**真实的运行时写限制**，不是声明；附加失败必须终止并拒绝。
+    if IS_WINDOWS and not policy.writes:
+        from . import win_token
+
+        restricted, restrict_note = win_token.restrict_readonly(proc.pid)
+        if not restricted:
+            tree_kill = job.terminate(proc, binding)
+            return _reject(
+                f"read-only 受限令牌附加失败：{restrict_note}（已终止：{tree_kill}）",
+                policy_name=policy.name, policy_fingerprint=policy.fingerprint())
+        notes.append(restrict_note)
+
+    # ★ Windows 上进程是 CREATE_SUSPENDED 创建的：绑定完成后必须恢复。
     # ★ Windows 上进程是 CREATE_SUSPENDED 创建的：绑定完成后必须恢复。
     #   恢复失败 ⇒ 终止并 Fail-Closed，绝不留一个永远挂着的进程。
     resumed, resume_note = job.resume(proc)

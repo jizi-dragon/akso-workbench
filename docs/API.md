@@ -568,7 +568,10 @@ Python 不再代理 `/update-check` / `/update-install`。
 
 - **工作区边界**：`cwd` 必须在 `workspace.root` 内；`mode=read-only` 时拒绝 `writes=true`
   的策略（`skill-script` / `mcp-stdio`），只允许 `strict-readonly`；`allowNetwork` /
-  `allowSubprocess` 对策略声明做预检。**这不是内核级只读**——见响应里的 `honest_limit`。
+  `allowSubprocess` 对策略声明做预检。Windows 上 `strict-readonly` 还会附加
+  `WRITE_RESTRICTED` 受限令牌（logon + Everyone），运行时写检查按限制列表走——但
+  `Everyone` 的环境授予仍可能放行，属 **partial**；`workspace-write` 尚未有内核级隔离。
+  见 `/api/sandbox/status` 的 `capabilities` 与 `honest_limit`。
 - **刻意没有"通用执行"端点**：`POST /api/sandbox/exec` 这类接口等于给本机开一个
   "用 HTTP 跑任意命令"的洞（本仓服务端**无认证**，仅靠 127.0.0.1 收敛，见 §0）。
   要跑代码请走 Skill（§17.2）——那里有准入扫描、固定策略与确认门三道。
