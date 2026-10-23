@@ -112,6 +112,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+      - name: Stage sidecar placeholder
+        run: New-Item -ItemType Directory -Force dist\WorkbenchServer | Out-Null
       - name: Rust shell check
         run: |
           rustc --version
