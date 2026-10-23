@@ -181,4 +181,6 @@ def test_api_workspace_roundtrip(workspace_config: Path, tmp_path: Path) -> None
 
     reset = routes_sandbox.reset_workspace()
     assert reset["mode"] == "read-write"
-    assert reset["root"] == str(layout.SANDBOX_ROOT)
+    # CI 的 %TEMP% 可能是 8.3 短路径（RUNNER~1）；产品统一 resolve 后返回长路径，
+    # 所以不能拿未解析的 SANDBOX_ROOT 做字符串比较。
+    assert Path(reset["root"]).resolve() == Path(layout.SANDBOX_ROOT).resolve()
