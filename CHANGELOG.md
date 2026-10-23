@@ -49,6 +49,12 @@
   写/危险工具即使被点名也按"未执行"回填（`plan_mode`，`AgentConfig` + `/api/chat/stream`）。
   UI 入口与前后端 wiring 有静态判据；`tests/test_plan_mode.py` 2 条。
 
+### Added
+
+- **工作区快照 UI（2026-10-23）**：沙箱页新增「工作区快照」卡片；
+  `GET/POST /api/checkpoints` + `POST /api/checkpoints/{id}/restore`，只认沙箱工作区根；
+  创建/恢复走 `to_thread`，恢复前 `confirm()`。`tests/test_checkpoint_routes.py` 1 条。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

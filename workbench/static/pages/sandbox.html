@@ -93,6 +93,22 @@
       </section>
 
       <section class="mcard">
+        <h2>工作区快照</h2>
+        <p class="hint" style="margin-top:0">
+          快照只覆盖<b>文件</b>；脚本的 <span class="mono">rm</span>、网络、数据库副作用撤不了。
+          恢复会覆盖同路径文件，快照之外的新文件不会删除。
+        </p>
+        <button class="mbtn" id="sb-snap-create" type="button">创建当前工作区快照</button>
+        <p class="hint" id="sb-snap-meta"></p>
+        <table class="mtable" id="sb-snapshots">
+          <thead>
+            <tr><th>时间</th><th>ID</th><th>文件数</th><th>大小</th><th>操作</th></tr>
+          </thead>
+          <tbody><tr><td colspan="5" class="hint">加载中…</td></tr></tbody>
+        </table>
+      </section>
+
+      <section class="mcard">
         <h2>运行期状态</h2>
         <div class="mgrid cols-4" id="sb-status"></div>
       </section>

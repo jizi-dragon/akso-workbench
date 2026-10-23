@@ -41,6 +41,7 @@ _OPTIONAL_ROUTERS: tuple[tuple[str, str], ...] = (
     ("mcp", "routes_mcp"),
     ("sandbox", "routes_sandbox"),
     ("skills", "routes_skills"),
+    ("checkpoints", "routes_checkpoints"),
     ("vault", "routes_vault"),
 )
 

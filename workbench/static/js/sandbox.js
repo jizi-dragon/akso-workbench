@@ -204,19 +204,62 @@ function renderRuns(payload) {
   }).join('');
 }
 
+function renderSnapshots(payload) {
+  const tbody = document.querySelector('#sb-snapshots tbody');
+  const rows = payload.checkpoints || [];
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="hint">还没有快照</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map((cap) => `
+    <tr>
+      <td>${fmtTime(cap.createdAt)}</td>
+      <td class="mono">${esc(cap.id)}</td>
+      <td>${(cap.files || []).length}</td>
+      <td>${fmtBytes(cap.bytes || 0)}${cap.truncated ? ' <span class="hint">（截断）</span>' : ''}</td>
+      <td><button class="mbtn ghost snap-restore" type="button" data-id="${esc(cap.id)}">恢复</button></td>
+    </tr>`).join('');
+}
+
+async function createSnapshot() {
+  const meta = $('sb-snap-meta');
+  meta.textContent = '正在扫描工作区…';
+  try {
+    const data = await api('/api/checkpoints', { method: 'POST' });
+    renderSnapshots(data);
+    meta.textContent = `✓ 已创建 ${data.checkpoint.id}（${data.checkpoint.files.length} 文件）`;
+  } catch (err) {
+    meta.textContent = `✗ 创建失败：${err.message}`;
+  }
+}
+
+async function restoreSnapshot(captureId) {
+  if (!window.confirm(`恢复快照 ${captureId}？同路径文件会被覆盖。`)) return;
+  const meta = $('sb-snap-meta');
+  try {
+    const result = await api(`/api/checkpoints/${encodeURIComponent(captureId)}/restore`, { method: 'POST' });
+    meta.textContent = `✓ 已恢复 ${result.restored} 个文件`;
+    await refresh();
+  } catch (err) {
+    meta.textContent = `✗ 恢复失败：${err.message}`;
+  }
+}
+
 async function refresh() {
   const health = await loadHealth();
   try {
-    const [policies, status, runs] = await Promise.all([
+    const [policies, status, runs, snapshots] = await Promise.all([
       api('/api/sandbox/policies'),
       api('/api/sandbox/status'),
       api('/api/sandbox/runs?limit=100'),
+      api('/api/checkpoints'),
     ]);
     renderBoundary(policies);
     renderPolicies(policies);
     renderStatus(status, health);
     renderWorkspace(status.workspace);
     renderRuns(runs);
+    renderSnapshots(snapshots);
   } catch (err) {
     const tbody = document.querySelector('#sb-runs tbody');
     tbody.innerHTML = `<tr><td colspan="7" class="hint" style="color:#f85149">加载失败：${esc(String(err.message || err))}</td></tr>`;
@@ -226,6 +269,11 @@ async function refresh() {
 $('sb-refresh')?.addEventListener('click', refresh);
 $('sb-ws-save')?.addEventListener('click', saveWorkspace);
 $('sb-ws-reset')?.addEventListener('click', resetWorkspace);
+$('sb-snap-create')?.addEventListener('click', createSnapshot);
+document.querySelector('#sb-snapshots tbody')?.addEventListener('click', (event) => {
+  const btn = event.target.closest('.snap-restore');
+  if (btn) restoreSnapshot(btn.dataset.id);
+});
 $('sb-ws-copy')?.addEventListener('click', async (event) => {
   const root = $('sb-ws-root').value.trim();
   try {

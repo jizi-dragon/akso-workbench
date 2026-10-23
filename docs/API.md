@@ -540,7 +540,7 @@ Python 不再代理 `/update-check` / `/update-install`。
 > 现在只剩本端点半边）。**不要把探测打到有副作用的端点上**——Tauri 启动时会反复探它，
 > 若写库会把“扩展开没开过”之类的判定污染掉（本端点自身无副作用）。
 
-## 17. Agent 能力面：沙箱与 Skill 共享库（`routes_sandbox.py` / `routes_skills.py`）
+## 17. Agent 能力面：沙箱 / Skill 共享库 / 工作区快照（`routes_sandbox.py` / `routes_skills.py` / `routes_checkpoints.py`）
 
 这两族端点对应导航里的「**Agent 能力**」分组，回答的是**"我的 Agent 现在能做什么、
 它做过的（上传来的）代码跑成什么样"**——与 §10 的"产品自带工具"互补：
@@ -618,6 +618,18 @@ Python 不再代理 `/update-check` / `/update-install`。
   （这正是 §10 那条文档门禁能继续成立的原因）；
 - **卸载 ≠ 删除**：卸载只断 `current` 指针并摘插件，**共享库里的版本一个都不删**；
 - **核心插件只能禁用、不能卸载**（`capability_id` 为空串的插件会被守卫直接拒）。
+
+### 17.3 工作区快照 `/api/checkpoints`（`routes_checkpoints.py`，2026-10-23 引入）
+
+| 方法 | 路径 | 请求 | 说明 |
+|---|---|---|---|
+| GET | `/api/checkpoints` | — | `{checkpoints:[manifest...], root}`；只读列表，不扫文件 |
+| POST | `/api/checkpoints` | —（无请求体） | 对**当前沙箱工作区根**创建快照，返回 `{checkpoint, checkpoints}` |
+| POST | `/api/checkpoints/{id}/restore` | — | 覆盖回快照自己的 root；非法/不存在 id → **404** |
+
+- **只接受沙箱工作区根**：端点不接收任意路径，否则会变成"读/写任意目录"的洞。
+- 快照只覆盖**文件**；`rm`、网络、DB 副作用撤不了；快照之外的新文件不会删除。
+- 创建与恢复都走 `asyncio.to_thread`（I11）；恢复前 UI 有 `confirm()`。
 
 ## 18. 运行日志 `/api/logs`（`routes_logs.py`，2026-09-20 引入）
 
