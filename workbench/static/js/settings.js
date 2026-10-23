@@ -66,8 +66,97 @@ export function initSettings() {
 
   initPromptEditor();
   initToolScope();
+  initSchedules();
   initCachePanel();
   initMcpPanel();
+}
+
+/* ---------------------------------------------------------------- 定时任务 */
+
+function initSchedules() {
+  const list = document.getElementById("sch-list");
+  const meta = document.getElementById("sch-meta");
+  if (!list) return;
+
+  const fmtTime = (ms) => ms ? new Date(Number(ms)).toLocaleString() : "—";
+  const render = (items) => {
+    if (!items.length) {
+      list.innerHTML = '<div class="hint" style="padding:8px">还没有定时任务</div>';
+      return;
+    }
+    list.innerHTML = items.map((task) => `
+      <div class="schedule-row">
+        <div class="schedule-main">
+          <b>${esc(task.title)}</b>
+          <small>每 ${Math.round(task.intervalS / 60)} 分钟 · 下次 ${fmtTime(task.nextRunAt)}
+            ${task.lastStatus ? ` · 上次 ${esc(task.lastStatus)}` : ""}</small>
+          ${task.lastError ? `<small class="mcp-error">${esc(task.lastError)}</small>` : ""}
+        </div>
+        <button class="btn-ghost btn-sm" type="button" data-sch-toggle="${esc(task.id)}">
+          ${task.enabled ? "暂停" : "启用"}
+        </button>
+        <button class="btn-ghost btn-sm" type="button" data-sch-run="${esc(task.id)}">运行</button>
+        <button class="btn-ghost btn-sm" type="button" data-sch-del="${esc(task.id)}">删除</button>
+      </div>`).join("");
+  };
+
+  const load = async () => {
+    try {
+      const data = await api.listSchedules();
+      render(data.schedules || []);
+    } catch (err) {
+      list.innerHTML = `<div class="hint" style="color:#f85149;padding:8px">加载失败：${esc(err.message)}</div>`;
+    }
+  };
+
+  document.getElementById("btn-sch-create").addEventListener("click", async () => {
+    const title = document.getElementById("sch-title").value.trim();
+    const prompt = document.getElementById("sch-prompt").value.trim();
+    const intervalS = Number(document.getElementById("sch-interval").value)
+      * Number(document.getElementById("sch-unit").value);
+    if (!title || !prompt) {
+      meta.textContent = "标题和提示词都不能为空";
+      return;
+    }
+    try {
+      await api.createSchedule({ title, prompt, intervalS });
+      document.getElementById("sch-title").value = "";
+      document.getElementById("sch-prompt").value = "";
+      meta.textContent = "✓ 已创建";
+      await load();
+    } catch (err) {
+      meta.textContent = `✗ 创建失败：${err.message}`;
+    }
+  });
+
+  list.addEventListener("click", async (event) => {
+    const toggle = event.target.closest("[data-sch-toggle]");
+    const run = event.target.closest("[data-sch-run]");
+    const del = event.target.closest("[data-sch-del]");
+    try {
+      if (toggle) {
+        const id = toggle.dataset.schToggle;
+        const task = (await api.listSchedules()).schedules.find((item) => item.id === id);
+        await api.patchSchedule(id, { enabled: !task.enabled });
+        await load();
+      } else if (run) {
+        meta.textContent = "正在执行（只读，可能要一会儿）…";
+        const result = await api.runSchedule(run.dataset.schRun);
+        meta.textContent = result.status === "ok"
+          ? "✓ 已执行，结果在会话记录里"
+          : `✗ 执行失败：${result.error || "未知错误"}`;
+        await load();
+      } else if (del) {
+        if (!window.confirm("删除这个定时任务？")) return;
+        await api.deleteSchedule(del.dataset.schDel);
+        await load();
+      }
+    } catch (err) {
+      meta.textContent = `✗ 操作失败：${err.message}`;
+    }
+  });
+
+  load();
 }
 
 /* ---------------------------------------------------------------- 工具范围 */

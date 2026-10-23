@@ -246,6 +246,44 @@
               </section>
 
               <section class="settings-section">
+                <h2 class="settings-section-title">⚡ 定时任务</h2>
+                <div class="settings-card">
+                  <p class="settings-hint">
+                    按固定间隔把一条<b>只读</b>提示词跑进新会话（无人值守，不能写平台/文件）。
+                    最小 60 秒；结果在左栏「会话记录」里回看。
+                  </p>
+                  <label class="field">
+                    <span>标题</span>
+                    <input id="sch-title" type="text" maxlength="120" placeholder="例如：每周行业动态" />
+                  </label>
+                  <label class="field">
+                    <span>提示词</span>
+                    <textarea id="sch-prompt" rows="3" maxlength="4000"
+                              placeholder="例如：汇总本周 NMPA/FDA 相关动态，列出来源链接"></textarea>
+                  </label>
+                  <div class="mgrid cols-2">
+                    <label class="mfield">
+                      间隔
+                      <input id="sch-interval" type="number" min="1" value="1" />
+                    </label>
+                    <label class="mfield">
+                      单位
+                      <select id="sch-unit">
+                        <option value="60">分钟</option>
+                        <option value="3600">小时</option>
+                        <option value="86400">天</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="prompt-actions">
+                    <button class="btn-primary" id="btn-sch-create" type="button">创建定时任务</button>
+                    <small id="sch-meta"></small>
+                  </div>
+                  <div id="sch-list" class="tool-scope-list"></div>
+                </div>
+              </section>
+
+              <section class="settings-section">
                 <h2 class="settings-section-title">⚡ MCP 服务器</h2>
                 <div class="settings-card">
                   <p class="settings-hint">

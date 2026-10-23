@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
   逐列适配并对未知 `NOT NULL` 无默认值列填中性值，避免接管旧库时 IntegrityError。
 - `checksum` 按 sqlx 语义取迁移 SQL 的 SHA-384 摘要。
 
-### 迁移账（1–26，全部已应用）
+### 迁移账（1–27，全部已应用）
 
 | # | 名称 | 内容 | 血统 |
 |---|---|---|---|
@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS _sqlx_migrations (
 | 23 | `messages_kind` | `messages` 增 `kind`（`message` / `error` / `tool`）；并把历史里 `role='assistant' AND content LIKE '错误：%'` 的行标成 `error`（**启发式**，边界写在迁移注释里） | §5.4b |
 | 24 | `agent_run_and_span` | 新建 `agent_run`（一次用户回合：状态/步数/用量/耗时）与 `agent_span`（该回合每一步：model/tool/sandbox/confirm + 耗时/状态/attrs）+ 索引 | |
 | 25 | `transcript_columns` | `messages` 增 `tool_calls` / `tool_call_id` / `seq`（**工具轨迹落库 + 定序**）；`seq` 由 `rowid` 回填；建 `idx_messages_conv_seq(conversation_id, seq)` | 核心 Agent 计划 §7.3 |
+| 26 | `agent_memory` | 新建 `agent_memory`（长期记忆：scope/type/title/body/keywords/revision/expires_at）+ 两个索引 | 记忆 v1 |
+| 27 | `scheduled_task` | 新建 `scheduled_task`（定时只读任务：prompt/interval/next_run/status/last_conversation）+ `idx_scheduled_task_due` | goal/定时任务 v1 |
 
 > **迁移 1–6 为 fork 历史，按不可变纪律保留**。其中 `documents` / `doc_chunks` / `qa_metrics`
 > 的知识库相关功能**源码已删**（表仅留存、不再读写）；`knowledge_nodes` / `knowledge_edges` /
@@ -439,7 +441,18 @@ DB 行是 **snake_case**（`env_base_url`，由 JOIN 带上），
 检索：`workbench/memory.py::search` 用词元重叠排序（英文词 + 中文单字/双字），只返回未过期行；
 `list_memories` 不过滤过期（便于清理）。
 
-### 3.17 已下线但表仍在（勿恢复业务代码）
+### 3.17 `scheduled_task` — 定时任务（迁移 27）
+
+字段：`id` / `title` / `prompt` / `interval_s` / `enabled` / `last_run_at` / `next_run_at` /
+`last_status` / `last_error` / `last_conversation_id` / `created_at` / `updated_at`。
+
+- 只允许 **READ 工具**：`scheduler.execute` 用 `plan_mode=True` + core READ 白名单，无人值守时没有确认门可点；
+- 每次执行**新建会话**，结果可在会话记录里回看；
+- 固定间隔（≥60s），不支持 cron；失败只写 `last_error`，下一次到点再试。
+
+索引：`idx_scheduled_task_due(enabled, next_run_at)`。
+
+### 3.18 已下线但表仍在（勿恢复业务代码）
 
 | 表 | 来源迁移 | 现状 |
 |---|---|---|

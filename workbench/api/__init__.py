@@ -42,6 +42,7 @@ _OPTIONAL_ROUTERS: tuple[tuple[str, str], ...] = (
     ("sandbox", "routes_sandbox"),
     ("skills", "routes_skills"),
     ("checkpoints", "routes_checkpoints"),
+    ("schedules", "routes_schedules"),
     ("vault", "routes_vault"),
 )
 
@@ -86,6 +87,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     _sandbox_setup()
     _skills_setup()
     _tool_selfcheck()
+    # 定时任务：daemon 线程，30s 轮询；WORKBENCH_DISABLE_SCHEDULER=1 可关。
+    from ..scheduler import Scheduler
+
+    _scheduler = Scheduler()
+    _scheduler.start()
     _mcp_setup()
     # **启动横幅放在这里而不是入口脚本里**：入口脚本只覆盖两条路
     # （`main.py` 与 `server_entry.py`），而**桌面壳的开发态是直接 spawn
@@ -101,6 +107,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
     # MCP 连接是子进程：退出时主动收，不留给 OS 去猜（尤其 Windows 上子进程不会
     # 因为父进程退出就自动消失）。失败不阻断退出。
+    try:
+        _scheduler.stop()
+    except Exception:  # noqa: BLE001
+        logger.warning("定时任务调度器收尾失败（不影响应用退出）", exc_info=True)
     try:
         from .. import mcp_registry
 

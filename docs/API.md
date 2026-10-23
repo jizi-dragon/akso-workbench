@@ -634,6 +634,20 @@ Python 不再代理 `/update-check` / `/update-install`。
 - 快照只覆盖**文件**；`rm`、网络、DB 副作用撤不了；快照之外的新文件不会删除。
 - 创建与恢复都走 `asyncio.to_thread`（I11）；恢复前 UI 有 `confirm()`。
 
+### 17.4 定时任务 `/api/schedules`（`routes_schedules.py`，2026-10-23 引入）
+
+| 方法 | 路径 | 请求 | 说明 |
+|---|---|---|---|
+| GET | `/api/schedules` | — | `{schedules:[{id,title,prompt,intervalS,enabled,lastRunAt,nextRunAt,lastStatus,lastError,lastConversationId,...}]}` |
+| POST | `/api/schedules` | `{title,prompt,intervalS}` | 创建；`intervalS` 60–2592000，非法 **400** |
+| PATCH | `/api/schedules/{id}` | `{title?,prompt?,intervalS?,enabled?}` | 局部更新；不存在 **404** |
+| DELETE | `/api/schedules/{id}` | — | 删除；不存在 **404** |
+| POST | `/api/schedules/{id}/run` | — | 立即执行一次（只读）并回写 `lastStatus` |
+
+- 执行时 `plan_mode=True` + **core READ 工具白名单**：无人值守没有确认门可点，所以**不允许写工具**；
+- 每次执行新建一个会话，结果在左栏会话记录里回看；
+- 固定间隔，不支持 cron；调度器每 30 秒轮询（`WORKBENCH_DISABLE_SCHEDULER=1` 可关）。
+
 ## 18. 运行日志 `/api/logs`（`routes_logs.py`，2026-09-20 引入）
 
 **定位**：这是**运维面**，不是业务域。它回答"刚才发生了什么"。

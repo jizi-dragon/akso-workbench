@@ -422,3 +422,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+
+/* 定时任务列表 */
+.schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.schedule-row:last-child { border-bottom: 0; }
+.schedule-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.schedule-main small { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }

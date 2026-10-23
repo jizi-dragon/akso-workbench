@@ -48,6 +48,7 @@ hiddenimports = [
     "workbench.api.routes_sandbox",
     "workbench.api.routes_skills",
     "workbench.api.routes_checkpoints",
+    "workbench.api.routes_schedules",
     "workbench.api.routes_vault",
     # MCP：连接器与注册器都在函数体内延迟导入（不阻塞启动 / 不循环依赖）。
     "workbench.hub",
@@ -60,6 +61,8 @@ hiddenimports = [
     "workbench.plugins.accounts",
     "workbench.plugins.memory",
     "workbench.memory",
+    "workbench.schedules",
+    "workbench.scheduler",
     "workbench.skills.folders",
     "uvicorn.logging",
     "uvicorn.loops",

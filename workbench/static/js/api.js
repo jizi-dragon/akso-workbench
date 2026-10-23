@@ -50,6 +50,15 @@ export const api = {
   /** 系统提示词：读当前生效值 + 基线 + 是否自定义 */
   getPrompt: () => jsonFetch("/api/settings/prompt"),
   getToolScope: () => jsonFetch("/api/settings/tools"),
+  listSchedules: () => jsonFetch("/api/schedules"),
+  createSchedule: (body) =>
+    jsonFetch("/api/schedules", { method: "POST", body: JSON.stringify(body) }),
+  patchSchedule: (id, body) =>
+    jsonFetch(`/api/schedules/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteSchedule: (id) =>
+    jsonFetch(`/api/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  runSchedule: (id) =>
+    jsonFetch(`/api/schedules/${encodeURIComponent(id)}/run`, { method: "POST" }),
   saveToolScope: (allowed) =>
     jsonFetch("/api/settings/tools", { method: "PUT", body: JSON.stringify({ allowed }) }),
   /** 保存提示词（传空串 = 恢复基线） */

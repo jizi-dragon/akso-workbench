@@ -66,6 +66,12 @@
 - **工具范围设置 UI（2026-10-23）**：设置页新增工具白名单勾选（`GET/PUT /api/settings/tools`），
   保存后对话默认按白名单收窄 schema；未知工具 400；「恢复全部工具」清空限制。
 
+### Added
+
+- **定时任务 v1（2026-10-23）**：迁移 27 `scheduled_task`；`/api/schedules` CRUD + 手动运行；
+  调度器每 30 秒轮询，在独立线程里以 `plan_mode + core READ 工具白名单` 执行一次只读回合，
+  结果落新会话。设置页新增创建/暂停/运行/删除卡片。`tests/test_schedules.py` 4 条。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

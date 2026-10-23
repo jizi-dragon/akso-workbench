@@ -584,6 +584,28 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_scope_updated
 CREATE INDEX IF NOT EXISTS idx_agent_memory_expires
     ON agent_memory(expires_at);
 """),
+    (27, "scheduled_task", """
+-- 定时任务（v1）：每隔 N 秒把一条**只读 prompt**跑在一个新会话里。
+--
+-- 为什么不支持写工具：无人值守时没人能点确认门；把定时任务限制在 READ 工具，
+-- 才能在不假装有确认人的前提下可用。写操作仍必须由人当场发起。
+CREATE TABLE IF NOT EXISTS scheduled_task (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    prompt      TEXT NOT NULL,
+    interval_s  INTEGER NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    last_run_at INTEGER,
+    next_run_at INTEGER NOT NULL,
+    last_status TEXT NOT NULL DEFAULT '',
+    last_error  TEXT NOT NULL DEFAULT '',
+    last_conversation_id TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_task_due
+    ON scheduled_task(enabled, next_run_at);
+"""),
 ]
 
 
