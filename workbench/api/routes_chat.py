@@ -17,7 +17,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .. import config
+from .. import config, mcp_registry
 from ..approvals import NOTE_ROLE
 from ..harness.loop import run_agent_loop
 from ..harness.prompts import build_system_prompt
@@ -159,6 +159,17 @@ async def chat_stream(body: ChatBody) -> StreamingResponse:
 def feedback(body: FeedbackBody) -> dict:
     storage.update_qa_feedback(body.metricId, 1 if body.helpful else 0)
     return {"ok": True}
+
+
+def _system_prompt() -> str:
+    """基线系统提示词 + 已装载 MCP server 的外部说明（有上限、失败不影响对话）。"""
+    prompt = build_system_prompt()
+    try:
+        block = mcp_registry.get_registry().instructions_block()
+    except Exception:  # noqa: BLE001 —— MCP 是增强能力，不能拖垮对话
+        logger.warning("读取 MCP instructions 失败，按无 MCP 说明继续", exc_info=True)
+        return prompt
+    return f"{prompt}\n\n{block}" if block else prompt
 
 
 def _sse(event: dict) -> str:
@@ -448,7 +459,7 @@ async def _stream_agent(
     client = DeepSeekClient(cfg.api_key, model=cfg.model)
     agent_config = AgentConfig(
         temperature=cfg.temperature,
-        system_prompt=build_system_prompt(),
+        system_prompt=_system_prompt(),
         # 步数预算从设置读（默认 40）。**这里曾经什么都不传** —— 于是 `max_steps`
         # 永远是 `AgentConfig` 里的类默认值，用户没有任何手段调大它，
         # 而"稍微长一点的多步任务"必然撞上限并**整轮被砍掉**。

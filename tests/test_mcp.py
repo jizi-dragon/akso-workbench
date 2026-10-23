@@ -151,9 +151,9 @@ def test_registry_registers_tools_and_executes(cfg_path: Path) -> None:
         assert state["errors"] == []
         assert state["servers"][0]["connected"] is True
         assert state["servers"][0]["toolCount"] == 6
-        assert {s.name for s in hub.specs()} >= {"mcp_fake_echo", "mcp_fake_add"}
+        assert {s.name for s in hub.specs()} >= {"mcp__fake__echo", "mcp__fake__add"}
 
-        inv = asyncio.run(hub.execute("mcp_fake_echo", {"text": "hi"}))
+        inv = asyncio.run(hub.execute("mcp__fake__echo", {"text": "hi"}))
         assert inv.status is pa.ToolStatus.OK
         assert "hi" in inv.content
         assert "外部" in inv.content and "不可信" in inv.content, "MCP 结果必须带 UNTRUSTED 前缀（I18）"
@@ -171,7 +171,7 @@ def test_registry_defaults_to_write_risk_and_fails_closed(tmp_path: Path, monkey
     registry = mcp_registry.McpRegistry(hub)
     try:
         registry.reload()
-        inv = asyncio.run(hub.execute("mcp_fake_echo", {"text": "hi"}))
+        inv = asyncio.run(hub.execute("mcp__fake__echo", {"text": "hi"}))
         assert inv.status is pa.ToolStatus.REJECTED
     finally:
         registry.close()
@@ -191,7 +191,7 @@ def test_one_bad_server_does_not_block_the_good_one(tmp_path: Path, monkeypatch:
         assert by_name["fake"]["connected"] is True
         assert by_name["broken"]["connected"] is False
         assert "启动" in by_name["broken"]["error"] or "not found" in by_name["broken"]["error"].lower()
-        assert hub.get("mcp_fake_echo") is not None
+        assert hub.get("mcp__fake__echo") is not None
     finally:
         registry.close()
 
@@ -201,12 +201,12 @@ def test_reload_removes_stale_tools(cfg_path: Path, monkeypatch: pytest.MonkeyPa
     registry = mcp_registry.McpRegistry(hub)
     try:
         registry.reload()
-        assert hub.get("mcp_fake_echo") is not None
+        assert hub.get("mcp__fake__echo") is not None
 
         # 配置改成空 → 重连后旧工具必须消失（否则卸载后仍能被模型看到）
         _write_config(cfg_path.parent, {})
         registry.reload()
-        assert hub.get("mcp_fake_echo") is None
+        assert hub.get("mcp__fake__echo") is None
     finally:
         registry.close()
 
@@ -351,7 +351,7 @@ def test_health_check_reconnects_after_process_death(cfg_path: Path) -> None:
         server = state["servers"][0]
         assert server["connected"] is True, server
         assert server["restarts"] >= 1
-        assert hub.get("mcp_fake_echo") is not None
+        assert hub.get("mcp__fake__echo") is not None
     finally:
         registry.close()
 
@@ -367,7 +367,7 @@ def test_health_check_refreshes_on_tools_changed(cfg_path: Path) -> None:
             time.sleep(0.01)
         state = registry.health_check()
         assert state["servers"][0]["restarts"] >= 1
-        assert hub.get("mcp_fake_echo") is not None
+        assert hub.get("mcp__fake__echo") is not None
     finally:
         registry.close()
 
@@ -381,8 +381,8 @@ def test_per_tool_risk_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     registry = mcp_registry.McpRegistry(hub)
     try:
         registry.reload()
-        assert hub.get("mcp_fake_echo").risk is pa.Risk.READ
-        assert hub.get("mcp_fake_add").risk is pa.Risk.WRITE
+        assert hub.get("mcp__fake__echo").risk is pa.Risk.READ
+        assert hub.get("mcp__fake__add").risk is pa.Risk.WRITE
     finally:
         registry.close()
 

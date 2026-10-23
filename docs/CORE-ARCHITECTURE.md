@@ -44,8 +44,9 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 - **不做热插拔（核心层）**：core 插件导入期一次装配、之后只读；只有 `installed` 层（Skill / MCP 工具）运行期可变。
 - **不做多 Agent 编排**：无 planner/worker 分工、无子 Agent 派生。理由见 §7.3。
 - **不做向量检索/知识库**：迁移 6 已把 `knowledge_nodes` / `faq_cards` 删除，Embedding 配置随之移除。
-- **MCP 只做 stdio（2026-10-19 起）**：用户级 `mcp.json` + `tools/list`/`tools/call`，接进 installed 层；
-  **不做**远程 HTTP/SSE 传输、resources/prompts/sampling、自动重连。见 §7.2 与 [MCP.md](MCP.md)。
+- **MCP 支持 stdio + Streamable HTTP（2026-10-23 起）**：用户级 `mcp.json` + `tools/list`/`tools/call`，
+  工具名 `mcp__<server>__<tool>`（与 DSH / Claude Code 同形）；server `instructions` 以「外部说明」
+  追加到系统提示词。**不做** resources/prompts/sampling 与长连接推送。见 §7.2 与 [MCP.md](MCP.md)。
 
 ---
 
@@ -526,7 +527,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 | 维度 | 行业当前做法 | 本项目 | 判定 |
 |---|---|---|---|
 | **工具契约** | JSON Schema + 名字 + 描述；Anthropic 2025-11 追加 `input_examples` | pydantic `args_model` → `_openai_schema()` 自动派生，**schema 不手写第二份** | ✅ **优于主流**：类型即契约，schema 由类型派生，天然不会漂移 |
-| **工具来源标准化** | **MCP** 已是事实标准：2025-12-09 由 Anthropic 捐给 Linux Foundation 下的 Agentic AI Foundation（Anthropic/Block/OpenAI 共同创立，Google/Microsoft/AWS/Cloudflare/Bloomberg 支持），1 万+ 公开 server、97M+ 月 SDK 下载，ChatGPT/Cursor/Gemini/Copilot/VS Code 均已采用 | `ToolHub` 插件协议 ＋ **2026-10-19 起的最小 stdio MCP 客户端**（[MCP.md](MCP.md)） | ✅ **基础对齐**（stdio + tools；无远程/resources/sampling） |
+| **工具来源标准化** | **MCP** 已是事实标准：2025-12-09 由 Anthropic 捐给 Linux Foundation 下的 Agentic AI Foundation（Anthropic/Block/OpenAI 共同创立，Google/Microsoft/AWS/Cloudflare/Bloomberg 支持），1 万+ 公开 server、97M+ 月 SDK 下载，ChatGPT/Cursor/Gemini/Copilot/VS Code 均已采用 | `ToolHub` 插件协议 ＋ **stdio + Streamable HTTP MCP 客户端**（[MCP.md](MCP.md)） | ✅ **基础对齐**（两种传输 + tools + instructions；无 resources/sampling） |
 | **大规模工具注入** | Anthropic Tool Search Tool（`defer_loading`）：>10K token 或 10+ 工具时按需发现，上下文省 85%；纯工具定义在 5 server 场景可达 55K token，Anthropic 内部见过 134K | **全量注入**，自估 ~2k token/轮；`list_api_for(plugins)` 已留白名单口子 | 🟡 当前工具规模（见 [TOOLS.md](TOOLS.md)）、~2k token **远低于 10K 阈值**，当前全量注入是**正确选择**；但缺"工具变多之后的退路" |
 | **风险分级** | 框架普遍有（OpenAI Agents SDK `needsApproval`、LangGraph `interrupt()`） | `Risk` 三档 + 显式声明（装配期强制，不声明不给过） | ✅ 符合 |
 | **工具结果体量** | 普遍靠截断；前沿做法是 Programmatic Tool Calling（工具在代码沙箱里编排，中间结果不进上下文，token 降 37%） | `MAX_RESULT_CHARS=16_000` **显式告知**截断 + 沙箱已具备执行能力，但**未做工具编排** | 🟡 截断处理比多数项目诚实（告知而非静默）；PTC 是明确的下一步 |

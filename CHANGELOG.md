@@ -20,6 +20,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- **MCP Streamable HTTP + 行业命名（2026-10-23）**：`mcp.json` 支持
+  `transport: "streamable-http"` + `url` / `headers`；响应兼容 `application/json` 与请求级
+  `text/event-stream`，使用 `Mcp-Session-Id`；工具名改为 `mcp__<server>__<tool>`；
+  server `instructions` 以「外部说明」追加系统提示词（≤8k）。`tests/test_mcp_http.py`（7 条）。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

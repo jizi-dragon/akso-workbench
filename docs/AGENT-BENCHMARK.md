@@ -22,7 +22,7 @@
 | Tools | ✅ 内置工具 + MCP 工具 | ✅ 5 插件 / 18 内置工具；风险分级 / 信任标签 / 可逆性 / 审计 | **对齐（基础）** |
 | Skills | ✅ 上传/创建/启停/批量卸载 | ✅ `SKILL.md`（wraps / script 二选一）、ZIP 准入、安装/卸载/禁用 | **对齐（基础）** |
 | Sandbox | ✅ 权限确认 + 工作区边界 | ✅ 限损层沙箱：Fail-Closed 策略、解释器白名单、Job Object 树杀；**2026-10-19 加工作区根 + 只读/联网/派生进程预检** | **对齐（定位不同）** |
-| MCP | ✅ 用户级/项目级 `mcp.json`、状态页 | ✅ **2026-10-19**：用户级 `mcp.json`、stdio、分页、**健康巡检/自动重连/`tools/list_changed`/按工具 risk** | **对齐（基础）** |
+| MCP | ✅ 用户级/项目级 `mcp.json`、状态页 | ✅ **2026-10-23**：`mcp.json`、stdio + Streamable HTTP、`mcp__server__tool`、server instructions、分页、**健康巡检/自动重连/`tools/list_changed`/按工具 risk** | **对齐（基础）** |
 | 记忆 | ✅ 对话记忆、每晚摘要、可编辑/导入 | ❌ 只有会话内摘要（`cache.freeze_summary`），**无跨会话长期记忆** | **缺口** |
 | 多任务 | ✅ 多任务并行、上下文隔离 | 🟡 后端按会话独立；前端 `isRunning` 是全局的，一次只能跑一个 | **部分** |
 | 产物 / 结果面板 | ✅ Artifacts / All Files / Changes / Preview | 🟡 对象分析有产物预览（Markdown/drawio）；无通用文件/差异面板 | **部分** |
@@ -129,7 +129,7 @@ Workbench：只有**会话上下文**——`cache.freeze_summary` 把长历史�
 |---|---|---|---|
 | 1 | **长期记忆缺失** | 无表、无工具、无注入 | 迁移 26 `agent_memory`；`memory_list` / `memory_add` / `memory_delete`（add/delete 为 write）；系统提示词加"何时查记忆"；设置页可查看/删除 |
 | 2 | **云端账号库仍无自动双向同步** | **2026-10-20 已补只读拉取 + 本地→云端一次性 merge**（脱敏 + 5 分钟缓存 + 断网回落）；仍无自动轮询/冲突 UI | 做自动同步前先定冲突展示与重试策略 |
-| 3 | **MCP 只支持 stdio** | 远程 HTTP/SSE 未接 | 第二阶段：`streamable-http` 传输；仍保持"配置只由人写" |
+| 3 | ~~MCP 只支持 stdio~~ **已补**（2026-10-23） | `streamable-http` + `mcp__server__tool` + instructions 已接 | 仍保持“配置只由人写”；resources/prompts 未做 |
 | 4 | **MCP 通知 / 资源面未接** | 自动重连/健康检查已补；`resources` / `prompts` / `sampling` / progress 仍忽略 | 按需接 `resources`/`prompts`；sampling 不做 |
 | 5 | **`/api/*` 无认证** | 本机回环、单用户； 有意保留 | 不改成"假装有认证"；文档明确边界；远程访问一律不支持 |
 
@@ -212,7 +212,7 @@ Workbench：只有**会话上下文**——`cache.freeze_summary` 把长历史�
 
 1. **记忆**（P1）：迁移 26 + 3 个工具 + 设置页；预计 1 天，收益最高。
 2. **云端双向同步**（P1）：只读拉取已完成；若要合并/推送，先定 `snapshotId` 幂等与冲突策略。
-3. **MCP 第二阶段**（P1）：HTTP/SSE 传输；健康巡检/自动重连已在 v0.4.1 补上。
+3. ~~**MCP 第二阶段**：HTTP/SSE 传输~~（2026-10-23 已完成 Streamable HTTP）；健康巡检/自动重连已在 v0.4.1 补上。
 4. **多任务前端**（P2）：`isRunning` 改成按会话；后端无需改。
 5. **通用产物面板**（P2）：把附件、Skill 产物与对象分析统一到一张列表 + diff；预览组件已可复用。
 6. **覆盖空洞**（P2）：`/api/attachments` HTTP 层、`/api/vault`（已补）。

@@ -4,19 +4,19 @@
 
 WorkBuddy 一类 Agent 工作台的「基础五件套」是：agent 循环、tools、skills、sandbox、MCP。
 本仓前四件早已原生化，MCP 此前只有一句「通道已预留」（`CORE-ARCHITECTURE` §7.2）。
-这个模块补的是**最小可用且安全默认**的那一半：stdio 传输、初始化握手、`tools/list`、
-`tools/call`，以及一个**只认用户配置文件、模型永远不能指定命令**的启动面。
+这个模块补的是**最小可用且安全默认**的那一半：stdio + Streamable HTTP 传输、初始化握手、
+`tools/list`、`tools/call`，以及一个**只认用户配置文件、模型永远不能指定命令/URL**的启动面。
 
 ## 三条纪律（都是本仓已有的）
 
 **① 配置是用户写的，不是模型写的。**
-`mcp.json` 里的 `command/args` 只能由人放进数据目录；模型能做的只有调用**已经列出**的工具。
-因此不存在"模型让宿主 `curl | sh`"这条路径 —— 这是 MCP 与"任意命令执行"之间唯一的分界，
-比在参数里做命令白名单可靠得多（命令里可以藏的东西，正则列不完）。
+`mcp.json` 里的 `command/args` / `url` 只能由人放进数据目录；模型能做的只有调用**已经列出**的工具。
+因此不存在"模型让宿主 `curl | sh` / 访问任意 URL"这条路径 —— 这是 MCP 与"任意命令执行 / SSRF"
+之间唯一的分界，比在参数里做命令白名单可靠得多（命令里可以藏的东西，正则列不完）。
 
 **② 不继承宿主的全部环境变量**（规则 13）。
 MCP server 只需要 PATH / TEMP / 用户目录这类运行环境；`WORKBENCH_*`、云令牌、
-API Key 一律不传。要传的密钥由用户在 `mcp.json` 的 `env` 里**显式**写。
+API Key 一律不传。要传的密钥由用户在 `mcp.json` 的 `env`（stdio）或 `headers`（HTTP）里**显式**写。
 
 **③ 结果一律是 UNTRUSTED。**
 MCP 返回的是外部系统写的内容（网页、工单、消息），不是我们自己边界内的数据。
@@ -24,8 +24,11 @@ MCP 返回的是外部系统写的内容（网页、工单、消息），不是�
 
 ## 传输
 
-stdio，**一行一个 JSON-RPC 2.0 消息**（MCP 的 stdio 传输没有 Content-Length 头）。
-请求串行化：一个 server 一个连接、一把锁。这是刻意的 ——
+- **stdio**：一行一个 JSON-RPC 2.0 消息（没有 Content-Length 头）；
+- **Streamable HTTP**：`POST` 到用户配置的 `url`，响应可为 `application/json` 或请求级
+  `text/event-stream`；会话头 `Mcp-Session-Id` 由服务端下发后回带。
+
+请求串行化：一个 server 一个连接（HTTP 为一条 `httpx.Client`）、一把锁。这是刻意的 ——
 并发调用同一个 MCP server 的收益很小，而"响应串台"的代价是拿到别人的结果。
 """
 
@@ -43,6 +46,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import httpx
+
 from .. import config
 
 logger = logging.getLogger("workbench.mcp")
@@ -50,14 +55,14 @@ logger = logging.getLogger("workbench.mcp")
 #: 配置文件名（放在数据目录下，与 workbench.db 同级）。
 CONFIG_FILENAME = "mcp.json"
 
-#: MCP 协议版本：先用一个被广泛实现的版本；服务端返回什么就按什么用。
-PROTOCOL_VERSION = "2024-11-05"
+#: MCP 协议版本：优先用支持 Streamable HTTP 的版本；服务端返回什么就按什么用。
+PROTOCOL_VERSION = "2025-06-18"
 
 #: 单次请求的兜底超时。工具调用可在 server 配置里单独调大。
 DEFAULT_TIMEOUT_S = 60.0
 MAX_TIMEOUT_S = 600.0
 
-#: server 名限制得比工具名更严：它会被拼进 `mcp_<server>_<tool>`（≤64 字符）。
+#: server 名限制得比工具名更严：它会被拼进 `mcp__<server>__<tool>`（≤64 字符）。
 SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$")
 
 #: 允许继承的环境变量。**白名单，不是黑名单**：漏掉一个只是 server 跑不起来，
@@ -90,7 +95,7 @@ class ServerConfig:
     """一个 MCP server 的静态配置。`risk` 保持字符串，由注册层翻译成 `Risk`。"""
 
     name: str
-    command: str
+    command: str = ""
     args: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
     cwd: str | None = None
@@ -101,6 +106,12 @@ class ServerConfig:
     timeout_s: float = DEFAULT_TIMEOUT_S
     description: str = ""
     protocol_version: str = PROTOCOL_VERSION
+    #: `stdio`（默认，向后兼容）或 `streamable-http`。
+    transport: str = "stdio"
+    #: Streamable HTTP 的端点（transport 为 http 时必填）。
+    url: str = ""
+    #: 附加请求头（可能含 token）；只从用户配置读，绝不投影到状态/日志。
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 _RISK_VALUES = {"read", "write", "dangerous"}
@@ -143,25 +154,62 @@ def config_path() -> Path:
     return config.DATA_DIR / CONFIG_FILENAME
 
 
+def _parse_transport(raw: object, *, has_url: bool) -> str:
+    if raw is None:
+        return "streamable-http" if has_url else "stdio"
+    value = str(raw).strip().lower().replace("_", "-")
+    if value in {"http", "streamable-http", "streamablehttp"}:
+        return "streamable-http"
+    if value == "stdio":
+        return "stdio"
+    raise ValueError("transport 只能是 stdio / streamable-http")
+
+
 def _parse_server(name: str, raw: object) -> ServerConfig:
     if not SERVER_NAME_RE.match(name):
         raise ValueError("server 名只允许 1–32 位 ASCII 字母/数字/._-，且不能以符号开头")
     if not isinstance(raw, dict):
         raise ValueError("配置必须是一个对象")
+    transport = _parse_transport(raw.get("transport"), has_url=bool(raw.get("url")))
     command = raw.get("command")
-    if not isinstance(command, str) or not command.strip():
-        raise ValueError("缺少 command（字符串）")
-    args = raw.get("args") or []
-    if not isinstance(args, list) or any(not isinstance(a, str) for a in args):
-        raise ValueError("args 必须是字符串数组")
-    env = raw.get("env") or {}
-    if not isinstance(env, dict) or any(
-        not isinstance(k, str) or not isinstance(v, (str, int, float)) for k, v in env.items()
+    url = raw.get("url")
+    headers_raw = raw.get("headers") or {}
+    if not isinstance(headers_raw, dict) or any(
+        not isinstance(k, str) or not isinstance(v, str) for k, v in headers_raw.items()
     ):
-        raise ValueError("env 必须是字符串到字符串的对象")
-    cwd = raw.get("cwd")
-    if cwd is not None and not isinstance(cwd, str):
-        raise ValueError("cwd 必须是字符串")
+        raise ValueError("headers 必须是字符串到字符串的对象")
+    if len(headers_raw) > 32:
+        raise ValueError("headers 最多 32 条")
+    if transport == "streamable-http":
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("transport=streamable-http 时必须提供 url")
+        parsed = httpx.URL(url.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.host:
+            raise ValueError("url 必须是 http(s) 绝对地址")
+        if parsed.userinfo:
+            raise ValueError("url 不能内嵌用户名/密码；凭据请放 headers")
+        if command is not None and command != "":
+            raise ValueError("transport=streamable-http 时不接受 command（只认 url）")
+        command = ""
+        args = []
+        env = {}
+        cwd = None
+    else:
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError("缺少 command（字符串）")
+        if url:
+            raise ValueError("transport=stdio 时不接受 url")
+        args = raw.get("args") or []
+        if not isinstance(args, list) or any(not isinstance(a, str) for a in args):
+            raise ValueError("args 必须是字符串数组")
+        env = raw.get("env") or {}
+        if not isinstance(env, dict) or any(
+            not isinstance(k, str) or not isinstance(v, (str, int, float)) for k, v in env.items()
+        ):
+            raise ValueError("env 必须是字符串到字符串的对象")
+        cwd = raw.get("cwd")
+        if cwd is not None and not isinstance(cwd, str):
+            raise ValueError("cwd 必须是字符串")
     enabled = raw.get("enabled", True)
     if not isinstance(enabled, bool):
         raise ValueError("enabled 必须是布尔值")
@@ -179,7 +227,7 @@ def _parse_server(name: str, raw: object) -> ServerConfig:
     description = str(raw.get("description", ""))[:200]
     return ServerConfig(
         name=name,
-        command=command.strip(),
+        command=str(command).strip(),
         args=tuple(args),
         env={str(k): str(v) for k, v in env.items()},
         cwd=cwd,
@@ -189,6 +237,9 @@ def _parse_server(name: str, raw: object) -> ServerConfig:
         timeout_s=timeout_s,
         description=description,
         protocol_version=protocol,
+        transport=transport,
+        url=url.strip() if isinstance(url, str) else "",
+        headers={str(k): str(v) for k, v in headers_raw.items()},
     )
 
 
@@ -265,6 +316,48 @@ def render_result(result: dict) -> str:
     return text
 
 
+def _parse_sse_json(text: str) -> list[dict]:
+    """把 SSE 响应里的 `data:` 帧解析成 JSON-RPC 消息（流式 HTTP 的响应形态）。"""
+    messages: list[dict] = []
+    data: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("data:"):
+            data.append(line[5:].lstrip())
+            continue
+        if line.strip() or not data:
+            continue
+        payload = "\n".join(data)
+        data.clear()
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise McpError(f"MCP SSE 帧不是合法 JSON：{exc}", kind="protocol") from exc
+        if isinstance(parsed, dict):
+            messages.append(parsed)
+    if data:
+        try:
+            parsed = json.loads("\n".join(data))
+        except json.JSONDecodeError as exc:
+            raise McpError(f"MCP SSE 帧不是合法 JSON：{exc}", kind="protocol") from exc
+        if isinstance(parsed, dict):
+            messages.append(parsed)
+    return messages
+
+
+def _http_messages(response: httpx.Response) -> list[dict]:
+    """HTTP 响应 → JSON-RPC 消息；兼容 `application/json` 与 `text/event-stream`。"""
+    content_type = (response.headers.get("content-type") or "").lower()
+    if "text/event-stream" in content_type:
+        return _parse_sse_json(response.text)
+    try:
+        parsed = response.json()
+    except ValueError as exc:
+        raise McpError(f"MCP HTTP 响应不是合法 JSON：{exc}", kind="protocol") from exc
+    if isinstance(parsed, list):
+        return [item for item in parsed if isinstance(item, dict)]
+    return [parsed] if isinstance(parsed, dict) else []
+
+
 class McpClient:
     """一个 stdio MCP 连接。**同步**：调用方负责 `asyncio.to_thread`（规则 I11）。"""
 
@@ -281,11 +374,16 @@ class McpClient:
         self._request_id = 0
         self._threads: list[threading.Thread] = []
         self._closed = False
+        self._http: httpx.Client | None = None
+        self._session_id: str = ""
+        self.instructions: str = ""
 
     # ---------------------------------------------------------------- 生命周期
 
     @property
     def connected(self) -> bool:
+        if self.cfg.transport == "streamable-http":
+            return self._http is not None and not self._closed
         return self._proc is not None and self._proc.poll() is None and not self._closed
 
     @property
@@ -294,6 +392,9 @@ class McpClient:
         return " / ".join(self._stderr[-5:])
 
     def start(self) -> None:
+        if self.cfg.transport == "streamable-http":
+            self._start_http()
+            return
         if self._proc is not None:
             return
         if self._closed:
@@ -339,6 +440,12 @@ class McpClient:
             raise
 
     def close(self) -> None:
+        http, self._http = self._http, None
+        if http is not None:
+            try:
+                http.close()
+            except Exception:  # noqa: BLE001 —— 关闭失败不能让退出流程卡住
+                pass
         proc, self._proc = self._proc, None
         self._closed = True
         if proc is None:
@@ -400,6 +507,106 @@ class McpClient:
                 return
             raise
 
+    # ---------------------------------------------------------------- HTTP 传输
+
+    def _start_http(self) -> None:
+        if self._http is not None:
+            return
+        if self._closed:
+            raise McpError("这个连接已经关闭")
+        self._http = httpx.Client(
+            timeout=httpx.Timeout(self.cfg.timeout_s),
+            headers=self.cfg.headers,
+            follow_redirects=False,
+        )
+        try:
+            result = self._request_http(
+                "initialize",
+                {
+                    "protocolVersion": self.cfg.protocol_version,
+                    "capabilities": {},
+                    "clientInfo": {"name": "akso-workbench", "version": "0.4"},
+                },
+                timeout=min(self.cfg.timeout_s, 30.0),
+            )
+            self.server_info = result.get("serverInfo") or {}
+            self.protocol_version = str(result.get("protocolVersion") or self.cfg.protocol_version)
+            instructions = result.get("instructions")
+            self.instructions = str(instructions)[:32768] if isinstance(instructions, str) else ""
+            self._notify_http("notifications/initialized", {})
+        except Exception:
+            self.close()
+            raise
+
+    def _http_headers(self) -> dict[str, str]:
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            "MCP-Protocol-Version": self.protocol_version,
+        }
+        headers.update(self.cfg.headers)
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
+        return headers
+
+    def _request_http(self, method: str, params: dict, *, timeout: float) -> dict:
+        with self._lock:
+            client = self._http
+            if client is None:
+                raise McpError(f"MCP HTTP 连接未建立（{self.cfg.name}）")
+            self._request_id += 1
+            req_id = self._request_id
+            payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
+            try:
+                response = client.post(
+                    self.cfg.url, json=payload, headers=self._http_headers(), timeout=timeout
+                )
+            except httpx.HTTPError as exc:
+                raise McpError(f"MCP {method} 网络失败：{type(exc).__name__}", kind="network") from exc
+            session_id = response.headers.get("mcp-session-id")
+            if session_id:
+                self._session_id = session_id
+            if response.status_code in {202, 204}:
+                return {}
+            if response.status_code >= 400:
+                raise McpError(
+                    f"MCP {method} HTTP {response.status_code}（{response.reason_phrase}）",
+                    kind="network",
+                )
+            for message in _http_messages(response):
+                if not isinstance(message, dict) or message.get("id") != req_id:
+                    continue
+                if "error" in message:
+                    error = message.get("error") or {}
+                    raw_code = error.get("code")
+                    code = raw_code if isinstance(raw_code, int) else None
+                    raise McpError(
+                        f"MCP {method} 失败：{error.get('message') or error}",
+                        code=code,
+                        kind="rpc",
+                    )
+                return message.get("result") or {}
+            raise McpError(f"MCP {method} 没有收到匹配响应", kind="protocol")
+
+    def _notify_http(self, method: str, params: dict) -> None:
+        client = self._http
+        if client is None:
+            return
+        try:
+            response = client.post(
+                self.cfg.url,
+                json={"jsonrpc": "2.0", "method": method, "params": params},
+                headers=self._http_headers(),
+                timeout=min(self.cfg.timeout_s, 10.0),
+            )
+        except httpx.HTTPError as exc:
+            raise McpError(f"MCP {method} 网络失败：{type(exc).__name__}", kind="network") from exc
+        if response.status_code >= 400:
+            raise McpError(
+                f"MCP {method} HTTP {response.status_code}（{response.reason_phrase}）",
+                kind="network",
+            )
+
     # ---------------------------------------------------------------- 进程 IO
 
     def _read_stdout(self) -> None:
@@ -452,9 +659,14 @@ class McpClient:
             raise McpError(f"向 MCP server 写请求失败：{exc}") from exc
 
     def _notify(self, method: str, params: dict) -> None:
+        if self.cfg.transport == "streamable-http":
+            self._notify_http(method, params)
+            return
         self._send({"jsonrpc": "2.0", "method": method, "params": params})
 
     def _request(self, method: str, params: dict, *, timeout: float) -> dict:
+        if self.cfg.transport == "streamable-http":
+            return self._request_http(method, params, timeout=timeout)
         with self._lock:
             if self._proc is None or self._proc.poll() is not None:
                 raise McpError(f"MCP server 不在运行（{self.cfg.name}）")

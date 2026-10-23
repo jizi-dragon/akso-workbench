@@ -83,7 +83,7 @@ Tauri 用 `free_port()` 选空闲端口，经 `WORKBENCH_PORT` 下发；Web 模�
 | `workbench/approvals.py` | 风险门 + 模型发起的确认（两条通道，一张表） |
 | `workbench/hub.py` | 宿主装配器（`approvals.install` 必须先于 `plugins.load_all`） |
 | `workbench/mcp_registry.py` | MCP 连接、工具注册、状态、健康巡检与自动重连 |
-| `workbench/services/mcp.py` | stdio JSON-RPC 客户端、配置解析、环境白名单、`ping` / `list_changed` |
+| `workbench/services/mcp.py` | stdio + Streamable HTTP JSON-RPC 客户端、配置解析、环境白名单、`ping` / `list_changed` |
 | `workbench/services/egmp/` | 平台知识层：`kernel/`（纯知识）· `client.py` · `insight/`（Monitor 已于 2026-10-19 删除） |
 | `workbench/sandbox/` | 不受信代码的限损层（**不是安全边界**） |
 | `workbench/skills/` | SKILL.md 能力包：装/卸/删 + ZIP 准入 |

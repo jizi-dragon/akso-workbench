@@ -669,11 +669,8 @@ curl.exe -s "http://127.0.0.1:18765/api/logs/tail?level=ERROR&n=50"
   "loaded": true,
   "servers": [
     {"name": "wecom", "enabled": true, "connected": true, "toolCount": 3,
-     "toolNames": ["send_message", "list_groups", "whoami"],
-     "command": "uvx", "risk": "write", "toolRisk": {"whoami": "read"},
-     "error": "", "restarts": 0, "protocolVersion": "2024-11-05",
-     "serverName": "wecom-bot-mcp-server", "serverVersion": "1.0.0",
-     "lastPingAt": 1730000000000, "serverInfo": {"name": "wecom-bot-mcp-server", "version": "1.0.0"}}
+     "transport": "stdio", "risk": "write", "description": "",
+     "error": "", "restarts": 0, "lastErrorAt": 0}
   ],
   "errors": [],
   "tools": 3,
@@ -684,8 +681,8 @@ curl.exe -s "http://127.0.0.1:18765/api/logs/tail?level=ERROR&n=50"
 }
 ```
 
-- `status` 里**不返回** `args` / `env`（可能有 token）；
-- `toolNames` 只给名称，不含 schema；`toolRisk` 是配置里的按工具覆盖；
+- `status` 里**不返回** `args` / `env` / `headers` / `url`（可能有 token）；
+- `transport` 是 `stdio` 或 `streamable-http`；`toolCount` 只给数量，不返回 schema；
 - 后台每 `monitorIntervalS` 秒做一次 `ping` 健康检查；失败 / 进程退出 /
   `notifications/tools/list_changed` 会触发自动重连（指数退避，上限 5 分钟）；
 - 未配置时 `servers` 为空、`exists` 可能是 `false`；
