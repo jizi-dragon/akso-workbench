@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 #: 对外只暴露这些字段。MCP 配置可以含 `env`/`headers`（token/webhook），
 #: 状态面永远不该把它们带出去——allowlist 比"记得删"可靠。
 _SERVER_FIELDS = ("name", "enabled", "connected", "toolCount", "error",
-                  "restarts", "lastErrorAt", "risk", "description", "transport")
+                  "restarts", "lastErrorAt", "risk", "description", "transport", "lazy")
 
 
 def _project_status(status: dict) -> dict:
@@ -47,6 +47,20 @@ def list_servers() -> dict:
         return _project_status(mcp_registry.get_registry().status())
     except Exception as exc:  # noqa: BLE001 —— 状态读不出来要说清，不要 500 空白
         raise HTTPException(503, f"MCP 注册表不可用：{exc}") from exc
+
+
+@router.post("/servers/{name}/activate")
+async def activate_server(name: str) -> dict:
+    """延迟加载的 server：显式连接并注册工具。"""
+    try:
+        await asyncio.to_thread(mcp_registry.get_registry().activate, name)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"MCP 加载失败：{exc}") from exc
+    projected = _project_status(mcp_registry.get_registry().status())
+    server = next((s for s in projected["servers"] if s.get("name") == name), {})
+    return {"server": server, **projected}
 
 
 @router.post("/servers/{name}/reconnect")

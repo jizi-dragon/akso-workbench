@@ -17,6 +17,7 @@
 | `notifications/tools/list_changed` | ✅ | 收到后重新 `tools/list` 并重新注册（不用手动重连） |
 | 用户级配置 `mcp.json` | ✅ | stdio 条目与 Claude Desktop 同形；HTTP 条目加 `transport` / `url` / `headers` |
 | 状态 / 手动重连 / 单 server 重连 | ✅ | 设置页「MCP 服务器」或 `POST /api/mcp/servers/{name}/reconnect` |
+| 延迟加载 | ✅ | `lazy: true` 的 server 启动不连接；点「加载」/ `POST .../activate` 后才注册工具 |
 | 按工具 risk 覆盖 | ✅ | `risk: {default, tools}`（见 §2） |
 | 远程 HTTP server | ✅ | `transport: "streamable-http"` + `url`；不需要本地桥接 |
 | `resources` / `prompts` / `sampling` | ❌ | 本版只接 tools；server 反向请求一律回 `-32601` |
@@ -61,6 +62,7 @@
 | `command` | stdio 必填 | — | 可执行文件；**只从配置文件来，模型不能指定** |
 | `url` | http 必填 | — | Streamable HTTP 端点，必须是 `http(s)` 绝对地址 |
 | `headers` | — | `{}` | 附加请求头（可含 token）；**状态面与日志不返回** |
+| `lazy` | — | `false` | 延迟加载：启动不连接/不注册工具，设置页点「加载」或 `POST /api/mcp/servers/{name}/activate` 后才进入工具面 |
 | `args` | — | `[]` | 字符串数组 |
 | `env` | — | `{}` | **只追加**这些变量；宿主环境按白名单继承（见 §3） |
 | `cwd` | — | 继承 | 必须是已存在目录 |

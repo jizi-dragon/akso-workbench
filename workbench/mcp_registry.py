@@ -180,7 +180,7 @@ class McpRegistry:
             self._next_retry = {}
             for name, cfg in servers.items():
                 self._states[name] = self._initial_state(cfg)
-                if cfg.enabled:
+                if cfg.enabled and not cfg.lazy:
                     self._connect_locked(name, cfg)
             self._loaded = True
             return self.status_locked()
@@ -210,6 +210,17 @@ class McpRegistry:
                     if now >= self._next_retry.get(name, 0.0):
                         self._restart_locked(name, cfg, reason="连接已断")
             return self.status_locked()
+
+    def activate(self, name: str) -> dict:
+        """延迟加载的 server：显式连接并注册工具。"""
+        with self._lock:
+            cfg = self._configs.get(name)
+            if cfg is None:
+                raise ValueError(f"没有这个 MCP server：{name}")
+            state = self._states.setdefault(name, self._initial_state(cfg))
+            if not state.get("connected"):
+                self._connect_locked(name, cfg)
+            return state
 
     def reconnect(self, name: str) -> dict:
         """手动重连单个 server（不存在则抛 ValueError）。"""
@@ -298,6 +309,7 @@ class McpRegistry:
             "toolNames": [],
             "command": Path(cfg.command).name if cfg.command else "",
             "transport": cfg.transport,
+            "lazy": cfg.lazy,
             "description": cfg.description,
             "risk": cfg.risk,
             "toolRisk": dict(cfg.tool_risk),

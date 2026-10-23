@@ -485,19 +485,20 @@ function flashButton(id, text) {
 function initMcpPanel() {
   document.getElementById("btn-mcp-reload").addEventListener("click", () => loadMcp(true));
   document.getElementById("mcp-servers").addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-mcp-reconnect]");
+    const activate = event.target.closest("[data-mcp-activate]");
+    const button = event.target.closest("[data-mcp-reconnect]") || activate;
     if (!button) return;
-    const name = button.dataset.mcpReconnect;
+    const name = activate ? button.dataset.mcpActivate : button.dataset.mcpReconnect;
     button.disabled = true;
-    button.textContent = "重连中…";
+    button.textContent = activate ? "加载中…" : "重连中…";
     try {
-      await api.reconnectMcp(name);
+      await (activate ? api.activateMcp(name) : api.reconnectMcp(name));
       await loadMcp(false);
     } catch (error) {
       const note = document.getElementById("mcp-note");
       if (note) note.textContent = `重连 ${name} 失败：${error.message}`;
       button.disabled = false;
-      button.textContent = "重连";
+      button.textContent = activate ? "加载" : "重连";
     }
   });
   void loadMcp(false);
@@ -557,9 +558,12 @@ function paintMcp(data) {
           ${server.error ? `<small class="mcp-error">${esc(server.error)}</small>` : ""}
         </div>
         <span class="badge ${badge}">${state}</span>
-        <button class="btn-ghost btn-sm" type="button" data-mcp-reconnect="${esc(server.name)}"
-                ${server.enabled ? "" : "disabled"}
-                title="${server.enabled ? "只重连这个 server" : "server 在配置里已禁用"}">重连</button>
+        ${server.lazy && !server.connected
+          ? `<button class="btn-ghost btn-sm" type="button" data-mcp-activate="${esc(server.name)}"
+                     title="延迟加载：点一下才连接并注册工具">加载</button>`
+          : `<button class="btn-ghost btn-sm" type="button" data-mcp-reconnect="${esc(server.name)}"
+                     ${server.enabled ? "" : "disabled"}
+                     title="${server.enabled ? "只重连这个 server" : "server 在配置里已禁用"}">重连</button>`}
       </div>`;
   }).join("");
 

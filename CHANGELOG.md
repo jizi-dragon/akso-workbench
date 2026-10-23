@@ -89,6 +89,12 @@
 - **目标有限自动推进（2026-10-23）**：`POST /api/goals/{id}/advance` 连续执行只读回合，
   最多剩余轮次；正文含「目标完成」标记 done，否则到上限停止。设置页新增「自动推进」。
 
+### Added
+
+- **MCP 延迟加载（2026-10-23）**：`mcp.json` 支持 `lazy: true`；启动不连接/不注册工具，
+  设置页「加载」或 `POST /api/mcp/servers/{name}/activate` 后才进入工具面。
+  `tests/test_mcp.py` 增加 lazy 反证 + UI wiring。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

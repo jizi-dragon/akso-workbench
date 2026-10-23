@@ -398,3 +398,29 @@ def test_monitor_is_idempotent_and_stops(cfg_path: Path) -> None:
         assert registry._monitor_thread is first, "重复启动会多出一个巡检线程"
     finally:
         registry.close()
+
+
+def test_lazy_server_waits_for_activate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _write_config(tmp_path, {"lazy": _fake_server(lazy=True)})
+    monkeypatch.setattr(mcp, "config_path", lambda: path)
+    hub = pa.ToolHub()
+    registry = mcp_registry.McpRegistry(hub)
+    try:
+        state = registry.reload()
+        assert state["servers"][0]["lazy"] is True
+        assert state["servers"][0]["connected"] is False
+        assert hub.get("mcp__lazy__echo") is None
+
+        registry.activate("lazy")
+        assert registry.status()["servers"][0]["connected"] is True
+        assert hub.get("mcp__lazy__echo") is not None
+    finally:
+        registry.close()
+
+
+def test_lazy_mcp_ui_is_wired() -> None:
+    root = Path(__file__).resolve().parents[1] / "workbench" / "static"
+    js = (root / "js" / "settings.js").read_text(encoding="utf-8")
+    api_js = (root / "js" / "api.js").read_text(encoding="utf-8")
+    assert "data-mcp-activate" in js and "activateMcp" in js
+    assert "activateMcp" in api_js

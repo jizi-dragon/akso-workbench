@@ -112,6 +112,8 @@ class ServerConfig:
     url: str = ""
     #: 附加请求头（可能含 token）；只从用户配置读，绝不投影到状态/日志。
     headers: dict[str, str] = field(default_factory=dict)
+    #: 延迟加载：启动时不连接/不注册工具，等用户点「加载」或 API activate。
+    lazy: bool = False
 
 
 _RISK_VALUES = {"read", "write", "dangerous"}
@@ -213,6 +215,9 @@ def _parse_server(name: str, raw: object) -> ServerConfig:
     enabled = raw.get("enabled", True)
     if not isinstance(enabled, bool):
         raise ValueError("enabled 必须是布尔值")
+    lazy = raw.get("lazy", raw.get("defer", False))
+    if not isinstance(lazy, bool):
+        raise ValueError("lazy 必须是布尔值")
     risk, tool_risk = _parse_risk(raw.get("risk"))
     protocol = str(raw.get("protocolVersion") or raw.get("protocol_version") or PROTOCOL_VERSION)
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", protocol):
@@ -240,6 +245,7 @@ def _parse_server(name: str, raw: object) -> ServerConfig:
         transport=transport,
         url=url.strip() if isinstance(url, str) else "",
         headers={str(k): str(v) for k, v in headers_raw.items()},
+        lazy=lazy,
     )
 
 

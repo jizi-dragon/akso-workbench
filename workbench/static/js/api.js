@@ -109,6 +109,7 @@ export const api = {
   reloadMcp: () => jsonFetch("/api/mcp/reload", { method: "POST" }),
   /** 只重连某一个 server（手动，不走退避） */
   reconnectMcp: (name) => jsonFetch(`/api/mcp/servers/${encodeURIComponent(name)}/reconnect`, { method: "POST" }),
+  activateMcp: (name) => jsonFetch(`/api/mcp/servers/${encodeURIComponent(name)}/activate`, { method: "POST" }),
 
   /** 云端账号库：登录状态 / 设备流 / 只读数据视图 */
   getVaultStatus: () => jsonFetch("/api/vault/status"),
