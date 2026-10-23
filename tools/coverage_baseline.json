@@ -1,0 +1,15 @@
+{
+  "workbench/approvals.py": 94.5,
+  "workbench/checkpoints.py": 90.2,
+  "workbench/diagnostics.py": 80.6,
+  "workbench/harness/loop.py": 92.5,
+  "workbench/permissions.py": 89.9,
+  "workbench/plugin_api.py": 92.2,
+  "workbench/sandbox/job.py": 70.0,
+  "workbench/sandbox/layout.py": 82.3,
+  "workbench/sandbox/policy.py": 90.4,
+  "workbench/sandbox/runner.py": 83.0,
+  "workbench/services/vault.py": 84.5,
+  "workbench/memory.py": 92.5,
+  "workbench/plugins/memory.py": 74.2
+}

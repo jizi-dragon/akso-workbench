@@ -22,12 +22,29 @@ logger = logging.getLogger("workbench.routes_mcp")
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
+#: 对外只暴露这些字段。MCP 配置可以含 `env`/`headers`（token/webhook），
+#: 状态面永远不该把它们带出去——allowlist 比"记得删"可靠。
+_SERVER_FIELDS = ("name", "enabled", "connected", "toolCount", "error",
+                  "restarts", "lastErrorAt", "risk", "description", "transport")
+
+
+def _project_status(status: dict) -> dict:
+    """状态投影：只保留白名单字段；错误文本限长。"""
+    out = dict(status)
+    out["servers"] = [
+        {key: server.get(key) for key in _SERVER_FIELDS if key in server}
+        for server in (status.get("servers") or [])
+        if isinstance(server, dict)
+    ]
+    out["errors"] = [str(item)[:200] for item in (status.get("errors") or [])]
+    return out
+
 
 @router.get("/servers")
 def list_servers() -> dict:
     """当前 MCP 服务器状态（配置路径、每个 server 的连接/工具数/错误）。"""
     try:
-        return mcp_registry.get_registry().status()
+        return _project_status(mcp_registry.get_registry().status())
     except Exception as exc:  # noqa: BLE001 —— 状态读不出来要说清，不要 500 空白
         raise HTTPException(503, f"MCP 注册表不可用：{exc}") from exc
 
@@ -36,12 +53,14 @@ def list_servers() -> dict:
 async def reconnect_server(name: str) -> dict:
     """手动重连单个 server。**立即尝试**，不走退避。"""
     try:
-        state = await asyncio.to_thread(mcp_registry.get_registry().reconnect, name)
+        await asyncio.to_thread(mcp_registry.get_registry().reconnect, name)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"MCP 重连失败：{exc}") from exc
-    return {"server": state, **mcp_registry.get_registry().status()}
+    projected = _project_status(mcp_registry.get_registry().status())
+    server = next((s for s in projected["servers"] if s.get("name") == name), {})
+    return {"server": server, **projected}
 
 
 @router.post("/reload")
@@ -52,7 +71,7 @@ async def reload_servers() -> dict:
     与 `errors[]` 里，其余 server 照常可用（与 `plugins.load_all` 同一语义）。
     """
     try:
-        return await asyncio.to_thread(mcp_registry.get_registry().reload)
+        return _project_status(await asyncio.to_thread(mcp_registry.get_registry().reload))
     except Exception as exc:  # noqa: BLE001
         logger.warning("MCP 重连失败", exc_info=True)
         raise HTTPException(502, f"MCP 重连失败：{exc}") from exc

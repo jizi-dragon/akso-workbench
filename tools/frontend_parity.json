@@ -1,0 +1,34 @@
+{
+  "apiOnly": {
+    "/api/agent/invoke": "无交互 HTTP 调用面（Agent 集成/脚本），不设页面入口",
+    "/api/agent/audit": "审计检索 API，支持/排障用",
+    "/api/agent/audit/{audit_id}": "单条审计 API，支持/排障用",
+    "/api/agent/plugins": "插件清单 API，排障用",
+    "/api/agent/selfcheck": "启动自检 API，排障用",
+    "/api/diagnostics": "能力诊断 API（本期新增），设置页接入前先保留 API",
+    "/api/logs/days": "日志运维 API",
+    "/api/logs/download": "日志运维 API",
+    "/api/logs/tail": "日志运维 API",
+    "/api/logs/trace/{trace_id}": "日志运维 API",
+    "/api/mcp/servers/{name}/reconnect": "MCP 管理 API；设置页暂无手动重连按钮",
+    "/api/settings/permissions": "权限策略 API；设置页 UI 未接（P2 记录）",
+    "/api/vault/refresh": "账号库内部刷新 API；页面走 /api/vault/library",
+    "/api/insight/workspace": "对象分析工作区 API（未被页面直接调用）",
+    "/api/memory": "记忆管理 API（P3 v1）；管理 UI 后续再接",
+    "/api/memory/{memory_id}": "记忆删除 API（P3 v1）；管理 UI 后续再接"
+  },
+  "missing": {
+    "/api/accounts/boxes": "账号中心 2026-10-20 改版后只保留云端库，盒子管理未接",
+    "/api/accounts/boxes/create": "同上",
+    "/api/accounts/boxes/default-name": "同上",
+    "/api/accounts/boxes/delete": "同上",
+    "/api/accounts/boxes/disable": "同上",
+    "/api/accounts/boxes/rename": "同上",
+    "/api/accounts/envs": "多环境管理未接（账号中心改版遗留）",
+    "/api/accounts/envs/{env_id}": "同上",
+    "/api/accounts/export": "本地账号导出未接",
+    "/api/accounts/import": "本地账号导入未接",
+    "/api/accounts/import-backup": "本地账号备份导入未接",
+    "/api/accounts/import/preview": "本地账号导入预览未接"
+  }
+}

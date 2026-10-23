@@ -1,0 +1,30 @@
+{
+  "/api/bootstrap": {
+    "required": ["conversations", "stats", "settings", "cache"],
+    "consumed": ["conversations", "stats", "settings", "cache"]
+  },
+  "/api/agent/tools": {
+    "required": ["plugins", "tools"],
+    "consumed": ["plugins", "tools"]
+  },
+  "/api/agent/selfcheck": {
+    "required": ["ok", "plugins", "tools", "missingRequired", "failures"],
+    "consumed": []
+  },
+  "/api/mcp/servers": {
+    "required": ["configPath", "exists", "loaded", "servers", "errors", "tools", "healthy", "failing"],
+    "consumed": ["configPath", "servers", "errors", "tools", "healthy", "failing"]
+  },
+  "/api/settings/permissions": {
+    "required": ["mode", "allow", "ask", "deny", "precedence"],
+    "consumed": []
+  },
+  "/api/diagnostics": {
+    "required": ["schemaVersion", "ok", "summary", "modules", "issues"],
+    "consumed": []
+  },
+  "/api/sandbox/status": {
+    "required": ["platform", "job", "capabilities", "layout", "workspace", "executables_allowed"],
+    "consumed": ["platform", "job", "capabilities", "layout", "workspace", "executables_allowed"]
+  }
+}

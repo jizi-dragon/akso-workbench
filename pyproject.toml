@@ -26,6 +26,8 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    # 敏感路径覆盖率棘轮（tools/coverage_gate.py）；只进 dev，不进运行期/打包。
+    "coverage>=7.6",
     # 仅用于 Web UI E2E 验收脚本（tools/verify_*_ui.py），**不进运行期**；
     # 2026-10-19 内置浏览器下线后，产品不再导入 playwright，PyInstaller 也不再收集
     # chromium / ms-playwright（见 workbench/server.spec）。
