@@ -19,7 +19,7 @@
 | 基础能力 | WorkBuddy | Workbench（2026-10-19） | 判定 |
 |---|---|---|---|
 | Agent 循环 / 多步执行 | ✅ 规划任务、多步执行、结果面板 | ✅ `harness/loop.py`：步数预算、停止、确认、超时、回填未执行调用 | **对齐（基础）** |
-| Tools | ✅ 内置工具 + MCP 工具 | ✅ 5 插件 / 18 内置工具；风险分级 / 信任标签 / 可逆性 / 审计 | **对齐（基础）** |
+| Tools | ✅ 内置工具 + MCP 工具 | ✅ 5 插件 / 20 内置工具；风险分级 / 信任标签 / 可逆性 / 审计 | **对齐（基础）** |
 | Skills | ✅ 上传/创建/启停/批量卸载 | ✅ `SKILL.md`（wraps / script 二选一）、ZIP 准入、安装/卸载/禁用 | **对齐（基础）** |
 | Sandbox | ✅ 权限确认 + 工作区边界 | ✅ 限损层沙箱：Fail-Closed 策略、解释器白名单、Job Object 树杀；**2026-10-19 加工作区根 + 只读/联网/派生进程预检** | **对齐（定位不同）** |
 | MCP | ✅ 用户级/项目级 `mcp.json`、状态页 | ✅ **2026-10-23**：`mcp.json`、stdio + Streamable HTTP、`mcp__server__tool`、server instructions、分页、**健康巡检/自动重连/`tools/list_changed`/按工具 risk** | **对齐（基础）** |

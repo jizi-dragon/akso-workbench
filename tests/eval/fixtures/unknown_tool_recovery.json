@@ -5,9 +5,9 @@
   "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
   "interactions": [
     {
-      "key": "9a7de4e5d8518e75be5a335adf3883fb4a48a9f42fe0252932bf0997dcfc94b9",
+      "key": "a85bc730a7300d1baa10a01324b70ce68c2ee8f3d013ddbd0dc25d80f6e13998",
       "kind": "stream",
-      "label": "stream |  2 msgs | 18 tools | 帮我查天气",
+      "label": "stream |  2 msgs | 20 tools | 帮我查天气",
       "event": {
         "ok": true,
         "content": "",
@@ -28,9 +28,9 @@
       }
     },
     {
-      "key": "10b655e0b1042e93b4111d4503cc43ae9846274125b8300283817a3fc1d0564a",
+      "key": "ac31215d99ee970787c14a45e0757f63ba5f57cd99b4f5d06a2c65da28546fd5",
       "kind": "stream",
-      "label": "stream |  4 msgs | 18 tools | 帮我查天气",
+      "label": "stream |  4 msgs | 20 tools | 帮我查天气",
       "event": {
         "ok": true,
         "content": "",
@@ -51,9 +51,9 @@
       }
     },
     {
-      "key": "8c415a38825ea87b0461f7060c872592ff0c1f3340d7bab8cb9971cdb1eb2b69",
+      "key": "5044430590063dd44422814c8001b05318d24130b4d7a803aaf0b11069d46a02",
       "kind": "stream",
-      "label": "stream |  6 msgs | 18 tools | 帮我查天气",
+      "label": "stream |  6 msgs | 20 tools | 帮我查天气",
       "event": {
         "ok": true,
         "content": "没有天气工具，我查了时间。",

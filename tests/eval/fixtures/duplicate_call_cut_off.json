@@ -5,9 +5,9 @@
   "note": "合成：由脚本化客户端录制（非真实模型回答）。换真机：tools/run_evals.py --record",
   "interactions": [
     {
-      "key": "7c64049eef09813ab3832329695facc456147e5bbcb61dc76ff5f3de30f1d2fb",
+      "key": "b5867a6677899c5075bb237feab75702d58debad87aa8724e16247c6af66bbab",
       "kind": "stream",
-      "label": "stream |  2 msgs | 18 tools | 重复调用试试",
+      "label": "stream |  2 msgs | 20 tools | 重复调用试试",
       "event": {
         "ok": true,
         "content": "",
@@ -28,9 +28,9 @@
       }
     },
     {
-      "key": "37b8ed04d09b3d2e0389595a0dccc92091be1ca6e3bf2c31e0367489a53e5f5e",
+      "key": "4cd81d39c0833bc91b50dc60d26b680558784d1573d330396341f3ff8b6829a0",
       "kind": "stream",
-      "label": "stream |  4 msgs | 18 tools | 重复调用试试",
+      "label": "stream |  4 msgs | 20 tools | 重复调用试试",
       "event": {
         "ok": true,
         "content": "",
@@ -51,9 +51,9 @@
       }
     },
     {
-      "key": "3035f166bc3f55dd2ad136bf0b963313103694ea49ac593ae79884e6cef03259",
+      "key": "ebc8d0739a575bfa560adec711b91df28f5fff931d2b9b97aca267d58b7685aa",
       "kind": "stream",
-      "label": "stream |  6 msgs | 18 tools | 重复调用试试",
+      "label": "stream |  6 msgs | 20 tools | 重复调用试试",
       "event": {
         "ok": true,
         "content": "",

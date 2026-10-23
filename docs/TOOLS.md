@@ -33,11 +33,11 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 > 手改会在下一次 `--check` 时被判为不一致——这正是设计意图（清单只能来自代码）。
 
 <!-- TOOLS-TABLE:BEGIN —— 由 tools/gen_tools_doc.py 生成，勿手改；改插件后跑 --write -->
-> 实测（由运行期工具中枢生成）：**5 个插件 / 18 个工具**。风险分布：16 read · 2 write · 0 dangerous；装配失败：无。
+> 实测（由运行期工具中枢生成）：**5 个插件 / 20 个工具**。风险分布：18 read · 2 write · 0 dangerous；装配失败：无。
 
 | 插件 | 标题 | 版本 | 工具数 | 负责什么 |
 |---|---|---|---|---|
-| `builtin` | 内置工具 | 1.2.0 | 6 | 与业务无关的通用能力：时间、读本地文件、读网页正文、读用户交的附件、请求用户确认 |
+| `builtin` | 内置工具 | 1.2.0 | 8 | 与业务无关的通用能力：时间、读本地文件、读网页正文、读用户交的附件、请求用户确认 |
 | `websearch` | 联网检索 | 1.1.0 | 1 | 自建联网检索（DeepSeek API 不支持内置 web_search，故由本工作台实现） |
 | `insight` | 对象分析 | 1.0.0 | 6 | 读平台对象元数据、跑五步织网洞察、取回产物（akso-cc 能力原生化） |
 | `accounts` | 快捷登录 | 1.0.0 | 2 | 账号库清单与平台登录验证（quick-login 能力内化 |
@@ -50,7 +50,9 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | `attachment_list` | builtin | read | — | 15s | **用户在对话里交给你的文件/图片**有哪些（id、名字、类型、规模、解析状态、坐标目录） | — |
 | `attachment_read` | builtin | read | — | 30s | 按坐标读附件正文：`unit=page/sheet/table/line/chars`。**长文件必须用它按需取**（内联在上下文里的只有开头一段） | `attachment_id`、`unit`、`index`、`name`、`start`、`max_chars` |
 | `get_current_time` | builtin | read | — | 5s | 获取当前日期与时间（本地时区） | — |
+| `list_skills` | builtin | read | — | 5s | 列出本机可用的 Agent Skills（`SKILL.md` 文件夹，可能来自项目 .agents/skills、用户目录或 WORKBENCH_SKILLS_DIRS） | — |
 | `read_local_file` | builtin | read | — | 30s | 读取本地文本文件。**敏感路径一律拒绝**（数据库/登录态/token 缓存/账号备份/浏览器 profile/SSH 与云凭据） | `path` |
+| `read_skill` | builtin | read | — | 5s | 读取一个 Agent Skill 的完整说明（SKILL.md 正文，按需加载，最多 32k 字符）。用于获取该技能的步骤、约束和输出格式 | `name` |
 | `read_web_page` | builtin | read | — | 40s | 读取公开网页正文（用于核实 NMPA/FDA/ICH 等官方监管页面原文），返回标题、来源与正文文本 | `url` |
 | `request_user_confirmation` | builtin | read | 🙋 模型可主动问 | 10s | 【高风险任务前置】在执行敏感、不可逆或会影响真实平台的操作**之前**，先向用户弹确认框并**等待他当场答复**（同意 / 拒绝），也可以用来**让用户在卡片上挑一个账号 / 环境** | `question`、`details`、`target_tool`、`target_args`、`timeout_s`、`options_source` |
 | `insight_accounts` | insight | read | — | 15s | 列出工作台账号库里的账号（id/用户名/环境），用于确定 account_id | — |
@@ -67,7 +69,7 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 
 ### 2.1 运行期工具（installed 层）
 
-上表只承诺**产品自带**的 18 个工具（`core_specs()`）。运行期还会有两类工具进入同一个
+上表只承诺**产品自带**的 20 个工具（`core_specs()`）。运行期还会有两类工具进入同一个
 `ToolHub`，它们**不计入**上面的数字，也**不写入**生成块：
 
 | 来源 | 谁注册 | 命名 | 默认风险 |
@@ -154,6 +156,12 @@ _2026-09-16 建立。锚定 `plugin_api.ToolHub` + `workbench/plugins/` + `workb
 | 何时变 | 导入期一次，之后只读 | **运行期可变**（装/卸/换版本） |
 | 能不能卸 | ❌ 只能**禁用** | ✅ 一键卸载 |
 | 风险下限 | 按工具语义定 | 声明式 ≥ 被包装工具；**脚本式 ≥ `write`** |
+
+**文件夹 Skill 是第三种来源**（2026-10-23）：它不经过共享库/安装层，而是从
+`WORKBENCH_SKILLS_DIRS`、`<cwd>/.agents/skills`、`<cwd>/.workbench/skills`、
+`<DATA_DIR>/skills/folders` 发现。模型用两个 **core read 工具**访问：
+`list_skills`（只读目录）与 `read_skill`（按需读正文）。文件夹 Skill **不执行代码**，
+也不会贡献工具；需要工具声明的仍走 ZIP 共享库。
 
 **脚本式工具的风险为什么必须 ≥ `write`**：它执行的是**上传的代码**，
 而"这段代码只读"无法被静态证明。标成 `read` 等于给模型一张"不经确认随便跑"的通行证。

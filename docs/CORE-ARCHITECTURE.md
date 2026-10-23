@@ -86,7 +86,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 ┌──────────────────────────────────────────────────────┴───────────────────┐
 │ L3 技能供给层  skills/                                                   │
 │   manifest.py  SKILL.md 契约（wraps 声明式 / script 脚本式，二选一）      │
-│   security.py  ZIP 准入 + 可疑模式扫描  ·  library.py 装/卸/删            │
+│   security.py  ZIP 准入 + 扫描 · library.py 装/卸/删 · folders.py 标准目录  │
 │   script_runner.py  stdin JSON → stdout JSON（**与 MCP stdio 同构**）     │
 └──────────────────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -182,7 +182,7 @@ class Risk(str, Enum):
     DANGEROUS = "dangerous"  # 过门 + UI 二次确认 + 永不进入 Monitor 可执行回放
 ```
 
-当前分布（机检输出）：**16 read · 2 write · 0 dangerous**（共 18 个 core 工具；2026-10-19 内置浏览器下线后 `accounts_browser_*` 三条已删除）。
+当前分布（机检输出）：**18 read · 2 write · 0 dangerous**（共 20 个 core 工具；2026-10-19 内置浏览器下线后 `accounts_browser_*` 三条已删除）。
 
 > ⚠️ **产品当前一个 `DANGEROUS` 工具都没有**——唯一的那个（`factory_create`）随配置工厂在 2026-09-22 整体删除。
 > **删的是工具，不是分级能力**：枚举三档照旧、确认门的 dangerous 分支照旧（§3.5 与 §5 的 I6 都没变），
@@ -212,7 +212,7 @@ class Risk(str, Enum):
 > **2026-10-19 起 installed 层有两个生产者**：用户从共享库安装的 Skill，以及
 > `mcp_registry` 从 MCP server 的 `tools/list` 生成的工具。后者同样必须显式声明
 > `risk/trust/reversibility`，默认 `WRITE/UNTRUSTED/IRREVERSIBLE`（见 [MCP.md](MCP.md)）。
-> `core_specs()` 的 18 个工具仍是文档承诺的"产品面"；MCP 工具与 Skill 一样属于"运行期"。
+> `core_specs()` 的 20 个工具仍是文档承诺的"产品面"；MCP 工具与 Skill 一样属于"运行期"。
 
 `deregister_capability("")` 的守卫（`:369-373`）值得单独记：核心插件的 `capability_id` 是**空串**，
 于是传空会把所有核心插件误判成可卸载目标。**先查"请求是否合法"再查"是否存在"**——
@@ -351,9 +351,17 @@ Windows 上绑定用挂起创建消除竞态；但在宿主嵌套 Job 里补绑�
 这类缺口不会再出现。写入前 `redact_args()` 剔除凭据类键；
 `GET /api/agent/audit` **刻意不 `SELECT *`**（`args` 可能有敏感片段），列表只回摘要列。
 
-### 3.6 L6 技能供给层（`skills/`，7 文件 ≈1775 行）
+### 3.6 L6 技能供给层（`skills/`，8 文件 ≈2000 行）
 
-**格式与 Agent Skills 开放标准同源**：ZIP 包根目录的 `SKILL.md` + YAML frontmatter。
+**两种运行时形态**（2026-10-23 起）：
+
+| 形态 | 入口 | 能做什么 | 是否执行代码 |
+|---|---|---|---|
+| **文件夹 Skill**（标准） | `<root>/<name>/SKILL.md` | `list_skills` 看目录、`read_skill` 按需读正文；不贡献工具 | ❌ 只读正文 |
+| **ZIP 工具包**（本仓扩展） | 上传共享库 → 安装 | 声明式 `wraps` / 脚本式 `script`，贡献工具 | 脚本式会进沙箱 |
+
+文件夹根：`WORKBENCH_SKILLS_DIRS`、`<cwd>/.agents/skills`、`<cwd>/.workbench/skills`、
+`<DATA_DIR>/skills/folders`。ZIP 仍是"需要工具声明"时的分发格式，**不是唯一 Skill 形态**。
 
 **两种工具形态，二选一**：
 
@@ -565,9 +573,9 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 | 维度 | 行业当前做法 | 本项目 | 判定 |
 |---|---|---|---|
 | **技能包目录** | **Agent Skills 规范**：`SKILL.md` + `scripts/` + `references/` + `assets/`（[agentskills.io/specification](https://agentskills.io/specification)） | `SKILL.md` + `scripts/` + `references/`，**没有 `assets/`** | 🟡 基本对齐 |
-| **技能是什么** | 规范里 Skill = **指令与知识**（+ 可选脚本）；核心机制是 **progressive disclosure 四阶段**：① Advertise（每技能约 100 token，只注入 name+description）→ ② Load（任务匹配时拉取正文，建议 <5000 token）→ ③ Read resources（按需读 `references/`）→ ④ Run scripts | 本项目 Skill = **工具提供者**：`tools:` 数组声明贡献哪些工具，`SKILL.md` **正文明确"本期不注入上下文"** | ❌ **语义分歧**：借用了规范的外壳，但**恰好放弃了规范的核心机制**（正文按需注入）。本项目是"能力包"，规范是"知识包" |
-| **frontmatter 字段** | 必填仅 `name`（≤64、**仅小写字母/数字/连字符**、不得首尾连字符、**必须与父目录名一致**）与 `description`（≤1024）；可选 `license` / `compatibility`（≤500，环境要求）/ `metadata` / `allowed-tools`（实验） | 必填 `id` / `name` / `version` / `description` / `tools`；另有 `capabilities` | ❌ **字段不兼容**：规范**没有** `id` / `version` / `tools`，也**不要求** `name` 与目录名一致 → 本项目的包**装不进**任何遵循规范的客户端（已验证微软 Agent Framework、CrewAI、Cline 均支持该规范） |
-| **"技能贡献工具"这件事规范怎么做** | 规范**不让技能声明工具**。客户端只在"至少一个技能带资源"时才注册 `read_skill_resource`、只在"至少一个技能带脚本"时才注册 `run_skill_script`——**工具面随实际能力动态收缩** | 技能**直接声明** `tools:`，装配期全量并入 `ToolHub` | 🟡 **两条路都能走通**，但规范的做法**天然抑制工具面膨胀**；本项目 18 个 core 工具 + 每个 Skill 最多 20 个，**没有"按需注册"这一层** |
+| **技能是什么** | 规范里 Skill = **指令与知识**（+ 可选脚本）；核心机制是 **progressive disclosure 四阶段**：① Advertise（每技能约 100 token，只注入 name+description）→ ② Load（任务匹配时拉取正文，建议 <5000 token）→ ③ Read resources（按需读 `references/`）→ ④ Run scripts | **文件夹 Skill** 走 ①（`list_skills` 目录）→ ②（`read_skill` 正文）；**ZIP 工具包**仍是"能力包"（`tools:` 声明贡献工具） | 🟡 **部分对齐**：标准目录已能按需读正文；但 ZIP 工具包仍是自有扩展，没有 resources/scripts 的标准四阶段 |
+| **frontmatter 字段** | 必填仅 `name`（≤64、**仅小写字母/数字/连字符**、不得首尾连字符、**必须与父目录名一致**）与 `description`（≤1024）；可选 `license` / `compatibility`（≤500，环境要求）/ `metadata` / `allowed-tools`（实验） | **文件夹**只要 `name` + `description`（version 可选，默认 0.1.0）；**ZIP 工具包**仍要 `id`/`version`/`tools` | 🟡 **文件夹已兼容**；ZIP 包仍装不进标准客户端 |
+| **"技能贡献工具"这件事规范怎么做** | 规范**不让技能声明工具**。客户端只在"至少一个技能带资源"时才注册 `read_skill_resource`、只在"至少一个技能带脚本"时才注册 `run_skill_script`——**工具面随实际能力动态收缩** | 技能**直接声明** `tools:`，装配期全量并入 `ToolHub` | 🟡 **两条路都能走通**，但规范的做法**天然抑制工具面膨胀**；本项目 20 个 core 工具 + 每个 Skill 最多 20 个，**没有"按需注册"这一层** |
 | **技能工具的审批粒度** | 微软 Agent Framework：三个技能工具（`load_skill` / `read_skill_resource` / `run_skill_script`）**默认全部需要审批**，靠 `auto_approval_rules` 放行；`ReadOnlyToolsAutoApprovalRule` 自动批准前两个，**但不批准 `run_skill_script``** | 只有三档 `Risk`；技能工具整体按"声明式 ≥ 被包装工具 / 脚本式 ≥ write"定级 | 🟡 **本项目的分级更粗**：微软做到了"同一机制内按能力粒度分级"，本项目是"按工具整档分级"。本项目脚本式 ≥ `write` 的结论与微软一致（都不自动放行脚本执行） |
 | **`capabilities` 的语义** | 规范的 `compatibility` 是**信息性**的（"需要什么环境"）；`allowed-tools` 是预先批准的工具清单 | `capabilities` 是**权限申请 + Fail-Closed 校验**：声明 `network`/`subprocess` 直接**安装失败** | ✅ **强于规范**：把权限声明做成了强制准入，而非文档说明 |
 | **脚本执行** | 规范只说 `scripts/` 是"可执行代码"，**由客户端自行决定怎么跑**；微软官方 `SubprocessScriptRunner` 被自标为"**仅供演示**"，并要求生产环境补上沙箱 + 资源限制 + 输入校验 + 结构化审计。MCP 归档里的脚本**永不执行**，只作只读资源 | 沙箱子进程 + **stdin JSON → stdout JSON**，文档明确写"**与 MCP stdio 传输同构**"；已接沙箱、策略、审计 | ✅ **强于参照物**：本项目把微软"让你自己补"的那一层**已经补好了** |
@@ -808,7 +816,7 @@ Codex 之所以必须提供 `unelevated` 回退，正是因为企业策略常常
 | **技能供给层**（L3） | `skills/` 7 文件 **1,775 行** | 同上 |
 | 工具插件实现 | `plugins/` **4 文件 1,420 行**（删掉 `factory.py` 之后） | 同上 |
 | 模型接入（L1） | `deepseek.py` **255 行** | — |
-| 工具规模 | **5 插件 / 18 core 工具**（**16 read · 2 write · 0 dangerous**） | `python tools/gen_tools_doc.py` |
+| 工具规模 | **5 插件 / 20 core 工具**（**18 read · 2 write · 0 dangerous**） | `python tools/gen_tools_doc.py` |
 | HTTP 端点 | **99** | `@router.` 计数 |
 | 数据库迁移 | **1–26** | `workbench/db.py::MIGRATIONS` |
 | **仓库全量** | `workbench/**.py`；前端 `static` js+css；测试；`tools/`；Tauri 壳 `src-tauri/`（Electron `desktop/` 已删除） | 同上 |

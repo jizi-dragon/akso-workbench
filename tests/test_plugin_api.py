@@ -518,12 +518,15 @@ def test_real_hub_schema_budget() -> None:
     - **26 → 18**（2026-09-22）：`factory_*` 七条随配置工厂整体移除，实测工具面 18 个。
       ⚠️ 上限**刻意从 26 下调到 18**，不留在 26：留一个虚高的上限等于把"工具面又长回来了"
       这件事变得看不见——而这条用例的全部价值就是让工具面增长**必须有人签字**。
+    - **18 → 20**（2026-10-23）：新增 `list_skills` / `read_skill`，让 Agent Skills 的
+      `SKILL.md` 文件夹能按需加载正文（渐进披露）。两个都是 READ、不执行代码；
+      这是"标准 Skill 兼容"的最小动词，不再继续抬到 20 以上。
     ⚠️ 下次再涨之前先问：**能不能靠插件白名单把工具面按场景裁剪**
     （`hub.list_api_for(plugins)` 已经支持），而不是继续抬这个数字。
     """
     hub = get_hub()
     payload = json.dumps(hub.list_api_for(None), ensure_ascii=False)
-    assert len(hub.specs()) <= 18, f"工具数 {len(hub.specs())} 已超预算，考虑拆分插件白名单"
+    assert len(hub.specs()) <= 20, f"工具数 {len(hub.specs())} 已超预算，考虑拆分插件白名单"
     assert len(payload) < 24_000, f"工具 schema 体积 {len(payload)} 字符，偏大"
 
 

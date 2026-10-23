@@ -27,6 +27,14 @@
   `text/event-stream`，使用 `Mcp-Session-Id`；工具名改为 `mcp__<server>__<tool>`；
   server `instructions` 以「外部说明」追加系统提示词（≤8k）。`tests/test_mcp_http.py`（7 条）。
 
+### Added
+
+- **Agent Skills 文件夹运行时（2026-10-23）**：支持标准 `SKILL.md` 文件夹发现
+  （`WORKBENCH_SKILLS_DIRS` / `.agents/skills` / `.workbench/skills` / 数据目录 `skills/folders`），
+  新增 `list_skills`（只读目录）与 `read_skill`（按需读正文）两个 READ 工具；工具面 18→20，
+  文件夹 Skill **不执行代码**。ZIP 工具包继续用于需要 `wraps`/`script` 的场景。
+  `tests/test_skill_folders.py`（6 条）；eval 夹具已按新工具面重录。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

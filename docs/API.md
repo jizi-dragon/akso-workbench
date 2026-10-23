@@ -317,7 +317,7 @@ POST /api/chat/stream   Content-Type: application/json
 ## 10. Agent 工具层 `/api/agent`（`routes_agent.py`）
 
 > **单一事实源**：工具清单来自**工具插件中枢** `plugin_api.ToolHub`（`workbench/plugins/`
-> 五个插件装配，共 18 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
+> 五个插件装配，共 20 个工具）。本模块**不再定义工具**——`GET /tools`、对话 Agent 的 function calling
 > schema、审计三处读的是同一份定义。插件 SDK 契约见 `PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**）。
 
 | 方法 | 路径 | 请求 | 说明 |
@@ -366,18 +366,19 @@ POST /api/chat/stream   Content-Type: application/json
 - HTTP 链路（`POST /invoke`）：本端点**不等待**，直接 409 + `confirm` 内容；
   调用方自己看 `GET /pending` 决定何时 `approve`（同意同样会预先批准那次目标调用）。
 
-**工具清单（18 个工具，按插件）**：
+**工具清单（20 个工具，按插件）**：
 
 | 插件 | 工具 | 风险 |
 |---|---|---|
 | `builtin` | `get_current_time` / `read_local_file` / `read_web_page` / `attachment_list` / `attachment_read` | read |
+| `builtin` | `list_skills` / `read_skill`（Agent Skills 文件夹目录 + 按需读正文） | read |
 | `builtin` | `request_user_confirmation`（模型主动请求确认；会暂停对话等答复） | read |
 | `websearch` | `web_search` | read |
 | `insight` | `insight_accounts` / `insight_read_config` / `insight_run` / `insight_artifacts` / `insight_read_artifact` / `insight_runs` | 全 read |
 | `accounts` | `accounts_list` / `accounts_login` | read |
 | `memory` | `memory_search` / `memory_add` / `memory_delete` | search=read；add/delete=write |
 
-> **风险分布：16 read / 2 write / 0 dangerous**（2026-10-22 装配 `ToolHub` 实测）。
+> **风险分布：18 read / 2 write / 0 dangerous**（2026-10-23 装配 `ToolHub` 实测）。
 > 内置浏览器 / 托管会话下线后，产品里暂时没有 WRITE 工具；风险模型与确认门
 > 仍是 `read` / `write` / `dangerous` 三级，机制由 `tests/test_plugin_api.py` 的合成用例守着。
 > `Risk.DANGEROUS` 枚举与确认门里那一条分支**都还在**——只是产品里现在没有工具用它

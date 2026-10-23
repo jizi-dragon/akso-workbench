@@ -59,6 +59,7 @@ hiddenimports = [
     "workbench.plugins.accounts",
     "workbench.plugins.memory",
     "workbench.memory",
+    "workbench.skills.folders",
     "uvicorn.logging",
     "uvicorn.loops",
     "uvicorn.loops.auto",

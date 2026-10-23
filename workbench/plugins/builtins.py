@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from .. import config, net_guard
 from .. import plugin_api as pa
+from ..skills import folders
 
 PLUGIN_ID = "builtin"
 
@@ -65,6 +66,23 @@ class ReadLocalFileArgs(BaseModel):
 
 class ReadWebPageArgs(BaseModel):
     url: str = pa.Arg("完整网页地址（http/https）")
+
+
+class SkillNameArgs(BaseModel):
+    name: str = pa.Arg("Skill 名称（从 list_skills 的目录里取）")
+
+
+async def list_skills(_args, _ctx) -> str:
+    items = folders.catalog()
+    return json.dumps({"skills": items, "count": len(items)}, ensure_ascii=False)
+
+
+async def read_skill(args: SkillNameArgs, _ctx) -> str:
+    try:
+        return folders.read(args.name)
+    except KeyError as exc:
+        names = [item["name"] for item in folders.catalog()]
+        raise ValueError(f"{exc}；可选：{names[:20]}") from exc
 
 
 class ConfirmationArgs(BaseModel):
@@ -504,6 +522,31 @@ PLUGIN = pa.Plugin(
             trust=pa.Trust.LOCAL,
             timeout_s=30,
             audit_extra=pa.audit_env_key("attachment_id", "unit"),
+        ),
+        pa.ToolSpec(
+            name="list_skills",
+            description=(
+                "列出本机可用的 Agent Skills（`SKILL.md` 文件夹，可能来自项目 .agents/skills、"
+                "用户目录或 WORKBENCH_SKILLS_DIRS）。先看目录，再用 read_skill 读取需要的正文。"
+            ),
+            args_model=pa.ZERO_ARGS,
+            handler=list_skills,
+            risk=pa.Risk.READ,
+            trust=pa.Trust.LOCAL,
+            timeout_s=5,
+        ),
+        pa.ToolSpec(
+            name="read_skill",
+            description=(
+                "读取一个 Agent Skill 的完整说明（SKILL.md 正文，按需加载，最多 32k 字符）。"
+                "用于获取该技能的步骤、约束和输出格式；不会执行 Skill 目录里的脚本。"
+            ),
+            args_model=SkillNameArgs,
+            handler=read_skill,
+            risk=pa.Risk.READ,
+            trust=pa.Trust.LOCAL,
+            timeout_s=5,
+            audit_extra=pa.audit_env_key("name"),
         ),
         pa.ToolSpec(
             name="request_user_confirmation",
