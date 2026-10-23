@@ -135,3 +135,29 @@ def test_goal_advance_ui_is_wired() -> None:
     api_js = (root / "js" / "api.js").read_text(encoding="utf-8")
     assert "advanceGoal" in js and "data-goal-advance" in js
     assert "advanceGoal" in api_js
+
+
+def test_goal_round_executes_and_persists(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from workbench.services import storage
+
+    async def fake_run(_messages, _client, _hub, _config, **_kwargs):
+        yield {"type": "final", "content": "本轮进展：已检查一半。"}
+
+    monkeypatch.setattr("workbench.harness.loop.run_agent_loop", fake_run)
+    monkeypatch.setattr("workbench.services.settings.load_deepseek",
+                        lambda: SimpleNamespace(api_key="sk-test", model="fake",
+                                                temperature=0.2))
+    monkeypatch.setattr("workbench.services.settings.load_max_steps", lambda: 5)
+    monkeypatch.setattr("workbench.services.deepseek.DeepSeekClient",
+                        lambda *args, **kwargs: object())
+    goal = goals.create("推进", "完成只读检查", max_rounds=3)
+    try:
+        result = goals.execute_round(goal["id"])
+        assert result["goal"]["rounds"] == 1
+        assert result["error"] == ""
+        messages = storage.list_messages(result["conversationId"])
+        assert any("本轮进展" in m["content"] for m in messages)
+    finally:
+        goals.delete(goal["id"])
