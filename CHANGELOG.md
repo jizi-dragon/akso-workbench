@@ -55,6 +55,12 @@
   `GET/POST /api/checkpoints` + `POST /api/checkpoints/{id}/restore`，只认沙箱工作区根；
   创建/恢复走 `to_thread`，恢复前 `confirm()`。`tests/test_checkpoint_routes.py` 1 条。
 
+### Added
+
+- **工具白名单（2026-10-23）**：`/api/chat/stream` 接受 `allowed_tools`；
+  `AgentConfig.allowed_tools` 同时收窄模型可见 schema 与执行闸门（被点名但不在清单 →
+  回填"未执行"，不执行）。与 `plan_mode` 正交，供页面/Agent 按场景裁剪工具面。
+
 ### Fixed
 
 - **测试数据隔离（2026-10-22，PITFALLS #131）**：`config.has_explicit_data_dir()` 在显式

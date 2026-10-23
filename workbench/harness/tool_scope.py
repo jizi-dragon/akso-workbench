@@ -10,16 +10,21 @@ from .types import make_event
 
 
 def visible_tool_specs(registry: ToolHub, plugins: list[str] | None,
-                       plan_mode: bool) -> list[dict]:
+                       plan_mode: bool,
+                       allowed_tools: tuple[str, ...] | None = None) -> list[dict]:
     specs = registry.list_api_for(plugins)
-    if not plan_mode:
-        return specs
+    allow = None if allowed_tools is None else set(allowed_tools)
     visible: list[dict] = []
     for item in specs:
         name = str((item.get("function") or {}).get("name") or "")
         spec = registry.get(name) if name else None
-        if spec is not None and spec.risk is Risk.READ:
-            visible.append(item)
+        if spec is None:
+            continue
+        if allow is not None and name not in allow:
+            continue
+        if plan_mode and spec.risk is not Risk.READ:
+            continue
+        visible.append(item)
     return visible
 
 
@@ -39,3 +44,7 @@ def skipped_observation(call: dict, reason: str) -> dict:
             "isError": True,
         },
     )
+
+
+def tool_allowed(allowed_tools: tuple[str, ...] | None, name: str) -> bool:
+    return allowed_tools is None or name in set(allowed_tools)

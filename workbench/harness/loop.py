@@ -59,7 +59,7 @@ from .context import (
     estimate_tools_tokens,
 )
 from .safety import SafetyGate
-from .tool_scope import skipped_observation, visible_tool_specs
+from .tool_scope import skipped_observation, tool_allowed, visible_tool_specs
 from .types import AgentConfig, make_event
 
 logger = logging.getLogger("workbench.harness")
@@ -340,7 +340,7 @@ async def run_agent_loop(
     # ★ 工具 schema 是**每一轮都发**的常量（实测 18 个工具约 2,104 token），
     # 而它不在 messages 里 —— 所以折叠判定要单独把它算进去（计划 §7.1）。
     # 在这里算一次就够：`plugins` 在整个回合里不变，schema 也就不变。
-    _tools_tokens = estimate_tools_tokens(visible_tool_specs(registry, plugins, config.plan_mode))
+    _tools_tokens = estimate_tools_tokens(visible_tool_specs(registry, plugins, config.plan_mode, config.allowed_tools))
     # ★ 校准系数（计划 §7.1(b)）：
     # 拿**API 自报的 `prompt_tokens`** 反过来校准字数估算。
     #
@@ -690,7 +690,7 @@ async def _one_model_turn(
     ended = False
     async for event in client.stream_chat(
         context,
-        tools=visible_tool_specs(registry, plugins, config.plan_mode),
+        tools=visible_tool_specs(registry, plugins, config.plan_mode, config.allowed_tools),
         temperature=config.temperature,
         max_tokens=config.max_tokens,
     ):
@@ -807,6 +807,12 @@ async def _one_model_turn(
                     return
 
                 spec = registry.get(str(call.get("name") or ""))
+                if spec is not None and not tool_allowed(
+                    config.allowed_tools, str(call.get("name") or "")
+                ):
+                    _fill_unexecuted(context, [call], "工具不在本回合允许清单")
+                    yield skipped_observation(call, "工具不在本回合允许清单")
+                    continue
                 if config.plan_mode and spec is not None and spec.risk is not Risk.READ:
                     _fill_unexecuted(context, [call], "计划模式禁止执行写工具")
                     yield skipped_observation(call, "计划模式禁止执行写工具")

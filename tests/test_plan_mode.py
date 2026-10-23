@@ -76,3 +76,22 @@ def test_plan_mode_ui_is_wired() -> None:
     assert "planMode" in chat and "plan: planMode" in chat
     assert "plan = false" in api and "attachmentIds, plan" in api
     assert '.tool-palette-btn[aria-pressed="true"]' in css
+
+
+def test_allowed_tools_narrows_schema_and_blocks_others() -> None:
+    client = FakeClient([
+        {"content": "", "tool_calls": [_call("memory_add", {"title": "x", "body": "y"})]},
+        {"content": "只用了允许的只读工具。"},
+    ])
+    events = asyncio.run(_collect(run_agent_loop(
+        [{"role": "user", "content": "看看"}],
+        client,
+        default_registry(),
+        AgentConfig(system_prompt="你是测试助手", allowed_tools=("get_current_time",)),
+        conversation_id="scope-test",
+    )))
+    offered = {item["function"]["name"] for item in client.tools_seen[0]}
+    assert offered == {"get_current_time"}, offered
+    observations = [event for event in events if event["type"] == "observation"]
+    assert observations[0]["invocation"]["status"] == "skipped"
+    assert "允许清单" in observations[0]["result"]["summary"]
