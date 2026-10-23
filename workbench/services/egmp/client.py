@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field
 
 from .. import accounts as accounts_svc
 from .kernel import endpoints, normalize_base_url
@@ -40,11 +39,6 @@ class ApiError(RuntimeError):
         self.code = code
         self.message = message
 
-
-class EgmpSettings(BaseModel):
-    base_url: str = Field(..., description="平台根地址，如 https://demo-val.example.com")
-    username: str = ""
-    password: str = ""
 
 
 def _trim_base(url: str) -> str:

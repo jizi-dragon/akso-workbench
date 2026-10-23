@@ -64,9 +64,6 @@ DEFAULT_SYSTEM_PROMPT = """你是这个工作台的 AI 助手，帮用户完成�
 """
 
 
-def default_prompt() -> str:
-    return DEFAULT_SYSTEM_PROMPT
-
 
 def user_prompt() -> str:
     """用户在设置页填的提示词（空 = 未自定义）。"""

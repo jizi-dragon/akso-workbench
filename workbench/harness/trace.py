@@ -56,8 +56,6 @@ SPAN_TOOL = "tool"
 SPAN_SANDBOX = "sandbox"
 SPAN_CONFIRM = "confirm"
 
-SPAN_KINDS = (SPAN_MODEL, SPAN_TOOL, SPAN_SANDBOX, SPAN_CONFIRM)
-
 #: `agent_run.status` 的取值。
 #:
 #: `aborted` 与 `failed` **刻意分开**：前者是"用户关掉了页面/切了会话"

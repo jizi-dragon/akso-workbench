@@ -140,16 +140,6 @@ def repair_dangling(conversation_id: str, *, reason: str = "") -> int:
     return filled
 
 
-def write_failures() -> int:
-    """轨迹落库失败的累计次数（供 `selfcheck` 与时间线面板显示）。"""
-    return _write_failures
-
-
-def reset_write_failures() -> None:
-    """清计数（仅测试用）。"""
-    global _write_failures
-    _write_failures = 0
-
 
 def record(conversation_id: str, message: dict) -> None:
     """落一条**当时发出去**的消息。`conversation_id` 为空时什么都不做。

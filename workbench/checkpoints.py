@@ -26,7 +26,6 @@ from . import config
 
 MAX_FILES = 200
 MAX_BYTES = 20 * 1024 * 1024
-ID_RE_LEN = 12
 
 
 class CheckpointError(RuntimeError):

@@ -33,7 +33,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKBENCH = ROOT / "workbench"
-STATIC = WORKBENCH / "static"
 BASELINE = ROOT / "tools" / "repolint_baseline.json"
 FRONTEND_PARITY = ROOT / "tools" / "frontend_parity.json"
 FILE_BUDGET = 800

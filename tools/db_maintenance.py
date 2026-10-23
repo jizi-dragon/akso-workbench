@@ -40,8 +40,6 @@ FAT_COLUMNS: dict[str, tuple[str, ...]] = {
 # 已下线功能遗留的 settings 键（默认只报告，不清除）
 LEGACY_SETTINGS_KEYS = ("dingtalkLastSync", "embeddingApiKey", "embeddingModel", "embeddingBaseUrl")
 
-SERVER_PORT = 18765
-
 
 def resolve_db_path(explicit: str | None) -> Path:
     if explicit:

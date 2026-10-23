@@ -335,12 +335,6 @@ def reveal_password(account_id: str) -> str:
     return decrypt_password(row["password_enc"])
 
 
-def account_env_base_url(account_id: str) -> str:
-    account = get_account(account_id)
-    if not account:
-        raise AccountError(f"账号不存在：{account_id}")
-    return normalize_base_url(account.get("env_base_url") or "")
-
 
 # ------------------------------------------------- 盒子管理（quick-login 盒子语义）
 

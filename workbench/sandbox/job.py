@@ -56,7 +56,6 @@ IS_WINDOWS = sys.platform == "win32"
 # ── Win32 常量 ────────────────────────────────────────────────────────────────
 CREATE_SUSPENDED = 0x00000004
 CREATE_BREAKAWAY_FROM_JOB = 0x01000000
-CREATE_NEW_PROCESS_GROUP = 0x00000200
 CREATE_NO_WINDOW = 0x08000000
 
 TH32CS_SNAPPROCESS = 0x00000002
@@ -94,7 +93,6 @@ class JobBinding:
     verified: bool = False
     """是否用 `IsProcessInJob` 校验过**已绑定的每一个后代**。"""
     bound_pids: tuple[int, ...] = ()
-    unverified_pids: tuple[int, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -434,7 +432,6 @@ def assign(proc: subprocess.Popen, *, allow_subprocesses: bool) -> JobBinding:
         note=note,
         verified=not unverified,
         bound_pids=tuple(bound),
-        unverified_pids=tuple(sorted(set(unverified))),
     )
 
 

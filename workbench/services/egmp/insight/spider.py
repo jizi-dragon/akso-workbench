@@ -30,10 +30,6 @@ from . import drawio as drawio_mod
 from .lifecycle import LifecycleApi
 from .report import _table  # noqa: PLC2701 —— 同包渲染工具
 
-# 签名语义对象（电子签名类对象不参与织网的关系推导）。
-# 原定义在 crawler.py，随 inventory/understand 下线一并迁到这里——它现在的唯一使用者是本模块。
-SIGNATURE_RE = re.compile(r"签名|sign|esign", re.IGNORECASE)
-
 #: **容忍**的读失败：网络/HTTP 状态/平台信封 code≠0/本地 IO。这类失败记进 `failures`
 #: 并让覆盖度降级，但整次织网继续（读不到一个端点不该让产物全废）。
 #:
@@ -855,9 +851,6 @@ def build_graphs(api: LifecycleApi, workflows: list[dict[str, Any]],
         graphs.append(graph)
     return graphs
 
-
-def _fenced(text: str) -> str:
-    return text if text.strip() else "—"
 
 
 def _write_step1_md(spider: dict[str, Any], output_dir: Path) -> Path:
