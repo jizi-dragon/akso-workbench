@@ -1,9 +1,0 @@
-{
-  // 打开本项目时推荐安装（VS Code 会弹出「推荐扩展」提示）
-  "recommendations": [
-    "ms-python.python",
-    "ms-python.vscode-pylance",
-    "charliermarsh.ruff",
-    "dbaeumer.vscode-eslint"
-  ]
-}

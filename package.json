@@ -1,0 +1,16 @@
+{
+  "name": "akso-workbench-ts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "akso-workbench 的服务层（DSH 插件侧的域能力）；只保留 eGMP 域逻辑，不要 agent 循环/沙箱/技能/MCP/UI",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0"
+  }
+}
