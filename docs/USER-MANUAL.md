@@ -240,7 +240,7 @@
    回滚前应先备份 `%APPDATA%\Workbench`。
 
 > Tauri updater 的目标行为是：启动后延迟检查、后台下载、退出时安装；
-> 在此之前不要期待自动弹窗。详见 [TAURI-MIGRATION.md](TAURI-MIGRATION.md) §4。
+> 在此之前不要期待自动弹窗。详见 TAURI-MIGRATION.md §4。
 
 ---
 
@@ -402,7 +402,7 @@ MCP 让 Agent 调用**外部工具服务**（消息、数据库、业务 API 等
    只读 server 可在配置里写 `"risk": "read"`。
 
 > ⚠️ **命令只从配置文件来，模型不能指定**；`env` 里可以放 server 需要的 token，
-> 但不要把宿主的环境变量整份搬进去。详细字段、安全默认与排障见 [MCP.md](MCP.md)。
+> 但不要把宿主的环境变量整份搬进去。详细字段、安全默认与排障见 MCP.md。
 >
 > ⚠️ MCP server 是**按你的用户权限运行**的本地程序，不在沙箱里。只安装你信任的 server。
 
@@ -428,7 +428,7 @@ MCP 让 Agent 调用**外部工具服务**（消息、数据库、业务 API 等
 ### 更新一直下载不下来
 
 当前版本没有自动更新，升级请从内部 HTTPS 源下载新的 `Workbench_<版本>_x64-setup.exe` 覆盖安装。
-如果你在等 Tauri updater 的自动更新，它尚未接入界面；详见 [TAURI-MIGRATION.md](TAURI-MIGRATION.md) §4。
+如果你在等 Tauri updater 的自动更新，它尚未接入界面；详见 TAURI-MIGRATION.md §4。
 若下载本身需要代理，设置 Windows 系统代理即可；应用不再读取 `proxy.txt`。
 
 ### 应用升级后，功能看起来还是旧的

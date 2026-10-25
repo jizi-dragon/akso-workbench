@@ -1301,7 +1301,7 @@
   用户也从未打算发这些版本。
 
   **处置**：版本号回到 **`0.3.12`**（它**从未发布过**——无 tag、无 Release、无安装包，
-  见 [VERSIONING.md](docs/VERSIONING.md) §3.3 的带 token 复核结论，故可安全重用）；
+  见 VERSIONING.md §3.3 的带 token 复核结论，故可安全重用）；
   **删除**误发的 GitHub Release `v0.6.1` 与本地/远端 tag。
 
   **这次是首次真跑通 `publish_release.py`，顺带留下两条实测事实**（与撤稿无关，值得留）：
@@ -1462,7 +1462,7 @@
 > **本版范围说明**：这是自最后一个**已发布**版本 `0.3.4`（2026-09-11）以来首次对外发布，
 > 故本节的条目**跨 0.3.5 → 0.3.12**，不是单次迭代的内容
 > （背景：`bump.py` 在本地演进过 12 次版本号，但只有 2 次真正走完发布，
-> 见 [VERSIONING.md](docs/VERSIONING.md) §3.3 的带 token 复核结论）。
+> 见 VERSIONING.md §3.3 的带 token 复核结论）。
 > 另有两条关于**误发版本 `v0.6.1` 与撤稿**的说明，见 `[Unreleased]` 一节。
 
 ### Fixed
@@ -2000,7 +2000,7 @@
   新增 `GET/PUT /api/settings/prompt`；「填入默认内容」只填框不保存，
   保存必须显式点按钮（改提示词会打断一次缓存前缀，得让用户自己决定何时生效）。
 
-- **新增 [docs/VERSIONING.md](docs/VERSIONING.md)：版本管理机制与 GitHub 能帮哪一段**（2026-09-17）。
+- **新增 docs/VERSIONING.md：版本管理机制与 GitHub 能帮哪一段**（2026-09-17）。
   把"版本管理"拆成三层（**L1 版本号 / L2 发布事实 / L3 用户可见**），逐层给出实测现状与选型。三条实测结论：
   1. **L1 已做得很好**：单一真源（`pyproject.toml`）+ 五写同步 + `bump.py` 两档制，**不需要引入任何工具**。
   2. **L2 有真缺口**：**发布了 12 个版本却只有 3 个 tag**（`v0.3.3`/`v0.3.4`/一个遗留 tag）。
@@ -2034,7 +2034,7 @@
     tag 与 Release **一一对应、无缺口**；那 12 次 `chore(release)` 是**本地版本演进，其中 10 次从未发布**。
     所以**不补历史 tag**（补了会制造假历史）。自动打 tag 的意义相应改为"**今后构建即留锚点**"。
   - 本地逐条复现 CI 的同一命令序列：`pytest` 全绿 / `PACKAGING_CHECKS: 9/9` / ruff `All checks passed`。
-  - 相关文档：新增 [docs/VERSIONING.md](docs/VERSIONING.md)；`CONTRIBUTING.md` 增 §3.3.1（tag 与 CI 纪律）。
+  - 相关文档：新增 docs/VERSIONING.md；`CONTRIBUTING.md` 增 §3.3.1（tag 与 CI 纪律）。
 
 ### Fixed
 

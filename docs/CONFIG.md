@@ -202,7 +202,7 @@
 | ~~`runtime/browser-states/<account_id>.json`~~ | 旧版 `browser_pool` | — | 2026-10-19 起不再产生；旧残留可删 |
 | ~~`runtime/monitor/<acc8>-<stamp>/`~~ | 旧版 Monitor | 人 | 2026-10-19 起不再产生；旧残留可查看/删 |
 | `runtime/egmp-tokens/token-<env_id>.json` | `egmp.client` | 同上 | ✅ 删 = 强制重新登录换取 token（55 分钟 TTL） |
-| **`mcp.json`** | **用户** | `mcp_registry`（启动后台 + 「重新连接」） | ✅ **给用户的开关**：`{"mcpServers": {…}}`，形状见 [MCP.md](MCP.md)。⚠️ 可含 server 的 webhook/token ⇒ 已列入 `SENSITIVE_PATH_PARTS`，`read_local_file` 不会把它交给模型；改完必须点「重新连接」才生效 |
+| **`mcp.json`** | **用户** | `mcp_registry`（启动后台 + 「重新连接」） | ✅ **给用户的开关**：`{"mcpServers": {…}}`，形状见 MCP.md。⚠️ 可含 server 的 webhook/token ⇒ 已列入 `SENSITIVE_PATH_PARTS`，`read_local_file` 不会把它交给模型；改完必须点「重新连接」才生效 |
 | **`sandbox-workspace.json`** | **沙箱页**（`PUT /api/sandbox/workspace`） | `sandbox.layout`（每次执行读取） | ✅ **给用户的开关**：`{root,mode,allowNetwork,allowSubprocess,updatedAt}`。默认根 `%APPDATA%\Workbench\sandbox`、`mode=read-write`、联网/派生进程关闭。⚠️ **手改也要重启/重进沙箱页**；`mode=read-only` 拒绝声明会写的策略，且 Windows 上 `strict-readonly` 会附加 WRITE_RESTRICTED 受限令牌（partial；workspace-write 仍无内核级隔离） |
 | ~~`Partitions/` / `Cache/` / `Code Cache/` / `Local Storage/` …~~ | Electron 旧版 | — | 2026-10-19 起不再产生；旧残留可删，**不会**丢账号（DB 凭据仍在） |
 | `workbench.backup-YYYYMMDD-HHMMSS.db` | `tools/db_maintenance.py --backup` | 人 | ✅ 归档对象；实测有 85.7 MB 的历史备份 |

@@ -22,12 +22,11 @@
 | 摸清一个平台上有什么对象、字段、状态、流转 | 记命令、跑 Node 脚本、翻产物目录 | 工作台里填对象编码 → **蜘蛛五步织网**：关系网络 + `spider-network.drawio` + 生命周期流转图 |
 | 记住十几个测试账号的口令 | 明文表格 / 记事本 | **账号中心**：数据源是云端账号库（设备流登录、只读展示）；旧本地库可一次性「本地推到云端」，日常增删改在 Akso Cloud 控制台 |
 | 让 Agent 替你跑这些活 | 每件事都得自己点 | **对话 Agent + 20 个内置工具**：工具由 `ToolHub` 单一定义，**风险操作有确认门**（单次令牌，无令牌不执行），模型还能用 `request_user_confirmation` **先问再做**，每次调用**进审计表** |
-| 接外部工具 / 社区 server | 只能改代码加插件 | **MCP**（用户级 `mcp.json`，stdio + Streamable HTTP）：工具运行期进入同一个 `ToolHub`，默认 `write` 过确认门、结果标 `UNTRUSTED`；健康巡检 + 自动重连（[docs/MCP.md](docs/MCP.md)） |
 
 > **本仓最该被看见的不是功能清单，而是它的工程纪律**：能力以「工具插件」形式接入，
 > `ToolHub` 是**唯一扩展面**（不是 router、不是模块清单）；工具定义**只有一处**，
 > 对话的 function calling、HTTP 调用面、审计表三处都从它读。工具治理见
-> [docs/TOOLS.md](docs/TOOLS.md)，MCP 见 [docs/MCP.md](docs/MCP.md)。
+> docs/TOOLS.md（已于 2026-10-25 删除），MCP 见 docs/MCP.md（已于 2026-10-25 删除）。
 
 ## 四个来源项目的沉淀
 
@@ -66,19 +65,13 @@
 工作台的**核心资产是插件/tools 层**——Agent 的所有能力都经 `plugin_api.ToolHub` 注册，
 业务能力（洞察 / 账号 / 检索）各自是一个插件。当前 **5 个插件 / 20 个内置工具**
 （16 个 `read` + 2 个 `write`）；**MCP server 的工具在运行期动态进入同一个中枢**
-（installed 层，见 [docs/MCP.md](docs/MCP.md)）。
+（installed 层，见 docs/MCP.md（已于 2026-10-25 删除））。
 
 | 想知道什么 | 去哪看 |
 |---|---|
-| **现在到底有哪些工具、谁在管、怎么加一个** | **[docs/TOOLS.md](docs/TOOLS.md)**（工具注册表 + 变更纪律 + 机检） |
-| **想让编辑器 / DSH 驱动本工作台** | **[docs/ACP.md](docs/ACP.md)**（ACP v1 stdio：initialize / session/new / session/prompt / cancel；写工具快速失败） |
-| **怎么接外部 MCP server、安全默认是什么** | **[docs/MCP.md](docs/MCP.md)** |
-| **和 WorkBuddy 这类 Agent 工作台差在哪** | **[docs/AGENT-BENCHMARK.md](docs/AGENT-BENCHMARK.md)** |
 | **不受信代码（上传的 Skill）在哪跑、拦得住什么** | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) §3.4.1（安全姿态与诚实边界）+ 工作台「沙箱」页（工作区/权限、策略、状态、执行审计） |
-| **怎么上传 / 安装 / 卸载 Skill** | 工作台「Skill 管理」页 + `docs/TOOLS.md`（工具治理纪律） |
-| 为什么平台相关代码集中在 `services/egmp/` | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) §2 / §3、[docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
 
-> 工具清单**不靠人记**：`docs/TOOLS.md` 的清单由 `tools/gen_tools_doc.py` 从运行中的工具中枢生成，
+> 工具清单**不靠人记**：`docs/TOOLS.md（已于 2026-10-25 删除）` 的清单由 `tools/gen_tools_doc.py` 从运行中的工具中枢生成，
 > `python tools/gen_tools_doc.py --check` 会对不上就报红——防止再出现"我不知道多了几个工具"。
 
 ## 安装（终端用户）
@@ -96,7 +89,7 @@
 
 > **Tauri（2026-10-19 起）**：Electron 壳已退役，`src-tauri/` 的 Tauri 2 + Python sidecar
 > 是唯一桌面分发路径。已在本机完成 release 构建、NSIS 安装与启停冒烟；
-> 构建与更新骨架见 [docs/TAURI-MIGRATION.md](docs/TAURI-MIGRATION.md)。
+> 构建与更新骨架见 docs/TAURI-MIGRATION.md（已于 2026-10-25 删除）。
 
 > 升级：**当前版本还没有接入自动更新的 UI**（Tauri updater 的签名/清单/构建链路已就绪）。
 > 需要升级时直接运行新版本安装包覆盖安装；Tauri 的“检查→下载→退出安装”在后续版本接入。
@@ -123,13 +116,8 @@
 | **[docs/USER-MANUAL.md](docs/USER-MANUAL.md)** | **使用者** | 功能详解、操作步骤、常见问题、数据与安全须知 |
 | [docs/API.md](docs/API.md) | 要调接口/写脚本的人 | 端点权威契约 + SSE/长轮询/产物下载四类特殊通道 |
 | [docs/CONFIG.md](docs/CONFIG.md) | 现场排障、要调行为的人 | 五层配置全覆盖（环境变量 / settings 键 / 代码参数 / 数据目录文件 / 前端常量） |
-| [docs/TAURI-MIGRATION.md](docs/TAURI-MIGRATION.md) | 参与桌面壳/发布的人 | Tauri 2 + Python sidecar 架构、内部 HTTPS 自动更新与验收判据 |
 | [docs/SCHEMA.md](docs/SCHEMA.md) | 要改数据层的人 | DB 迁移 1–26、表结构、跨进程数据契约、改表清单 |
-| **[docs/TOOLS.md](docs/TOOLS.md)** | **要给 Agent 加工具 / 想知道有哪些工具的人** | 工具注册表与治理：全量清单（插件 × 风险 × 确认门）、加一个工具要动的文件、机检命令 |
-| **[docs/MCP.md](docs/MCP.md)** | 要接外部工具的人 | `mcp.json` 形状、安全默认、工具命名、排障、诚实边界 |
-| **[docs/AGENT-BENCHMARK.md](docs/AGENT-BENCHMARK.md)** | 想知道"和 WorkBuddy 差在哪"的人 | 基础五件套对标矩阵、仍存在的缺陷清单、下一步优先级 |
 | **[docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md)** | 要动 Agent 核心的人 | 八层结构、不变量 I1–I18、与行业做法的差异 |
-| [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) | 接手维护的人（含 AI 助手） | 代码地图、模块职责、风险索引（2026-10-19 精简重写） |
 | [docs/PITFALLS.md](docs/PITFALLS.md) | 现场排障、要改底层的人 | **135 条真机环境坑**（只在真机复现过、无法从代码反推，只增不改） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发者 | 环境搭建、版本与发布（§3）、代码规约、验收纪律 |
 | [CHANGELOG.md](CHANGELOG.md) | 所有人 | 版本变更明细（含每次事故的根因） |

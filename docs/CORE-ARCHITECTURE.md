@@ -10,7 +10,7 @@ _2026-09-18 撰写。锚定 `15b847e`（main，v0.3.12 + 3）。本文是**新�
 > |---|---|---|
 > | 本文 | **核心 Agent 长什么样、为什么这样分层、离行业标准差在哪** | 结构说明 + 评估，随架构变 |
 > | `CODEBASE_OVERVIEW.md` | 代码地图、模块职责、当前风险索引（**2026-10-19 精简重写**） | 全仓视角，随代码变 |
-> | [TOOLS.md](TOOLS.md) | **现在到底有哪些工具**、加一个工具要同步哪五处 | **清单由脚本生成**，机检守着 |
+> | TOOLS.md | **现在到底有哪些工具**、加一个工具要同步哪五处 | **清单由脚本生成**，机检守着 |
 > | `PLUGIN-SDK.md`（**该文件已于 2026-09-29 删除**） | 怎么写一个插件（契约细节） | 面向插件作者 |
 > | | **不再变的决策**及其后果 | 只增不改 |
 >
@@ -46,7 +46,7 @@ Workbench 的核心 Agent 是一个**单用户、本机、工具驱动的对话�
 - **不做向量检索/知识库**：迁移 6 已把 `knowledge_nodes` / `faq_cards` 删除，Embedding 配置随之移除。
 - **MCP 支持 stdio + Streamable HTTP（2026-10-23 起）**：用户级 `mcp.json` + `tools/list`/`tools/call`，
   工具名 `mcp__<server>__<tool>`（与 DSH / Claude Code 同形）；server `instructions` 以「外部说明」
-  追加到系统提示词。**不做** resources/prompts/sampling 与长连接推送。见 §7.2 与 [MCP.md](MCP.md)。
+  追加到系统提示词。**不做** resources/prompts/sampling 与长连接推送。见 §7.2 与 MCP.md。
 
 ---
 
@@ -211,7 +211,7 @@ class Risk(str, Enum):
 
 > **2026-10-19 起 installed 层有两个生产者**：用户从共享库安装的 Skill，以及
 > `mcp_registry` 从 MCP server 的 `tools/list` 生成的工具。后者同样必须显式声明
-> `risk/trust/reversibility`，默认 `WRITE/UNTRUSTED/IRREVERSIBLE`（见 [MCP.md](MCP.md)）。
+> `risk/trust/reversibility`，默认 `WRITE/UNTRUSTED/IRREVERSIBLE`（见 MCP.md）。
 > `core_specs()` 的 20 个工具仍是文档承诺的"产品面"；MCP 工具与 Skill 一样属于"运行期"。
 
 `deregister_capability("")` 的守卫（`:369-373`）值得单独记：核心插件的 `capability_id` 是**空串**，
@@ -549,8 +549,8 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 | 维度 | 行业当前做法 | 本项目 | 判定 |
 |---|---|---|---|
 | **工具契约** | JSON Schema + 名字 + 描述；Anthropic 2025-11 追加 `input_examples` | pydantic `args_model` → `_openai_schema()` 自动派生，**schema 不手写第二份** | ✅ **优于主流**：类型即契约，schema 由类型派生，天然不会漂移 |
-| **工具来源标准化** | **MCP** 已是事实标准：2025-12-09 由 Anthropic 捐给 Linux Foundation 下的 Agentic AI Foundation（Anthropic/Block/OpenAI 共同创立，Google/Microsoft/AWS/Cloudflare/Bloomberg 支持），1 万+ 公开 server、97M+ 月 SDK 下载，ChatGPT/Cursor/Gemini/Copilot/VS Code 均已采用 | `ToolHub` 插件协议 ＋ **stdio + Streamable HTTP MCP 客户端**（[MCP.md](MCP.md)） | ✅ **基础对齐**（两种传输 + tools + instructions；无 resources/sampling） |
-| **大规模工具注入** | Anthropic Tool Search Tool（`defer_loading`）：>10K token 或 10+ 工具时按需发现，上下文省 85%；纯工具定义在 5 server 场景可达 55K token，Anthropic 内部见过 134K | **全量注入**，自估 ~2k token/轮；`list_api_for(plugins)` 已留白名单口子 | 🟡 当前工具规模（见 [TOOLS.md](TOOLS.md)）、~2k token **远低于 10K 阈值**，当前全量注入是**正确选择**；但缺"工具变多之后的退路" |
+| **工具来源标准化** | **MCP** 已是事实标准：2025-12-09 由 Anthropic 捐给 Linux Foundation 下的 Agentic AI Foundation（Anthropic/Block/OpenAI 共同创立，Google/Microsoft/AWS/Cloudflare/Bloomberg 支持），1 万+ 公开 server、97M+ 月 SDK 下载，ChatGPT/Cursor/Gemini/Copilot/VS Code 均已采用 | `ToolHub` 插件协议 ＋ **stdio + Streamable HTTP MCP 客户端**（MCP.md） | ✅ **基础对齐**（两种传输 + tools + instructions；无 resources/sampling） |
+| **大规模工具注入** | Anthropic Tool Search Tool（`defer_loading`）：>10K token 或 10+ 工具时按需发现，上下文省 85%；纯工具定义在 5 server 场景可达 55K token，Anthropic 内部见过 134K | **全量注入**，自估 ~2k token/轮；`list_api_for(plugins)` 已留白名单口子 | 🟡 当前工具规模（见 TOOLS.md）、~2k token **远低于 10K 阈值**，当前全量注入是**正确选择**；但缺"工具变多之后的退路" |
 | **风险分级** | 框架普遍有（OpenAI Agents SDK `needsApproval`、LangGraph `interrupt()`） | `Risk` 三档 + 显式声明（装配期强制，不声明不给过） | ✅ 符合 |
 | **工具结果体量** | 普遍靠截断；前沿做法是 Programmatic Tool Calling（工具在代码沙箱里编排，中间结果不进上下文，token 降 37%） | `MAX_RESULT_CHARS=16_000` **显式告知**截断 + 沙箱已具备执行能力，但**未做工具编排** | 🟡 截断处理比多数项目诚实（告知而非静默）；PTC 是明确的下一步 |
 | **参数准确率** | `input_examples` 实测把复杂参数准确率从 72% 提到 90% | 靠 `description` 里写清口径（**后果类措辞必须落到描述里**：会写平台数据的工具要写明"会真的改平台数据"——本仓的教训是一次误调用不报错、却会真的建出来） | 🟡 无示例机制；当前工具规模下描述够用 |
@@ -665,7 +665,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 对标 WorkBuddy 时，MCP 是基础五件套之一；不接就无法验证"外部工具能不能被安全地管住"。
 原判断的第三条（信任边界）没有消失，而是被落成了默认值。
 
-**已落地**（[MCP.md](MCP.md)）：
+**已落地**（MCP.md）：
 
 | 项 | 做法 |
 |---|---|
@@ -679,7 +679,7 @@ HTTP 侧的错误码语义是刻意的：**400 = 参数/前置条件问题（调
 
 **仍然不做**：远程 HTTP/SSE、`resources` / `prompts` / `sampling`、OAuth、自动重启、
 按工具粒度的 risk 覆盖。**MCP server 不在沙箱里**——它的权限等于当前用户，
-这条边界写在 [MCP.md](MCP.md) §3。
+这条边界写在 MCP.md §3。
 
 **触发条件（下一阶段）**：出现第一个必须走远程传输的 server，或需要 `resources` 才能完成的任务。
 

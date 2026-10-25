@@ -7,8 +7,8 @@
 > **表达不了** SSE 事件序列、长轮询挂起语义、`seq` 游标与产物下载路径守卫——这三类恰是最易踩坑处，见 §12。
 >
 > 相关文档：[SCHEMA.md](SCHEMA.md)（表与跨进程数据契约）、[CONFIG.md](CONFIG.md)（端口与环境变量）、
-> [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md)（代码地图与风险索引）、
-> [MCP.md](MCP.md)（MCP 配置与安全模型）。
+> CODEBASE_OVERVIEW.md（代码地图与风险索引）、
+> MCP.md（MCP 配置与安全模型）。
 >
 > ⚠ **2026-10-09：浏览器扩展已整体移出本仓库**（用户决策：桌面端与扩展不耦合，
 > 本仓只需账号管理页承接云端数据环境）。随之删除的是 `/extension/*` 整段蓝图（原 §11）、
@@ -752,7 +752,7 @@ curl.exe -s "http://127.0.0.1:18765/api/logs/tail?level=ERROR&n=50"
 - 重连会**先摘旧能力再注册**，不会留下"删了但还在工具表里"的幽灵。
 
 > 配置形状、安全默认（默认 `risk=write`、`trust=UNTRUSTED`、环境变量白名单）见
-> [MCP.md](MCP.md)。MCP 工具通过 `ToolHub` 的 installed 层进入 `/api/agent/tools`。
+> MCP.md。MCP 工具通过 `ToolHub` 的 installed 层进入 `/api/agent/tools`。
 
 ---
 

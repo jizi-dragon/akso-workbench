@@ -120,12 +120,7 @@ jobs:
           cargo --version
           cargo check --manifest-path src-tauri\Cargo.toml
 
-      # 工具清单 / 数字门禁（2026-09-16 随"工具清单治理"引入）：
-      # 核对 docs/TOOLS.md 的清单与"N 个工具/插件"数字 == 运行期 ToolHub。
-      # tests/test_tools_doc.py 也钉了它，所以这条在 pytest 里已覆盖；
-      # 单独再跑一次是为了**让失败原因在 CI 界面上一眼可见**（pytest 里红只会说某个 test 挂了）。
-      - name: Tool-list gate
-        run: .venv\Scripts\python.exe tools\gen_tools_doc.py
+      # 工具清单门禁已随 docs/TOOLS.md 于 2026-10-25 删除（判据无对象）
 
       # uv tool run 会按需下载 ruff（首次约 10 MB）。这是有意的：
       # 与 CONTRIBUTING §7 记录的本地命令**逐字一致**，本地绿 == CI 绿。

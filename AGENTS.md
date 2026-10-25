@@ -23,23 +23,21 @@
 > |---|---|
 > | ★ **核心 Agent 架构与分层契约 ＋ 不变量 I1–I18（地基）** | [docs/CORE-ARCHITECTURE.md](docs/CORE-ARCHITECTURE.md) |
 > | 真机环境坑（**135 条**，只增不改） | [docs/PITFALLS.md](docs/PITFALLS.md) |
-> | 有哪些工具、怎么加一个 | [docs/TOOLS.md](docs/TOOLS.md) |
-> | 怎么接外部 MCP server、安全默认是什么 | [docs/MCP.md](docs/MCP.md) |
-> | **和 WorkBuddy 差在哪、还剩哪些缺陷** | [docs/AGENT-BENCHMARK.md](docs/AGENT-BENCHMARK.md) |
 > | 数据库与迁移账（改必更的事实源） | [docs/SCHEMA.md](docs/SCHEMA.md) |
 > | HTTP 端点契约 / 配置项 | [docs/API.md](docs/API.md) · [docs/CONFIG.md](docs/CONFIG.md) |
 > | 版本与发版机制（已合并） | [CONTRIBUTING.md](CONTRIBUTING.md) §3.2 / §3.6 |
 > | 用户手册（给使用者的） | [docs/USER-MANUAL.md](docs/USER-MANUAL.md) |
-> | 代码地图 / 风险索引 | [docs/CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) |
 > | 平台取证的方法论与脱敏口径（**报告已删，只剩口径**） | [factory-tuning/README.md](factory-tuning/README.md) |
 > | 人的协作规范 | [CONTRIBUTING.md](CONTRIBUTING.md) |
 >
 > **2026-09-29 文档清理**：上表中原先指向 `PLATFORM-OPERATIONS-LEARNED` /
 > `FACTORY-PLATFORM-COGNITION` / `AGENT-FILE-INPUT-PLAN` 的三行**已删除**（用户下达的文档瘦身）。
 > 那三份的内容没有搬走 —— 要看它们只能 `git show <删除前提交>:docs/<文件名>`。
-> ★ **2026-10-19 二次瘦身**：`docs/CODEBASE_OVERVIEW.md` 从 498 行精简为一张地图（约 150 行）；
-> `docs/VERSIONING.md` 的正文并入 `CONTRIBUTING.md` §3.6，文件只留指针；
-> 新增 `docs/MCP.md` 与 `docs/AGENT-BENCHMARK.md`。
+> ★ **2026-10-25 三次瘦身（大重构前）**：`docs/TOOLS.md` / `docs/MCP.md` / `docs/AGENT-BENCHMARK.md` /
+> `docs/ACP.md` / `docs/TAURI-MIGRATION.md` / `docs/VERSIONING.md` / `docs/CODEBASE_OVERVIEW.md` **已删除**
+> （它们描述的正是即将被 DSH 插件取代的那部分）。要看只能 `git show <删除前提交>:docs/<文件名>`。
+> ★ 保留下来的 6 份是**还活着的事实**：`CORE-ARCHITECTURE`（I1–I18 判据在读）、`PITFALLS`（判据在读）、
+> `API` / `SCHEMA` / `CONFIG`（线上仍在跑）、`USER-MANUAL`（用户在用）。它们**随代码一起删**，不提前删。
 > ★ **`docs/CORE-ARCHITECTURE.md` 已上移到第一行**：它是 §5 不变量的载体，
 > 而 `tests/test_invariant_coverage.py` **按这个路径读它** —— 删了它，18 条不变量的覆盖率对账当场失效。
 
@@ -179,13 +177,11 @@
 #     与 shell 无关。见 §4「中文乱码」与 PITFALLS #38 的复核注。
 .\.venv\Scripts\python.exe -m pytest -o addopts=""        # 全量；默认 addopts 跳过 slow 层
 .\.venv\Scripts\uv.exe tool run ruff check .              # ★ lint —— 先探一次，见 §4（这条会漂；2026-09-24 实测走这条）
-.\.venv\Scripts\python.exe tools\gen_tools_doc.py         # 工具清单/数字 == 运行期中枢
 .\.venv\Scripts\python.exe tools\verify_packaging.py      # 打包静态核对 7 项
 ```
 
 | 你改了什么 | 必须额外跑 |
 |---|---|
-| `workbench/plugins/**` | `tools\gen_tools_doc.py --write`（重生成 [docs/TOOLS.md](docs/TOOLS.md) 清单块）**+** 确认 `server.spec` 的 `hiddenimports` 有该模块 **+** `REQUIRED_TOOLS`。<br>★ **新增/删除插件时三处必须同时改**，否则 `load_all` 会把 ImportError **吞成一条 failure**（它的隔离设计），表现为 `selfcheck` 静默变红而启动照常——2026-09-22 删配置工厂时正是这三处（`_MODULES`、`server.spec`、`REQUIRED_TOOLS`）一处都不能漏 |
 | **附件链路**：`services/attachments.py`、`services/parsing.py`、`api/routes_attachments.py`、`api/routes_chat.py` 的扼流点与**写给模型的附件提示**、`plugins/builtins.py` 的 `attachment_*` | `pytest tests/test_attachments.py -o addopts=""`（**26 条**：落盘/拒收/解析坐标/展开成 parts/按坐标取/会话隔离/**提示措辞**）**+** `python tools\verify_attachments.py`（**24 项**端到端：真起生产入口、真发 multipart、**字节级**读回、三条拒收、扼流点展开、删除是真删）**+** `python tools\verify_attachments_live.py`（**真机联调 · 要花 token**：颜色 / 形状 / 表格 / **不撤回自己** / 负样本，五问全绿才算过）<br>★ **这条链路上"函数对"与"链路通"是两件事**：2026-09-22 真机联调抓到两个单测看不见的缺陷（`_pending` 未绑定 / **这一轮的消息绕过扼流点**）——见 `docs/AGENT-FILE-INPUT-PLAN.md`（**该文件已于 2026-09-29 删除**） §6.1。**改这条链路后必须另跑一次真机联调**。<br>★ **写给模型的那句话也是链路的一部分**（[PITFALLS #89](docs/PITFALLS.md)）：旧轮图片的引用话术一处措辞不当，模型就会**撤回自己刚答对的内容**（"前面是瞎猜的"）；内联提示里提起"能不能读"会让它**拒绝看图**。改任何 `[附件 …]` 提示文案后，措辞判据在 `tests/test_attachments.py`，端到端那条是 `verify_attachments_live.py` 的 2b |
 | **输入区 / 附件 UI**：`static/index.html` 的输入框那一段、`static/js/chat.js` 的用量行与消息里的附件、`static/js/attachments.js`、`static/css/app.css` 的 `.usage-strip` / `.model-chip` / `.usage-ring` / `.msg-attachments` | `python tools\verify_composer_ui.py`（**32 项**：真起生产入口 + 真开 chromium，点会话、按发送，然后读**渲染后**的几何与计算样式）。<br>★ 为什么字符串断言不够（`verify_attachments.py` 的 A1–A9 只证明"源码里有这些字样"）：它抓不到这一整类**看起来完全正常**的失败——那一行还是 `hidden` / 被父元素裁掉、字号被别处一条更具体的规则压回 11px（用户上一轮的原话是「比蚂蚁还小的字」）、模型名换行掉到发送键**下面**、事件里少了 `contextTokens` 于是永远显示「上下文 —」。<br>★ **J/K 两组钉的是"三条输入入口真的能用"与"界面真的接住了服务端的事件"**：真点按钮（`expect_file_chooser`）、真派发带 `File` 的 paste/drop、发送后读**拦截下来的请求体**看 `attachmentIds`，再断言消息气泡里长出 chip；K 组还会**放开拦截**让真服务端把标记写进库（临时库那把 Key 是假的 ⇒ 401，不花 token），刷新后断言标记被画回 chip 而**没有**漏成 `[附件 att-…]` 原文（见 [PITFALLS #88](docs/PITFALLS.md)：服务端为界面发的 `attachment` 事件此前**前端没人接**）。<br>★ **凡"几何交给浏览器算"的样式（`conic-gradient` / `mask` / `clip-path`），判据必须落在像素上**：H4–H6 把那个 14px 的圆环按 4× 截图 → 自写 PNG 解码 → 逐角度判色（见 [PITFALLS #87](docs/PITFALLS.md)：修前 10 个角度全判成背景色，而当时那条"看 `backgroundImage` 里有没有 `conic-gradient`"的断言**是绿的**）。改了圆环尺寸/轨道色/填充色，`TRACK_RGB` / `TONE_WARN_RGB` 两个常量要跟着改。<br>★ 改了**用量行的数据口径**（哪一段是会话累计、哪一段是本轮真值）还要跑 `pytest tests/test_agent_loop.py -k context -o addopts=""`——键名对不上时前端**静默**显示占位，不报错 |
 | ★ 给 `services/parsing.py` **加一个新的文件类型** | 三处一起改：`SUPPORTED` 白名单 + 对应的 `_parse_*`（**必须给 locator 记 `offset`/`chars`**，否则"第 N 页"不可复算）+ `tests/test_attachments.py` 的 C 组加一条"抽到正文 **且** 坐标切得回原文" |
@@ -201,7 +197,6 @@
 | `tools/build_tauri.ps1` | **立刻补 UTF-8 BOM**，再跑 `verify_packaging.py`（P5 就是为这件事存在的，PITFALLS #37）。★ **它极易在脚本化编辑后丢失**：任何"读进来 → 改 → 写回去"的批处理都会顺手把 BOM 吃掉（2026-10-09 实测踩到一次，P5 当场报红——这正是它存在的理由） |
 | `src-tauri/**` / `tools/build_tauri.ps1` | `cargo check --manifest-path src-tauri\Cargo.toml` + `pytest tests\test_tauri_config.py tests\test_tauri_update_manifest.py -o addopts=""`；完整构建跑 `tools\build_tauri.ps1`（会先 PyInstaller 再 Tauri，数分钟）。★ `build_tauri.ps1` 同样必须带 UTF-8 BOM；改 Tauri 配置后先跑静态测试，别等到 NSIS 阶段才发现版本/资源错配 |
 | 端口号 / `workbench/config.py` / `src-tauri/src/main.rs` | Tauri 用动态端口；没有 `verify_port_broker` / `test_ports_contract`。改端口链路跑 `pytest tests\test_tauri_config.py -o addopts=""` 与 `cargo check`；Web 模式仍用 18765 |
-| 任何 `docs/` 里的数字（N 个工具/插件） | `tools\gen_tools_doc.py`（它扫 `README.md` + `docs/TOOLS.md` + `docs/API.md`；★ `docs/PLUGIN-SDK.md` **已于 2026-09-29 删除**，`docs/CODEBASE_OVERVIEW.md` **曾于同批删除、2026-10-07 重新生成**，两者都不在 `CLAIM_DOCS` 里） |
 | ★ **运行时间线 / 可观测性面**（`api/routes_agent.py` 的 `/runs`、`harness/trace.py`、`static/js/run-timeline.js`、`static/css/app.css` 的 `.rt-*`） | `pytest tests\test_agent_timeline.py -o addopts=""`（**5 条**：空结果是 200 不是 404 / run 与 span 一次返回 / 按 `step` 升序 / 会话过滤真的生效 / **摘要 span 自己声明 `attrs.summary`**）**+** `python tools\verify_agent_ui.py`（**19 项**端到端）。<br>★ **为什么另要一条端到端**：`verify_agent_ui.py` 读的是**计算样式**（`getComputedStyle`）而不是类名 —— 我写那个面板时凭印象编了 `badge-ok` / `badge-danger` 这些**不存在的类名**（真实的是 `badge-lime` / `badge-red`），后果是徽章退化成**灰底灰字**，而**界面上看不出哪里错了**：它只是"颜色不太对"，不是"少了一个元素"。同 PITFALLS #87 的教训：**类名对不对推不出渲染出来是什么样**。<br>★ **摘要那次调用必须标红且解释**：它几乎必然全 miss（摘要读完整段历史，前缀命中概率最低），而 miss 的价是命中的 **50 倍**。不标出来的话，用户看到"这一轮贵"只会去怪工具调用 |
 | ★ **任何 `docs/**` 或根目录的 markdown**（改链接 / 挪文件 / 加存档目录） | `pytest tests\test_doc_links.py -o addopts=""`（**6 条**：断链 / 幻影坑号 / **代码块里的链接（疑似正文被吞）** / 排除项必须真实存在且有理由 / **N 个反引号的代码段要剥干净** / 决策文档目录不得存在）。<br>★ **三类缺陷的处置口径不同，别一律改链接**：① 文件还在、只是改了名 ⇒ **改链接**；② 目标文件已删除 ⇒ 从正文里**删掉那处引用**（不要留一个点不开的链接，也不要把编号留着当"依据"）；③ 那是**带日期的取证报告 / vendor 逐字存档** ⇒ 加到 `tools/check_doc_links.py` 的 `ARCHIVES` 并**写明理由** —— ★ **改存档里的链接是改写历史**（与"CHANGELOG 是历史"同一条纪律）。<br>★ **一个整天误报的检查会把真缺陷埋掉**（实测：第一版报 789 处，其中 700+ 是假的，真正的 3 处幻影引用就埋在噪音里）—— 所以这个脚本的**作用域**（`ARCHIVES` 排除清单、剥代码块、URL 解码）是它的核心设计，不是可选项；见 PITFALLS #108 / #109 |
 | ★ 改了 `harness/**`、`prompts.py`、`cache.py`、`plugin_api.py` **或任何工具描述** | `python tools\run_evals.py --offline` + `pytest tests\eval -o addopts=""`（**16 条**离线评测，不联网不花 token）。<br>★ **这是计划 §6.3 的门禁（G3 的落地形式）：提交里必须附 before/after 数**（成功率 / 工具选择准确率 / 平均步数 / token / 缓存命中率）。<br>★ **看到「回放 miss」不要先怀疑行为**：那是**请求形状变了**（提示词 / 工具描述 / 消息装配），不是功能坏了。处置：`python tools\run_evals.py --record` 重录，然后 `git diff tests/eval/fixtures/` —— **那个 diff 就是"工具面变了多少"的量化答案**。<br>★ 夹具按**请求指纹**匹配（含 `messages + tools + temperature + max_tokens + json_mode`），这条门禁的全部价值就在于此：**改了提示词或工具描述会变成一次可见的失败**。<br>★ 夹具当前是**合成**的（`note` 字段逐份标注）：它锁的是"请求形状 + 链路行为"，**不是**"模型选得对不对"。换真机 `--record` 即可，**期望一行都不用改** |
@@ -216,13 +211,12 @@
 | **敏感路径**（`workbench/sandbox/**`、`approvals.py`、`services/vault.py`、`plugin_api.py`、`harness/loop.py`、`permissions.py`、`diagnostics.py`、`checkpoints.py`） | `coverage run --source=workbench -m pytest -o addopts=""` → `coverage json -o tmp\coverage.json` → `python tools\coverage_gate.py tmp\coverage.json`（基线只许升；`--update` 需人工确认） |
 | **任何代码** | 改了就必须重跑 §3 基线四条（PITFALLS #41）；结构门禁 `python tools\repolint.py --frontend`（文件预算 / error-text / 新端点必须登记进 `tools/frontend_parity.json`） |
 
-**加一个工具必须同步 5 处**（漏任何一处 = 装完静默没功能，PITFALLS #32）：
+**加一个工具必须同步 4 处**（漏任何一处 = 装完静默没功能，PITFALLS #32）：
 
 1. `workbench/plugins/<插件>.py` 的 `ToolSpec`（含显式 `risk`）
 2. `workbench/plugins/__init__.py::_MODULES`（新插件才要）
 3. `workbench/server.spec` 的 `hiddenimports`（新插件才要）——动态导入 PyInstaller 看不见
 4. `workbench/api/routes_agent.py::REQUIRED_TOOLS`（关键工具才要）
-5. `docs/TOOLS.md` 清单块 —— **跑 `gen_tools_doc.py --write`，不要手写**
 
 ---
 

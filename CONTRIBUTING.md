@@ -4,7 +4,7 @@
 > 原则先于工具——**先契约后实现，先复现后修复**。
 >
 > 使用者请看 [README.md](README.md) 与 [docs/USER-MANUAL.md](docs/USER-MANUAL.md)；
-> 接手维护请先读 `docs/CODEBASE_OVERVIEW.md`（2026-10-19 精简重写：代码地图 / 模块职责 / 风险索引）
+> 接手维护请先读 `docs/CODEBASE_OVERVIEW.md（已于 2026-10-25 删除）`（2026-10-19 精简重写：代码地图 / 模块职责 / 风险索引）
 > 与 [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑 / 排障速查）。
 >
 > **用 AI 助手改这个仓库时**：把 **[AGENTS.md](AGENTS.md)** 交给它（多数工具会自动读取根目录的该文件）。
@@ -186,7 +186,6 @@ Tauri updater 不再读 GitHub Releases。发布步骤：
 
 ```powershell
 .\.venv\Scripts\python.exe tools\verify_packaging.py   # 7 项静态核对，当前 7/7 PASS
-.\.venv\Scripts\python.exe tools\gen_tools_doc.py      # 工具清单/数字门禁，当前 PASS
 ```
 
 它拦住的是「跑完 PyInstaller（数分钟）才暴露」的断点：spec 入口脚本缺失、入口用了相对导入、
@@ -198,13 +197,9 @@ Tauri UI/图标缺失、**工具插件漏登记 `hiddenimports`（P7）**。
 
 ### 3.4.1 工具清单门禁（改了 `plugins/` 必跑）
 
-```powershell
-.\.venv\Scripts\python.exe tools\gen_tools_doc.py --write   # 重生成 docs/TOOLS.md 的清单块
-.\.venv\Scripts\python.exe tools\gen_tools_doc.py           # 核对：文档清单/数字 == 运行期中枢
-```
-
-`tests/test_tools_doc.py` 把它也钉进了 pytest，所以**忘了跑也会在测试里红**。
-治理规则见 [docs/TOOLS.md](docs/TOOLS.md)：工具是产品面，加/删/改都要过确认门与文档两道。
+> **2026-10-25：这条门禁已随 `docs/TOOLS.md` 一起删除**（工具清单文档不再维护，
+> 运行期真源是 `ToolHub` 本身）。`tests/test_tools_doc.py` 与 `tools/gen_tools_doc.py` 同批删除。
+治理规则见 docs/TOOLS.md（已于 2026-10-25 删除）：工具是产品面，加/删/改都要过确认门与文档两道。
 
 ### 3.5 构建链路的脚本纪律（PS 5.1）
 
@@ -215,9 +210,9 @@ Tauri UI/图标缺失、**工具插件漏登记 `hiddenimports`（P7）**。
 - **顺序敏感的一处**：`uv sync` 必须在 release commit **之前**（它会写 `uv.lock` 里的项目版本，
   反了则 commit 里的 lock 立刻过期）。
 
-### 3.6 版本管理的三层（2026-10-19 合并自 `docs/VERSIONING.md`）
+### 3.6 版本管理的三层（2026-10-19 合并自 `docs/VERSIONING.md（已于 2026-10-25 删除）`）
 
-> 原 `docs/VERSIONING.md` 的 534 行已合并到这里；文件保留为指针（历史链接仍要能点开）。
+> 原 `docs/VERSIONING.md（已于 2026-10-25 删除）` 的 534 行已合并到这里；文件保留为指针（历史链接仍要能点开）。
 > 下面只写**今天仍然成立**的规则，不再抄旧文里的 tag/Release 实测数字（它们已过期）。
 
 | 层 | 是什么 | 现在怎么做 |
@@ -273,7 +268,7 @@ Tauri UI/图标缺失、**工具插件漏登记 `hiddenimports`（P7）**。
 
 ## 5. 开发流程与分工边界
 
-1. **动代码前**先读 `docs/CODEBASE_OVERVIEW.md`（2026-10-19 精简重写：代码地图 / 约定 / 风险索引）与
+1. **动代码前**先读 `docs/CODEBASE_OVERVIEW.md（已于 2026-10-25 删除）`（2026-10-19 精简重写：代码地图 / 约定 / 风险索引）与
    [docs/PITFALLS.md](docs/PITFALLS.md)（环境坑）、[docs/SCHEMA.md](docs/SCHEMA.md)（数据契约）；
 2. 新路由挂到 `workbench/api/__init__.py::_optional_routers`（可选路由）或同级注册；
 3. 新增/修改端点 → 同步 [docs/API.md](docs/API.md)；新增配置项 → 同步 [docs/CONFIG.md](docs/CONFIG.md)；
@@ -315,14 +310,13 @@ Tauri UI/图标缺失、**工具插件漏登记 `hiddenimports`（P7）**。
 | 项 | 现状 | 影响 |
 |---|---|---|
 | `tools/verify_packaging.py` | **7/7 PASS**（P1/P2/P5/P7/P9/P10/P11；Electron 时代的 P3/P6 已删）；**CI 自动调用** | 构建链路上的断点已由 CI 兜住；**本机裸跑 `build_tauri.ps1` 时仍需手动跑一次**（CI 要等 push 之后才跑） |
-| 文档里的工具/插件数字 | **已上机检**：`tools/gen_tools_doc.py` + `tests/test_tools_doc.py` 核对 `docs/TOOLS.md` 与运行期中枢，并扫活跃文档里的"N 个工具/插件" | 2026-09-15 曾四处文档同时写旧数字且由用户先发现（[docs/TOOLS.md](docs/TOOLS.md) §7） |
 | ~~`desktop/package-lock.json` 版本陈旧~~ | ✅ **2026-10-19 Electron 退役**：该文件与整个 `desktop/` 已删除 | 版本副本只剩 `VERSION` / pyproject / `__init__` / `uv.lock` / `.version.json` / Tauri 两处 |
 | `tools/setup.ps1` §5 | Node 是 **INFO 信息项**（不计入失败），文案已改为「仅影响 Tauri CLI 构建与 Web UI E2E」 | ✅ 与当前 Tauri 交付形态一致 |
 | `tests/test_proc.py`（7 项） | 仍在测 Node 子进程封装 | 它测的是**遗留封装本身**，不代表运行时链路 |
-| ⚠️ **Tauri 自动更新 UI** | 签名/清单/构建链路已就绪，但“检查→提示→下载→安装”尚未接入 | 用户当前只能手动覆盖安装；详见 [TAURI-MIGRATION.md](docs/TAURI-MIGRATION.md) §4 |
+| ⚠️ **Tauri 自动更新 UI** | 签名/清单/构建链路已就绪，但“检查→提示→下载→安装”尚未接入 | 用户当前只能手动覆盖安装；详见 TAURI-MIGRATION.md §4 |
 | `adapters/*.json` 的 `$schema` | 原指向已删除的 `docs/模块契约.md#adapters` | ✅ 本轮已改为 `docs/SCHEMA.md`（仅此字段） |
 
-> 完整清单（含代码级缺陷与安全风险）见 `docs/CODEBASE_OVERVIEW.md` 的风险索引与\n> `docs/AGENT-BENCHMARK.md` §3。
+> 完整清单（含代码级缺陷与安全风险）见 `docs/CODEBASE_OVERVIEW.md（已于 2026-10-25 删除）` 的风险索引与\n> `docs/AGENT-BENCHMARK.md（已于 2026-10-25 删除）` §3。
 
 ## 7. 验收纪律
 
@@ -342,7 +336,7 @@ cargo check --manifest-path src-tauri\Cargo.toml
 ```
 改动**洞察页产物预览（`static/js/artifact-preview.js` / markdown 渲染 / drawio 画布）**后必跑
 `.\.venv\Scripts\python.exe tools\verify_insight_preview.py`（14 项，真浏览器断言渲染结果：表格列口径、引用块、drawio 节点与连线计数、多页切页、零 JS 错误）。它自起服务、用临时数据目录与专用端口（18791），**不需要先退出工作台**。
-完整验收基线（含真机项与 E2E）见本文 §7；代码地图与当前风险索引见 `docs/CODEBASE_OVERVIEW.md`。
+完整验收基线（含真机项与 E2E）见本文 §7；代码地图与当前风险索引见 `docs/CODEBASE_OVERVIEW.md（已于 2026-10-25 删除）`。
 
 - 阶段验收以 `tests/` 机器验收为准，不靠肉眼；
 - 真机验收（真实 eGMP 平台）只在测试环境账号上做；
