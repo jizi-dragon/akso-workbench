@@ -1,0 +1,7 @@
+# akso-workbench 的 loader 行。
+#
+# ★ 必须有一行：浏览器半边的名单来自 host 侧对当前 Loader 行的扫描 ——
+#   行不存在时，`dsh.client` 声明得再全也不会被加载（规范 §1 硬规则 1）。
+- insert:
+    - id: akso-workbench
+      name: akso-workbench-dsh-ui
