@@ -81,6 +81,8 @@ export function apply(ctx: any): void {
       ),
     )
 
+    /* 配置工具在 akso-workbench 页面内以导航 tab 呈现（见 page.tsx），不再单占左栏 */
+
     ctx.slots.inject('conversation.composer.dock', () =>
       ctx.slots.register(
         {

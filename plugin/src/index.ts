@@ -23,6 +23,10 @@ import { join } from 'node:path'
 import * as cloud from './cloud.ts'
 import { clearSession, readPrefs, readSession, writePrefs, writeSession } from './store.ts'
 import { buildSnapshotTool } from './tool.ts'
+import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
+import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
+import { EgmpError, clearEgmpSession, login as egmpLogin, publicSession, readEgmpSession, writeEgmpSession } from './config/session.ts'
+import { buildConfigApplyTool, buildConfigPlanTool } from './config/tools.ts'
 
 export const name = 'akso-workbench'
 export const inject = ['webServer']
@@ -180,6 +184,10 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   }
 
   function handleError(res: any, error: unknown): void {
+    if (error instanceof EgmpError) {
+      sendJson(res, 502, { error: error.message, code: error.code, traceId: error.traceId, path: error.path })
+      return
+    }
     if (error instanceof cloud.CloudError) {
       if (error.status === 401) {
         clearSession(dshHome)
@@ -249,6 +257,15 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     boxRename: '/api/akso-workbench/boxes/rename',
     boxBind: '/api/akso-workbench/boxes/bind-site',
     health: '/api/akso-workbench/health',
+    configCapabilities: '/api/akso-workbench/config/capabilities',
+    configSession: '/api/akso-workbench/config/session',
+    configLogin: '/api/akso-workbench/config/login',
+    configLogout: '/api/akso-workbench/config/logout',
+    configInvoke: '/api/akso-workbench/config/invoke',
+    configPlan: '/api/akso-workbench/config/plan',
+    configPlanGet: '/api/akso-workbench/config/plan-status',
+    configApply: '/api/akso-workbench/config/apply',
+    configAudit: '/api/akso-workbench/config/audit',
   }
 
   /** 写完之后：统一回拉一次，返回**整份新快照**。 */
@@ -473,6 +490,91 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       await cloud.bindBoxSite(cloud.normalizeBase(session.baseUrl), session.token, boxName, siteId)
       sendJson(res, 200, await afterWrite(session))
     }),
+
+    /* ───────────── 配置：eGMP 会话（口令不落盘，只存 JWT） ───────────── */
+    route('GET', R.configSession, false, async (_req, res) => {
+      sendJson(res, 200, publicSession(readEgmpSession(dshHome)))
+    }),
+
+    route('POST', R.configLogin, false, async (_req, res, body) => {
+      const session = await egmpLogin(String(body.baseUrl ?? ''), String(body.account ?? ''), String(body.password ?? ''))
+      writeEgmpSession(dshHome, session)
+      sendJson(res, 200, { ok: true, ...publicSession(session) })
+    }),
+
+    route('POST', R.configLogout, false, async (_req, res) => {
+      clearEgmpSession(dshHome)
+      sendJson(res, 200, { ok: true, loggedIn: false })
+    }),
+
+    /* ───────────── 配置：能力目录（工具页的数据源） ───────────── */
+    route('GET', R.configCapabilities, false, async (_req, res) => {
+      sendJson(res, 200, {
+        session: publicSession(readEgmpSession(dshHome)),
+        groups: groupByDomain(),
+        total: CAPABILITIES.length,
+      })
+    }),
+
+    /* ───────────── 配置：单接口执行（工具页人工触发；模型拿不到） ───────────── */
+    route('POST', R.configInvoke, false, async (_req, res, body) => {
+      const session = readEgmpSession(dshHome)
+      if (session === null) {
+        sendJson(res, 401, { error: '还没有登录 eGMP' })
+        return
+      }
+      const capabilityId = text(body.capabilityId, 120)
+      if (capabilityId === '') {
+        sendJson(res, 400, { error: '缺少 capabilityId' })
+        return
+      }
+      const params = body.params !== null && typeof body.params === 'object' ? (body.params as Record<string, unknown>) : {}
+      const json = await invokeCapability(session, capabilityId, params)
+      sendJson(res, 200, { ok: true, response: json })
+    }),
+
+    /* ───────────── 配置：计划 → 执行 → 审计 ───────────── */
+    route('POST', R.configPlan, false, async (_req, res, body) => {
+      const session = readEgmpSession(dshHome)
+      if (session === null) {
+        sendJson(res, 401, { error: '还没有登录 eGMP' })
+        return
+      }
+      const plan = await planBlueprint(session, body.blueprint as never, dshHome)
+      sendJson(res, 200, { ok: true, plan })
+    }),
+
+    route('GET', R.configPlanGet, false, async (req, res) => {
+      const url = new URL(String(req.url ?? '/'), 'http://127.0.0.1')
+      const id = url.searchParams.get('id') ?? ''
+      const plan = id === '' ? null : loadPlan(dshHome, id)
+      if (plan === null) {
+        sendJson(res, 404, { error: '计划不存在' })
+        return
+      }
+      sendJson(res, 200, { ok: true, plan })
+    }),
+
+    route('POST', R.configApply, false, async (_req, res, body) => {
+      const session = readEgmpSession(dshHome)
+      if (session === null) {
+        sendJson(res, 401, { error: '还没有登录 eGMP' })
+        return
+      }
+      const planId = text(body.planId, 120)
+      if (planId === '') {
+        sendJson(res, 400, { error: '缺少 planId' })
+        return
+      }
+      const plan = await applyPlan(session, planId, dshHome)
+      sendJson(res, 200, { ok: plan.status === 'applied', plan })
+    }),
+
+    route('GET', R.configAudit, false, async (req, res) => {
+      const url = new URL(String(req.url ?? '/'), 'http://127.0.0.1')
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50))
+      sendJson(res, 200, { records: readAudit(dshHome, limit) })
+    }),
   ]
 
   ctx.effect(() => {
@@ -509,6 +611,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         loginHint: '还没有登录 akso-cloud：请打开 DeepSeek Harness 左栏的 akso-workbench，用「在浏览器中登录」完成一次授权。',
       })
       ctx.effect(() => registry.register(definition), 'akso-workbench: snapshot tool')
+
+      const configDeps = { dshHome }
+      const planTool = buildConfigPlanTool(configDeps)
+      const applyTool = buildConfigApplyTool(configDeps)
+      ctx.effect(() => registry.register(planTool), 'akso-workbench: config plan tool')
+      ctx.effect(() => registry.register(applyTool), 'akso-workbench: config apply tool')
     } else {
       logger.warn('akso-workbench: 没有 tools 服务，agent 读不到快照（界面仍可用）')
     }

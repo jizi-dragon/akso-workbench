@@ -8,7 +8,7 @@
  *   任何写操作都由 host 回拉 `/api/ui/state` 后整体替换 —— 页内不维护第二份数据。
  * ★ 未登录时整页是登录门（akso-pass 的 login-mask 形态），登录后才渲染四个 tab。
  */
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 import { t } from './i18n.ts'
 import {
@@ -27,6 +27,7 @@ import {
   subscribe,
   syncNow,
 } from './state.ts'
+import { ConfigToolsTab } from './tools.tsx'
 
 type Tab = 'accounts' | 'add' | 'sites' | 'boxes'
 
@@ -43,9 +44,40 @@ function fmtTime(ms: number | null): string {
   return new Date(ms).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
+/** 每 30s 触发一次重渲染：让「同步于 N 分钟前」这类相对时间自己走。 */
+function useNow(intervalMs = 30000): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), intervalMs)
+    return () => window.clearInterval(timer)
+  }, [intervalMs])
+  return now
+}
+
+function fmtRelative(ms: number, now: number): string {
+  const diff = Math.max(0, now - ms)
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
+  return new Date(ms).toLocaleDateString('zh-CN')
+}
+
+const menuItemStyle: React.CSSProperties = {
+  display: 'block',
+  width: '100%',
+  textAlign: 'left',
+  padding: '7px 10px',
+  border: 0,
+  borderRadius: 7,
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  fontSize: 13,
+  cursor: 'pointer',
+}
 /* ────────────────────────────── 登录门 ────────────────────────────── */
 
-function LoginGate({ tr }: { tr: (key: string, vars?: Record<string, string | number>) => string }) {
+function LoginGate({ tr, embedded = false }: { tr: (key: string, vars?: Record<string, string | number>) => string; embedded?: boolean }) {
   const state = useStore()
   const [form, setForm] = useState(LOGIN_EMPTY)
   const device = state.device
@@ -74,18 +106,8 @@ function LoginGate({ tr }: { tr: (key: string, vars?: Record<string, string | nu
     if (ok) setForm(LOGIN_EMPTY)
   }
 
-  return (
-    <div className="akw-page">
-      <header className="akw-topbar">
-        <div className="akw-topbar__left">
-          <span className="akw-mark" aria-hidden="true">a</span>
-          <div className="akw-brandtext">
-            <h1>{tr('page.title')}</h1>
-            <p>{tr('page.subtitle')}</p>
-          </div>
-        </div>
-      </header>
-      <div className="akw-body akw-body--center">
+  const body = (
+    <div className="akw-body akw-body--center">
         <section className="akw-login">
           <h2 className="akw-login__title">{tr('cloud.gate.title')}</h2>
           <p className="akw-login__desc">{tr('cloud.gate.desc')}</p>
@@ -161,7 +183,23 @@ function LoginGate({ tr }: { tr: (key: string, vars?: Record<string, string | nu
             </form>
           </details>
         </section>
-      </div>
+    </div>
+  )
+
+  if (embedded) return body
+
+  return (
+    <div className="akw-page">
+      <header className="akw-topbar">
+        <div className="akw-topbar__left">
+          <span className="akw-mark" aria-hidden="true">a</span>
+          <div className="akw-brandtext">
+            <h1>{tr('page.title')}</h1>
+            <p>{tr('page.subtitle')}</p>
+          </div>
+        </div>
+      </header>
+      {body}
     </div>
   )
 }
@@ -537,17 +575,69 @@ function BoxesTab({ tr }: { tr: (key: string, vars?: Record<string, string | num
 
 /* ────────────────────────────── 页面 ────────────────────────────── */
 
+type Section = 'accounts' | 'tools'
+
+const primaryNavStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: 2,
+  padding: '0 24px',
+  borderBottom: '1px solid var(--akw-line, #0002)',
+}
+
+function primaryTabStyle(active: boolean): React.CSSProperties {
+  return {
+    appearance: 'none',
+    border: 'none',
+    background: 'transparent',
+    color: 'inherit',
+    padding: '10px 14px',
+    fontSize: 14,
+    fontWeight: active ? 650 : 500,
+    opacity: active ? 1 : 0.55,
+    borderBottom: active ? '2px solid var(--akw-brand, #366ef4)' : '2px solid transparent',
+    cursor: 'pointer',
+  }
+}
+
 export function AccountsPage(props: { t?: (key: string, vars?: Record<string, string | number>) => string } = {}) {
   const tr = typeof props.t === 'function' ? props.t : t
   const state = useStore()
+  const [section, setSection] = useState<Section>('accounts')
   const [tab, setTab] = useState<Tab>('accounts')
   const [query, setQuery] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const now = useNow(30000)
+  const loggedInRef = useRef(state.loggedIn)
 
   useEffect(() => {
     void refresh()
+    // 自动同步：可见时每 60s 拉一次云端；窗口重新聚焦时也补一次
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return
+      if (!loggedInRef.current) {
+        void refresh()
+        return
+      }
+      void syncNow()
+    }
+    const timer = window.setInterval(tick, 60_000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && loggedInRef.current) void syncNow()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
   }, [])
 
-  if (!state.loggedIn) return <LoginGate tr={tr} />
+  const loggedIn = state.loggedIn
+
+  useEffect(() => {
+    loggedInRef.current = loggedIn
+  }, [loggedIn])
 
   const tabs: Array<{ key: Tab; label: string; count?: number }> = [
     { key: 'accounts', label: tr('page.tab.accounts'), count: state.counts.accounts },
@@ -562,90 +652,154 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
         <div className="akw-topbar__left">
           <span className="akw-mark" aria-hidden="true">a</span>
           <div className="akw-brandtext">
-            <h1>{tr('page.title')}</h1>
-            <p title={state.profile?.email}>{state.profile?.displayName || state.profile?.email || tr('page.subtitle')}</p>
+            <h1>akso-workbench</h1>
+            {loggedIn ? null : <p>账号中心未登录，配置工具仍可用</p>}
           </div>
-          <div className="akw-stats">
-            <span className="akw-stat"><b>{state.counts.accounts}</b><span>{tr('page.stat.accounts')}</span></span>
-            <span className="akw-stat"><b>{state.counts.sites}</b><span>{tr('page.stat.sites')}</span></span>
-            <span className="akw-stat"><b>{state.counts.boxes}</b><span>{tr('page.stat.boxes')}</span></span>
-          </div>
-          <span className="akw-sync" title={tr('cloud.status.loggedIn')}>
-            {state.revision === null ? '—' : tr('cloud.status.revision', { revision: state.revision })}
-            {' · '}
-            {tr('cloud.status.syncedAt', { time: fmtTime(state.syncedAt) })}
-          </span>
         </div>
         <div className="akw-topbar__right">
-          {tab === 'accounts' ? (
-            <label className="akw-search">
-              <input
-                value={query}
-                placeholder={tr('page.search')}
-                aria-label={tr('page.search')}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </label>
-          ) : null}
-          <button type="button" className="akw-btn" disabled={state.busy !== null} onClick={() => void syncNow()}>
-            {state.busy === 'sync' ? '…' : state.stale ? tr('cloud.status.retry') : tr('cloud.status.sync')}
-          </button>
-          <button type="button" className="akw-btn akw-btn--ghost" disabled={state.busy === 'logout'} onClick={() => void logout()}>
-            {tr('cloud.status.logout')}
-          </button>
+          {loggedIn ? (
+            <>
+              <span
+                className="akw-sync"
+                title={state.syncedAt === null ? '' : new Date(state.syncedAt).toLocaleString('zh-CN')}
+              >
+                {state.syncedAt === null ? '尚未同步' : `同步于 ${fmtRelative(state.syncedAt, now)}`}
+              </span>
+              <div style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  className="akw-btn"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((value) => !value)}
+                >
+                  {state.profile?.displayName || state.profile?.email || '已登录'}
+                  <span style={{ opacity: 0.5, fontSize: 10 }}>▾</span>
+                </button>
+                {menuOpen ? (
+                  <>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setMenuOpen(false)} />
+                    <div
+                      role="menu"
+                      style={{
+                        position: 'absolute',
+                        right: 0,
+                        top: 'calc(100% + 6px)',
+                        zIndex: 41,
+                        minWidth: 176,
+                        padding: 6,
+                        borderRadius: 10,
+                        border: '1px solid var(--dsw-alias-border-l3)',
+                        background: 'var(--dsw-alias-bg-layer-1)',
+                        boxShadow: '0 8px 24px rgba(0,0,0,.18)',
+                      }}
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        style={menuItemStyle}
+                        onClick={() => {
+                          setMenuOpen(false)
+                          const base = state.profile?.baseUrl
+                          if (base) window.open(base, '_blank', 'noopener')
+                        }}
+                      >
+                        打开 akso-cloud
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        style={menuItemStyle}
+                        onClick={() => {
+                          setMenuOpen(false)
+                          void logout()
+                        }}
+                      >
+                        退出登录
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }}>未登录</span>
+          )}
         </div>
       </header>
 
-      {state.stale && state.syncError !== null ? (
-        <div className="akw-notice akw-notice--err" role="alert">
-          <span className="akw-notice__grow">{tr('cloud.status.stale', { message: state.syncError })}</span>
-        </div>
-      ) : null}
-
-      <nav className="akw-tabs" role="tablist" aria-label={tr('page.title')}>
-        {tabs.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === item.key}
-            className={`akw-tab${tab === item.key ? ' is-active' : ''}`}
-            onClick={() => setTab(item.key)}
-          >
-            {item.label}
-            {item.count === undefined ? null : <i>{item.count}</i>}
-          </button>
-        ))}
+      {/* 一级导航：账号中心 / 配置工具 */}
+      <nav style={primaryNavStyle} aria-label="模块导航">
+        <button type="button" style={primaryTabStyle(section === 'accounts')} onClick={() => setSection('accounts')}>
+          账号中心
+        </button>
+        <button type="button" style={primaryTabStyle(section === 'tools')} onClick={() => setSection('tools')}>
+          配置工具
+        </button>
       </nav>
 
-      <div className="akw-body">
-        {state.flash !== null ? (
-          <div className="akw-notice" role="status" aria-live="polite">
-            <span className="akw-notice__grow">{state.flash}</span>
-          </div>
-        ) : null}
-
-        {state.status === 'loading' ? (
+      {section === 'accounts' ? (
+        loggedIn ? (
           <>
-            <div className="akw-skeleton" />
-            <div className="akw-skeleton" />
+            <nav className="akw-tabs" role="tablist" aria-label={tr('page.title')}>
+              {tabs.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === item.key}
+                  className={`akw-tab${tab === item.key ? ' is-active' : ''}`}
+                  onClick={() => setTab(item.key)}
+                >
+                  {item.label}
+                  {item.count === undefined ? null : <i>{item.count}</i>}
+                </button>
+              ))}
+            </nav>
+
+            <div className="akw-body">
+              {state.stale && state.syncError !== null ? (
+                <div className="akw-notice akw-notice--err" role="alert">
+                  <span className="akw-notice__grow">{tr('cloud.status.stale', { message: state.syncError })}</span>
+                </div>
+              ) : null}
+
+              {state.flash !== null ? (
+                <div className="akw-notice" role="status" aria-live="polite">
+                  <span className="akw-notice__grow">{state.flash}</span>
+                </div>
+              ) : null}
+
+              {state.status === 'loading' ? (
+                <>
+                  <div className="akw-skeleton" />
+                  <div className="akw-skeleton" />
+                </>
+              ) : null}
+
+              {state.status === 'error' ? (
+                <div className="akw-notice akw-notice--err" role="alert">
+                  <span className="akw-notice__grow">{tr('page.error', { message: state.error ?? '' })}</span>
+                  <button type="button" className="akw-btn akw-btn--sm" onClick={() => void refresh()}>
+                    {tr('page.retry')}
+                  </button>
+                </div>
+              ) : null}
+
+              {state.status === 'ready' && tab === 'accounts' ? <AccountsTab tr={tr} query={query} /> : null}
+              {state.status === 'ready' && tab === 'add' ? <AddAccountTab tr={tr} /> : null}
+              {state.status === 'ready' && tab === 'sites' ? <SitesTab tr={tr} /> : null}
+              {state.status === 'ready' && tab === 'boxes' ? <BoxesTab tr={tr} /> : null}
+            </div>
           </>
-        ) : null}
-
-        {state.status === 'error' ? (
-          <div className="akw-notice akw-notice--err" role="alert">
-            <span className="akw-notice__grow">{tr('page.error', { message: state.error ?? '' })}</span>
-            <button type="button" className="akw-btn akw-btn--sm" onClick={() => void refresh()}>
-              {tr('page.retry')}
-            </button>
-          </div>
-        ) : null}
-
-        {state.status === 'ready' && tab === 'accounts' ? <AccountsTab tr={tr} query={query} /> : null}
-        {state.status === 'ready' && tab === 'add' ? <AddAccountTab tr={tr} /> : null}
-        {state.status === 'ready' && tab === 'sites' ? <SitesTab tr={tr} /> : null}
-        {state.status === 'ready' && tab === 'boxes' ? <BoxesTab tr={tr} /> : null}
-      </div>
+        ) : (
+          <LoginGate tr={tr} embedded />
+        )
+      ) : (
+        <div className="akw-body">
+          <ConfigToolsTab />
+        </div>
+      )}
     </div>
   )
 }
