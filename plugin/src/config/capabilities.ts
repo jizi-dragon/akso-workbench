@@ -44,8 +44,8 @@ export interface Capability {
   risk: Risk
   irreversible?: boolean
   params: CapabilityParam[]
-  /** 工具页的预填请求；引擎用同一形状生成 plan */
-  example: Record<string, unknown>
+  /** 工具页的预填请求；引擎用同一形状生成 plan。少数接口（如菜单排序）整份 body 就是数组。 */
+  example: Record<string, unknown> | unknown[]
 }
 
 const p = (name: string, location: CapabilityParam['location'], required = true, type = 'string', description = ''): CapabilityParam => ({

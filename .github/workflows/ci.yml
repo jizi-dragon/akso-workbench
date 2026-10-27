@@ -1,0 +1,36 @@
+name: CI
+
+# 这个仓库以前没有任何自动检查：类型错、构建断、测试红全靠人记着跑。
+# 这里把根包与插件包的两套检查都串起来，push / PR 各跑一次。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            plugin/package-lock.json
+
+      - name: 安装依赖（根包 + 插件包）
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix plugin ci --no-audit --no-fund
+
+      # 根包：类型 + 单测；插件包：类型 + 单测 + 构建（构建产物不入库，所以构建失败必须在这里挡住）
+      - name: 类型 / 单测 / 构建
+        run: npm run check

@@ -153,7 +153,9 @@ export function validateBlueprint(input: unknown): ValidationResult {
         requireString('name')
         requireString('code')
         if (typeof resource.dataType !== 'number') errors.push(`${at}.dataType 必须是数字`)
-        if (resource.dataType === 4 && typeof resource.extras?.picklist !== 'string') {
+        // dataType=4（选项集）必须指明引用哪个 picklist —— extras 是未知形状，先收窄再读
+        const extras = resource.extras
+        if (resource.dataType === 4 && !(isRecord(extras) && typeof extras.picklist === 'string')) {
           errors.push(`${at} dataType=4 需要 extras.picklist（选项集 code）`)
         }
         break

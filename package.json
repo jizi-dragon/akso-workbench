@@ -7,7 +7,9 @@
   "engines": { "node": ">=24" },
   "scripts": {
     "test": "node --test \"test/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:plugin": "npm --prefix plugin run typecheck",
+    "check": "npm run typecheck && npm test && npm run typecheck:plugin && npm --prefix plugin test && npm --prefix plugin run build"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
