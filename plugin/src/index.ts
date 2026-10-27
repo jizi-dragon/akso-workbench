@@ -26,7 +26,7 @@ import { buildSnapshotTool } from './tool.ts'
 import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
 import { EgmpError, clearEgmpSession, login as egmpLogin, publicSession, readEgmpSession, writeEgmpSession } from './config/session.ts'
-import { buildConfigApplyTool, buildConfigPlanTool } from './config/tools.ts'
+import { buildConfigApplyTool, buildConfigPlanTool, applyApprovalFor } from './config/tools.ts'
 
 export const name = 'akso-workbench'
 export const inject = ['webServer']
@@ -169,6 +169,10 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   const baseUrl = cloud.normalizeBase(config.cloudBaseUrl ?? process.env.AKSO_CLOUD_BASE)
   // 验证/CI 里不希望真的弹一个浏览器窗口时，用 env 关掉（host 仍会返回链接）
   const openBrowser = process.env.AKSO_WORKBENCH_NO_OPEN === '1' ? () => {} : (config.openBrowser ?? openExternalUrl)
+  // 配置写入只走「模型工具 + 宿主审批」。HTTP 直连（invoke/apply）默认关闭：
+  // 一条 loopback 的 POST 没有人的审批参与，开着它等于给这道门留了个侧门。
+  const allowDirectWrite = process.env.AKSO_WORKBENCH_ALLOW_DIRECT_WRITE === '1'
+  const DIRECT_WRITE_HINT = '配置写入只走 agent 工具 + 宿主审批；本机调试要直连请设 AKSO_WORKBENCH_ALLOW_DIRECT_WRITE=1'
   const logger = { warn: (error: unknown) => ctx.logger?.warn?.(error) }
 
   /** 设备流：deviceCode 只在 host 侧，浏览器拿到的是"用户码 + 链接"。 */
@@ -569,8 +573,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       })
     }),
 
-    /* ───────────── 配置：单接口执行（工具页人工触发；模型拿不到） ───────────── */
+    /* ───────────── 配置：单接口执行（本机调试；默认关闭） ───────────── */
     route('POST', R.configInvoke, false, async (_req, res, body) => {
+      if (!allowDirectWrite) {
+        sendJson(res, 403, { error: DIRECT_WRITE_HINT })
+        return
+      }
       const session = readEgmpSession(dshHome)
       if (session === null) {
         sendJson(res, 401, { error: '还没有登录 eGMP' })
@@ -609,6 +617,10 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     }),
 
     route('POST', R.configApply, false, async (_req, res, body) => {
+      if (!allowDirectWrite) {
+        sendJson(res, 403, { error: DIRECT_WRITE_HINT })
+        return
+      }
       const session = readEgmpSession(dshHome)
       if (session === null) {
         sendJson(res, 401, { error: '还没有登录 eGMP' })
@@ -636,6 +648,21 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       for (const dispose of disposers) dispose()
     }
   }, 'akso-workbench: routes')
+
+  /* ── 确认门：配置写入必须过一次宿主审批 ──
+     我们只给「理由」，门是 DSH 的（`tools/pre-execute` → `ctx.approval`）：
+     返回 `ask` ⇒ 宿主把问题交给人在 GUI 里点，只有 `allowed-once` 才继续执行；
+     没有审批服务 / 会话策略是 `never` / 人点了拒绝 / 中途取消 ⇒ 调用直接失败（fail closed）。
+     `ask` 的理由来自盘上的计划摘要，不由模型传参决定。 */
+  const approvalArmed = typeof ctx.on === 'function'
+  if (approvalArmed) {
+    ctx.on('tools/pre-execute', (exec: any, next: () => Promise<any>) => {
+      if (exec?.name !== 'akso_workbench_config_apply') return next()
+      const verdict = applyApprovalFor(dshHome, exec.arguments)
+      if (!verdict.ask) return next()
+      return { kind: 'ask', reason: verdict.reason, displayReason: verdict.displayReason }
+    })
+  }
 
   /* ── 给 agent 的只读工具：让它能读到与界面同一份快照 ── */
   try {
@@ -673,7 +700,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       const planTool = buildConfigPlanTool(configDeps)
       const applyTool = buildConfigApplyTool(configDeps)
       ctx.effect(() => registry.register(planTool), 'akso-workbench: config plan tool')
-      ctx.effect(() => registry.register(applyTool), 'akso-workbench: config apply tool')
+      // 没有审批总线就**不注册**执行工具：宁可少一个工具，也不给一条不经过人的写入口
+      if (approvalArmed) {
+        ctx.effect(() => registry.register(applyTool), 'akso-workbench: config apply tool')
+      } else {
+        logger.warn('akso-workbench: 拿不到 tools/pre-execute，配置执行工具不注册（写入必须过审批）')
+      }
     } else {
       logger.warn('akso-workbench: 没有 tools 服务，agent 读不到快照（界面仍可用）')
     }

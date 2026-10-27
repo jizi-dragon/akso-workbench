@@ -20,6 +20,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { errorMessage, uiState } from '../src/cloud.ts'
+import { savePlan } from '../src/config/engine.ts'
 import { apply, ROUTES } from '../src/index.ts'
 import { buildSnapshotTool } from '../src/tool.ts'
 import { startFakeCloud } from './fake-cloud.mjs'
@@ -37,6 +38,8 @@ interface Mounted {
   disposers: Array<() => void>
   opened: string[]
   tools: Array<{ name: string; execute: (args: unknown, exec?: unknown) => Promise<unknown> }>
+  /** 宿主侧 `tools/pre-execute` 的监听器（审批门就从这里进去）。 */
+  preExecute: Array<(exec: any, next: () => Promise<any>) => any>
 }
 
 function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false): Mounted {
@@ -44,10 +47,15 @@ function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false
   const disposers: Array<() => void> = []
   const opened: string[] = []
   const tools: Mounted['tools'] = []
+  const preExecute: Mounted['preExecute'] = []
   const ctx = {
     logger: { warn: () => {} },
     effect: (fn: () => () => void) => {
       disposers.push(fn())
+      return () => {}
+    },
+    on: (event: string, listener: (exec: any, next: () => Promise<any>) => any) => {
+      if (event === 'tools/pre-execute') preExecute.push(listener)
       return () => {}
     },
     get: (name: string) => (name === 'tools' && withTools
@@ -61,7 +69,7 @@ function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false
     },
   }
   apply(ctx as never, { dshHome, cloudBaseUrl: cloudUrl, openBrowser: (url: string) => opened.push(url) })
-  return { routes, disposers, opened, tools }
+  return { routes, disposers, opened, tools, preExecute }
 }
 
 function makeReq(method: string, body?: unknown, remote = '127.0.0.1') {
@@ -553,5 +561,124 @@ test('配置池：默认空池，加入才可用；当前连接的账号不许�
     assert.equal(removed.json.currentAccountId, null)
   } finally {
     await cloud.close()
+  }
+})
+
+/* ─────────────────── 确认门：配置写入必须过一次审批 ─────────────────── */
+
+function planFixture(planId: string, overrides: { create: number; update: number; irreversible: number }): never {
+  return {
+    planId,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 30 * 60 * 1000,
+    env: 'test',
+    summary: { create: overrides.create, update: overrides.update, skip: 0, irreversible: overrides.irreversible },
+    steps: overrides.irreversible > 0
+      ? [{
+          id: 's1',
+          kind: 'lifecycle',
+          action: 'create',
+          title: '生命周期 新增状态：评审中',
+          naturalKey: 'lifecycle:review',
+          risk: 'WRITE',
+          irreversible: true,
+          capabilityId: 'lifecycle.status.create',
+          params: {},
+          dependsOn: [],
+          warnings: [],
+        }]
+      : [],
+    warnings: [],
+    status: 'planned',
+    results: [],
+  } as never
+}
+
+test('配置执行前必须过一次宿主审批：有写入就问人，只读/无计划/别的工具都放行', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  assert.equal(mounted.preExecute.length, 1, '应注册一个 tools/pre-execute 监听器')
+  const gate = mounted.preExecute[0]!
+
+  let delegated = 0
+  const next = async () => {
+    delegated += 1
+    return { kind: 'allow' as const }
+  }
+
+  // ① 会写的计划：必须变成 ask，且理由里有人能看懂的数字与不可逆步骤
+  savePlan(home, planFixture('pln_writes', { create: 1, update: 2, irreversible: 1 }))
+  const ask = await gate({ name: 'akso_workbench_config_apply', arguments: { planId: 'pln_writes' } }, next)
+  assert.equal(ask.kind, 'ask', '有写入的执行调用必须走审批')
+  assert.equal(delegated, 0, 'ask 之后不应该继续放行')
+  assert.match(String(ask.reason), /pln_writes/)
+  assert.match(String(ask.reason), /新建 1 步、更新 2 步/)
+  assert.match(String(ask.reason), /不可逆/)
+  assert.ok(ask.displayReason, '审批面板要拿到中英两版文案')
+  assert.equal(typeof ask.displayReason.zh, 'string')
+  assert.equal(typeof ask.displayReason.en, 'string')
+
+  // ② 全是 skip 的计划没有任何写入：问了只是噪音
+  savePlan(home, planFixture('pln_noop', { create: 0, update: 0, irreversible: 0 }))
+  const allowed = await gate({ name: 'akso_workbench_config_apply', arguments: { planId: 'pln_noop' } }, next)
+  assert.equal(allowed.kind, 'allow')
+  assert.equal(delegated, 1)
+
+  // ③ 计划不存在：让工具自己去报错，不弹窗
+  const ghost = await gate({ name: 'akso_workbench_config_apply', arguments: { planId: 'pln_ghost' } }, next)
+  assert.equal(ghost.kind, 'allow')
+  assert.equal(delegated, 2)
+
+  // ④ 别的工具一律不拦（包括只出计划的 plan 工具）
+  const other = await gate({ name: 'akso_workbench_config_plan', arguments: {} }, next)
+  assert.equal(other.kind, 'allow')
+  assert.equal(delegated, 3)
+})
+
+test('拿不到事件总线时**不注册**执行工具：宁少一个工具，也不留一条不过人的写入口', () => {
+  const routes = new Map<string, Captured['handler']>()
+  const tools: Mounted['tools'] = []
+  const ctx = {
+    logger: { warn: () => {} },
+    effect: (fn: () => () => void) => {
+      fn()
+      return () => {}
+    },
+    // 故意不给 on：模拟没有 `tools/pre-execute` 的极简宿主
+    get: (name: string) => (name === 'tools'
+      ? { register: (definition: Mounted['tools'][number]) => { tools.push(definition); return () => {} } }
+      : undefined),
+    webServer: {
+      register: (route: Captured) => {
+        routes.set(route.path, route.handler)
+        return () => routes.delete(route.path)
+      },
+    },
+  }
+  apply(ctx as never, { dshHome: freshHome(), openBrowser: () => {} })
+  assert.deepEqual(
+    tools.map((tool) => tool.name).sort(),
+    ['akso_workbench_accounts', 'akso_workbench_config_plan'],
+    '没有审批门时不能注册 config_apply',
+  )
+})
+
+test('HTTP 直连写配置是侧门：默认 403，显式开 env 才回到登录检查', async () => {
+  const closed = mount(freshHome())
+  for (const path of [P.configInvoke, P.configApply]) {
+    const res = await call(closed.routes, path, 'POST', { capabilityId: 'object.save', planId: 'pln_x' })
+    assert.equal(res.status, 403, `${path} 默认必须关着`)
+    assert.match(String(res.json.error), /AKSO_WORKBENCH_ALLOW_DIRECT_WRITE/)
+  }
+
+  process.env.AKSO_WORKBENCH_ALLOW_DIRECT_WRITE = '1'
+  try {
+    const opened = mount(freshHome())
+    const res = await call(opened.routes, P.configApply, 'POST', { planId: 'pln_x' })
+    // 门开了之后才轮到"没有 eGMP 会话"这一关
+    assert.equal(res.status, 401)
+    assert.match(String(res.json.error), /eGMP/)
+  } finally {
+    delete process.env.AKSO_WORKBENCH_ALLOW_DIRECT_WRITE
   }
 })
