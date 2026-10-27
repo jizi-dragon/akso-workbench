@@ -116,7 +116,7 @@ async function getPicklist(ctx: QueryContext, code: string): Promise<Record<stri
  */
 async function getStatuses(ctx: QueryContext, objectCode: string): Promise<Array<Record<string, unknown>>> {
   if (ctx.statuses.has(objectCode)) return ctx.statuses.get(objectCode)!
-  const json = await tryInvoke(ctx.session, 'query.lifecycle.by.object', { objectCode })
+  const json = await tryInvoke(ctx.session, 'query.lifecycle.status.list', { objectCode })
   const data = json?.data
   const nested = (data as Record<string, unknown> | undefined)?.lifecycle_status ?? (data as Record<string, unknown> | undefined)?.statuses
   const raw = Array.isArray(data) ? data : nested
