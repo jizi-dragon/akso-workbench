@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 import { t } from './i18n.ts'
+import BRAND_LOGO from './assets/logo.png'
 import {
   bindBoxSite,
   cancelDevice,
@@ -26,10 +27,11 @@ import {
   startDevice,
   subscribe,
   syncNow,
+  togglePool,
 } from './state.ts'
 import { ConfigToolsTab } from './tools.tsx'
 
-type Tab = 'accounts' | 'add' | 'sites' | 'boxes'
+type Tab = 'accounts' | 'pool' | 'add' | 'sites' | 'boxes'
 
 const ACCOUNT_EMPTY = { siteId: '', username: '', password: '', tabName: '', box: '', note: '' }
 const SITE_EMPTY = { name: '', baseUrl: '', note: '' }
@@ -192,7 +194,7 @@ function LoginGate({ tr, embedded = false }: { tr: (key: string, vars?: Record<s
     <div className="akw-page">
       <header className="akw-topbar">
         <div className="akw-topbar__left">
-          <span className="akw-mark" aria-hidden="true">a</span>
+          <img className="akw-logo" src={BRAND_LOGO} alt="" aria-hidden="true" />
           <div className="akw-brandtext">
             <h1>{tr('page.title')}</h1>
             <p>{tr('page.subtitle')}</p>
@@ -230,6 +232,7 @@ function AccountsTab({ tr, query }: { tr: (key: string, vars?: Record<string, st
       {matched.map((account) => {
         const isConnected = account.id === state.currentAccountId
         const connecting = state.busy === `connect:${account.id}`
+        const inPool = state.poolAccountIds.includes(account.id)
         const title = account.tabName.trim() !== '' ? account.tabName : account.username
         const site = account.siteName !== '' ? account.siteName : account.siteHost
         return (
@@ -253,19 +256,27 @@ function AccountsTab({ tr, query }: { tr: (key: string, vars?: Record<string, st
               </div>
             </dl>
             {account.note !== '' ? <p className="akw-card__note">{account.note}</p> : null}
-            <div className="akw-card__actions">
-              {isConnected ? (
-                <span className="akw-card__hint">{tr('page.tag.connectedHint')}</span>
-              ) : (
-                <button
-                  type="button"
-                  className="akw-btn akw-btn--sm"
-                  disabled={state.busy !== null}
-                  onClick={() => void connectAccount(account.id)}
-                >
-                  {connecting ? tr('page.action.connecting') : tr('page.action.connect')}
-                </button>
-              )}
+            <div className="akw-card__foot">
+              <span
+                className={`akw-pool-dot${inPool ? ' is-on' : ''}`}
+                role="img"
+                aria-label={inPool ? tr('pool.mark.in') : tr('pool.mark.out')}
+                title={inPool ? tr('pool.mark.in') : tr('pool.mark.out')}
+              />
+              <div className="akw-card__actions">
+                {isConnected ? (
+                  <span className="akw-card__hint">{tr('page.tag.connectedHint')}</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="akw-btn akw-btn--sm"
+                    disabled={state.busy !== null}
+                    onClick={() => void connectAccount(account.id)}
+                  >
+                    {connecting ? tr('page.action.connecting') : tr('page.action.connect')}
+                  </button>
+                )}
+              </div>
             </div>
           </li>
         )
@@ -274,6 +285,141 @@ function AccountsTab({ tr, query }: { tr: (key: string, vars?: Record<string, st
   )
 }
 
+/* ────────────────────────────── 配置池 ────────────────────────────── */
+
+/**
+ * 配置池：决定「agent 能拿哪些账号登录」。
+ *
+ * 默认是空池 —— 账号不会自己进来；点「添加账号」是在**已有账号里挑**，
+ * 不是跳去新增账号（新增走「添加账号」那个 tab）。池子只列已加入的账号，
+ * agent 当前连接的那个不许直接移出。
+ */
+function PoolTab({
+  tr,
+  onAdd,
+}: {
+  tr: (key: string, vars?: Record<string, string | number>) => string
+  onAdd: () => void
+}) {
+  const state = useStore()
+  const [picking, setPicking] = useState(false)
+  const pool = new Set(state.poolAccountIds)
+  const members = state.accounts.filter((account) => pool.has(account.id))
+  const candidates = state.accounts.filter((account) => !pool.has(account.id))
+
+  const label = (account: (typeof state.accounts)[number]): { title: string; meta: string } => ({
+    title: account.tabName.trim() !== '' ? account.tabName : account.username,
+    meta: `${account.siteName !== '' ? account.siteName : account.siteHost || '—'} · ${account.box || state.defaultBox || '—'}`,
+  })
+
+  return (
+    <section className="akw-pool">
+      <div className="akw-pool__head">
+        <p className="akw-pool__desc">{tr('pool.desc')}</p>
+        <div className="akw-pool__tools">
+          <span className="akw-pool__count">{tr('pool.count', { count: members.length, total: state.accounts.length })}</span>
+          {state.accounts.length === 0 ? (
+            <button type="button" className="akw-btn akw-btn--sm" onClick={onAdd}>{tr('pool.new')}</button>
+          ) : (
+            <button
+              type="button"
+              className={`akw-btn akw-btn--sm${picking ? '' : ' akw-btn--primary'}`}
+              aria-expanded={picking}
+              onClick={() => setPicking((value) => !value)}
+            >
+              {picking ? tr('pool.pick.close') : tr('pool.add')}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {picking ? (
+        <div className="akw-pool__pick">
+          <div className="akw-pool__pickhead">
+            <b>{tr('pool.pick.title')}</b>
+            <span>{tr('pool.pick.hint')}</span>
+          </div>
+          {candidates.length === 0 ? (
+            <p className="akw-pool__pickempty">{tr('pool.pick.empty')}</p>
+          ) : (
+            <ul className="akw-rows">
+              {candidates.map((account) => {
+                const { title, meta } = label(account)
+                const busy = state.busy === `pool:${account.id}`
+                return (
+                  <li key={account.id} className="akw-row">
+                    <div className="akw-row__main">
+                      <b>{title}</b>
+                      <span>{meta}</span>
+                    </div>
+                    <div className="akw-row__inline">
+                      <button
+                        type="button"
+                        className="akw-btn akw-btn--sm akw-btn--primary"
+                        disabled={state.busy !== null}
+                        onClick={() => void togglePool(account.id, true)}
+                      >
+                        {busy ? '…' : tr('pool.in')}
+                      </button>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      ) : null}
+
+      {state.accounts.length === 0 ? (
+        <div className="akw-empty">
+          <span className="akw-empty__title">{tr('pool.empty.title')}</span>
+          <span className="akw-empty__desc">{tr('pool.empty.desc')}</span>
+          <button type="button" className="akw-btn akw-btn--sm" onClick={onAdd}>{tr('pool.new')}</button>
+        </div>
+      ) : members.length === 0 ? (
+        <div className="akw-empty">
+          <span className="akw-empty__title">{tr('pool.none.title')}</span>
+          <span className="akw-empty__desc">{tr('pool.none.desc')}</span>
+        </div>
+      ) : (
+        <ul className="akw-rows">
+          {members.map((account) => {
+            const { title, meta } = label(account)
+            const isCurrent = account.id === state.currentAccountId
+            const busy = state.busy === `pool:${account.id}`
+            return (
+              <li key={account.id} className="akw-row is-pooled">
+                <span
+                  className="akw-pool-dot is-on"
+                  role="img"
+                  aria-label={tr('pool.mark.in')}
+                />
+                <div className="akw-row__main">
+                  <b>
+                    {title}
+                    {isCurrent ? <span className="akw-chiplet">{tr('pool.current')}</span> : null}
+                  </b>
+                  <span>{meta}</span>
+                </div>
+                <div className="akw-row__inline">
+                  <button
+                    type="button"
+                    className="akw-btn akw-btn--sm"
+                    disabled={state.busy !== null || isCurrent}
+                    title={isCurrent ? tr('pool.locked') : undefined}
+                    onClick={() => void togglePool(account.id, false)}
+                  >
+                    {busy ? '…' : tr('pool.out')}
+                  </button>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
+  )
+}
 /* ────────────────────────────── 添加账号 ────────────────────────────── */
 
 function AddAccountTab({ tr }: { tr: (key: string, vars?: Record<string, string | number>) => string }) {
@@ -306,13 +452,12 @@ function AddAccountTab({ tr }: { tr: (key: string, vars?: Record<string, string 
       password: form.password,
       tabName: form.tabName.trim() || undefined,
       box: form.box.trim() || undefined,
-      note: form.note.trim() || undefined,
     })
     if (ok) setForm({ ...ACCOUNT_EMPTY, siteId: form.siteId })
   }
 
   return (
-    <form className="akw-form" onSubmit={(event) => void submit(event)}>
+    <form className="akw-form akw-form--single" onSubmit={(event) => void submit(event)}>
       <div className="akw-form__head">
         <h2>{tr('page.form.title')}</h2>
         <span>{tr('page.form.desc')}</span>
@@ -364,15 +509,6 @@ function AddAccountTab({ tr }: { tr: (key: string, vars?: Record<string, string 
             <option key={box.name} value={box.name}>{box.name}</option>
           ))}
         </select>
-      </label>
-      <label className="akw-field">
-        <span className="akw-field__label">{tr('page.form.note')}</span>
-        <input
-          className="akw-input"
-          value={form.note}
-          placeholder={tr('page.form.note.ph')}
-          onChange={(event) => setForm({ ...form, note: event.target.value })}
-        />
       </label>
       <div className="akw-form__actions">
         <button type="button" className="akw-btn akw-btn--ghost" onClick={() => setForm(ACCOUNT_EMPTY)}>
@@ -577,28 +713,21 @@ function BoxesTab({ tr }: { tr: (key: string, vars?: Record<string, string | num
 
 type Section = 'accounts' | 'tools'
 
-const primaryNavStyle: React.CSSProperties = {
-  display: 'flex',
-  gap: 2,
-  padding: '0 24px',
-  borderBottom: '1px solid var(--akw-line, #0002)',
+const modNavIcon = {
+  accounts: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="5.4" r="2.6" />
+      <path d="M2.9 13.4c.4-2.6 2.5-4.1 5.1-4.1s4.7 1.5 5.1 4.1" />
+    </svg>
+  ),
+  tools: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.9 5.1h10.2M2.9 10.9h10.2" />
+      <circle cx="6.1" cy="5.1" r="1.5" />
+      <circle cx="9.9" cy="10.9" r="1.5" />
+    </svg>
+  ),
 }
-
-function primaryTabStyle(active: boolean): React.CSSProperties {
-  return {
-    appearance: 'none',
-    border: 'none',
-    background: 'transparent',
-    color: 'inherit',
-    padding: '10px 14px',
-    fontSize: 14,
-    fontWeight: active ? 650 : 500,
-    opacity: active ? 1 : 0.55,
-    borderBottom: active ? '2px solid var(--akw-brand, #366ef4)' : '2px solid transparent',
-    cursor: 'pointer',
-  }
-}
-
 export function AccountsPage(props: { t?: (key: string, vars?: Record<string, string | number>) => string } = {}) {
   const tr = typeof props.t === 'function' ? props.t : t
   const state = useStore()
@@ -641,6 +770,7 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
 
   const tabs: Array<{ key: Tab; label: string; count?: number }> = [
     { key: 'accounts', label: tr('page.tab.accounts'), count: state.counts.accounts },
+    { key: 'pool', label: tr('page.tab.pool'), count: state.poolAccountIds.length },
     { key: 'add', label: tr('page.tab.add') },
     { key: 'sites', label: tr('page.tab.sites'), count: state.counts.sites },
     { key: 'boxes', label: tr('page.tab.boxes'), count: state.counts.boxes },
@@ -650,7 +780,7 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
     <div className="akw-page">
       <header className="akw-topbar">
         <div className="akw-topbar__left">
-          <span className="akw-mark" aria-hidden="true">a</span>
+          <img className="akw-logo" src={BRAND_LOGO} alt="" aria-hidden="true" />
           <div className="akw-brandtext">
             <h1>akso-workbench</h1>
             {loggedIn ? null : <p>账号中心未登录，配置工具仍可用</p>}
@@ -729,11 +859,23 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
       </header>
 
       {/* 一级导航：账号中心 / 配置工具 */}
-      <nav style={primaryNavStyle} aria-label="模块导航">
-        <button type="button" style={primaryTabStyle(section === 'accounts')} onClick={() => setSection('accounts')}>
+      <nav className="akw-modnav" aria-label="模块导航">
+        <button
+          type="button"
+          className={`akw-modnav__btn${section === 'accounts' ? ' is-active' : ''}`}
+          aria-current={section === 'accounts' ? 'page' : undefined}
+          onClick={() => setSection('accounts')}
+        >
+          {modNavIcon.accounts}
           账号中心
         </button>
-        <button type="button" style={primaryTabStyle(section === 'tools')} onClick={() => setSection('tools')}>
+        <button
+          type="button"
+          className={`akw-modnav__btn${section === 'tools' ? ' is-active' : ''}`}
+          aria-current={section === 'tools' ? 'page' : undefined}
+          onClick={() => setSection('tools')}
+        >
+          {modNavIcon.tools}
           配置工具
         </button>
       </nav>
@@ -787,6 +929,7 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
               ) : null}
 
               {state.status === 'ready' && tab === 'accounts' ? <AccountsTab tr={tr} query={query} /> : null}
+              {state.status === 'ready' && tab === 'pool' ? <PoolTab tr={tr} onAdd={() => setTab('add')} /> : null}
               {state.status === 'ready' && tab === 'add' ? <AddAccountTab tr={tr} /> : null}
               {state.status === 'ready' && tab === 'sites' ? <SitesTab tr={tr} /> : null}
               {state.status === 'ready' && tab === 'boxes' ? <BoxesTab tr={tr} /> : null}

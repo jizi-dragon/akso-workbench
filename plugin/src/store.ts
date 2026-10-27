@@ -19,6 +19,16 @@ export interface Prefs {
   currentAccountId: string | null
 }
 
+/**
+ * 配置池：允许 agent 登录的账号集合。
+ *
+ * `pool.json` 不存在 = 还没配置过 ⇒ 视为"全部账号都在池里"（升级前的行为不变）；
+ * 一旦用户挪过任何一次，就以文件里的列表为准。
+ */
+export interface Pool {
+  accountIds: string[]
+}
+
 export function dataDir(dshHome: string): string {
   return join(dshHome, 'akso-workbench')
 }
@@ -79,4 +89,22 @@ export function readPrefs(dshHome: string): Prefs {
 
 export function writePrefs(dshHome: string, prefs: Prefs): void {
   writeJson(join(dataDir(dshHome), 'prefs.json'), prefs)
+}
+
+/** `null` = 从来没配置过（调用方据此回落到"全部账号"）。 */
+export function readPool(dshHome: string): Pool | null {
+  try {
+    const file = join(dataDir(dshHome), 'pool.json')
+    if (!existsSync(file)) return null
+    const parsed = readJson<{ accountIds?: unknown }>(file, {})
+    const list = Array.isArray(parsed.accountIds) ? parsed.accountIds : []
+    const accountIds = list.filter((id): id is string => typeof id === 'string' && id !== '')
+    return { accountIds: [...new Set(accountIds)] }
+  } catch {
+    return null
+  }
+}
+
+export function writePool(dshHome: string, pool: Pool): void {
+  writeJson(join(dataDir(dshHome), 'pool.json'), { accountIds: [...new Set(pool.accountIds)] })
 }

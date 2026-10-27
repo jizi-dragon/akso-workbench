@@ -28,6 +28,8 @@ await build({
   platform: 'browser',
   target: 'chrome110',
   jsx: 'automatic',
+  /* 品牌图等静态资源内联成 data URI：浏览器半边只有一个 JS 产物，没有静态目录可挂。 */
+  loader: { '.png': 'dataurl', '.svg': 'dataurl' },
   external: ['react', 'react-dom', 'react/jsx-runtime', 'react-dom/client'],
   define: { 'process.env.NODE_ENV': '"production"' },
   legalComments: 'none',

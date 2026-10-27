@@ -21,7 +21,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import * as cloud from './cloud.ts'
-import { clearSession, readPrefs, readSession, writePrefs, writeSession } from './store.ts'
+import { clearSession, readPool, readPrefs, readSession, writePool, writePrefs, writeSession } from './store.ts'
 import { buildSnapshotTool } from './tool.ts'
 import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
@@ -79,7 +79,38 @@ interface StatePayload {
   defaultBox: string
   counts: { accounts: number; sites: number; boxes: number }
   currentAccountId: string | null
+  /** 配置池：允许 agent 登录的账号；`pool.json` 不存在时等于全部账号。 */
+  poolAccountIds: string[]
 }
+
+/**
+ * 路由表 —— **导出**是给 host.test.ts 用的：
+ * 测试直接拿这张表比对"注册出来的路由"，新增端点时不用再手工同步一份。
+ */
+export const ROUTES = {
+  state: '/api/akso-workbench/state',
+  login: '/api/akso-workbench/cloud/login',
+  logout: '/api/akso-workbench/cloud/logout',
+  sync: '/api/akso-workbench/cloud/sync',
+  deviceStart: '/api/akso-workbench/cloud/device/start',
+  devicePoll: '/api/akso-workbench/cloud/device/poll',
+  accountCreate: '/api/akso-workbench/accounts/create',
+  accountCurrent: '/api/akso-workbench/accounts/current',
+  poolToggle: '/api/akso-workbench/pool/toggle',
+  siteCreate: '/api/akso-workbench/sites/create',
+  boxRename: '/api/akso-workbench/boxes/rename',
+  boxBind: '/api/akso-workbench/boxes/bind-site',
+  health: '/api/akso-workbench/health',
+  configCapabilities: '/api/akso-workbench/config/capabilities',
+  configSession: '/api/akso-workbench/config/session',
+  configLogin: '/api/akso-workbench/config/login',
+  configLogout: '/api/akso-workbench/config/logout',
+  configInvoke: '/api/akso-workbench/config/invoke',
+  configPlan: '/api/akso-workbench/config/plan',
+  configPlanGet: '/api/akso-workbench/config/plan-status',
+  configApply: '/api/akso-workbench/config/apply',
+  configAudit: '/api/akso-workbench/config/audit',
+} as const
 
 /* ────────────────────────────── HTTP 小工具 ────────────────────────────── */
 
@@ -147,13 +178,26 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   let snapshot: cloud.CloudSnapshot | null = null
   let syncedAt: number | null = null
 
+  /**
+   * 配置池：**默认空池** —— 账号不会自己进来，要人在「配置池 → 添加账号」里挑。
+   * 只保留还存在的账号 id（云端删掉的账号自动掉出池子）。
+   */
+  function poolFor(accounts: cloud.CloudAccount[]): string[] {
+    const stored = readPool(dshHome)
+    const known = new Set(accounts.map((a) => a.id))
+    return (stored?.accountIds ?? []).filter((id) => known.has(id))
+  }
+
   function payload(
     session: { email: string; displayName: string } | null,
     extra: { stale?: boolean; syncError?: string | null } = {},
   ): StatePayload {
     const prefs = readPrefs(dshHome)
     const accounts = snapshot?.accounts ?? []
-    const currentId = prefs.currentAccountId !== null && accounts.some((a) => a.id === prefs.currentAccountId)
+    // 配置池默认空；「已连接给 agent」以池子为准 —— 池外的账号即使 prefs 里记着也不算连接
+    // （prefs 不动，重新加回池子后连接会自动恢复，不丢用户的选择）。
+    const poolAccountIds = poolFor(accounts)
+    const currentId = prefs.currentAccountId !== null && poolAccountIds.includes(prefs.currentAccountId)
       ? prefs.currentAccountId
       : null
     return {
@@ -170,6 +214,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       defaultBox: snapshot?.defaultBox ?? '',
       counts: snapshot?.counts ?? { accounts: 0, sites: 0, boxes: 0 },
       currentAccountId: currentId,
+      poolAccountIds,
     }
   }
 
@@ -244,29 +289,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     }
   }
 
-  const R = {
-    state: '/api/akso-workbench/state',
-    login: '/api/akso-workbench/cloud/login',
-    logout: '/api/akso-workbench/cloud/logout',
-    sync: '/api/akso-workbench/cloud/sync',
-    deviceStart: '/api/akso-workbench/cloud/device/start',
-    devicePoll: '/api/akso-workbench/cloud/device/poll',
-    accountCreate: '/api/akso-workbench/accounts/create',
-    accountCurrent: '/api/akso-workbench/accounts/current',
-    siteCreate: '/api/akso-workbench/sites/create',
-    boxRename: '/api/akso-workbench/boxes/rename',
-    boxBind: '/api/akso-workbench/boxes/bind-site',
-    health: '/api/akso-workbench/health',
-    configCapabilities: '/api/akso-workbench/config/capabilities',
-    configSession: '/api/akso-workbench/config/session',
-    configLogin: '/api/akso-workbench/config/login',
-    configLogout: '/api/akso-workbench/config/logout',
-    configInvoke: '/api/akso-workbench/config/invoke',
-    configPlan: '/api/akso-workbench/config/plan',
-    configPlanGet: '/api/akso-workbench/config/plan-status',
-    configApply: '/api/akso-workbench/config/apply',
-    configAudit: '/api/akso-workbench/config/audit',
-  }
+  const R = ROUTES
 
   /** 写完之后：统一回拉一次，返回**整份新快照**。 */
   async function afterWrite(session: { token: string; baseUrl: string }): Promise<StatePayload> {
@@ -447,7 +470,37 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 404, { error: '账号不存在（可能已被别处删除，刷新一下）' })
         return
       }
+      // agent 只能连配置池里的账号：不在池里的一律拒绝（界面本来也不会给这个入口）
+      if (id !== '' && !poolFor(snapshot?.accounts ?? []).includes(id)) {
+        sendJson(res, 400, { error: '这个账号不在配置池里：先去「配置池」把它加进来' })
+        return
+      }
       writePrefs(dshHome, { currentAccountId: id === '' ? null : id })
+      sendJson(res, 200, payload(session))
+    }),
+
+    /* 配置池：决定底部账号条里 agent 能选哪些账号登录 */
+    route('POST', R.poolToggle, false, async (_req, res, body) => {
+      const id = text(body.id, 120)
+      const inPool = body.inPool !== false
+      const session = readSession(dshHome)
+      if (id === '') {
+        sendJson(res, 400, { error: '缺少账号 id' })
+        return
+      }
+      if (snapshot === null || !snapshot.accounts.some((a) => a.id === id)) {
+        sendJson(res, 404, { error: '账号不存在（先同步一次）' })
+        return
+      }
+      if (!inPool && readPrefs(dshHome).currentAccountId === id) {
+        sendJson(res, 400, { error: '这是 agent 当前连接的账号：先在底部账号条换一个或断开，再移出配置池' })
+        return
+      }
+      const current = payload(session).poolAccountIds
+      const next = inPool
+        ? [...new Set([...current, id])]
+        : current.filter((item) => item !== id)
+      writePool(dshHome, { accountIds: next })
       sendJson(res, 200, payload(session))
     }),
 
@@ -592,16 +645,20 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       const definition = buildSnapshotTool({
         read: () => {
           const session = readSession(dshHome)
+          const accounts = snapshot?.accounts ?? []
+          const pool = poolFor(accounts)
+          const pref = readPrefs(dshHome).currentAccountId
           return {
             loggedIn: session !== null,
             revision: snapshot?.revision ?? null,
             syncedAt,
-            accounts: snapshot?.accounts ?? [],
+            accounts,
             sites: snapshot?.sites ?? [],
             boxes: snapshot?.boxes ?? [],
             defaultBox: snapshot?.defaultBox ?? '',
             counts: snapshot?.counts ?? { accounts: 0, sites: 0, boxes: 0 },
-            currentAccountId: readPrefs(dshHome).currentAccountId,
+            currentAccountId: pref !== null && pool.includes(pref) ? pref : null,
+            poolAccountIds: pool,
           }
         },
         refresh: async () => {

@@ -22,6 +22,8 @@ export interface SnapshotView {
   counts: { accounts: number; sites: number; boxes: number }
   /** 已连接到 agent 的账号 id（界面里那个「已连接」） */
   currentAccountId: string | null
+  /** 配置池：允许 agent 登录的账号 id（底部账号条只列这些） */
+  poolAccountIds: string[]
 }
 
 export interface SnapshotToolDeps {
@@ -94,6 +96,7 @@ export function buildSnapshotTool(deps: SnapshotToolDeps) {
       const limit = Number.isFinite(input.limit) ? Math.min(200, Math.max(1, Number(input.limit))) : 50
       const want = String(input.section ?? 'all')
 
+      const pool = new Set(view.poolAccountIds)
       const accounts = view.accounts
         .filter((a) => matches([a.username, a.siteName, a.siteHost, a.note, a.box], q))
         .slice(0, limit)
@@ -106,6 +109,8 @@ export function buildSnapshotTool(deps: SnapshotToolDeps) {
           status: a.status,
           hasPassword: a.hasPassword,
           connected: a.id === view.currentAccountId,
+          /** 在配置池里 = agent 可以选它登录 */
+          inPool: pool.has(a.id),
           id: a.id,
         }))
       const sites = view.sites
@@ -124,6 +129,8 @@ export function buildSnapshotTool(deps: SnapshotToolDeps) {
         counts: view.counts,
         defaultBox: view.defaultBox,
         connectedAccountId: view.currentAccountId,
+        poolAccountIds: view.poolAccountIds,
+        poolCount: view.poolAccountIds.length,
       }
       if (want === 'all' || want === 'accounts') payload.accounts = accounts
       if (want === 'all' || want === 'sites') payload.sites = sites

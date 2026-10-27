@@ -60,6 +60,8 @@ export interface ServerState {
   defaultBox: string
   counts: { accounts: number; sites: number; boxes: number }
   currentAccountId: string | null
+  /** 配置池：允许 agent 登录的账号（底部账号条只列这些） */
+  poolAccountIds: string[]
 }
 
 const BASE = 'api/akso-workbench'
@@ -111,6 +113,9 @@ export const api = {
     box?: string
   }) => call<ServerState>('accounts/create', post(input)),
   setCurrent: (id: string) => call<ServerState>('accounts/current', post({ id })),
+
+  /** 配置池：把账号加入/移出 agent 可选登录的范围。 */
+  togglePool: (id: string, inPool: boolean) => call<ServerState>('pool/toggle', post({ id, inPool })),
 
   createSite: (input: { name?: string; baseUrl: string; note?: string }) =>
     call<ServerState>('sites/create', post(input)),

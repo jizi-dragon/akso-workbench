@@ -13,7 +13,7 @@ export const CSS = `
 .akw-topbar{position:sticky;top:0;z-index:3;flex:none;display:flex;align-items:center;gap:14px;padding:14px 24px 12px;background:var(--dsw-alias-bg-base);border-bottom:1px solid var(--dsw-alias-border-l2)}
 .akw-topbar__left{display:flex;align-items:center;gap:12px;min-width:0}
 .akw-topbar__right{display:flex;align-items:center;gap:8px;margin-left:auto}
-.akw-mark{flex:none;display:grid;place-items:center;width:28px;height:28px;border-radius:9px;color:var(--dsw-alias-bg-base);background:var(--dsw-alias-state-business-primary)}
+.akw-logo{flex:none;display:block;width:28px;height:28px;object-fit:contain}
 .akw-brandtext{min-width:0}
 .akw-brandtext h1{margin:0;font-size:15px;line-height:20px;font-weight:600}
 .akw-brandtext p{margin:2px 0 0;font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -29,14 +29,24 @@ export const CSS = `
 .akw-search input{width:170px;border:0;outline:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px}
 .akw-search input::placeholder{color:var(--dsw-alias-label-caption)}
 
-/* 下划线式 tab（akso-pass 的 .tabs / .tab.is-active） */
+/* 一级导航（账号中心 / 配置工具）：分段控件，和二级的下划线 tab 区分开 */
+.akw-modnav{flex:none;align-self:flex-start;display:flex;gap:2px;margin:12px 24px 8px;padding:3px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
+.akw-modnav__btn{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 13px;border:0;border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap;transition:background .14s ease,color .14s ease,box-shadow .14s ease}
+.akw-modnav__btn:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
+.akw-modnav__btn:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:1px}
+.akw-modnav__btn.is-active{background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:0 0 0 1px var(--dsw-alias-border-l2),0 1px 2px rgb(0 0 0 / 8%)}
+.akw-modnav__btn svg{flex:none;width:15px;height:15px;opacity:.85}
+.akw-modnav__btn.is-active svg{color:var(--dsw-alias-state-business-primary);opacity:1}
+
+/* 下划线式 tab（akso-pass 的 .tabs / .tab.is-active）——二级导航统一用它 */
 .akw-tabs{flex:none;display:flex;align-items:center;gap:2px;padding:0 24px;border-bottom:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base)}
-.akw-tab{position:relative;height:36px;padding:0 10px;border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;line-height:36px;cursor:pointer;white-space:nowrap}
-.akw-tab:hover{color:var(--dsw-alias-label-primary)}
+.akw-tab{position:relative;height:40px;padding:0 11px;border:0;border-radius:9px 9px 0 0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;line-height:40px;cursor:pointer;white-space:nowrap;transition:background .14s ease,color .14s ease}
+.akw-tab:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
+.akw-tab:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:-2px}
 .akw-tab.is-active{color:var(--dsw-alias-label-primary);font-weight:600}
-.akw-tab.is-active::after{content:"";position:absolute;left:8px;right:8px;bottom:-1px;height:2px;border-radius:2px;background:var(--dsw-alias-state-business-primary)}
-.akw-tab i{margin-left:6px;font-style:normal;font-size:11px;color:var(--dsw-alias-label-tertiary);font-weight:400}
-.akw-tab.is-active i{color:var(--dsw-alias-state-business-primary)}
+.akw-tab.is-active::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--dsw-alias-state-business-primary)}
+.akw-tab i{margin-left:7px;padding:0 6px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover-solid);font-style:normal;font-size:11px;font-weight:500;line-height:16px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.akw-tab.is-active i{background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-bg-base)}
 
 .akw-body{flex:1;min-height:0;overflow:auto;padding:18px 24px 40px;display:flex;flex-direction:column;gap:14px}
 
@@ -74,10 +84,16 @@ export const CSS = `
 .akw-facts dd{margin:2px 0 0;font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .akw-card__actions{display:flex;align-items:center;gap:8px;justify-content:flex-end}
 .akw-card__note{margin:0;font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.akw-card__foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .akw-card__hint{font-size:11px;color:var(--dsw-alias-state-business-primary)}
 
+/* 配置池标记：圆形色标（在池里才亮） */
+.akw-pool-dot{flex:none;width:8px;height:8px;border-radius:50%;border:1px solid var(--dsw-alias-border-l4);background:transparent}
+.akw-pool-dot.is-on{border-color:transparent;background:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 3px var(--dsw-alias-interactive-bg-hover)}
 /* 新增表单（akso-pass 的 .field-pair） */
 .akw-form{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px;border:1px solid var(--dsw-alias-border-l3);border-radius:16px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-panel)}
+/* 添加账号：单列（用户要求，字段一列往下排）；太宽的单列表单不好填，限一个舒服的宽度 */
+.akw-form--single{grid-template-columns:1fr;max-width:620px}
 .akw-form__head{grid-column:1/-1;display:flex;align-items:baseline;gap:8px}
 .akw-form__head h2{margin:0;font-size:15px;line-height:20px;font-weight:600}
 .akw-form__head span{font-size:12px;color:var(--dsw-alias-label-tertiary)}
@@ -152,6 +168,17 @@ export const CSS = `
 /* 同步状态（顶栏小字：让"四处同一份数据"可见） */
 .akw-sync{font-size:11px;color:var(--dsw-alias-label-caption);white-space:nowrap;font-variant-numeric:tabular-nums}
 
+/* 配置池页：说明 + 计数 + 行列表（行沿用 .akw-row） */
+.akw-pool{display:flex;flex-direction:column;gap:12px}
+.akw-pool__head{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.akw-pool__desc{margin:0;max-width:62ch;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.akw-pool__tools{display:flex;align-items:center;gap:8px}
+.akw-pool__count{font-size:11px;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}
+.akw-pool__pick{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:1px dashed var(--dsw-alias-border-l3);border-radius:14px;background:var(--dsw-alias-bg-layer-1)}
+.akw-pool__pickhead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.akw-pool__pickhead b{font-size:13px;font-weight:600}
+.akw-pool__pickhead span{font-size:11.5px;color:var(--dsw-alias-label-tertiary)}
+.akw-pool__pickempty{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 /* 行式列表：站点 / 盒子 */
 .akw-rows{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
 .akw-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--dsw-alias-border-l3);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
@@ -166,10 +193,94 @@ export const CSS = `
 .akw-input--inline{width:150px;height:28px}
 .akw-field--wide{grid-column:1/-1}
 
+/* ───────────────── 配置工具（横向二级导航 + 接口台账） ─────────────────
+ * 顶部是分区 tab（与账号中心的 tab 同一套下划线语言），下面是这一区的说明与卡片；
+ * 对象处理再按对象/选项集/字段/布局分栏。颜色只走主题 token（规范 §5 规则 10）。
+ */
+.akw-cfg{display:flex;flex-direction:column;gap:16px;width:auto;margin:-18px -24px 0}
+.akw-cfg__tabs{display:flex;align-items:center;gap:2px;padding:0 24px;border-bottom:1px solid var(--dsw-alias-border-l2);overflow-x:auto;scrollbar-width:none}
+.akw-cfg__tabs::-webkit-scrollbar{display:none}
+.akw-cfg__tab{position:relative;flex:none;height:38px;padding:0 12px;border:0;border-radius:9px 9px 0 0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;line-height:38px;cursor:pointer;white-space:nowrap;transition:background .14s ease,color .14s ease}
+.akw-cfg__tab:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
+.akw-cfg__tab:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:-2px}
+.akw-cfg__tab.is-active{color:var(--dsw-alias-label-primary);font-weight:600}
+.akw-cfg__tab.is-active::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--dsw-alias-state-business-primary)}
+.akw-cfg__tab i{margin-left:7px;padding:0 6px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover-solid);font-style:normal;font-size:11px;font-weight:500;line-height:16px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.akw-cfg__tab.is-active i{background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-bg-base)}
+
+.akw-cfg__main{display:flex;flex-direction:column;gap:14px;min-width:0;padding:0 24px}
+.akw-cfg__lede{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.akw-cfg__lede p{margin:2px 0 0;max-width:62ch;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.akw-cfg__stats{flex:none;display:flex;gap:6px}
+.akw-cfg__stat{display:flex;align-items:baseline;gap:5px;padding:4px 9px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;font-variant-numeric:tabular-nums}
+.akw-cfg__stat b{font-size:13px;font-weight:600}
+.akw-cfg__stat em{font-style:normal;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.akw-cfg__stat.is-danger b{color:var(--dsw-alias-state-error-primary)}
+.akw-cfg__stat.is-warn b{color:var(--dsw-alias-state-warn-primary)}
+
+/* 写入不可逆：一句提示，不用整块告警条 */
+.akw-cfg__legend{margin:-4px 0 0;padding-left:10px;border-left:2px solid var(--dsw-alias-state-warn-primary);font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-tertiary)}
+.akw-cfg__session{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px dashed var(--dsw-alias-border-l3);border-radius:12px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.akw-cfg__session b{font-weight:600;color:var(--dsw-alias-label-primary)}
+.akw-cfg__dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-caption)}
+.akw-cfg__session.is-on .akw-cfg__dot{background:var(--dsw-alias-state-business-primary)}
+
+.akw-cfg__subtabs{align-self:flex-start;display:flex;flex-wrap:wrap;gap:3px;padding:3px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
+.akw-cfg__subtab{display:flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:0;border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12.5px;cursor:pointer;transition:background .14s ease,color .14s ease}
+.akw-cfg__subtab:hover{color:var(--dsw-alias-label-primary)}
+.akw-cfg__subtab:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:1px}
+.akw-cfg__subtab.is-active{background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:0 1px 2px rgb(0 0 0 / 8%)}
+.akw-cfg__subtab span{font-size:11px;font-weight:400;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}
+
+.akw-cfg__grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(318px,1fr));align-items:start;gap:12px}
+.akw-cfg__card{display:flex;flex-direction:column;gap:7px;padding:13px 14px 12px;border:1px solid var(--dsw-alias-border-l3);border-radius:14px;background:var(--dsw-alias-bg-layer-1);cursor:pointer;transition:border-color .14s ease,transform .14s ease,box-shadow .14s ease}
+.akw-cfg__card:hover{border-color:var(--dsw-alias-border-l4);transform:translateY(-1px)}
+.akw-cfg__card:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:1px}
+.akw-cfg__card.is-blocked{border-color:var(--dsw-alias-state-error-primary)}
+.akw-cfg__card.is-open{transform:none;box-shadow:var(--dsw-elevation-panel)}
+.akw-cfg__cardtop{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.akw-cfg__cardtop strong{font-size:13px;line-height:18px;font-weight:600}
+.akw-cfg__flags{flex:none;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
+.akw-cfg__id,.akw-cfg__path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;line-height:15px}
+.akw-cfg__id{color:var(--dsw-alias-label-caption)}
+.akw-cfg__path{display:flex;gap:6px;color:var(--dsw-alias-label-tertiary);word-break:break-all}
+.akw-cfg__path b{flex:none;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.akw-cfg__desc{margin:0;font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-tertiary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.akw-cfg__meta{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:2px}
+.akw-cfg__count{font-size:10.5px;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}
+.akw-cfg__more{margin-left:auto;font-size:11px;color:var(--dsw-alias-state-business-primary)}
+
+.akw-cfg__tag{padding:1px 7px;border:1px solid;border-radius:999px;font-size:10.5px;line-height:15px;white-space:nowrap}
+.akw-cfg__tag.is-ok{color:var(--dsw-alias-state-success-primary,#2e7d32)}
+.akw-cfg__tag.is-warn{color:var(--dsw-alias-state-warn-primary,#b26a00)}
+.akw-cfg__tag.is-danger{color:var(--dsw-alias-state-error-primary,#b00020)}
+.akw-cfg__tag.is-kind-write{color:var(--dsw-alias-label-secondary);border-color:var(--dsw-alias-border-l4)}
+.akw-cfg__tag.is-kind-query,.akw-cfg__tag.is-kind-auth{color:var(--dsw-alias-label-caption);border-color:var(--dsw-alias-border-l3)}
+
+.akw-cfg__detail{display:flex;flex-direction:column;gap:8px;margin-top:2px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2);cursor:default}
+.akw-cfg__note{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-warn-primary)}
+.akw-cfg__noparam{font-size:11px;color:var(--dsw-alias-label-caption)}
+.akw-cfg__params{width:100%;border-collapse:collapse;font-size:11px}
+.akw-cfg__params th{padding:2px 8px 4px 0;font-weight:400;text-align:left;color:var(--dsw-alias-label-caption)}
+.akw-cfg__params td{padding:3px 8px 3px 0;color:var(--dsw-alias-label-secondary);vertical-align:top}
+.akw-cfg__params td.is-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-primary)}
+
+.akw-cfg__empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;width:100%;max-width:720px;padding:46px 24px;border:1px dashed var(--dsw-alias-border-l3);border-radius:16px;text-align:center}
+.akw-cfg__empty svg{width:48px;height:48px;margin-bottom:2px;color:var(--dsw-alias-label-caption)}
+.akw-cfg__empty b{font-size:14px;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.akw-cfg__empty span{max-width:52ch;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.akw-cfg__empty em{max-width:52ch;font-style:normal;font-size:11px;line-height:16px;color:var(--dsw-alias-label-caption)}
+
+.akw-cfg__hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.akw-cfg__hint.is-error{color:var(--dsw-alias-state-error-primary)}
+
 @media (max-width: 980px){
   .akw-stats,.akw-brandtext p{display:none}
   .akw-search input{width:110px}
   .akw-grid{grid-template-columns:1fr}
   .akw-form{grid-template-columns:1fr}
+  .akw-cfg__grid{grid-template-columns:1fr}
+  .akw-cfg__lede{flex-direction:column;align-items:flex-start;gap:8px}
+  .akw-cfg__tab{padding:0 9px}
 }
 `

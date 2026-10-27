@@ -41,7 +41,13 @@ function WorkbenchIcon({ size }: { size?: number; active?: boolean }) {
 
 function injectStyles(): void {
   const marker = 'style[data-plugin="akso-workbench"]'
-  if (document.querySelector(marker) !== null) return
+  const existing = document.querySelector<HTMLStyleElement>(marker)
+  if (existing !== null) {
+    // HMR 重载时旧 <style> 仍留在 <head>：内容一致就复用，不一致就改写，
+    // 否则改过的样式表会被"已经注入过"的短路挡住，新版类名拿不到任何规则。
+    if (existing.textContent !== CSS) existing.textContent = CSS
+    return
+  }
   const tag = document.createElement('style')
   tag.dataset.plugin = 'akso-workbench'
   tag.textContent = CSS

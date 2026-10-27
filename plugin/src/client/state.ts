@@ -52,6 +52,7 @@ const initial: State = {
   defaultBox: '',
   counts: { accounts: 0, sites: 0, boxes: 0 },
   currentAccountId: null,
+  poolAccountIds: [],
   error: null,
   flash: null,
   busy: null,
@@ -100,6 +101,7 @@ function fromServer(next: ServerState): Partial<State> {
     defaultBox: next.defaultBox ?? '',
     counts: next.counts ?? { accounts: 0, sites: 0, boxes: 0 },
     currentAccountId: next.currentAccountId ?? null,
+    poolAccountIds: Array.isArray(next.poolAccountIds) ? next.poolAccountIds : [],
     error: null,
   }
 }
@@ -308,4 +310,15 @@ export async function renameBox(source: string, target: string): Promise<boolean
 
 export async function bindBoxSite(name: string, siteId: string): Promise<void> {
   await write(`box-bind:${name}`, () => api.bindBoxSite(name, siteId), t('box.flash.bound', { name }))
+}
+
+/** 配置池：把账号加入 / 移出 agent 可选登录的范围。 */
+export async function togglePool(id: string, inPool: boolean): Promise<boolean> {
+  const account = state.accounts.find((item) => item.id === id)
+  const name = account === undefined ? id : (account.tabName || account.username)
+  return write(
+    `pool:${id}`,
+    () => api.togglePool(id, inPool),
+    inPool ? t('pool.flash.in', { name }) : t('pool.flash.out', { name }),
+  )
 }

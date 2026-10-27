@@ -20,7 +20,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { errorMessage, uiState } from '../src/cloud.ts'
-import { apply } from '../src/index.ts'
+import { apply, ROUTES } from '../src/index.ts'
 import { buildSnapshotTool } from '../src/tool.ts'
 import { startFakeCloud } from './fake-cloud.mjs'
 
@@ -29,20 +29,8 @@ interface Captured {
   handler: (req: unknown, res: unknown) => void
 }
 
-const P = {
-  state: '/api/akso-workbench/state',
-  login: '/api/akso-workbench/cloud/login',
-  logout: '/api/akso-workbench/cloud/logout',
-  sync: '/api/akso-workbench/cloud/sync',
-  deviceStart: '/api/akso-workbench/cloud/device/start',
-  devicePoll: '/api/akso-workbench/cloud/device/poll',
-  accountCreate: '/api/akso-workbench/accounts/create',
-  accountCurrent: '/api/akso-workbench/accounts/current',
-  siteCreate: '/api/akso-workbench/sites/create',
-  boxRename: '/api/akso-workbench/boxes/rename',
-  boxBind: '/api/akso-workbench/boxes/bind-site',
-  health: '/api/akso-workbench/health',
-}
+/** 路由表直接来自插件（导出常量），这里不再手工维护第二份。 */
+const P = ROUTES
 
 interface Mounted {
   routes: Map<string, Captured['handler']>
@@ -132,7 +120,7 @@ async function loginWith(routes: Map<string, Captured['handler']>) {
   return res
 }
 
-test('注册了 12 条路由，卸载时全部摘掉', () => {
+test('注册的路由与常量表逐条一致，卸载时全部摘掉', () => {
   const { routes, disposers } = mount(freshHome())
   assert.deepEqual([...routes.keys()].sort(), Object.values(P).sort())
   for (const dispose of disposers) dispose()
@@ -307,6 +295,8 @@ test('连接偏好落盘：写 prefs.json，传空 id 可断开', async () => {
     const created = await call(routes, P.accountCreate, 'POST', { siteId, username: 'u1', password: 'pw' })
     const accountId = (created.json.accounts as Array<{ id: string }>)[0]!.id
 
+    // 只有配置池里的账号才能连接（默认空池，先加进池）
+    await call(routes, P.poolToggle, 'POST', { id: accountId, inPool: true })
     const set = await call(routes, P.accountCurrent, 'POST', { id: accountId })
     assert.equal(set.json.currentAccountId, accountId)
     const prefs = JSON.parse(readFileSync(join(home, 'akso-workbench', 'prefs.json'), 'utf8')) as { currentAccountId?: string }
@@ -412,15 +402,20 @@ test('工具经 ctx.tools 真注册，且读到的是**同一条链路**的数�
   const cloud = await startFakeCloud()
   try {
     const { routes, tools } = mount(freshHome(), cloud.url, true)
-    assert.equal(tools.length, 1, '插件应把工具注册进 tools 服务')
-    assert.equal(tools[0]!.name, 'akso_workbench_accounts')
+    assert.deepEqual(
+      tools.map((tool) => tool.name).sort(),
+      ['akso_workbench_accounts', 'akso_workbench_config_apply', 'akso_workbench_config_plan'],
+      '插件应把三个工具都注册进 tools 服务',
+    )
+    const snapshotTool = tools.find((tool) => tool.name === 'akso_workbench_accounts')
+    assert.ok(snapshotTool, '缺 akso_workbench_accounts')
 
     await loginWith(routes)
     const site = await call(routes, P.siteCreate, 'POST', { name: '通桥', baseUrl: 'https://tonbridge-config.aksoegmp.com' })
     const siteId = (site.json.sites as Array<{ id: string }>)[0]!.id
     await call(routes, P.accountCreate, 'POST', { siteId, username: 'qa.admin', password: 'pw', note: '只读' })
 
-    const result = (await tools[0]!.execute({})) as Record<string, unknown>
+    const result = (await snapshotTool.execute({})) as Record<string, unknown>
     assert.equal(result.loggedIn, true)
     const accounts = result.accounts as Array<Record<string, unknown>>
     assert.equal(accounts.length, 1)
@@ -484,6 +479,7 @@ test('工具：登录后按 section/query 过滤，且**不暴露口令字段**'
       defaultBox: '默认盒',
       counts: { accounts: 2, sites: 1, boxes: 1 },
       currentAccountId: 'a2',
+      poolAccountIds: ['a2'],
     }),
     refresh: async () => {},
     loginHint: '',
@@ -499,10 +495,63 @@ test('工具：登录后按 section/query 过滤，且**不暴露口令字段**'
   assert.equal(accounts.find((a) => a.username === 'auditor')!.connected, true)
   assert.equal(accounts.find((a) => a.username === 'qa.admin')!.connected, false)
   assert.equal(all.connectedAccountId, 'a2')
+  // 配置池：只有池里的账号标 inPool（a2 在池里，a1 不在）
+  assert.deepEqual(all.poolAccountIds, ['a2'])
+  assert.equal(all.poolCount, 1)
+  assert.equal(accounts.find((a) => a.username === 'auditor')!.inPool, true)
+  assert.equal(accounts.find((a) => a.username === 'qa.admin')!.inPool, false)
 
   const filtered = (await tool.execute({ query: 'audit', section: 'accounts' })) as Record<string, unknown>
   const one = filtered.accounts as Array<Record<string, unknown>>
   assert.equal(one.length, 1)
   assert.equal(one[0]!.username, 'auditor')
   assert.equal(filtered.sites, undefined, 'section=accounts 时不该附带站点')
+})
+
+test('配置池：默认空池，加入才可用；当前连接的账号不许移出', async () => {
+  const cloud = await startFakeCloud()
+  try {
+    const home = freshHome()
+    const { routes } = mount(home, cloud.url)
+    await loginWith(routes)
+
+    const site = await call(routes, P.siteCreate, 'POST', { baseUrl: 'https://a.example.com' })
+    const siteId = (site.json.sites as Array<{ id: string }>)[0]!.id
+    const created = await call(routes, P.accountCreate, 'POST', { siteId, username: 'u1', password: 'pw' })
+    const accountId = (created.json.accounts as Array<{ id: string }>)[0]!.id
+
+    // 默认空池：账号不会自己进来，也没有 pool.json
+    assert.deepEqual(created.json.poolAccountIds, [])
+    assert.equal(existsSync(join(home, 'akso-workbench', 'pool.json')), false)
+
+    // 不在池里的账号不能连接给 agent
+    const rejected = await call(routes, P.accountCurrent, 'POST', { id: accountId })
+    assert.equal(rejected.status, 400)
+    assert.match(String(rejected.json.error), /配置池/)
+
+    // 手动加入 → 落盘
+    const added = await call(routes, P.poolToggle, 'POST', { id: accountId, inPool: true })
+    assert.equal(added.status, 200)
+    assert.deepEqual(added.json.poolAccountIds, [accountId])
+    const stored = JSON.parse(readFileSync(join(home, 'akso-workbench', 'pool.json'), 'utf8')) as { accountIds: string[] }
+    assert.deepEqual(stored.accountIds, [accountId])
+
+    // 进池后可以连接
+    const connected = await call(routes, P.accountCurrent, 'POST', { id: accountId })
+    assert.equal(connected.json.currentAccountId, accountId)
+
+    // 当前连接给 agent 的账号不能被移出（要先换一个或断开）
+    const blocked = await call(routes, P.poolToggle, 'POST', { id: accountId, inPool: false })
+    assert.equal(blocked.status, 400)
+    assert.match(String(blocked.json.error), /当前连接/)
+
+    // 断开之后就能移出，连接偏好保留但不生效（currentAccountId 归 null）
+    await call(routes, P.accountCurrent, 'POST', { id: '' })
+    const removed = await call(routes, P.poolToggle, 'POST', { id: accountId, inPool: false })
+    assert.equal(removed.status, 200)
+    assert.deepEqual(removed.json.poolAccountIds, [])
+    assert.equal(removed.json.currentAccountId, null)
+  } finally {
+    await cloud.close()
+  }
 })

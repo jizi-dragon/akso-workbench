@@ -131,6 +131,9 @@ export function AccountStrip(props: StripProps = {}) {
   }
 
   const connected = state.accounts.find((account) => account.id === state.currentAccountId) ?? null
+  // 只有进了「配置池」的账号才是 agent 可选的 —— 底部账号条的候选数量 = 配置池大小
+  const pool = new Set(state.poolAccountIds)
+  const poolAccounts = state.accounts.filter((account) => pool.has(account.id))
 
   return (
     <div className="akw-strip" ref={rootRef}>
@@ -149,17 +152,17 @@ export function AccountStrip(props: StripProps = {}) {
           type="button"
           className="akw-strip__add"
           onClick={() => {
-            if (state.accounts.length === 0) props.openPanel?.()
+            if (poolAccounts.length === 0) props.openPanel?.()
             else setOpen(true)
           }}
         >
-          {state.accounts.length === 0 ? tr('strip.add') : tr('strip.connect')}
+          {poolAccounts.length === 0 ? tr('strip.add') : tr('strip.connect')}
         </button>
       )}
       {open ? (
         <Picker
           tr={tr}
-          accounts={state.accounts}
+          accounts={poolAccounts}
           current={state.currentAccountId}
           onClose={() => setOpen(false)}
           onAdd={() => {
