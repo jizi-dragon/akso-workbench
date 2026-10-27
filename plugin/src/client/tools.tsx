@@ -5,13 +5,12 @@
  *   → 对象处理再按「对象 / 选项集 / 字段 / 表单布局 / 列表布局」分栏
  *   → 右栏是这一区的接口卡片（点开看参数表）。
  *
- * 定位仍是**台账**，不是执行台：只读能力目录（GET config/capabilities），
- * 不登录 eGMP、不写配置；写入走 plan/apply 工具，必须由人确认。
+ * 定位仍是**台账**：只读能力目录（GET config/capabilities）+ 管 host 侧的 eGMP 会话，
+ * 不写配置；写入走 plan/apply 工具，必须由人确认。
  * 生命周期与工作流两区先占位，流程设计好再往里放工具。
  */
-import { useEffect, useMemo, useState } from 'react'
-
-const BASE = 'api/akso-workbench/config'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { api } from './api.ts'
 
 interface Param {
   name: string
@@ -139,8 +138,7 @@ function ParamsTable({ params }: { params: Param[] }) {
   )
 }
 
-function CapabilityCard({ item, open, onToggle }: { item: Capability; open: boolean; onToggle: () => void }) {
-  const status = STATUS[item.id]
+function CapabilityCard({ item, open, onToggle }: { item: Capability; open: boolean; onToggle: () => void }) {  const status = STATUS[item.id]
   const kind = kindOf(item)
   return (
     <article
@@ -188,6 +186,137 @@ function CapabilityCard({ item, open, onToggle }: { item: Capability; open: bool
   )
 }
 
+/**
+ * eGMP 会话条 + 登录表单。
+ *
+ * 口令只往 host 发这一次（host 换 JWT 落盘，浏览器不保存任何凭据），
+ * 登录成功后 host 的 `config/session` 才有内容；写入（plan/apply）靠它。
+ */
+function EgmpSessionPanel({ session, onChange }: { session: Session | null; onChange: (next: Session) => void }) {
+  const [open, setOpen] = useState(false)
+  const [baseUrl, setBaseUrl] = useState('')
+  const [account, setAccount] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const loggedIn = session?.loggedIn === true
+
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault()
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const next = await api.configLogin({ baseUrl: baseUrl.trim(), account: account.trim(), password })
+      onChange({ loggedIn: true, baseUrl: next.baseUrl, account: next.account, savedAt: next.savedAt })
+      setPassword('')
+      setOpen(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function logout(): Promise<void> {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      await api.configLogout()
+      onChange({ loggedIn: false, baseUrl: null, account: null, savedAt: null })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={`akw-cfg__auth${loggedIn ? ' is-on' : ''}`}>
+      <div className="akw-cfg__session">
+        <span className="akw-cfg__dot" aria-hidden="true" />
+        {session === null ? (
+          <span className="akw-cfg__sessiontext">读取 eGMP 会话状态…</span>
+        ) : loggedIn ? (
+          <span className="akw-cfg__sessiontext">
+            eGMP 已登录：<b>{session.account ?? '—'}</b> · {session.baseUrl ?? '—'}
+            <em>令牌只在 host 侧，浏览器拿不到</em>
+          </span>
+        ) : (
+          <span className="akw-cfg__sessiontext">
+            eGMP 未登录 —— 查询类接口不受影响；<b>写入（生成计划 / 执行）需要先登录</b>。
+          </span>
+        )}
+        <div className="akw-cfg__sessionacts">
+          {loggedIn ? (
+            <button type="button" className="akw-btn akw-btn--sm akw-btn--ghost" onClick={() => void logout()} disabled={busy}>
+              退出登录
+            </button>
+          ) : (
+            <button type="button" className="akw-btn akw-btn--sm" onClick={() => setOpen(!open)} aria-expanded={open}>
+              {open ? '收起' : '登录 eGMP'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {open && !loggedIn ? (
+        <form className="akw-form akw-form--single" onSubmit={(event) => void submit(event)}>
+          <div className="akw-form__head">
+            <h2>登录 eGMP</h2>
+            <span>口令只用于换 JWT，不落盘；令牌存在 host 侧</span>
+          </div>
+          <label className="akw-field akw-field--wide">
+            <span className="akw-field__label">环境地址</span>
+            <input
+              className="akw-input"
+              value={baseUrl}
+              onChange={(event) => setBaseUrl(event.target.value)}
+              placeholder="https://<你的 eGMP 环境>"
+              autoComplete="url"
+              spellCheck={false}
+              required
+            />
+          </label>
+          <label className="akw-field">
+            <span className="akw-field__label">账号</span>
+            <input
+              className="akw-input"
+              value={account}
+              onChange={(event) => setAccount(event.target.value)}
+              autoComplete="username"
+              spellCheck={false}
+              required
+            />
+          </label>
+          <label className="akw-field">
+            <span className="akw-field__label">口令</span>
+            <input
+              className="akw-input"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </label>
+          {error !== '' ? <p className="akw-cfg__hint is-error">{error}</p> : null}
+          <div className="akw-form__actions">
+            <button type="button" className="akw-btn akw-btn--sm akw-btn--ghost" onClick={() => setOpen(false)} disabled={busy}>
+              取消
+            </button>
+            <button type="submit" className="akw-btn akw-btn--sm akw-btn--primary" disabled={busy}>
+              {busy ? '登录中…' : '连接'}
+            </button>
+          </div>
+        </form>
+      ) : null}
+    </div>
+  )
+}
+
 export function ConfigToolsTab() {
   const [groups, setGroups] = useState<Group[]>([])
   const [session, setSession] = useState<Session | null>(null)
@@ -201,12 +330,10 @@ export function ConfigToolsTab() {
     let alive = true
     void (async () => {
       try {
-        const response = await fetch(new URL(`${BASE}/capabilities`, document.baseURI).toString(), { cache: 'no-store' })
-        const payload = (await response.json()) as { groups?: Group[]; session?: Session }
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const payload = await api.configCapabilities()
         if (!alive) return
-        setGroups(payload.groups ?? [])
-        setSession(payload.session ?? null)
+        setGroups((payload.groups ?? []) as Group[])
+        setSession((payload.session ?? null) as Session | null)
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -289,14 +416,7 @@ export function ConfigToolsTab() {
         ) : null}
 
         {section.id === 'access' ? (
-          <div className={`akw-cfg__session${session?.loggedIn === true ? ' is-on' : ''}`}>
-            <span className="akw-cfg__dot" aria-hidden="true" />
-            {session === null
-              ? <span>读取 eGMP 会话状态…</span>
-              : session.loggedIn
-                ? <span>eGMP 已登录：<b>{session.account ?? '—'}</b> · {session.baseUrl ?? '—'}</span>
-                : <span>eGMP 未登录 —— 查询能用的部分不依赖它；写入流程需要先登录（登录入口待接入）</span>}
-          </div>
+          <EgmpSessionPanel session={session} onChange={setSession} />
         ) : null}
 
         {section.id === 'objects' ? (

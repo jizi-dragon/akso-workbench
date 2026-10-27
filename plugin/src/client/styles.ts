@@ -224,6 +224,13 @@ export const CSS = `
 .akw-cfg__session b{font-weight:600;color:var(--dsw-alias-label-primary)}
 .akw-cfg__dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-caption)}
 .akw-cfg__session.is-on .akw-cfg__dot{background:var(--dsw-alias-state-business-primary)}
+/* eGMP 会话：条 + 登录表单，登录成功改成实线并把点染成主色 */
+.akw-cfg__auth{display:grid;gap:10px}
+.akw-cfg__auth.is-on .akw-cfg__session{border-style:solid;border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}
+.akw-cfg__auth.is-on .akw-cfg__dot{background:var(--dsw-alias-state-business-primary)}
+.akw-cfg__sessiontext{flex:1;min-width:0}
+.akw-cfg__sessiontext em{margin-left:6px;font-style:normal;color:var(--dsw-alias-label-caption)}
+.akw-cfg__sessionacts{display:flex;flex:none;gap:6px}
 
 .akw-cfg__subtabs{align-self:flex-start;display:flex;flex-wrap:wrap;gap:3px;padding:3px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
 .akw-cfg__subtab{display:flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:0;border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12.5px;cursor:pointer;transition:background .14s ease,color .14s ease}

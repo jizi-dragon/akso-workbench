@@ -93,6 +93,14 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 
 const post = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(body) })
 
+/** eGMP 会话（host 侧持有 JWT；这里永远拿不到令牌，只有"登没登录、哪个账号、哪个环境"）。 */
+export interface EgmpSessionView {
+  loggedIn: boolean
+  baseUrl: string | null
+  account: string | null
+  savedAt: number | null
+}
+
 export const api = {
   state: () => call<ServerState>('state'),
 
@@ -129,4 +137,12 @@ export const api = {
 
   renameBox: (source: string, target: string) => call<ServerState>('boxes/rename', post({ source, target })),
   bindBoxSite: (name: string, siteId: string) => call<ServerState>('boxes/bind-site', post({ name, siteId })),
+
+  /* ── eGMP 会话：口令只过去这一次，host 换 JWT 落盘，浏览器不保存任何凭据 ── */
+  configSession: () => call<EgmpSessionView>('config/session'),
+  configLogin: (input: { baseUrl: string; account: string; password: string }) =>
+    call<EgmpSessionView & { ok: boolean }>('config/login', post(input)),
+  configLogout: () => call<{ ok: boolean; loggedIn: boolean }>('config/logout', post({})),
+  /** 能力目录（工具页的数据源）。返回的 items 形状由 tools.tsx 自己声明。 */
+  configCapabilities: () => call<{ session: EgmpSessionView; groups: Array<{ domain: string; items: unknown[] }> }>('config/capabilities'),
 }
