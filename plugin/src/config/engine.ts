@@ -274,24 +274,28 @@ export async function planBlueprint(session: EgmpSession, input: Blueprint, dshH
         const diff = diffOptions(existingOptions(existing), desired)
         const generated = spec.options.filter((option) => option.code === undefined).length
         const warnings: string[] = []
+        // 2026-10-27 实测：`ObjectPicklist/save` 只增不删 —— 提交里"没出现"的旧选项会原样留在平台。
+        // 所以少传选项不是删除动作，既不改变提交内容，也不构成不可逆风险，只提醒人一声。
         if (diff.removed.length > 0) {
           const shown = diff.removed.slice(0, 5).map((o) => o.name === '' ? o.code : `${o.name}(${o.code})`)
           const more = diff.removed.length > shown.length ? ` 等 ${diff.removed.length} 个` : ''
-          warnings.push(`这次提交的选项里不含 ${shown.join('、')}${more}：平台按整份覆盖处理，它们会被删掉，历史记录里选过它们的值会跟着失效`)
+          warnings.push(`这次提交的选项里不含 ${shown.join('、')}${more}：平台的保存只增不删（实测 2026-10-27），这些选项会原样留在平台上，要清掉只能后台手工处理`)
         }
         if (generated > 0) {
           warnings.push(`有 ${generated} 个选项没写 code，按位置补成 opt_N__c（留空让平台按 name 生成的话编码不可预知，没法回读比对）`)
         }
-        if (diff.renamed.length > 0 && diff.removed.length === 0) {
+        if (diff.renamed.length > 0) {
           warnings.push(`${diff.renamed.length} 个选项只改了名称（编码不变），历史记录不受影响`)
         }
+        // 只有"新增选项"或"改名"才会真正改变平台上的东西；仅少传旧选项时不必提交
+        const changes = diff.added.length > 0 || diff.renamed.length > 0
         add({
           kind: 'picklist',
-          action: existing === null ? 'create' : diff.same ? 'skip' : 'update',
+          action: existing === null ? 'create' : changes ? 'update' : 'skip',
           title: `选项集 ${spec.name}（${spec.code}）`,
           naturalKey: spec.code,
-          risk: diff.removed.length > 0 ? 'high' : 'low',
-          irreversible: diff.removed.length > 0,
+          risk: 'low',
+          irreversible: false,
           capabilityId: 'picklist.save',
           params: { name: spec.name, code: spec.code, options: payload },
           expected: { optionCount: desired.length, codes: desired.map((o) => o.code) },
@@ -683,12 +687,11 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
         if (wrongNames.length > 0) {
           return { verified: false, message: `回读有 ${wrongNames.length} 个选项名称不符：${wrongNames.slice(0, 3).map((o) => o.code).join('、')}` }
         }
-        // 平台若没有按"整份覆盖"删掉缺省项，这里就会如实报出来，而不是假装成功
+        // 平台保存只增不删（2026-10-27 实测），所以"多出来的旧选项"是正常状态，不算校验失败；
+        // 只有缺项、名称不符才说明这次提交没生效。
         const extra = have.filter((o) => !want.some((w) => w.code === o.code))
-        if (extra.length > 0) {
-          return { verified: false, message: `回读多出 ${extra.length} 个没提交的选项：${extra.slice(0, 5).map((o) => o.code).join('、')}（平台没有删）` }
-        }
-        return { verified: true, message: `选项 ${have.length} 个，编码与名称都对得上` }
+        const kept = extra.length > 0 ? `（另有 ${extra.length} 个没在本次提交里的选项仍在：${extra.slice(0, 5).map((o) => o.code).join('、')}）` : ''
+        return { verified: true, message: `选项 ${have.length} 个，编码与名称都对得上${kept}` }
       }
       case 'object': {
         const object = await getObject(ctx, step.naturalKey)

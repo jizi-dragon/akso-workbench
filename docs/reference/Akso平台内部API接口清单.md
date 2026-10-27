@@ -43,7 +43,7 @@
 | 方法 | 路径 | 用途 | 要点 |
 | --- | --- | --- | --- |
 | POST | `/api/platform/BasicObject/SaveField` | 创建/更新自定义字段 | `statisticsArrange:{id:1}` **必填**（漏传是 1000 错误最常见原因）；`dataType=15` 自动 `isRequired=true`、`16` 自动 false |
-| POST | `/api/platform/ObjectPicklist/save` | 创建/更新选项集 | `options[{name,code,status,operations,sort}]`；响应**不返回 picklistId**，需反查。**同一个 `code` 再提交就是更新**（平台按 code 认既有选项集，不用传 id）。`options[].code` 不填时平台按 name 自动生成编码，生成结果不可预知 ⇒ 想稳定比对就自己给编码。⚠️ 未验证：整份提交里"没出现"的旧选项是否被删除（接口清单只写"创建/更新"）。✅ 2026-10-27 实测：先 2 项建出 `akw_test_pk__c`，再提交 3 项，读回 3 项、`picklist_option_name` 与编码都正确；两次写入平台都回了 `code=401 Unauthorized` 而数据已经落库（见文末「写入报未授权但已生效」） |
+| POST | `/api/platform/ObjectPicklist/save` | 创建/更新选项集 | `options[{name,code,status,operations,sort}]`；响应**不返回 picklistId**，需反查。**同一个 `code` 再提交就是更新**（平台按 code 认既有选项集，不用传 id）。`options[].code` 不填时平台按 name 自动生成编码，生成结果不可预知 ⇒ 想稳定比对就自己给编码。✅ **只增不删**（2026-10-27 实测，此前存疑已否）：提交里"没出现"的旧选项会原样留着，清单里也没有删选项的端点 ⇒ 要清理只能后台手工处理，所以这一步不是不可逆动作。同日实测过程：先 2 项建出 `akw_test_pk__c`，再提交 3 项 → 读回 3 项、名称与编码都对；改名 + 加项 → 4 项（改名生效）；只提交 3 项（去掉 `low__c`）→ 读回仍是 4 项，`low__c` 未被删。两次写入平台都回过 `code=401 Unauthorized` 而数据已经落库（见文末「写入报未授权但已生效」） |
 
 ### 表单布局（3）
 

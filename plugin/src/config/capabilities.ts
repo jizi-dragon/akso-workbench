@@ -120,8 +120,8 @@ export const CAPABILITIES: Capability[] = [
     domain: 'picklist',
     title: '创建/更新选项集',
     description:
-      '同一个 code 再提交就是更新：平台按 code 认既有的那个选项集，options 整份覆盖。'
-      + '一次提交里没出现的旧选项会被删掉，历史记录里选过它们的值跟着失效，所以这一步按不可逆处理。'
+      '同一个 code 再提交就是更新：平台按 code 认既有的那个选项集。'
+      + '注意它只增不删：提交里没出现的旧选项会原样留着（2026-10-27 实测），要清掉只能后台手工处理，所以不按不可逆处理。'
       + 'options[].code 不填时平台会按 name 自动生成编码，生成结果不可预知，引擎一律自己补 opt_N__c 以便回读比对。'
       + '响应只有 {code:0,data:true}，不返回 picklistId，要用「取选项集」反查。',
     method: 'POST',

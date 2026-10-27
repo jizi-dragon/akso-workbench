@@ -992,7 +992,7 @@ test('JWT 解不开时不许崩：只回 null，不影响登录态', async () =>
 
 /* ─────────────── 选项集：同一个 code 再提交就是更新 ─────────────── */
 
-test('选项集计划：按 code 认出更新，删掉的选项要点名并且标不可逆', async () => {
+test('选项集计划：按 code 认出更新，少传的旧选项点名提醒但不算不可逆', async () => {
   const home = freshHome()
   const blueprint = (options: Array<{ name: string; code?: string }>) => ({
     version: 1,
@@ -1016,16 +1016,25 @@ test('选项集计划：按 code 认出更新，删掉的选项要点名并且�
   assert.equal(created.irreversible, false)
   assert.deepEqual(created.warnings, [])
 
-  // ② 提交里没有旧选项 ⇒ 更新，而且这一删就回不来
+  // ② 提交里没有旧选项 ⇒ 平台并不会删（2026-10-27 实测），所以既不提交、也不算不可逆，只提醒
   const removed = await run(
     [{ code: 'major__c', name: '主要变更' }, { code: 'legacy__c', name: '旧选项' }],
     [{ name: '主要变更', code: 'major__c' }],
   )
-  assert.equal(removed.action, 'update')
-  assert.equal(removed.irreversible, true)
-  assert.equal(removed.risk, 'high')
-  assert.match(removed.warnings.join(' '), /旧选项\(legacy__c\)/, '要点名删了哪个选项')
-  assert.match(removed.warnings.join(' '), /整份覆盖/)
+  assert.equal(removed.action, 'skip', '只少传旧选项时提交也删不掉，不必写')
+  assert.equal(removed.irreversible, false)
+  assert.equal(removed.risk, 'low')
+  assert.match(removed.warnings.join(' '), /旧选项\(legacy__c\)/, '要点名少传了哪个选项')
+  assert.match(removed.warnings.join(' '), /只增不删/, '要说清平台不会删')
+
+  // ②b 少传旧选项 + 加新选项 ⇒ 真更新，但仍然不是不可逆
+  const mixed = await run(
+    [{ code: 'major__c', name: '主要变更' }, { code: 'legacy__c', name: '旧选项' }],
+    [{ name: '主要变更', code: 'major__c' }, { name: '新选项', code: 'fresh__c' }],
+  )
+  assert.equal(mixed.action, 'update')
+  assert.equal(mixed.irreversible, false)
+  assert.match(mixed.warnings.join(' '), /只增不删/)
 
   // ③ 一模一样 ⇒ 跳过（不算写入，不用问人）
   const skipped = await run([{ code: 'major__c', name: '主要变更' }], [{ name: '主要变更', code: 'major__c' }])
@@ -1042,4 +1051,59 @@ test('选项集计划：按 code 认出更新，删掉的选项要点名并且�
   const options = (generated.params as { options: Array<{ code: string }> }).options
   assert.equal(options[0]?.code, 'opt_0__c')
   assert.match(generated.warnings.join(' '), /没写 code/)
+})
+
+test('选项集回读：平台留下的旧选项不算失败，只在消息里交代一句', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  // 平台上 4 个选项，这次只提交 3 个（真实场景：2026-10-27 实测 low__c 没被删）
+  const egmp = await startFakeEgmp([
+    { code: 'major__c', name: '主要变更' },
+    { code: 'minor__c', name: '次要变更' },
+    { code: 'urgent__c', name: '紧急变更' },
+    { code: 'low__c', name: '低风险变更' },
+  ])
+  writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() })
+  try {
+    const plan = {
+      planId: 'pln_extra',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1000,
+      env: 'test',
+      summary: { create: 0, update: 1, skip: 0, irreversible: 0 },
+      steps: [{
+        id: 's1',
+        kind: 'picklist',
+        action: 'update',
+        title: '选项集 akso-workbench 验证选项集（akw_test_pk__c）',
+        naturalKey: 'akw_test_pk__c',
+        risk: 'low',
+        irreversible: false,
+        capabilityId: 'picklist.save',
+        params: {
+          name: 'akso-workbench 验证选项集',
+          code: 'akw_test_pk__c',
+          options: [
+            { name: '主要变更', code: 'major__c', status: 1, operations: 1, sort: 0 },
+            { name: '次要变更', code: 'minor__c', status: 1, operations: 1, sort: 1 },
+            { name: '紧急变更', code: 'urgent__c', status: 1, operations: 1, sort: 2 },
+          ],
+        },
+        dependsOn: [],
+        warnings: [],
+      }],
+      warnings: [],
+      status: 'planned',
+      results: [],
+    }
+    savePlan(home, plan as never)
+    const result = await applyTool.execute({ planId: 'pln_extra' }, { agent: { id: 'agent-1' } }) as Record<string, any>
+    assert.equal(result.ok, true)
+    assert.equal(result.results[0].status, 'verified', '多出来的旧选项不该把这一步判失败')
+    assert.match(String(result.results[0].message), /另有 1 个/)
+    assert.match(String(result.results[0].message), /low__c/)
+  } finally {
+    await egmp.close()
+  }
 })
