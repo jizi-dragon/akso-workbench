@@ -28,6 +28,12 @@ export interface AskQuestion {
   question: string
   detail?: string
   options: AskOption[]
+  /**
+   * 走宿主的「计划审阅」版式：卡片只显示标题 + 一段摘要，正文（detail 的 markdown）
+   * 自动在右侧栏打开 —— 比把整段 JSON 塞进提问卡片干净得多。
+   * 约束（宿主会校验）：approve 必须是 options 里的某个 label，且必须有 detail。
+   */
+  intent?: { kind: 'plan-review'; approve: string }
 }
 
 /** 工具执行上下文里我们真正用得到的两样（agent / 中断信号）。 */
@@ -54,13 +60,59 @@ function sessionOf(deps: ConfigToolDeps): EgmpSession | null {
 const LOGIN_HINT = '还没有登录 eGMP：请打开「akso-workbench · 配置工具」页，填写环境地址与账号完成登录。'
 
 const HOST_PREFIX = 'https://'
+const STEP_JSON_LIMIT = 6000
 
-/** 把要写的东西摊成人能核对的 markdown（卡片里原样渲染）。 */
+const KIND_LABEL: Record<string, string> = {
+  picklist: '选项集',
+  object: '对象',
+  lifecycle: '生命周期',
+  field: '字段',
+  formLayout: '表单布局',
+  listLayout: '列表布局',
+  menu: '菜单',
+}
+
+function actionVerb(action: string): string {
+  return action === 'create' ? '新建' : '更新'
+}
+
+/**
+ * 卡片标题（宿主取 detail 的**第一行**当标题）。
+ * 只有一步时给「更新选项集 akw_test_pk__c」这种人话，多步时给规模。
+ */
+export function approvalTitle(plan: Plan): string {
+  const edits = plan.steps.filter((step) => step.action !== 'skip')
+  if (edits.length === 1) {
+    const step = edits[0]
+    if (step !== undefined) {
+      const kind = KIND_LABEL[step.kind] ?? step.kind
+      const params = (step.params ?? {}) as Record<string, unknown>
+      const code = typeof params.code === 'string' ? params.code : ''
+      return `${actionVerb(step.action)}${kind}${code === '' ? '' : ` ${code}`}`
+    }
+  }
+  const parts: string[] = []
+  if (plan.summary.create > 0) parts.push(`新建 ${plan.summary.create}`)
+  if (plan.summary.update > 0) parts.push(`更新 ${plan.summary.update}`)
+  return `${edits.length} 步变更（${parts.join(' · ') || '无写入'}）`
+}
+
+/**
+ * 审批卡正文（markdown）。
+ *
+ * 结构刻意做成「标题行 / 一行摘要 / 每步一个小节」：宿主的审阅卡只把**第一行**当标题、
+ * **第一个段落**当摘要，其余全文在右侧栏里读 —— 所以第一行必须是结论，不能是表头或分隔线。
+ */
 export function approvalDetail(plan: Plan, baseUrl: string): string {
+  const host = baseUrl.startsWith(HOST_PREFIX) ? baseUrl.slice(HOST_PREFIX.length) : baseUrl
   const lines: string[] = []
-  lines.push(`**${plan.planId}** · 环境 \`${plan.env}\` · 目标 \`${baseUrl.replace(HOST_PREFIX, '')}\``)
+  lines.push(approvalTitle(plan))
   lines.push('')
-  lines.push(`新建 ${plan.summary.create} · 更新 ${plan.summary.update} · 跳过 ${plan.summary.skip} · 不可逆 ${plan.summary.irreversible}`)
+  const scale: string[] = []
+  if (plan.summary.create > 0) scale.push(`新建 ${plan.summary.create} 步`)
+  if (plan.summary.update > 0) scale.push(`更新 ${plan.summary.update} 步`)
+  if (plan.summary.skip > 0) scale.push(`跳过 ${plan.summary.skip} 步`)
+  lines.push(`环境 \`${plan.env}\` · 目标 \`${host}\` · ${scale.join(' · ') || '没有要写的内容'}`)
   lines.push('')
   let index = 0
   for (const step of plan.steps) {
@@ -71,14 +123,24 @@ export function approvalDetail(plan: Plan, baseUrl: string): string {
       : CAPABILITIES.find((item) => item.id === step.capabilityId)
     const method = capability?.method ?? 'POST'
     const path = capability?.path ?? ''
-    lines.push(`${index}. **${step.title}** — \`${method} ${path}\``)
+    const tags: string[] = [`\`${method} ${path}\``]
+    if (step.irreversible) tags.push('不可逆')
+    else if (step.risk === 'high') tags.push('高风险')
+    lines.push(`**${index}. ${step.title}**`)
+    lines.push(tags.join(' · '))
     lines.push('')
+    let payload = JSON.stringify(step.params ?? {}, null, 2)
+    if (payload.length > STEP_JSON_LIMIT) {
+      payload = `${payload.slice(0, STEP_JSON_LIMIT)}\n…（已截断，完整内容见计划文件 ${plan.planId}.json）`
+    }
     lines.push('```json')
-    lines.push(JSON.stringify(step.params ?? {}, null, 2))
+    lines.push(payload)
     lines.push('```')
     lines.push('')
   }
-  lines.push('平台侧没有回滚接口：上面这些写进去就是生效状态。')
+  lines.push('---')
+  lines.push('')
+  lines.push(`计划 \`${plan.planId}\` · 写入即刻生效，平台侧没有回滚接口。`)
   return lines.join('\n')
 }
 
@@ -147,8 +209,9 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
     description:
       '执行一份**已存在**的配置计划（必须先由 akso_workbench_config_plan 生成）。'
       + '逐步执行、每步回读校验；某步失败即停并返回 checkpoint。不接受临时参数，不能绕过计划。'
-      + '计划里有写入时，本工具会**在这个对话里弹一张确认卡**（与 ask_user_question 同一套界面）：'
-      + '人点「允许这次写入」之后才发请求，点「拒绝」则一步都不写。'
+      + '计划里有写入时，本工具会**在这个对话里弹一张确认卡**：卡片上只留标题与规模，'
+      + '完整内容在右侧栏展开（每条请求的方法、路径、请求体）；人点「允许这次写入」之后才发请求，'
+      + '点「拒绝」则一步都不写。'
       + '这一关不在工具参数里，模型无法自己批准。',
     parameters: {
       type: 'object',
@@ -190,12 +253,13 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
               {
                 id: `approve-${planId}`,
                 header: '配置写入确认',
-                question: `执行配置计划 ${planId}？新建 ${plan.summary.create} 步、更新 ${plan.summary.update} 步，其中 ${plan.summary.irreversible} 步不可逆。`,
+                question: `执行配置计划 ${planId}？${approvalTitle(plan)}`,
                 detail,
                 options: [
                   { label: APPROVE_LABEL, description: '按上面的内容写平台；写后无法在平台侧回滚' },
                   { label: DENY_LABEL, description: '一步都不写，计划保持未执行' },
                 ],
+                intent: { kind: 'plan-review', approve: APPROVE_LABEL },
               },
             ],
             (exec ?? {}) as ToolExec,

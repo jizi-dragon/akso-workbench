@@ -143,7 +143,7 @@ export const CSS = `
 .akw-strip__retry{height:24px;padding:0 10px;border-radius:999px;border:1px solid var(--dsw-alias-state-error-primary);background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;cursor:pointer}
 
 /* 换/清连接的小面板（点已连接的胶囊弹出；点外面或 Esc 关闭） */
-.akw-picker{position:absolute;right:0;bottom:32px;z-index:40;display:flex;flex-direction:column;gap:8px;width:288px;max-height:340px;padding:12px;border:1px solid var(--dsw-alias-border-l3);border-radius:14px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-prominent)}
+.akw-picker{position:absolute;right:0;bottom:32px;z-index:40;display:flex;flex-direction:column;gap:8px;width:288px;max-height:440px;padding:12px;border:1px solid var(--dsw-alias-border-l3);border-radius:14px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-prominent)}
 .akw-picker__head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .akw-picker__head b{font-size:13px;line-height:18px;font-weight:600}
 .akw-picker__x{width:22px;height:22px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:14px;line-height:18px;cursor:pointer}
@@ -159,6 +159,22 @@ export const CSS = `
 .akw-picker__empty p{margin:0;font-size:12px;color:var(--dsw-alias-label-tertiary)}
 .akw-picker__clear{align-self:flex-start;height:26px;padding:0 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;cursor:pointer}
 .akw-picker__clear:hover{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l4)}
+
+/* 令牌一角：一行摘要 + 展开后的原文（默认不摊开，免得一开面板就是一大串 base64） */
+.akw-token{display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2)}
+.akw-token__row{display:flex;align-items:center;gap:6px;min-width:0}
+.akw-token__dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
+.akw-token__row.is-on .akw-token__dot{background:var(--dsw-alias-state-success-primary)}
+.akw-token__row.is-warn .akw-token__dot{background:var(--dsw-alias-state-warn-primary)}
+.akw-token__row.is-off .akw-token__dot{background:var(--dsw-alias-state-error-primary)}
+.akw-token__name{flex:none;font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary)}
+.akw-token__meta{flex:1;min-width:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+.akw-token__toggle{flex:none;height:22px;padding:0 8px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}
+.akw-token__toggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.akw-token__body{display:flex;flex-direction:column;gap:6px}
+.akw-token__times{display:flex;gap:10px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.akw-token__raw{max-height:76px;margin:0;padding:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:16px;overflow:auto;word-break:break-all;white-space:pre-wrap;user-select:all}
+.akw-token__acts{display:flex;justify-content:flex-end}
 
 /* 登录门（akso-pass 的 login-mask 形态） */
 .akw-body--center{align-items:center;justify-content:center}

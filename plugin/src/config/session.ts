@@ -93,6 +93,67 @@ export function publicSession(session: EgmpSession | null): { loggedIn: boolean;
   return { loggedIn: true, baseUrl: session.baseUrl, account: session.account, savedAt: session.savedAt }
 }
 
+/** 浏览器侧「查看令牌」用：token 原样 + 从 JWT 里解出来的签发/到期时间。 */
+export interface TokenView {
+  loggedIn: boolean
+  baseUrl: string | null
+  account: string | null
+  savedAt: number | null
+  token: string | null
+  /** 来自 JWT `iat`（毫秒） */
+  issuedAt: number | null
+  /** 来自 JWT `exp`（毫秒） */
+  expiresAt: number | null
+}
+
+/**
+ * 解 JWT 的 payload，只读声明、**不验签**（验签是平台的事；这里只是给人看还剩多久）。
+ * base64url、无 padding —— Node 的 Buffer 要求补齐，所以先换字符集再补 `=`。
+ */
+export function jwtClaims(token: string): Record<string, unknown> | null {
+  const parts = token.split('.')
+  if (parts.length < 2) return null
+  const payload = parts[1] ?? ''
+  if (payload === '') return null
+  const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4)
+  let json: string
+  try {
+    json = Buffer.from(padded, 'base64').toString('utf8')
+  } catch {
+    return null
+  }
+  try {
+    const parsed: unknown = JSON.parse(json)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function claimTime(claims: Record<string, unknown> | null, key: string): number | null {
+  const value = claims?.[key]
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null
+  return value * 1000
+}
+
+export function tokenView(session: EgmpSession | null): TokenView {
+  if (session === null) {
+    return { loggedIn: false, baseUrl: null, account: null, savedAt: null, token: null, issuedAt: null, expiresAt: null }
+  }
+  const claims = jwtClaims(session.token)
+  return {
+    loggedIn: true,
+    baseUrl: session.baseUrl,
+    account: session.account,
+    savedAt: session.savedAt,
+    token: session.token,
+    issuedAt: claimTime(claims, 'iat'),
+    expiresAt: claimTime(claims, 'exp'),
+  }
+}
+
 interface RawResponse {
   status: number
   json: Record<string, unknown>

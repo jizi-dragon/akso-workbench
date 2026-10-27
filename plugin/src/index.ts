@@ -25,7 +25,7 @@ import { clearSession, readPool, readPrefs, readSession, writePool, writePrefs, 
 import { buildSnapshotTool } from './tool.ts'
 import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
-import { EgmpError, clearEgmpSession, login as egmpLogin, publicSession, readEgmpSession, writeEgmpSession } from './config/session.ts'
+import { EgmpError, clearEgmpSession, login as egmpLogin, publicSession, readEgmpSession, tokenView, writeEgmpSession } from './config/session.ts'
 import { buildConfigApplyTool, buildConfigPlanTool, type AskQuestion, type ToolExec } from './config/tools.ts'
 
 export const name = 'akso-workbench'
@@ -103,6 +103,7 @@ export const ROUTES = {
   health: '/api/akso-workbench/health',
   configCapabilities: '/api/akso-workbench/config/capabilities',
   configSession: '/api/akso-workbench/config/session',
+  configToken: '/api/akso-workbench/config/token',
   configLogin: '/api/akso-workbench/config/login',
   configLogout: '/api/akso-workbench/config/logout',
   configInvoke: '/api/akso-workbench/config/invoke',
@@ -594,6 +595,17 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     /* ───────────── 配置：eGMP 会话（口令不落盘，只存 JWT） ───────────── */
     route('GET', R.configSession, false, async (_req, res) => {
       sendJson(res, 200, publicSession(readEgmpSession(dshHome)))
+    }),
+
+    route('GET', R.configToken, false, async (req, res) => {
+      // 令牌是凭据：GET 也要求自定义头。跨站既设不了这个头，也读不到响应体，
+      // 但要挡住 `<img src>` / `<script src>` 这类"不需要读响应也能发出去"的引用。
+      const headers = (req?.headers ?? {}) as Record<string, unknown>
+      if (String(headers[CLIENT_HEADER] ?? '').trim() !== '1') {
+        sendJson(res, 403, { error: `forbidden: 缺少 ${CLIENT_HEADER} 请求头` })
+        return
+      }
+      sendJson(res, 200, tokenView(readEgmpSession(dshHome)))
     }),
 
     route('POST', R.configLogin, false, async (_req, res, body) => {

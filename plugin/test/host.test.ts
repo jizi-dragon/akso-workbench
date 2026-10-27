@@ -809,11 +809,18 @@ test('配置写入先在对话里问人：允许才发请求，拒绝就一步�
     const question = mounted.asked[0]!.questions[0]!
     assert.equal(question.header, '配置写入确认')
     assert.match(String(question.question), /pln_writes/)
-    assert.match(String(question.question), /新建 1 步、更新 2 步/)
+    assert.match(String(question.question), /新建 1 · 更新 2/)
     assert.deepEqual((question.options as Array<{ label: string }>).map((option) => option.label), ['允许这次写入', '拒绝'])
+    // 宿主的「计划审阅」版式：详情的第一行当标题、第一段当摘要，正文在右侧栏展开
+    assert.deepEqual(question.intent, { kind: 'plan-review', approve: '允许这次写入' }, '要走审阅卡而不是普通提问卡')
+    const detailLines = String(question.detail).split('\n')
+    assert.match(detailLines[0] ?? '', /3 步变更（新建 1 · 更新 2）/, '第一行是标题')
+    assert.ok((detailLines[1] ?? '') === '', '标题后面空一行，摘要才是第一段')
+    assert.match(detailLines[2] ?? '', /环境 `test`/, '摘要给环境')
     assert.match(String(question.detail), /ObjectPicklist\/save/, '要摊出真实接口路径')
+    assert.match(String(question.detail), /\*\*1\. /, '每步一个小节')
     assert.match(String(question.detail), /akw_test_pk__c/, '要摊出完整请求体')
-    assert.match(String(question.detail), /不可逆 1/)
+    assert.match(String(question.detail), /不可逆/, '不可逆的步骤要标出来')
     assert.deepEqual(mounted.asked[0]!.exec?.agent, { id: 'agent-1' }, '提问要挂在发起调用的那个 agent 上')
 
     // ② 允许之后才真的发请求
@@ -926,4 +933,45 @@ test('engine 用到的能力 id 都在目录里（拼错会静默变成"查不�
   assert.ok(used.length >= 9, `应该能扫到 engine 用到的能力 id，实际 ${used.length}`)
   const missing = used.filter((id) => !known.has(id))
   assert.deepEqual(missing, [], `这些 id 不在能力目录里：${missing.join(', ')}`)
+})
+
+/* ─────────────── 令牌详情：只在人要的时候给，且必须带自定义头 ─────────────── */
+
+test('令牌详情：原文 + 从 JWT 解出的签发/到期时间', async () => {
+  const home = freshHome()
+  const mounted = mount(home)
+  const claims = Buffer.from(JSON.stringify({ iat: 1_700_000_000, exp: 1_700_003_600, sub: 'liyulong' })).toString('base64url')
+  const token = `eyJhbGciOiJIUzI1NiJ9.${claims}.c2ln`
+  writeEgmpSession(home, { baseUrl: 'https://standard-val.aksoegmp.com', account: 'liyulong', token, savedAt: 1_700_000_000_000 })
+
+  // 不带自定义头：连读都不给（防止 <img src> 这类"不需要读响应也能发出去"的引用）
+  const refused = await call(mounted.routes, P.configToken, 'GET', undefined, '127.0.0.1', { host: '127.0.0.1:60717' })
+  assert.equal(refused.status, 403)
+  assert.match(String(refused.json.error), /x-akso-workbench/)
+
+  const view = await call(mounted.routes, P.configToken, 'GET')
+  assert.equal(view.status, 200)
+  assert.equal(view.json.token, token)
+  assert.equal(view.json.account, 'liyulong')
+  assert.equal(view.json.issuedAt, 1_700_000_000_000)
+  assert.equal(view.json.expiresAt, 1_700_003_600_000)
+
+  // 没登录：200，但不给令牌
+  const bare = mount(freshHome())
+  const none = await call(bare.routes, P.configToken, 'GET')
+  assert.equal(none.status, 200)
+  assert.equal(none.json.loggedIn, false)
+  assert.equal(none.json.token, null)
+  assert.equal(none.json.expiresAt, null)
+})
+
+test('JWT 解不开时不许崩：只回 null，不影响登录态', async () => {
+  const home = freshHome()
+  const mounted = mount(home)
+  writeEgmpSession(home, { baseUrl: 'https://standard-val.aksoegmp.com', account: 'liyulong', token: 'not-a-jwt', savedAt: 1 })
+  const view = await call(mounted.routes, P.configToken, 'GET')
+  assert.equal(view.status, 200)
+  assert.equal(view.json.token, 'not-a-jwt')
+  assert.equal(view.json.issuedAt, null)
+  assert.equal(view.json.expiresAt, null)
 })

@@ -101,6 +101,16 @@ export interface EgmpSessionView {
   savedAt: number | null
 }
 
+/**
+ * 令牌详情：**只有人主动点「查看」时才取**（`config/token`，GET 但要求自定义头）。
+ * `issuedAt` / `expiresAt` 是 host 从 JWT 的 `iat` / `exp` 解出来的毫秒时间戳，没解到就是 null。
+ */
+export interface EgmpTokenView extends EgmpSessionView {
+  token: string | null
+  issuedAt: number | null
+  expiresAt: number | null
+}
+
 export const api = {
   state: () => call<ServerState>('state'),
 
@@ -140,6 +150,8 @@ export const api = {
 
   /* ── eGMP 会话：口令只过去这一次，host 换 JWT 落盘，浏览器不保存任何凭据 ── */
   configSession: () => call<EgmpSessionView>('config/session'),
+  /** 令牌原文 + 到期时间（账号条里点「查看」才调）。 */
+  configToken: () => call<EgmpTokenView>('config/token'),
   configLogin: (input: { baseUrl: string; account: string; password: string }) =>
     call<EgmpSessionView & { ok: boolean }>('config/login', post(input)),
   configLogout: () => call<{ ok: boolean; loggedIn: boolean }>('config/logout', post({})),
