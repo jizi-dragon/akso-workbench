@@ -711,7 +711,7 @@ function BoxesTab({ tr }: { tr: (key: string, vars?: Record<string, string | num
 
 /* ────────────────────────────── 页面 ────────────────────────────── */
 
-type Section = 'accounts' | 'tools'
+type Section = 'accounts' | 'tools' | 'runs' | 'analysis'
 
 const modNavIcon = {
   accounts: (
@@ -727,6 +727,41 @@ const modNavIcon = {
       <circle cx="9.9" cy="10.9" r="1.5" />
     </svg>
   ),
+  runs: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.9 13.1h10.2" />
+      <path d="M4.8 13.1V7.9M8 13.1V4.6M11.2 13.1V6.1" />
+    </svg>
+  ),
+  analysis: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="4.2" cy="8" r="1.6" />
+      <circle cx="11.6" cy="4.3" r="1.5" />
+      <circle cx="11.6" cy="11.7" r="1.5" />
+      <path d="M5.7 7.4l4.4-2.4M5.7 8.6l4.4 2.4" />
+    </svg>
+  ),
+}
+
+/** 一级模块的顺序：连上账号 → 配好对象 → 回看结果 → 分析对象。 */
+const MODULES: Array<{ key: Section; label: string }> = [
+  { key: 'accounts', label: '账号中心' },
+  { key: 'tools', label: '配置工具' },
+  { key: 'runs', label: '运行报告' },
+  { key: 'analysis', label: '对象分析' },
+]
+
+/**
+ * 一级模块占位（2026-10-27 用户要求先把入口加上、内容留空）。
+ * 不画假数据、不摆假按钮 —— 就一句"内容还没接入"，等真内容进来再换掉。
+ */
+function PendingModule({ title, note }: { title: string; note: string }) {
+  return (
+    <div className="akw-pending">
+      <b>{title}</b>
+      <span>{note}</span>
+    </div>
+  )
 }
 export function AccountsPage(props: { t?: (key: string, vars?: Record<string, string | number>) => string } = {}) {
   const tr = typeof props.t === 'function' ? props.t : t
@@ -858,26 +893,20 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
         </div>
       </header>
 
-      {/* 一级导航：账号中心 / 配置工具 */}
+      {/* 一级导航：账号中心 / 配置工具 / 运行报告 / 对象分析 */}
       <nav className="akw-modnav" aria-label="模块导航">
-        <button
-          type="button"
-          className={`akw-modnav__btn${section === 'accounts' ? ' is-active' : ''}`}
-          aria-current={section === 'accounts' ? 'page' : undefined}
-          onClick={() => setSection('accounts')}
-        >
-          {modNavIcon.accounts}
-          账号中心
-        </button>
-        <button
-          type="button"
-          className={`akw-modnav__btn${section === 'tools' ? ' is-active' : ''}`}
-          aria-current={section === 'tools' ? 'page' : undefined}
-          onClick={() => setSection('tools')}
-        >
-          {modNavIcon.tools}
-          配置工具
-        </button>
+        {MODULES.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            className={`akw-modnav__btn${section === item.key ? ' is-active' : ''}`}
+            aria-current={section === item.key ? 'page' : undefined}
+            onClick={() => setSection(item.key)}
+          >
+            {modNavIcon[item.key]}
+            {item.label}
+          </button>
+        ))}
       </nav>
 
       {section === 'accounts' ? (
@@ -938,11 +967,25 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
         ) : (
           <LoginGate tr={tr} embedded />
         )
-      ) : (
+      ) : null}
+
+      {section === 'tools' ? (
         <div className="akw-body">
           <ConfigToolsTab />
         </div>
-      )}
+      ) : null}
+
+      {section === 'runs' ? (
+        <div className="akw-body">
+          <PendingModule title="运行报告" note="入口先留着，内容还没接入。" />
+        </div>
+      ) : null}
+
+      {section === 'analysis' ? (
+        <div className="akw-body">
+          <PendingModule title="对象分析" note="入口先留着，内容还没接入。" />
+        </div>
+      ) : null}
     </div>
   )
 }

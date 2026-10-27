@@ -30,8 +30,8 @@ export const CSS = `
 .akw-search input::placeholder{color:var(--dsw-alias-label-caption)}
 
 /* 一级导航（账号中心 / 配置工具）：分段控件，和二级的下划线 tab 区分开 */
-.akw-modnav{flex:none;align-self:flex-start;display:flex;gap:2px;margin:12px 24px 8px;padding:3px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
-.akw-modnav__btn{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 13px;border:0;border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap;transition:background .14s ease,color .14s ease,box-shadow .14s ease}
+.akw-modnav{flex:none;align-self:flex-start;display:flex;flex-wrap:wrap;gap:2px;max-width:calc(100% - 48px);margin:12px 24px 8px;padding:3px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
+.akw-modnav__btn{flex:none;display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 13px;border:0;border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap;transition:background .14s ease,color .14s ease,box-shadow .14s ease}
 .akw-modnav__btn:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
 .akw-modnav__btn:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:1px}
 .akw-modnav__btn.is-active{background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:0 0 0 1px var(--dsw-alias-border-l2),0 1px 2px rgb(0 0 0 / 8%)}
@@ -49,6 +49,11 @@ export const CSS = `
 .akw-tab.is-active i{background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-bg-base)}
 
 .akw-body{flex:1;min-height:0;overflow:auto;padding:18px 24px 40px;display:flex;flex-direction:column;gap:14px}
+
+/* 一级模块占位（运行报告 / 对象分析 内容未接入）——不画假数据，也不铺满整页 */
+.akw-pending{align-self:center;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;width:100%;max-width:720px;padding:40px 24px;border:1px dashed var(--dsw-alias-border-l3);border-radius:16px;text-align:center}
+.akw-pending b{font-size:14px;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.akw-pending span{max-width:52ch;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 
 /* 按钮：默认描边，主操作用品牌色填充 */
 .akw-btn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 12px;font:inherit;font-size:13px;color:var(--dsw-alias-label-primary);background:transparent;border:1px solid var(--dsw-alias-border-l4);border-radius:12px;cursor:pointer;white-space:nowrap;transition:background .14s ease,border-color .14s ease,transform .14s ease}
