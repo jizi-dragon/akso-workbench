@@ -10,7 +10,7 @@
  * 生命周期与工作流两区先占位，流程设计好再往里放工具。
  */
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { api, type ApprovalView } from './api.ts'
+import { api } from './api.ts'
 
 interface Param {
   name: string
@@ -325,137 +325,6 @@ function EgmpSessionPanel({ session, onChange }: { session: Session | null; onCh
   )
 }
 
-/**
- * 待确认：agent 想在平台上写东西时，这里冒出的一张单。
- *
- * 这是**我们自己的门**（不走 DSH 的 approval）：agent 的工具只开单、不写平台；
- * 人在这里核对要发出去的完整 body，点「允许」之后 agent 再用同一个 planId 调一次才会真写。
- * 每张单一次性、30 分钟过期。
- */
-function ApprovalPanel() {
-  const [pending, setPending] = useState<ApprovalView[]>([])
-  const [recent, setRecent] = useState<ApprovalView[]>([])
-  const [busy, setBusy] = useState('')
-  const [error, setError] = useState('')
-
-  async function reload(): Promise<void> {
-    try {
-      const payload = await api.configApprovals()
-      setPending(payload.pending ?? [])
-      setRecent(payload.recent ?? [])
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }
-
-  useEffect(() => {
-    void reload()
-    // agent 在后台开单，这里每 5 秒对一次（轮询比长连接好收拾，页面关掉就自然停）
-    const timer = window.setInterval(() => void reload(), 5000)
-    return () => window.clearInterval(timer)
-  }, [])
-
-  async function decide(id: string, decision: 'allow' | 'deny'): Promise<void> {
-    if (busy !== '') return
-    setBusy(id)
-    setError('')
-    try {
-      await api.decideApproval(id, decision)
-      await reload()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy('')
-    }
-  }
-
-  if (pending.length === 0 && recent.length === 0) return null
-
-  return (
-    <div className="akw-approval">
-      {pending.length > 0 ? (
-        <>
-          <div className="akw-approval__head">
-            待确认
-            <em>{pending.length}</em>
-            <span>agent 想写平台，核对下面的请求体再决定</span>
-          </div>
-          {pending.map((entry) => (
-            <div className="akw-approval__card" key={entry.id}>
-              <div className="akw-approval__meta">
-                <b>计划 {entry.planId}</b>
-                <span>
-                  新建 {entry.summary.create} · 更新 {entry.summary.update}
-                  {entry.summary.irreversible > 0 ? ` · 不可逆 ${entry.summary.irreversible}` : ''} · {entry.env}
-                </span>
-                <span className="akw-approval__ttl">还剩 {remain(entry.expiresAt)}</span>
-              </div>
-              {entry.payload.map((line) => (
-                <div className="akw-approval__step" key={line.stepId}>
-                  <div className="akw-approval__stephead">
-                    <span className="akw-approval__method">{line.method ?? '—'}</span>
-                    <code>{line.path ?? '（路径未登记）'}</code>
-                    <span className="akw-approval__steptitle">{line.title}</span>
-                  </div>
-                  <pre className="akw-approval__payload">{JSON.stringify(line.params, null, 2)}</pre>
-                </div>
-              ))}
-              <div className="akw-approval__acts">
-                <button
-                  type="button"
-                  className="akw-btn akw-btn--sm akw-btn--primary"
-                  onClick={() => void decide(entry.id, 'allow')}
-                  disabled={busy !== ''}
-                >
-                  {busy === entry.id ? '处理中…' : '允许这次写入'}
-                </button>
-                <button
-                  type="button"
-                  className="akw-btn akw-btn--sm akw-btn--ghost"
-                  onClick={() => void decide(entry.id, 'deny')}
-                  disabled={busy !== ''}
-                >
-                  拒绝
-                </button>
-                <span className="akw-cfg__hint">允许后要用同一个 planId 再调一次执行工具，才会真写。</span>
-              </div>
-            </div>
-          ))}
-        </>
-      ) : null}
-      {error !== '' ? <p className="akw-cfg__hint is-error">{error}</p> : null}
-      {recent.length > 0 ? (
-        <details className="akw-approval__recent">
-          <summary>处理过的（{recent.length}）</summary>
-          <ul>
-            {recent.map((entry) => (
-              <li key={entry.id}>
-                <code>{entry.planId}</code>
-                <span className={`akw-approval__state is-${entry.status}`}>{STATE_LABEL[entry.status]}</span>
-                <span>{new Date(entry.decidedAt ?? entry.usedAt ?? entry.createdAt).toLocaleString('zh-CN')}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
-    </div>
-  )
-}
-
-const STATE_LABEL: Record<ApprovalView['status'], string> = {
-  pending: '待确认',
-  approved: '已允许',
-  denied: '已拒绝',
-  used: '已执行',
-  expired: '已过期',
-}
-
-function remain(expiresAt: number): string {
-  const left = expiresAt - Date.now()
-  if (left <= 0) return '0 分钟'
-  return `${Math.max(1, Math.round(left / 60000))} 分钟`
-}
-
 export function ConfigToolsTab() {
   const [groups, setGroups] = useState<Group[]>([])
   const [session, setSession] = useState<Session | null>(null)
@@ -558,7 +427,6 @@ export function ConfigToolsTab() {
           <EgmpSessionPanel session={session} onChange={setSession} />
         ) : null}
 
-        <ApprovalPanel />
 
         {section.id === 'objects' ? (
           <div className="akw-cfg__subtabs" role="group" aria-label="对象处理分类">

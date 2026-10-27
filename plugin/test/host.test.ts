@@ -42,22 +42,40 @@ interface Mounted {
   disposers: Array<() => void>
   opened: string[]
   tools: Array<{ name: string; execute: (args: unknown, exec?: unknown) => Promise<unknown> }>
+  /** 工具在对话里问过人的每一次（问题 + 执行上下文） */
+  asked: Array<{ questions: Array<Record<string, any>>; exec: Record<string, any> | undefined }>
+  /** 下一次被问时人选了什么；`labels: null` 表示问答通道直接抛错 */
+  reply: { labels: string[] | null }
 }
 
-function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false): Mounted {
+function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false, withQuestions = true): Mounted {
   const routes = new Map<string, Captured['handler']>()
   const disposers: Array<() => void> = []
   const opened: string[] = []
   const tools: Mounted['tools'] = []
+  const asked: Mounted['asked'] = []
+  const reply: Mounted['reply'] = { labels: ['允许这次写入'] }
   const ctx = {
     logger: { warn: () => {} },
     effect: (fn: () => () => void) => {
       disposers.push(fn())
       return () => {}
     },
-    get: (name: string) => (name === 'tools' && withTools
-      ? { register: (definition: Mounted['tools'][number]) => { tools.push(definition); return () => {} } }
-      : undefined),
+    get: (name: string) => {
+      if (name === 'tools' && withTools) {
+        return { register: (definition: Mounted['tools'][number]) => { tools.push(definition); return () => {} } }
+      }
+      if (name === 'userQuestions' && withQuestions) {
+        return {
+          ask: async (request: { questions: Array<Record<string, any>>; agent?: unknown; signal?: unknown }) => {
+            asked.push({ questions: request.questions, exec: { agent: request.agent, signal: request.signal } })
+            if (reply.labels === null) throw new Error('这个宿主没有问答通道')
+            return { answers: [{ id: request.questions[0]?.id ?? '', selected: reply.labels }] }
+          },
+        }
+      }
+      return undefined
+    },
     webServer: {
       register: (route: Captured) => {
         routes.set(route.path, route.handler)
@@ -66,7 +84,7 @@ function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false
     },
   }
   apply(ctx as never, { dshHome, cloudBaseUrl: cloudUrl, openBrowser: (url: string) => opened.push(url) })
-  return { routes, disposers, opened, tools }
+  return { routes, disposers, opened, tools, asked, reply }
 }
 
 /** 默认就当"本机浏览器里的插件页面"发的请求：Host 是本机、带自定义头。 */
@@ -774,131 +792,118 @@ async function startFakeEgmp(): Promise<{ baseUrl: string; hits: number; close: 
   }
 }
 
-test('执行计划要人批准：工具只开单、不写平台；批准后再调一次才执行；单子一次性', async () => {
+test('配置写入先在对话里问人：允许才发请求，拒绝就一步都不写', async () => {
   const home = freshHome()
   const mounted = mount(home, undefined, true)
   const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')
-  assert.ok(applyTool !== undefined, '执行工具应当注册（不需要 DSH 的审批总线）')
+  assert.ok(applyTool !== undefined, '执行工具应当注册')
 
-  // eGMP 会话指向一个只数次的假平台：门没开的时候它一个请求都不该收到
   const egmp = await startFakeEgmp()
   writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() })
   try {
     savePlan(home, planFixture('pln_writes', { create: 1, update: 2, irreversible: 1 }))
 
-    // ① 第一次调用：只开单
-    const first = await applyTool!.execute({ planId: 'pln_writes' }) as Record<string, any>
-    assert.equal(first.status, 'awaiting-approval')
-    assert.match(String(first.approvalId), /^apr_/)
-    assert.equal(egmp.hits, 0, '没有批准之前不许碰平台')
-    assert.equal(first.payload.length, 3, '要把每步要发的请求摊给人看（1 建 2 改）')
-    assert.match(String(first.payload[0].path), /^\/api\//)
+    // ① 问人：卡片里要能看到要发的步骤与完整 body
+    const allowed = await applyTool!.execute({ planId: 'pln_writes' }, { agent: { id: 'agent-1' } }) as Record<string, any>
+    assert.equal(mounted.asked.length, 1, '有写入就必须问一次人')
+    const question = mounted.asked[0]!.questions[0]!
+    assert.equal(question.header, '配置写入确认')
+    assert.match(String(question.question), /pln_writes/)
+    assert.match(String(question.question), /新建 1 步、更新 2 步/)
+    assert.deepEqual((question.options as Array<{ label: string }>).map((option) => option.label), ['允许这次写入', '拒绝'])
+    assert.match(String(question.detail), /ObjectPicklist\/save/, '要摊出真实接口路径')
+    assert.match(String(question.detail), /akw_test_pk__c/, '要摊出完整请求体')
+    assert.match(String(question.detail), /不可逆 1/)
+    assert.deepEqual(mounted.asked[0]!.exec?.agent, { id: 'agent-1' }, '提问要挂在发起调用的那个 agent 上')
 
-    // ② 页面上看到那一张单
-    const list = await call(mounted.routes, P.configApprovals, 'GET')
-    assert.equal(list.status, 200)
-    const pending = (list.json.pending ?? []) as Array<Record<string, any>>
-    assert.equal(pending.length, 1)
-    assert.equal(pending[0]!.planId, 'pln_writes')
-    assert.equal(pending[0]!.status, 'pending')
-    assert.equal(pending[0]!.summary.irreversible, 1)
+    // ② 允许之后才真的发请求
+    assert.ok(egmp.hits >= 1, '允许之后必须真的发出请求')
+    assert.notEqual(allowed.status, 'denied')
 
-    // ③ 人点允许
-    const decided = await call(mounted.routes, P.configApprovalDecide, 'POST', {
-      approvalId: pending[0]!.id,
-      decision: 'allow',
-    })
-    assert.equal(decided.status, 200)
-    assert.equal(decided.json.approval.status, 'approved')
-    assert.equal(egmp.hits, 0, '点允许本身也不写平台')
-
-    // ④ 再用同一个 planId 调一次：这次才真写
-    const second = await applyTool!.execute({ planId: 'pln_writes' }) as Record<string, any>
-    assert.ok(egmp.hits >= 1, '批准之后必须真的发出请求')
-    assert.ok(second.status !== 'awaiting-approval', `不该再要批准：${JSON.stringify(second)}`)
-
-    // ⑤ 单子用掉了：再调一次要重新审批（一次性核销）
-    const third = await applyTool!.execute({ planId: 'pln_writes' }) as Record<string, any>
-    assert.equal(third.status, 'awaiting-approval', '同一张批准单不能驱动第二次写入')
-    assert.notEqual(third.approvalId, first.approvalId, '应当是一张新的单')
+    // ③ 同一步骤换成拒绝：一个包都不许发
+    const before = egmp.hits
+    mounted.reply.labels = ['拒绝']
+    savePlan(home, planFixture('pln_writes2', { create: 1, update: 0, irreversible: 0 }))
+    const denied = await applyTool!.execute({ planId: 'pln_writes2' }, { agent: { id: 'agent-1' } }) as Record<string, any>
+    assert.equal(denied.status, 'denied')
+    assert.equal(egmp.hits, before, '被拒绝时不许碰平台')
+    assert.match(String(denied.message), /一步都没写/)
   } finally {
     await egmp.close()
   }
 })
 
-test('审批单可以拒绝，拒了就不写；过期单不算数', async () => {
+test('没有问答通道时拒绝写入（fail closed），不静默放行', async () => {
   const home = freshHome()
-  const mounted = mount(home, undefined, true)
+  const mounted = mount(home, undefined, true, false)
   const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
   const egmp = await startFakeEgmp()
   writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() })
   try {
     savePlan(home, planFixture('pln_writes', { create: 1, update: 0, irreversible: 0 }))
-    const opened = await applyTool.execute({ planId: 'pln_writes' }) as Record<string, any>
-
-    const denied = await call(mounted.routes, P.configApprovalDecide, 'POST', {
-      approvalId: opened.approvalId,
-      decision: 'deny',
-      note: '先别写',
-    })
-    assert.equal(denied.status, 200)
-    assert.equal(denied.json.approval.status, 'denied')
-    assert.equal(denied.json.approval.note, '先别写')
-
-    // 被拒之后再调：开新单，仍然不写
-    const again = await applyTool.execute({ planId: 'pln_writes' }) as Record<string, any>
-    assert.equal(again.status, 'awaiting-approval')
-    assert.notEqual(again.approvalId, opened.approvalId)
-    assert.equal(egmp.hits, 0)
-
-    // 已经处理过的单不能改判
-    const twice = await call(mounted.routes, P.configApprovalDecide, 'POST', {
-      approvalId: opened.approvalId,
-      decision: 'allow',
-    })
-    assert.equal(twice.status, 409)
-
-    // 缺参 / 乱填 decision
-    assert.equal((await call(mounted.routes, P.configApprovalDecide, 'POST', { decision: 'allow' })).status, 400)
-    assert.equal(
-      (await call(mounted.routes, P.configApprovalDecide, 'POST', { approvalId: opened.approvalId, decision: 'maybe' })).status,
-      400,
-    )
+    const result = await applyTool.execute({ planId: 'pln_writes' }, {}) as Record<string, any>
+    assert.equal(result.status, 'no-approval-channel')
+    assert.equal(egmp.hits, 0, '没人答应就不许写')
   } finally {
     await egmp.close()
   }
 })
 
-test('全 skip 的计划没有写入，不需要审批', async () => {
+test('问答通道抛错（比如在被委派的子 agent 里）也按拒绝处理', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  const egmp = await startFakeEgmp()
+  writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() })
+  mounted.reply.labels = null
+  try {
+    savePlan(home, planFixture('pln_writes', { create: 1, update: 0, irreversible: 0 }))
+    const result = await applyTool.execute({ planId: 'pln_writes' }, {}) as Record<string, any>
+    assert.equal(result.status, 'no-approval-channel')
+    assert.equal(egmp.hits, 0)
+  } finally {
+    await egmp.close()
+  }
+})
+
+test('全 skip 的计划没有写入，不需要问人', async () => {
   const home = freshHome()
   const mounted = mount(home, undefined, true)
   const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
   savePlan(home, planFixture('pln_noop', { create: 0, update: 0, irreversible: 0 }))
-  const result = await applyTool.execute({ planId: 'pln_noop' }) as Record<string, any>
-  assert.notEqual(result.status, 'awaiting-approval')
-  const list = await call(mounted.routes, P.configApprovals, 'GET')
-  assert.deepEqual(list.json.pending, [], '没有写入就不该生成待确认单')
+  const result = await applyTool.execute({ planId: 'pln_noop' }, {}) as Record<string, any>
+  assert.notEqual(result.status, 'denied')
+  assert.equal(mounted.asked.length, 0, '没有写入就不该打扰人')
 })
 
-test('审批门不再挂在 DSH 的 tools/pre-execute 上（自己的门，自己的账）', () => {
+test('确认不再走 DSH 的 approval / tools-pre-execute（自己的问题、自己的门）', () => {
   const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
-  assert.doesNotMatch(source, /tools\/pre-execute/, 'akso-workbench 的审批已经自建，不该再注册 DSH 的门')
+  assert.doesNotMatch(source, /tools\/pre-execute/, '不该再注册 DSH 的 pre-execute 门')
   assert.doesNotMatch(source, /ctx\.approval/, '不该再向 DSH 的 approval 服务提问')
+  assert.match(source, /userQuestions/, '应当走宿主的用户提问通道')
 })
 
-test('HTTP 直连写配置是侧门：默认 403，显式开 env 才回到登录检查', async () => {
+test('HTTP 直连：写接口默认 403，读接口放行到登录检查', async () => {
   const closed = mount(freshHome())
-  for (const path of [P.configInvoke, P.configApply]) {
-    const res = await call(closed.routes, path, 'POST', { capabilityId: 'object.save', planId: 'pln_x' })
-    assert.equal(res.status, 403, `${path} 默认必须关着`)
-    assert.match(String(res.json.error), /AKSO_WORKBENCH_ALLOW_DIRECT_WRITE/)
-  }
+  const write = await call(closed.routes, P.configInvoke, 'POST', { capabilityId: 'object.save', params: {} })
+  assert.equal(write.status, 403, '写能力经 HTTP 直连默认必须关着')
+  assert.match(String(write.json.error), /AKSO_WORKBENCH_ALLOW_DIRECT_WRITE/)
+  const apply = await call(closed.routes, P.configApply, 'POST', { planId: 'pln_x' })
+  assert.equal(apply.status, 403)
+
+  // 只读能力不需要那个开关：门后是"还没有登录 eGMP"
+  const read = await call(closed.routes, P.configInvoke, 'POST', { capabilityId: 'query.object.get', params: { code: 'x__c' } })
+  assert.equal(read.status, 401)
+  assert.match(String(read.json.error), /eGMP/)
+
+  // 不认识的 capabilityId 直接 400，不猜
+  const unknown = await call(closed.routes, P.configInvoke, 'POST', { capabilityId: 'nope.nope', params: {} })
+  assert.equal(unknown.status, 400)
 
   process.env.AKSO_WORKBENCH_ALLOW_DIRECT_WRITE = '1'
   try {
     const opened = mount(freshHome())
     const res = await call(opened.routes, P.configApply, 'POST', { planId: 'pln_x' })
-    // 门开了之后才轮到"没有 eGMP 会话"这一关
     assert.equal(res.status, 401)
     assert.match(String(res.json.error), /eGMP/)
   } finally {

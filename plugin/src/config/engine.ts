@@ -711,21 +711,33 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
       plan.results.push(result)
       audit(dshHome, plan, step, result)
     } catch (error) {
+      // 平台有「写进去了却回未授权」的端点（2026-10-27 实测 `picklist.save`：HTTP 200 + code=401
+      // Unauthorized，但数据已落库）。所以失败也要回读一次：确认已是期望态就不算失败，
+      // 否则这条路会让 agent 重试同一步、把数据写两遍。
+      const verify = await verifyStep(ctx, step, res).catch((verifyError: unknown) => ({
+        verified: false,
+        message: verifyError instanceof Error ? verifyError.message : String(verifyError),
+      }))
+      const failure = error instanceof Error ? error.message : String(error)
       const result: StepResult = {
         stepId: step.id,
         title: step.title,
         kind: step.kind,
         action: step.action,
-        status: 'failed',
-        message: error instanceof Error ? error.message : String(error),
+        status: verify.verified ? 'verified' : 'failed',
+        message: verify.verified
+          ? `写入报「${failure}」，但回读确认已生效：${verify.message}`
+          : `${failure}；回读未确认：${verify.message}`,
         traceId: error instanceof EgmpError ? error.traceId : null,
         durationMs: Date.now() - t0,
       }
       plan.results.push(result)
-      plan.status = 'failed'
       audit(dshHome, plan, step, result)
-      savePlan(dshHome, plan)
-      return plan
+      if (!verify.verified) {
+        plan.status = 'failed'
+        savePlan(dshHome, plan)
+        return plan
+      }
     }
   }
   plan.status = plan.results.some((r) => r.status === 'failed') ? 'failed' : 'applied'

@@ -25,9 +25,8 @@ import { clearSession, readPool, readPrefs, readSession, writePool, writePrefs, 
 import { buildSnapshotTool } from './tool.ts'
 import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
-import { decideApproval, listApprovals } from './config/approvals.ts'
 import { EgmpError, clearEgmpSession, login as egmpLogin, publicSession, readEgmpSession, writeEgmpSession } from './config/session.ts'
-import { buildConfigApplyTool, buildConfigPlanTool } from './config/tools.ts'
+import { buildConfigApplyTool, buildConfigPlanTool, type AskQuestion, type ToolExec } from './config/tools.ts'
 
 export const name = 'akso-workbench'
 export const inject = ['webServer']
@@ -110,8 +109,6 @@ export const ROUTES = {
   configPlan: '/api/akso-workbench/config/plan',
   configPlanGet: '/api/akso-workbench/config/plan-status',
   configApply: '/api/akso-workbench/config/apply',
-  configApprovals: '/api/akso-workbench/config/approvals',
-  configApprovalDecide: '/api/akso-workbench/config/approvals/decide',
   configAudit: '/api/akso-workbench/config/audit',
 } as const
 
@@ -619,20 +616,26 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       })
     }),
 
-    /* ───────────── 配置：单接口执行（本机调试；默认关闭） ───────────── */
+    /* ───────────── 配置：单接口执行（读放行；写仅本机调试开关打开时放行） ───────────── */
     route('POST', R.configInvoke, false, async (_req, res, body) => {
-      if (!allowDirectWrite) {
+      const capabilityId = text(body.capabilityId, 120)
+      if (capabilityId === '') {
+        sendJson(res, 400, { error: '缺少 capabilityId' })
+        return
+      }
+      const capability = CAPABILITIES.find((item) => item.id === capabilityId)
+      if (capability === undefined) {
+        sendJson(res, 400, { error: `未知的 capabilityId：${capabilityId}` })
+        return
+      }
+      // 写类接口（非 GET）只走 agent 工具 + 人确认；HTTP 直连是调试口，默认关
+      if (capability.method.toUpperCase() !== 'GET' && !allowDirectWrite) {
         sendJson(res, 403, { error: DIRECT_WRITE_HINT })
         return
       }
       const session = readEgmpSession(dshHome)
       if (session === null) {
         sendJson(res, 401, { error: '还没有登录 eGMP' })
-        return
-      }
-      const capabilityId = text(body.capabilityId, 120)
-      if (capabilityId === '') {
-        sendJson(res, 400, { error: '缺少 capabilityId' })
         return
       }
       const params = body.params !== null && typeof body.params === 'object' ? (body.params as Record<string, unknown>) : {}
@@ -681,31 +684,6 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       sendJson(res, 200, { ok: plan.status === 'applied', plan })
     }),
 
-    route('GET', R.configApprovals, false, async (_req, res) => {
-      const { pending, recent } = listApprovals(dshHome)
-      sendJson(res, 200, { ok: true, pending, recent })
-    }),
-
-    route('POST', R.configApprovalDecide, false, async (_req, res, body) => {
-      const approvalId = text(body.approvalId, 64)
-      const decision = text(body.decision, 8)
-      if (approvalId === '') {
-        sendJson(res, 400, { error: '缺少 approvalId' })
-        return
-      }
-      if (decision !== 'allow' && decision !== 'deny') {
-        sendJson(res, 400, { error: 'decision 只能是 allow 或 deny' })
-        return
-      }
-      const note = text(body.note, 200)
-      const entry = decideApproval(dshHome, approvalId, decision, note)
-      if (entry === null) {
-        sendJson(res, 409, { error: '这张审批单不存在、已过期或已经处理过' })
-        return
-      }
-      sendJson(res, 200, { ok: true, approval: entry })
-    }),
-
     route('GET', R.configAudit, false, async (req, res) => {
       const url = new URL(String(req.url ?? '/'), 'http://127.0.0.1')
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50))
@@ -720,11 +698,11 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     }
   }, 'akso-workbench: routes')
 
-  /* ── 确认门是我们自己的，不走 DSH 的 approval ──
-     `danger-full-access` 档下会话策略是 `never`，DSH 会把所有 `ask` 静默判拒，写入这条路会被焊死；
-     而且宿主弹窗只显示工具名与参数，看不到要写到平台上的东西。所以改成
-     「工具只开审批单 → 页面里人点允许 → 同一个 planId 再调一次才真写」，
-     批准单一次性、30 分钟过期、全部落盘（见 `config/approvals.ts`）。 */
+  /* ── 写入前的确认走宿主自己的「用户提问」通道（跟 ask_user_question 同一套界面）──
+     不用 DSH 的 approval：完全权限档下会话策略是 `never`，它会把所有 `ask` 静默判拒，
+     写入这条路会被焊死；而这里问的本来就是"要不要写这么一批东西"，
+     当成问题问出来，卡片直接进对话、人点「允许这次写入」之后工具才继续。
+     拿不到通道（或在被委派的子 agent 里）时工具会拒绝执行 —— fail closed。 */
 
   /* ── 给 agent 的只读工具：让它能读到与界面同一份快照 ── */
   try {
@@ -758,7 +736,20 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       })
       ctx.effect(() => registry.register(definition), 'akso-workbench: snapshot tool')
 
-      const configDeps = { dshHome }
+      const questions = (typeof ctx.get === 'function' ? ctx.get('userQuestions', false) : undefined)
+        ?? (ctx as unknown as { userQuestions?: unknown }).userQuestions
+      const configDeps = {
+        dshHome,
+        /** 把问题交给宿主的问答通道；没有通道就返回 null，工具据此拒绝写入。 */
+        async ask(items: AskQuestion[], exec: ToolExec): Promise<string[] | null> {
+          const seam = questions as { ask?: (request: unknown) => Promise<unknown> } | undefined
+          if (seam === undefined || seam === null || typeof seam.ask !== 'function') return null
+          const answer = await seam.ask({ questions: items, agent: exec.agent, signal: exec.signal }) as
+            { answers?: Array<{ selected?: unknown }> } | undefined
+          const selected = answer?.answers?.[0]?.selected
+          return Array.isArray(selected) ? selected.map((item) => String(item)) : []
+        },
+      }
       const planTool = buildConfigPlanTool(configDeps)
       const applyTool = buildConfigApplyTool(configDeps)
       ctx.effect(() => registry.register(planTool), 'akso-workbench: config plan tool')
