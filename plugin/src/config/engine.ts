@@ -159,22 +159,57 @@ function picklistIdOf(data: Record<string, unknown> | null): string {
   return String(data.id ?? '')
 }
 
-function picklistOptionCodes(data: Record<string, unknown> | null): string[] {
-  if (data === null) return []
-  if (Array.isArray(data)) return (data as Array<Record<string, unknown>>).map((o) => String(o.code ?? ''))
-  const options = data.picklist_options
-  if (Array.isArray(options)) return (options as Array<Record<string, unknown>>).map((o) => String(o.picklist_option_code ?? ''))
-  return []
+interface ExistingOption {
+  code: string
+  name: string
 }
 
+/**
+ * 读回读到的选项集。平台两种形状都认：
+ *   · v3.6.4 `{picklists:{...}, picklist_options:[{picklist_option_code, picklist_option_name}]}`
+ *   · v1.0 裸数组 `[{code, name}]`
+ */
+function existingOptions(data: Record<string, unknown> | null): ExistingOption[] {
+  if (data === null) return []
+  const read = (o: Record<string, unknown>): ExistingOption => ({
+    code: String(o.picklist_option_code ?? o.code ?? ''),
+    name: String(o.picklist_option_name ?? o.name ?? ''),
+  })
+  if (Array.isArray(data)) return (data as Array<Record<string, unknown>>).map(read)
+  const options = data.picklist_options
+  if (!Array.isArray(options)) return []
+  return (options as Array<Record<string, unknown>>).map(read)
+}
+
+/**
+ * 提交给平台的选项数组。
+ *
+ * `code` 缺省时我们按位置补 `opt_N__c`，而不是留空让平台按 name 自动生成 ——
+ * 自动生成的编码不可预知，下次读回来没法与蓝图比对，等于每次都判"要更新"。
+ */
 function picklistOptions(spec: PicklistResource): Array<Record<string, unknown>> {
   return spec.options.map((option, index) => ({
-    ...option,
+    name: option.name,
     code: option.code ?? `opt_${index}__c`,
     status: option.status ?? 1,
     operations: 1,
     sort: option.sort ?? index,
   }))
+}
+
+/** 选项集差异：平台接口是"整份覆盖"，所以多出来的（要删）、少的（要加）、改了名的都得认出来。 */
+function diffOptions(existing: ExistingOption[], desired: ExistingOption[]): {
+  removed: ExistingOption[]
+  added: ExistingOption[]
+  renamed: ExistingOption[]
+  same: boolean
+} {
+  const have = new Map(existing.map((o) => [o.code, o.name]))
+  const want = new Map(desired.map((o) => [o.code, o.name]))
+  const removed = existing.filter((o) => !want.has(o.code))
+  const added = desired.filter((o) => !have.has(o.code))
+  const renamed = desired.filter((o) => have.has(o.code) && (have.get(o.code) ?? '') !== o.name)
+  return { removed, added, renamed, same: removed.length === 0 && added.length === 0 && renamed.length === 0 }
 }
 
 function objectBody(spec: ObjectResource): Record<string, unknown> {
@@ -234,21 +269,34 @@ export async function planBlueprint(session: EgmpSession, input: Blueprint, dshH
       case 'picklist': {
         const spec = resource as PicklistResource
         const existing = await getPicklist(ctx, spec.code)
-        const desired = picklistOptions(spec).map((o) => String(o.code))
-        const existingCodes = picklistOptionCodes(existing)
-        const same = existing !== null && existingCodes.length === desired.length && desired.every((c) => existingCodes.includes(c))
+        const payload = picklistOptions(spec)
+        const desired = payload.map((o) => ({ code: String(o.code), name: String(o.name) }))
+        const diff = diffOptions(existingOptions(existing), desired)
+        const generated = spec.options.filter((option) => option.code === undefined).length
+        const warnings: string[] = []
+        if (diff.removed.length > 0) {
+          const shown = diff.removed.slice(0, 5).map((o) => o.name === '' ? o.code : `${o.name}(${o.code})`)
+          const more = diff.removed.length > shown.length ? ` 等 ${diff.removed.length} 个` : ''
+          warnings.push(`这次提交的选项里不含 ${shown.join('、')}${more}：平台按整份覆盖处理，它们会被删掉，历史记录里选过它们的值会跟着失效`)
+        }
+        if (generated > 0) {
+          warnings.push(`有 ${generated} 个选项没写 code，按位置补成 opt_N__c（留空让平台按 name 生成的话编码不可预知，没法回读比对）`)
+        }
+        if (diff.renamed.length > 0 && diff.removed.length === 0) {
+          warnings.push(`${diff.renamed.length} 个选项只改了名称（编码不变），历史记录不受影响`)
+        }
         add({
           kind: 'picklist',
-          action: existing === null ? 'create' : same ? 'skip' : 'update',
+          action: existing === null ? 'create' : diff.same ? 'skip' : 'update',
           title: `选项集 ${spec.name}（${spec.code}）`,
           naturalKey: spec.code,
-          risk: 'low',
-          irreversible: false,
+          risk: diff.removed.length > 0 ? 'high' : 'low',
+          irreversible: diff.removed.length > 0,
           capabilityId: 'picklist.save',
-          params: { name: spec.name, code: spec.code, options: picklistOptions(spec) },
-          expected: { optionCount: desired.length },
+          params: { name: spec.name, code: spec.code, options: payload },
+          expected: { optionCount: desired.length, codes: desired.map((o) => o.code) },
           dependsOn: [],
-          warnings: [],
+          warnings,
         })
         break
       }
@@ -622,7 +670,25 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
     switch (step.kind) {
       case 'picklist': {
         const data = await getPicklist(ctx, step.naturalKey)
-        return { verified: data !== null, message: data === null ? '回读未找到选项集' : '选项集存在' }
+        if (data === null) return { verified: false, message: '回读未找到选项集' }
+        const have = existingOptions(data)
+        const raw = (step.params as Record<string, unknown>).options
+        const want = Array.isArray(raw)
+          ? (raw as Array<Record<string, unknown>>).map((o) => ({ code: String(o.code ?? ''), name: String(o.name ?? '') }))
+          : []
+        const haveMap = new Map(have.map((o) => [o.code, o.name]))
+        const missing = want.filter((o) => !haveMap.has(o.code)).map((o) => o.code)
+        if (missing.length > 0) return { verified: false, message: `回读缺 ${missing.length} 个选项：${missing.slice(0, 5).join('、')}` }
+        const wrongNames = want.filter((o) => haveMap.has(o.code) && (haveMap.get(o.code) ?? '') !== o.name)
+        if (wrongNames.length > 0) {
+          return { verified: false, message: `回读有 ${wrongNames.length} 个选项名称不符：${wrongNames.slice(0, 3).map((o) => o.code).join('、')}` }
+        }
+        // 平台若没有按"整份覆盖"删掉缺省项，这里就会如实报出来，而不是假装成功
+        const extra = have.filter((o) => !want.some((w) => w.code === o.code))
+        if (extra.length > 0) {
+          return { verified: false, message: `回读多出 ${extra.length} 个没提交的选项：${extra.slice(0, 5).map((o) => o.code).join('、')}（平台没有删）` }
+        }
+        return { verified: true, message: `选项 ${have.length} 个，编码与名称都对得上` }
       }
       case 'object': {
         const object = await getObject(ctx, step.naturalKey)

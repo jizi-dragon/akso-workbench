@@ -23,7 +23,7 @@ import { test } from 'node:test'
 
 import { errorMessage, uiState } from '../src/cloud.ts'
 import { CAPABILITIES } from '../src/config/capabilities.ts'
-import { savePlan } from '../src/config/engine.ts'
+import { savePlan, planBlueprint } from '../src/config/engine.ts'
 import { writeEgmpSession } from '../src/config/session.ts'
 import { apply, ROUTES } from '../src/index.ts'
 import { buildSnapshotTool } from '../src/tool.ts'
@@ -765,17 +765,31 @@ function planFixture(planId: string, overrides: { create: number; update: number
   } as never
 }
 
-/** 假平台：只数请求次数，用来证明「没批准之前一个包都没发出去」。 */
-async function startFakeEgmp(): Promise<{ baseUrl: string; hits: number; close: () => Promise<void> }> {
+/**
+ * 假平台：数请求次数（用来证明「没批准之前一个包都没发出去」），
+ * 也可以摆一份既有的选项集，让计划阶段真的走进"更新"分支。
+ */
+async function startFakeEgmp(
+  options: Array<{ code: string; name: string }> | null = [],
+): Promise<{ baseUrl: string; hits: number; close: () => Promise<void> }> {
   const state = { hits: 0 }
   const server = createServer((req, res) => {
     state.hits += 1
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({
-      code: 0,
-      message: 'ok',
-      data: { picklists: { picklist_code: 'akw_test_pk__c', picklist__name: 'akso-workbench 验证选项集' }, picklist_options: [] },
-    }))
+    // `options === null` 表示平台上还没有这个选项集
+    const data = options === null
+      ? null
+      : {
+          picklists: { picklist_code: 'akw_test_pk__c', picklist__name: 'akso-workbench 验证选项集' },
+          picklist_options: options.map((option) => ({
+            sort: 0,
+            status: 1,
+            picklist_option_id: `id-${option.code}`,
+            picklist_option_code: option.code,
+            picklist_option_name: option.name,
+          })),
+        }
+    res.end(JSON.stringify({ code: 0, message: 'ok', data }))
     void req
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -974,4 +988,58 @@ test('JWT 解不开时不许崩：只回 null，不影响登录态', async () =>
   assert.equal(view.json.token, 'not-a-jwt')
   assert.equal(view.json.issuedAt, null)
   assert.equal(view.json.expiresAt, null)
+})
+
+/* ─────────────── 选项集：同一个 code 再提交就是更新 ─────────────── */
+
+test('选项集计划：按 code 认出更新，删掉的选项要点名并且标不可逆', async () => {
+  const home = freshHome()
+  const blueprint = (options: Array<{ name: string; code?: string }>) => ({
+    version: 1,
+    env: 'test',
+    resources: [{ kind: 'picklist', name: '验证选项集', code: 'akw_test_pk__c', options }],
+  } as never)
+  const run = async (existing: Array<{ code: string; name: string }> | null, options: Array<{ name: string; code?: string }>) => {
+    const egmp = await startFakeEgmp(existing)
+    try {
+      writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() })
+      const plan = await planBlueprint({ baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() }, blueprint(options), home)
+      return plan.steps[0]!
+    } finally {
+      await egmp.close()
+    }
+  }
+
+  // ① 平台上还没有 ⇒ 新建
+  const created = await run(null, [{ name: '主要变更', code: 'major__c' }])
+  assert.equal(created.action, 'create')
+  assert.equal(created.irreversible, false)
+  assert.deepEqual(created.warnings, [])
+
+  // ② 提交里没有旧选项 ⇒ 更新，而且这一删就回不来
+  const removed = await run(
+    [{ code: 'major__c', name: '主要变更' }, { code: 'legacy__c', name: '旧选项' }],
+    [{ name: '主要变更', code: 'major__c' }],
+  )
+  assert.equal(removed.action, 'update')
+  assert.equal(removed.irreversible, true)
+  assert.equal(removed.risk, 'high')
+  assert.match(removed.warnings.join(' '), /旧选项\(legacy__c\)/, '要点名删了哪个选项')
+  assert.match(removed.warnings.join(' '), /整份覆盖/)
+
+  // ③ 一模一样 ⇒ 跳过（不算写入，不用问人）
+  const skipped = await run([{ code: 'major__c', name: '主要变更' }], [{ name: '主要变更', code: 'major__c' }])
+  assert.equal(skipped.action, 'skip')
+
+  // ④ 只改名字 ⇒ 更新，但不算不可逆（编码没变，历史值不受影响）
+  const renamed = await run([{ code: 'major__c', name: '主要变更' }], [{ name: '主要变更（含紧急）', code: 'major__c' }])
+  assert.equal(renamed.action, 'update')
+  assert.equal(renamed.irreversible, false)
+  assert.match(renamed.warnings.join(' '), /只改了名称/)
+
+  // ⑤ 没写 code 的选项按位置补，并提前说明（不然回读比对不了）
+  const generated = await run(null, [{ name: '无编码选项' }])
+  const options = (generated.params as { options: Array<{ code: string }> }).options
+  assert.equal(options[0]?.code, 'opt_0__c')
+  assert.match(generated.warnings.join(' '), /没写 code/)
 })

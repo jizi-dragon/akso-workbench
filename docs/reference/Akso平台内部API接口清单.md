@@ -43,7 +43,7 @@
 | 方法 | 路径 | 用途 | 要点 |
 | --- | --- | --- | --- |
 | POST | `/api/platform/BasicObject/SaveField` | 创建/更新自定义字段 | `statisticsArrange:{id:1}` **必填**（漏传是 1000 错误最常见原因）；`dataType=15` 自动 `isRequired=true`、`16` 自动 false |
-| POST | `/api/platform/ObjectPicklist/save` | 创建/更新选项集 | `options[{name,code,status,operations,sort}]`；响应**不返回 picklistId**，需反查 |
+| POST | `/api/platform/ObjectPicklist/save` | 创建/更新选项集 | `options[{name,code,status,operations,sort}]`；响应**不返回 picklistId**，需反查。**同一个 `code` 再提交就是更新**（平台按 code 认既有选项集，不用传 id）。`options[].code` 不填时平台按 name 自动生成编码，生成结果不可预知 ⇒ 想稳定比对就自己给编码。⚠️ 未验证：整份提交里"没出现"的旧选项是否被删除（接口清单只写"创建/更新"）。✅ 2026-10-27 实测：先 2 项建出 `akw_test_pk__c`，再提交 3 项，读回 3 项、`picklist_option_name` 与编码都正确；两次写入平台都回了 `code=401 Unauthorized` 而数据已经落库（见文末「写入报未授权但已生效」） |
 
 ### 表单布局（3）
 
@@ -141,3 +141,11 @@
 
 v1.0 `lifecycleStatus/{objectCode}` 返回**裸数组**：`[{belongType,id,code,name,lifecycleId,lifecycleCode,lifecycleName}]`；对象没绑生命周期时是空数组（不是报错）。
 
+
+## 写入报未授权但已生效（2026-10-27 实测）
+
+`POST /api/platform/ObjectPicklist/save` 出现过两次「HTTP 200 + `code=401` + `message="Unauthorized"` + `traceId=null`，但数据已经写进平台」：写入固定耗时 145 ms 报错，随后回读却能看到刚提交的选项集。因此：
+
+- 写入返回非 0 的 `code` **不等于没写**，不要在失败后盲目重试（会重复写）；
+- akso-workbench 的做法：写完先回读，回读是期望态就记 `verified`，并在结果里写明"写入报错但已生效"；
+- 别的写接口是否也这样**未验证**，按同样方式处理：先回读再下结论。
