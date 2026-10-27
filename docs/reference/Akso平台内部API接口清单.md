@@ -131,12 +131,13 @@
 | 通知模板 | `notice/GetMessageTemplateByObject` |
 | OAuth（有意不接：`Auth` 那条够用） | `Oauth/Login`、`Oauth/RefreshToken` |
 
-**三处口径不一致，接之前要先验**：
+**三处口径不一致（2026-10-27 在 standard-val 实测过，结论见下）**：
 
-| 能力 id | capabilities.ts 现在是 | 本清单是 |
-| --- | --- | --- |
-| `query.fields.list` | `GET /openapi/v3.6.4/metadatas/objects/{code}/fileds` | `GET /api/openapi/v1.0/BasicObject/field/{objectCode}` |
-| `query.picklist.get` | `GET /openapi/v3.6.4/metadatas/picklists/{code}` | `GET /api/openapi/v1.0/BasicObject/picklist/{code}` |
-| `query.lifecycle.status.list` | `GET /openapi/v3.6.4/metadatas/lifecycle_status/{lifecycleId}`（按 lifecycleId） | `GET /api/openapi/v1.0/BasicObject/lifecycleStatus/{objectCode}`（**按 objectCode**） |
+| 能力 id | capabilities.ts 现在是 | 本清单是 | 实测 |
+| --- | --- | --- | --- |
+| `query.fields.list` | `GET /openapi/v3.6.4/metadatas/objects/{code}/fileds` | `GET /api/openapi/v1.0/BasicObject/field/{objectCode}` | 两套都通；v1.0 更快（59 ms vs 299 ms）、字段更全（92 键 vs 54 键，带 `id`/`picklistId`/内联 `picklist`） |
+| `query.picklist.get` | `GET /openapi/v3.6.4/metadatas/picklists/{code}` | `GET /api/openapi/v1.0/BasicObject/picklist/{code}` | v3.6.4 通，**入参必须是选项集编码**（传 id / 字段编码一律 `code=0 + data:null`） |
+| `query.lifecycle.status.list` | `GET /openapi/v3.6.4/metadatas/lifecycle_status/{lifecycleCode}`（按编码） | `GET /api/openapi/v1.0/BasicObject/lifecycleStatus/{objectCode}`（按 objectCode） | **两条都要**：v3.6.4 只认生命周期编码（传 id 500「未找到对象生命周期」）；引擎判断「已有状态」走 v1.0 那条（对象元数据只给 `lifeCycleId`，`lifecycleCode` 要反向查） |
 
-前两条都是「读元数据」，两套路径可能都可用；第三条不只是路径不同，**入参语义也不一样**（lifecycleId vs objectCode）——接生命周期规划前必须在验证环境确认哪套对，别照抄。
+v1.0 `lifecycleStatus/{objectCode}` 返回**裸数组**：`[{belongType,id,code,name,lifecycleId,lifecycleCode,lifecycleName}]`；对象没绑生命周期时是空数组（不是报错）。
+

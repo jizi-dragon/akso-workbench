@@ -109,12 +109,19 @@ async function getPicklist(ctx: QueryContext, code: string): Promise<Record<stri
   return data
 }
 
-async function getStatuses(ctx: QueryContext, lifecycleId: string): Promise<Array<Record<string, unknown>>> {
-  if (ctx.statuses.has(lifecycleId)) return ctx.statuses.get(lifecycleId)!
-  const json = await tryInvoke(ctx.session, 'query.lifecycle.status.list', { lifecycleId })
+/**
+ * 对象已绑定的状态。按对象编码查 —— 对象元数据里的 lifeCycleId 是"对象侧生命周期 id"，
+ * v3.6.4 的 lifecycle_status 端点只认生命周期**编码**，传 id 会 500「未找到对象生命周期」；
+ * BasicObject/lifecycleStatus/{objectCode} 直接返回 [{belongType,id,code,name,lifecycleId,lifecycleCode,lifecycleName}]。
+ */
+async function getStatuses(ctx: QueryContext, objectCode: string): Promise<Array<Record<string, unknown>>> {
+  if (ctx.statuses.has(objectCode)) return ctx.statuses.get(objectCode)!
+  const json = await tryInvoke(ctx.session, 'query.lifecycle.by.object', { objectCode })
   const data = json?.data
-  const list = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : Array.isArray((data as Record<string, unknown> | undefined)?.statuses) ? ((data as Record<string, unknown>).statuses as Array<Record<string, unknown>>) : []
-  ctx.statuses.set(lifecycleId, list)
+  const nested = (data as Record<string, unknown> | undefined)?.lifecycle_status ?? (data as Record<string, unknown> | undefined)?.statuses
+  const raw = Array.isArray(data) ? data : nested
+  const list = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : []
+  ctx.statuses.set(objectCode, list)
   return list
 }
 
@@ -267,9 +274,12 @@ export async function planBlueprint(session: EgmpSession, input: Blueprint, dshH
       case 'lifecycle': {
         const spec = resource as LifecycleResource
         const object = await getObject(ctx, spec.object)
-        const lifecycleId = object === null ? null : String(object.lifeCycleId ?? object.lifecycle_id ?? '')
-        const existing = lifecycleId === null || lifecycleId === '' ? [] : await getStatuses(ctx, lifecycleId)
-        const existingCodes = existing.map((s) => String(s.code ?? ''))
+        const existing = object === null ? [] : await getStatuses(ctx, spec.object)
+        const existingCodes = existing.map((s) => String(s.code ?? s.lifecycle_status_code ?? ''))
+        // 状态列表自带 lifecycleId（和对象元数据的 lifeCycleId 是同一个值），比对象元数据更权威
+        const lifecycleId = existing.length > 0
+          ? String(existing[0]?.lifecycleId ?? '')
+          : object === null ? '' : String(object.lifeCycleId ?? object.lifecycle_id ?? '')
         for (const status of spec.statuses) {
           if (existingCodes.includes(status.code)) continue
           add({
@@ -626,11 +636,8 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
       }
       case 'lifecycle': {
         const objectCode = String(step.naturalKey.split('.')[0] ?? '')
-        const object = await getObject(ctx, objectCode)
-        const lifecycleId = String(object?.lifeCycleId ?? '')
-        if (lifecycleId === '') return { verified: false, message: '对象没有生命周期 id' }
-        const statuses = await getStatuses(ctx, lifecycleId)
-        const ok = statuses.some((s) => String(s.code ?? '') === String(step.expected?.code ?? ''))
+        const statuses = await getStatuses(ctx, objectCode)
+        const ok = statuses.some((s) => String(s.code ?? s.lifecycle_status_code ?? '') === String(step.expected?.code ?? ''))
         return { verified: ok, message: ok ? '状态存在' : '回读未找到状态' }
       }
       case 'formLayout': {
