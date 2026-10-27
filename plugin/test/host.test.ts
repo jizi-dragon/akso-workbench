@@ -156,6 +156,19 @@ test('禁止删除：账号 / 站点 / 盒子的删除端点都不存在', () =>
     assert.equal(routes.has(path), false, `不该注册删除端点：${path}`)
   }
 })
+
+test('禁止删除：cloud.ts 里也不留删除通道（路由删了、helper 还在就等于埋着）', () => {
+  const source = readFileSync(new URL('../src/cloud.ts', import.meta.url), 'utf8')
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  assert.deepEqual(
+    [...code.matchAll(/'(?:DELETE|PATCH)'|`\/api\/[^`]*delete/gi)].map((m) => m[0]),
+    [],
+    'cloud.ts 不该再有删除类请求：本仓的口径是"只能加不能删"，删账号/站点/盒子由人在 akso-cloud 上操作',
+  )
+  for (const gone of ['deleteAccount', 'deleteSite', 'deleteBox']) {
+    assert.equal(code.includes(gone), false, `死函数 ${gone} 应该删掉，不要留着给人"随手接上"`)
+  }
+})
 test('围栏：非 loopback 一律 403', async () => {
   const { routes } = mount(freshHome())
   assert.equal((await call(routes, P.state, 'GET', undefined, '10.1.2.3')).status, 403)

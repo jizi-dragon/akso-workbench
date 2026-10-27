@@ -79,7 +79,7 @@ interface StatePayload {
   defaultBox: string
   counts: { accounts: number; sites: number; boxes: number }
   currentAccountId: string | null
-  /** 配置池：允许 agent 登录的账号；`pool.json` 不存在时等于全部账号。 */
+  /** 配置池：允许 agent 登录的账号；`pool.json` 不存在时是**空池**（首次使用由用户自己加）。 */
   poolAccountIds: string[]
 }
 

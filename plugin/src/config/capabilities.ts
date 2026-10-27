@@ -250,7 +250,7 @@ export const CAPABILITIES: Capability[] = [
     id: 'layout.save',
     domain: 'layout',
     title: '保存表单布局（全量替换）',
-    description: 'sections/controls/pages 全量提交；不在数组中的会被移除。（当前受阻：平台要求 section.belongId 由其 FullPath 生成，规则待录制）',
+    description: 'sections/controls/pages 全量提交；不在数组中的会被移除。（尚未验证：平台要求 section.belongId 由其 FullPath 生成，写入规则还没实测）',
     method: 'POST',
     path: '/api/platform/Layout/SaveLayoutDetail',
     risk: 'medium',

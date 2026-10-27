@@ -307,15 +307,6 @@ export async function createAccount(
   return call(baseUrl, '/api/accounts', { method: 'POST', token, body }, fetchImpl)
 }
 
-export async function deleteAccount(
-  baseUrl: string,
-  token: string,
-  id: string,
-  fetchImpl: FetchImpl = fetch,
-): Promise<unknown> {
-  return call(baseUrl, `/api/accounts/${encodeURIComponent(id)}`, { method: 'DELETE', token }, fetchImpl)
-}
-
 export async function createSite(
   baseUrl: string,
   token: string,
@@ -323,16 +314,6 @@ export async function createSite(
   fetchImpl: FetchImpl = fetch,
 ): Promise<unknown> {
   return call(baseUrl, '/api/sites', { method: 'POST', token, body }, fetchImpl)
-}
-
-export async function deleteSite(
-  baseUrl: string,
-  token: string,
-  id: string,
-  force = true,
-  fetchImpl: FetchImpl = fetch,
-): Promise<unknown> {
-  return call(baseUrl, `/api/sites/${encodeURIComponent(id)}${force ? '?force=1' : ''}`, { method: 'DELETE', token }, fetchImpl)
 }
 
 export async function renameBox(
@@ -343,16 +324,6 @@ export async function renameBox(
   fetchImpl: FetchImpl = fetch,
 ): Promise<unknown> {
   return call(baseUrl, '/api/boxes/rename', { method: 'POST', token, body: { source, target } }, fetchImpl)
-}
-
-export async function deleteBox(
-  baseUrl: string,
-  token: string,
-  name: string,
-  deleteAccounts = false,
-  fetchImpl: FetchImpl = fetch,
-): Promise<unknown> {
-  return call(baseUrl, '/api/boxes/delete', { method: 'POST', token, body: { name, deleteAccounts } }, fetchImpl)
 }
 
 export async function bindBoxSite(

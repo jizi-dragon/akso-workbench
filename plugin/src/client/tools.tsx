@@ -67,13 +67,21 @@ const OBJECT_TABS: Array<{ key: string; label: string }> = [
   { key: 'listlayout', label: '列表布局' },
 ]
 
-/** 台账状态：只影响展示，不改变引擎行为（引擎对受阻项在 plan 阶段就拒绝）。 */
-const STATUS: Record<string, { label: '受阻' | '未实测'; note: string }> = {
-  'layout.save': { label: '受阻', note: '平台要求 section.belongId 由 FullPath 生成，规则待录制' },
-  'menu.submit': { label: '未实测', note: '平台没有按 code 预检菜单的接口，尚未在测试环境验证' },
-  'menu.sort': { label: '未实测', note: '全量替换菜单树，尚未在测试环境验证' },
-  'lifecycle.status.create': { label: '未实测', note: '需要对象先开启生命周期（不可逆），尚未验证' },
-  'lifecycle.status.update': { label: '未实测', note: '需要对象先开启生命周期（不可逆），尚未验证' },
+/**
+ * 台账状态：**只影响展示，不改变引擎行为**。
+ *
+ * 「未验证」= 接口登记了、但没在真环境跑通过，别当成能用的能力。
+ * （2026-10-27 起表单布局写入也归到这一类：不再写「受阻」——它不是做不了，
+ *  是 section.belongId / FullPath 的写入规则还没实测。）
+ */
+type LedgerLabel = '未验证' | '受阻'
+
+const STATUS: Record<string, { label: LedgerLabel; note: string }> = {
+  'layout.save': { label: '未验证', note: 'section.belongId 由 FullPath 生成，写入规则还没实测（验证前引擎仍会拒绝这一步）' },
+  'menu.submit': { label: '未验证', note: '平台没有按 code 预检菜单的接口，尚未在测试环境验证' },
+  'menu.sort': { label: '未验证', note: '全量替换菜单树，尚未在测试环境验证' },
+  'lifecycle.status.create': { label: '未验证', note: '需要对象先开启生命周期（不可逆），尚未验证' },
+  'lifecycle.status.update': { label: '未验证', note: '需要对象先开启生命周期（不可逆），尚未验证' },
 }
 
 /**
@@ -365,7 +373,7 @@ export function ConfigToolsTab() {
   const stats = useMemo(() => ({
     total: sectionItems.length,
     blocked: sectionItems.filter((item) => STATUS[item.id]?.label === '受阻').length,
-    untested: sectionItems.filter((item) => STATUS[item.id]?.label === '未实测').length,
+    untested: sectionItems.filter((item) => STATUS[item.id]?.label === '未验证').length,
     params: sectionItems.reduce((sum, item) => sum + item.params.length, 0),
     writes: sectionItems.filter((item) => kindOf(item) === 'write').length,
   }), [sectionItems])
@@ -405,7 +413,7 @@ export function ConfigToolsTab() {
                 <span className="akw-cfg__stat"><b>{stats.total}</b><em>接口</em></span>
                 {stats.total === 0 ? null : <span className="akw-cfg__stat"><b>{stats.params}</b><em>参数</em></span>}
                 {stats.blocked > 0 ? <span className="akw-cfg__stat is-danger"><b>{stats.blocked}</b><em>受阻</em></span> : null}
-                {stats.untested > 0 ? <span className="akw-cfg__stat is-warn"><b>{stats.untested}</b><em>未实测</em></span> : null}
+                {stats.untested > 0 ? <span className="akw-cfg__stat is-warn"><b>{stats.untested}</b><em>未验证</em></span> : null}
               </>
             )}
           </div>
@@ -456,7 +464,7 @@ export function ConfigToolsTab() {
           <EmptyState
             title="生命周期处理还没做"
             desc="对象状态机的写入流程还没设计，这一区先留空。"
-            note={sectionItems.length > 0 ? `底层已登记 ${sectionItems.length} 个状态写入接口（未实测），等流程定下来再接进来。` : undefined}
+            note={sectionItems.length > 0 ? `底层已登记 ${sectionItems.length} 个状态写入接口（未验证），等流程定下来再接进来。` : undefined}
           />
         ) : null}
 

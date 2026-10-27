@@ -22,8 +22,9 @@ export interface Prefs {
 /**
  * 配置池：允许 agent 登录的账号集合。
  *
- * `pool.json` 不存在 = 还没配置过 ⇒ 视为"全部账号都在池里"（升级前的行为不变）；
- * 一旦用户挪过任何一次，就以文件里的列表为准。
+ * `pool.json` 不存在 = 还没配置过 ⇒ **空池**：账号不会自己进来，
+ * 首次使用要人在「账号中心 → 配置池 → 添加账号」里自己挑（用户 2026-10-27 定稿）。
+ * 读失败/文件损坏同样回落空池 —— 宁少放行，不默认全放行。
  */
 export interface Pool {
   accountIds: string[]
@@ -91,7 +92,7 @@ export function writePrefs(dshHome: string, prefs: Prefs): void {
   writeJson(join(dataDir(dshHome), 'prefs.json'), prefs)
 }
 
-/** `null` = 从来没配置过（调用方据此回落到"全部账号"）。 */
+/** `null` = 从来没配置过（调用方按**空池**处理，不是"全部账号"）。 */
 export function readPool(dshHome: string): Pool | null {
   try {
     const file = join(dataDir(dshHome), 'pool.json')
