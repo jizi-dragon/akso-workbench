@@ -120,6 +120,42 @@ function isLoopback(req: any): boolean {
   return /^127\./.test(address.replace(/^::ffff:/, ''))
 }
 
+/** 浏览器侧自报的"我是插件自己"。跨站表单设不了自定义头，跨源 fetch 会先撞 preflight（我们不回 CORS 头）。 */
+export const CLIENT_HEADER = 'x-akso-workbench'
+
+const LOOPBACK_HOST = /^(?:127(?:\.\d{1,3}){3}|localhost|\[::1\])(?::\d{1,5})?$/i
+
+/**
+ * 第二道围栏。只看 `remoteAddress` 挡不住两类东西：
+ *   ① **DNS rebinding** —— 恶意域名解析到 127.0.0.1，浏览器照样把请求打进 loopback；
+ *   ② **别的网页发起的请求** —— 浏览器会带 `Origin`，而 `http://evil.com` 的页面能 POST 到本机。
+ * 所以再查三件事：`Host` 必须是本机名、`Origin`（有的话）必须同源、跨站标记必须干净；
+ * 写请求（POST）还要求带自定义头 —— 这一条是 CSRF 的硬闸门，因为跨站请求既设不了自定义头，
+ * 也过不了 preflight（我们从不回 `Access-Control-*`）。
+ * GET 不要求自定义头：GET 全是只读，跨站读不到响应体（没有 CORS），而 `curl` 探活更方便。
+ */
+export function requestFence(req: any, method: string): string | null {
+  const headers = (req?.headers ?? {}) as Record<string, unknown>
+  const text = (value: unknown) => String(value ?? '').trim()
+  const host = text(headers.host)
+  if (!LOOPBACK_HOST.test(host)) return `forbidden: host 不是本机地址（${host || '缺失'}）`
+  const origin = text(headers.origin)
+  if (origin !== '') {
+    if (origin === 'null') return 'forbidden: 跨站请求（origin: null）'
+    let originHost = ''
+    try {
+      originHost = new URL(origin).host
+    } catch {
+      return 'forbidden: origin 不合法'
+    }
+    if (originHost.toLowerCase() !== host.toLowerCase()) return `forbidden: 跨站请求（${originHost} ≠ ${host}）`
+  }
+  const site = text(headers['sec-fetch-site'])
+  if (site !== '' && site !== 'same-origin' && site !== 'none') return `forbidden: sec-fetch-site=${site}`
+  if (method === 'POST' && text(headers[CLIENT_HEADER]) !== '1') return `forbidden: 缺少 ${CLIENT_HEADER} 请求头`
+  return null
+}
+
 function sendJson(res: any, status: number, payload: unknown): void {
   const body = JSON.stringify(payload)
   res.statusCode = status
@@ -263,6 +299,13 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       kind: 'exact' as const,
       path,
       handler: async (req: any, res: any) => {
+        // 围栏①：本机地址 / 同源 / 跨站标记 / 写请求的自定义头
+        const fenced = requestFence(req, method)
+        if (fenced !== null) {
+          sendJson(res, 403, { error: fenced })
+          return
+        }
+        // 围栏②：socket 对端必须是 loopback（防端口被转发到局域网）
         if (!isLoopback(req)) {
           sendJson(res, 403, { error: 'forbidden: loopback-only' })
           return

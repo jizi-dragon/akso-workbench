@@ -66,6 +66,13 @@ export interface ServerState {
 
 const BASE = 'api/akso-workbench'
 
+/**
+ * 写请求必须带这个头（host 侧 `requestFence` 的硬闸门）：
+ * 跨站页面既设不了自定义头，也过不了 preflight —— 我们自己不发 CORS 头，所以别的网页
+ * 没法借你的浏览器往本机 API 写东西。只读的 GET 不要求，便于 curl 探活。
+ */
+export const CLIENT_HEADER = 'x-akso-workbench'
+
 function url(path: string): string {
   return new URL(`${BASE}/${path}`, document.baseURI).toString()
 }
@@ -74,7 +81,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url(path), {
     cache: 'no-store',
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    headers: { 'Content-Type': 'application/json', [CLIENT_HEADER]: '1', ...(init?.headers ?? {}) },
   })
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>
   if (!response.ok) {

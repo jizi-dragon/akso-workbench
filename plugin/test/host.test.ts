@@ -15,6 +15,8 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { createServer, request } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -72,10 +74,17 @@ function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false
   return { routes, disposers, opened, tools, preExecute }
 }
 
-function makeReq(method: string, body?: unknown, remote = '127.0.0.1') {
+/** 默认就当"本机浏览器里的插件页面"发的请求：Host 是本机、带自定义头。 */
+function makeReq(
+  method: string,
+  body?: unknown,
+  remote = '127.0.0.1',
+  headers: Record<string, string> = { host: '127.0.0.1:60717', 'x-akso-workbench': '1' },
+) {
   const emitter = new EventEmitter() as EventEmitter & Record<string, unknown>
   emitter.method = method
   emitter.socket = { remoteAddress: remote }
+  emitter.headers = headers
   emitter.destroy = () => {}
   queueMicrotask(() => {
     if (body !== undefined) emitter.emit('data', Buffer.from(JSON.stringify(body)))
@@ -107,6 +116,7 @@ async function call(
   method: string,
   body?: unknown,
   remote?: string,
+  headers?: Record<string, string>,
 ) {
   const handler = routes.get(path)
   assert.ok(handler, `路由未注册：${path}`)
@@ -114,7 +124,7 @@ async function call(
   const done = new Promise<void>((resolve) => {
     response.notify = resolve
   })
-  handler(makeReq(method, body, remote), response)
+  handler(makeReq(method, body, remote, headers), response)
   await done
   const text = response.body
   return { status: response.statusCode, json: JSON.parse(text === '' ? '{}' : text) as Record<string, unknown>, raw: text }
@@ -149,6 +159,135 @@ test('围栏：非 loopback 一律 403', async () => {
   const { routes } = mount(freshHome())
   assert.equal((await call(routes, P.state, 'GET', undefined, '10.1.2.3')).status, 403)
   assert.equal((await call(routes, P.login, 'POST', { email: 'a', password: 'b' }, '192.168.0.8')).status, 403)
+})
+
+test('围栏：Host 必须是本机名（DNS rebinding 的域名解析到 127.0.0.1 也挡得住）', async () => {
+  const { routes } = mount(freshHome())
+  for (const host of ['evil.example.com', '127.0.0.1.evil.com', '']) {
+    const res = await call(routes, P.state, 'GET', undefined, '127.0.0.1', {
+      host,
+      'x-akso-workbench': '1',
+    })
+    assert.equal(res.status, 403, `host=${host} 应该被挡`)
+    assert.match(String(res.json.error), /host/)
+  }
+  // 本机名的几种写法都放行
+  for (const host of ['127.0.0.1:60717', 'localhost:3000', '[::1]:8080']) {
+    const res = await call(routes, P.state, 'GET', undefined, '127.0.0.1', { host })
+    assert.equal(res.status, 200, `host=${host} 应该放行`)
+  }
+})
+
+test('围栏：跨站 Origin / sec-fetch-site 一律 403（别的网页借浏览器打本机）', async () => {
+  const { routes } = mount(freshHome())
+  const evil = await call(routes, P.login, 'POST', { email: 'a', password: 'b' }, '127.0.0.1', {
+    host: '127.0.0.1:60717',
+    origin: 'http://evil.example.com',
+    'x-akso-workbench': '1',
+  })
+  assert.equal(evil.status, 403)
+  assert.match(String(evil.json.error), /跨站/)
+
+  const nullOrigin = await call(routes, P.login, 'POST', {}, '127.0.0.1', {
+    host: '127.0.0.1:60717',
+    origin: 'null',
+    'x-akso-workbench': '1',
+  })
+  assert.equal(nullOrigin.status, 403)
+
+  const crossSite = await call(routes, P.login, 'POST', {}, '127.0.0.1', {
+    host: '127.0.0.1:60717',
+    'sec-fetch-site': 'cross-site',
+    'x-akso-workbench': '1',
+  })
+  assert.equal(crossSite.status, 403)
+
+  // 同源（带端口）正常放行
+  const same = await call(routes, P.state, 'GET', undefined, '127.0.0.1', {
+    host: '127.0.0.1:60717',
+    origin: 'http://127.0.0.1:60717',
+    'sec-fetch-site': 'same-origin',
+  })
+  assert.equal(same.status, 200)
+})
+
+test('围栏：写请求必须带自定义头（跨站表单设不了头，CSRF 走不通）', async () => {
+  const { routes } = mount(freshHome())
+  const bare = await call(routes, P.login, 'POST', { email: 'a', password: 'b' }, '127.0.0.1', {
+    host: '127.0.0.1:60717',
+  })
+  assert.equal(bare.status, 403)
+  assert.match(String(bare.json.error), /x-akso-workbench/)
+  // GET 不要求这个头：只读、跨站读不到响应体，而 curl 探活要方便
+  assert.equal((await call(routes, P.state, 'GET', undefined, '127.0.0.1', { host: '127.0.0.1:60717' })).status, 200)
+})
+
+test('围栏在真 HTTP 服务上成立（真 socket、真 header，不是手搓 req）', async () => {
+  const { routes } = mount(freshHome())
+  // 假的 webServer：把 captured handler 直接挂到真 http.Server 上，header 由 Node 自己解析
+  const server = createServer((req, res) => {
+    const path = String(req.url ?? '').split('?')[0] ?? ''
+    const handler = routes.get(path)
+    if (handler === undefined) {
+      res.statusCode = 404
+      res.end()
+      return
+    }
+    void handler(req, res)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = (server.address() as AddressInfo).port
+
+  const send = (path: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) =>
+    new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = request(
+        // agent:false ⇒ 每次一条新连接、响应后自己关掉；否则 keep-alive 会把 server.close() 挂住
+        { host: '127.0.0.1', port, path, method: init.method ?? 'GET', headers: init.headers, agent: false },
+        (res) => {
+          let data = ''
+          res.setEncoding('utf8')
+          res.on('data', (chunk: string) => {
+            data += chunk
+          })
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, body: data }))
+        },
+      )
+      req.on('error', reject)
+      if (init.body !== undefined) req.write(init.body)
+      req.end()
+    })
+
+  try {
+    // GET：Host 自动是本机，不需要自定义头
+    assert.equal((await send(P.state)).status, 200)
+    // 写：没自定义头 ⇒ 403
+    const bare = await send(P.login, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'a', password: 'b' }),
+    })
+    assert.equal(bare.status, 403)
+    // 写：有头但 Origin 是外站 ⇒ 403
+    const cross = await send(P.login, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://evil.example.com', 'x-akso-workbench': '1' },
+      body: '{}',
+    })
+    assert.equal(cross.status, 403)
+    // 写：都齐了 ⇒ 过围栏，落到业务层（没登录 eGMP ⇒ 401，说明不是被围栏挡的）
+    const ok = await send(P.configPlan, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-akso-workbench': '1' },
+      body: '{}',
+    })
+    assert.equal(ok.status, 401, ok.body)
+    // 改 Host 假装被别的域名解析过来 ⇒ 403
+    const rebound = await send(P.state, { headers: { Host: 'evil.example.com' } })
+    assert.equal(rebound.status, 403)
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
 })
 
 test('方法不对是 405', async () => {
