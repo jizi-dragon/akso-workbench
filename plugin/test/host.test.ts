@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { errorMessage, uiState } from '../src/cloud.ts'
+import { CAPABILITIES } from '../src/config/capabilities.ts'
 import { savePlan } from '../src/config/engine.ts'
 import { apply, ROUTES } from '../src/index.ts'
 import { buildSnapshotTool } from '../src/tool.ts'
@@ -820,4 +821,21 @@ test('HTTP 直连写配置是侧门：默认 403，显式开 env 才回到登录
   } finally {
     delete process.env.AKSO_WORKBENCH_ALLOW_DIRECT_WRITE
   }
+})
+/* ─────────────── 能力目录：路径不许有第二份 ─────────────── */
+
+test('engine 里不许再手写平台路径：能力目录是唯一的路径源', () => {
+  const source = readFileSync(new URL('../src/config/engine.ts', import.meta.url), 'utf8')
+  const hits = [...source.matchAll(/'(\/(?:api|openapi)\/[^']*)'/g)].map((match) => match[1])
+  assert.deepEqual(hits, [], `engine.ts 里还有第二份平台路径：${hits.join(', ')}`)
+  assert.match(source, /invokeCapability/, 'engine 应当只通过能力目录调用平台')
+})
+
+test('engine 用到的能力 id 都在目录里（拼错会静默变成"查不到"）', () => {
+  const source = readFileSync(new URL('../src/config/engine.ts', import.meta.url), 'utf8')
+  const known = new Set(CAPABILITIES.map((cap) => cap.id))
+  const used = [...source.matchAll(/(?:tryInvoke|invokeCapability)\([^,]+,\s*'([\w.]+)'/g)].map((match) => match[1])
+  assert.ok(used.length >= 9, `应该能扫到 engine 用到的能力 id，实际 ${used.length}`)
+  const missing = used.filter((id) => !known.has(id))
+  assert.deepEqual(missing, [], `这些 id 不在能力目录里：${missing.join(', ')}`)
 })

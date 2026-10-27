@@ -12,7 +12,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, write
 import { join } from 'node:path'
 
 import { CAPABILITIES, findCapability, type Capability, type Risk } from './capabilities.ts'
-import { call, EgmpError, type EgmpSession } from './session.ts'
+import { call, EgmpError, request, type EgmpSession } from './session.ts'
 import { dataDir } from '../store.ts'
 import type { Blueprint, FieldResource, FormLayoutResource, ListLayoutResource, MenuResource, ObjectResource, PicklistResource, LifecycleResource, ResourceKind } from './blueprint.ts'
 import { validateBlueprint } from './blueprint.ts'
@@ -71,9 +71,14 @@ function newId(prefix: string): string {
 
 /* ───────────────────────────── 查询缓存 ───────────────────────────── */
 
-async function tryCall(session: EgmpSession, method: string, path: string, body?: unknown, query?: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+/**
+ * 查询阶段宁可"没查到"也不要炸：返回 null，由调用方决定当作"不存在"还是硬失败。
+ * 这里**只走能力目录**（capabilities.ts），不在 engine 里另写一份路径 ——
+ * 两份路径放一起就会漂移，而漂移的表现是线上 404 / 悄悄读不到数据。
+ */
+async function tryInvoke(session: EgmpSession, capabilityId: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown> | null> {
   try {
-    return await call(session, method, path, body, query)
+    return await invokeCapability(session, capabilityId, params)
   } catch {
     return null
   }
@@ -81,7 +86,7 @@ async function tryCall(session: EgmpSession, method: string, path: string, body?
 
 async function getObject(ctx: QueryContext, code: string): Promise<Record<string, unknown> | null> {
   if (ctx.objects.has(code)) return ctx.objects.get(code) ?? null
-  const json = await tryCall(ctx.session, 'GET', `/api/openapi/v1.0/BasicObject/${encodeURIComponent(code)}`)
+  const json = await tryInvoke(ctx.session, 'query.object.get', { code })
   const data = (json?.data ?? null) as Record<string, unknown> | null
   ctx.objects.set(code, data)
   return data
@@ -89,7 +94,7 @@ async function getObject(ctx: QueryContext, code: string): Promise<Record<string
 
 async function getFields(ctx: QueryContext, objectCode: string): Promise<Array<Record<string, unknown>>> {
   if (ctx.fields.has(objectCode)) return ctx.fields.get(objectCode)!
-  const json = await tryCall(ctx.session, 'GET', `/openapi/v3.6.4/metadatas/objects/${encodeURIComponent(objectCode)}/fileds`)
+  const json = await tryInvoke(ctx.session, 'query.fields.list', { code: objectCode })
   const data = json?.data as Record<string, unknown> | undefined
   const list = Array.isArray(data?.fields) ? (data!.fields as Array<Record<string, unknown>>) : Array.isArray(data) ? (data as Array<Record<string, unknown>>) : []
   ctx.fields.set(objectCode, list)
@@ -98,7 +103,7 @@ async function getFields(ctx: QueryContext, objectCode: string): Promise<Array<R
 
 async function getPicklist(ctx: QueryContext, code: string): Promise<Record<string, unknown> | null> {
   if (ctx.picklists.has(code)) return ctx.picklists.get(code) ?? null
-  const json = await tryCall(ctx.session, 'GET', `/openapi/v3.6.4/metadatas/picklists/${encodeURIComponent(code)}`)
+  const json = await tryInvoke(ctx.session, 'query.picklist.get', { code })
   const data = (json?.data ?? null) as Record<string, unknown> | null
   ctx.picklists.set(code, data)
   return data
@@ -106,7 +111,7 @@ async function getPicklist(ctx: QueryContext, code: string): Promise<Record<stri
 
 async function getStatuses(ctx: QueryContext, lifecycleId: string): Promise<Array<Record<string, unknown>>> {
   if (ctx.statuses.has(lifecycleId)) return ctx.statuses.get(lifecycleId)!
-  const json = await tryCall(ctx.session, 'GET', `/openapi/v3.6.4/metadatas/lifecycle_status/${encodeURIComponent(lifecycleId)}`)
+  const json = await tryInvoke(ctx.session, 'query.lifecycle.status.list', { lifecycleId })
   const data = json?.data
   const list = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : Array.isArray((data as Record<string, unknown> | undefined)?.statuses) ? ((data as Record<string, unknown>).statuses as Array<Record<string, unknown>>) : []
   ctx.statuses.set(lifecycleId, list)
@@ -129,9 +134,9 @@ export async function invokeCapability(session: EgmpSession, capabilityId: strin
     if (cap.method === 'GET') query[key] = value
     else body[key] = value
   }
-  // menu.sort 的 body 是数组，不是对象
+  // menu.sort 的 body 是数组，不是对象 —— 走底层 request（call 会断言 code===0 并只接受对象体）
   if (capabilityId === 'menu.sort' && Array.isArray(params.tree)) {
-    const { status, json } = await import('../config/session.ts').then((m) => m.request(session, cap.method, path, params.tree))
+    const { status, json } = await request(session, cap.method, path, params.tree)
     if (json.code !== 0) throw new EgmpError(String(json.message ?? `HTTP ${status}`), { status, path })
     return json
   }
@@ -478,12 +483,12 @@ async function applyFormLayout(ctx: QueryContext, step: Step, res: Resolution): 
   const objectCode = String((step.params as Record<string, unknown>).objectRef)
   const sections = (step.params as Record<string, unknown>).sections as FormLayoutResource['sections']
   const objectId = await resolveObjectId(ctx, res, objectCode)
-  const list = await call(ctx.session, 'GET', '/api/platform/Layout/LayoutList', undefined, { basicObjectId: objectId, pageIndex: 1, pageSize: 20 })
+  const list = await invokeCapability(ctx.session, 'layout.list', { basicObjectId: objectId, pageIndex: 1, pageSize: 20 })
   const layouts = (list.data as Record<string, unknown> | undefined)?.datas as Array<Record<string, unknown>> | undefined
   const layout = (layouts ?? []).find((l) => Number(l.source) === 2) ?? (layouts ?? [])[0]
   if (layout === undefined) throw new EgmpError(`对象 ${objectCode} 没有可用的表单布局`)
   const layoutId = String(layout.id ?? '')
-  const detail = await call(ctx.session, 'GET', '/api/platform/Layout/LayoutDetail', undefined, { layoutId })
+  const detail = await invokeCapability(ctx.session, 'layout.detail', { layoutId })
   const data = (detail.data ?? {}) as Record<string, unknown>
   const existingSections = Array.isArray(data.sections) ? (data.sections as Array<Record<string, unknown>>) : []
   const existingControls = Array.isArray(data.controls) ? (data.controls as Array<Record<string, unknown>>) : []
@@ -528,7 +533,7 @@ async function applyFormLayout(ctx: QueryContext, step: Step, res: Resolution): 
     pages: Array.isArray(data.pages) ? data.pages : [],
     rules: Array.isArray(data.rules) ? data.rules : [],
   }
-  await call(ctx.session, 'POST', '/api/platform/Layout/SaveLayoutDetail', body)
+  await invokeCapability(ctx.session, 'layout.save', body)
   return { message: `已追加 ${addedSections.length} 个分区、${addedControls.length} 个控件`, after: { layoutId, controls: existingControls.length } }
 }
 
@@ -536,12 +541,12 @@ async function applyListLayout(ctx: QueryContext, step: Step, res: Resolution): 
   const objectCode = String((step.params as Record<string, unknown>).objectRef)
   const columns = (step.params as Record<string, unknown>).columns as ListLayoutResource['columns']
   const objectId = await resolveObjectId(ctx, res, objectCode)
-  const list = await call(ctx.session, 'GET', '/api/platform/Listlayout/List', undefined, { objectId })
+  const list = await invokeCapability(ctx.session, 'listlayout.list', { objectId })
   const layouts = Array.isArray(list.data) ? (list.data as Array<Record<string, unknown>>) : []
   const layout = layouts.find((l) => Number(l.source) === 2) ?? layouts[0]
   if (layout === undefined) throw new EgmpError(`对象 ${objectCode} 没有可用的列表布局`)
   const listlayoutId = String(layout.id ?? '')
-  const current = await call(ctx.session, 'GET', '/api/platform/Listlayout/Columns', undefined, { listlayoutId })
+  const current = await invokeCapability(ctx.session, 'listlayout.columns.get', { listlayoutId })
   const existing = Array.isArray(current.data) ? (current.data as Array<Record<string, unknown>>) : []
   const byPath = new Map(existing.map((c) => [String(c.fieldPath ?? c.field_path ?? ''), c]))
   for (const [index, column] of columns.entries()) {
@@ -550,7 +555,7 @@ async function applyListLayout(ctx: QueryContext, step: Step, res: Resolution): 
     byPath.set(column.fieldCode, { fieldId, fieldPath: column.fieldCode, sort: column.sort ?? index + 1 })
   }
   const merged = [...byPath.values()].map((c, index) => ({ ...c, sort: Number(c.sort ?? index + 1) }))
-  await call(ctx.session, 'POST', '/api/platform/Listlayout/AddColumns', { listlayoutId, listlayoutColumns: merged })
+  await invokeCapability(ctx.session, 'listlayout.columns.set', { listlayoutId, listlayoutColumns: merged })
   return { message: `列表列 ${merged.length} 个（本次目标 ${columns.length}）`, after: { listlayoutId, columns: merged.length } }
 }
 
@@ -631,11 +636,11 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
       case 'formLayout': {
         const objectCode = String((step.params as Record<string, unknown>).objectRef)
         const objectId = await resolveObjectId(ctx, res, objectCode)
-        const list = await call(ctx.session, 'GET', '/api/platform/Layout/LayoutList', undefined, { basicObjectId: objectId, pageIndex: 1, pageSize: 20 })
+        const list = await invokeCapability(ctx.session, 'layout.list', { basicObjectId: objectId, pageIndex: 1, pageSize: 20 })
         const layouts = ((list.data as Record<string, unknown> | undefined)?.datas ?? []) as Array<Record<string, unknown>>
         const layout = layouts.find((l) => Number(l.source) === 2) ?? layouts[0]
         if (layout === undefined) return { verified: false, message: '没有布局可校验' }
-        const detail = await call(ctx.session, 'GET', '/api/platform/Layout/LayoutDetail', undefined, { layoutId: layout.id })
+        const detail = await invokeCapability(ctx.session, 'layout.detail', { layoutId: layout.id })
         const controls = Array.isArray((detail.data as Record<string, unknown>)?.controls) ? ((detail.data as Record<string, unknown>).controls as Array<Record<string, unknown>>) : []
         const need = (step.expected?.fields as string[] | undefined) ?? []
         const have = new Set(controls.map((c) => String(c.code ?? '')))
@@ -645,11 +650,11 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
       case 'listLayout': {
         const objectCode = String((step.params as Record<string, unknown>).objectRef)
         const objectId = await resolveObjectId(ctx, res, objectCode)
-        const list = await call(ctx.session, 'GET', '/api/platform/Listlayout/List', undefined, { objectId })
+        const list = await invokeCapability(ctx.session, 'listlayout.list', { objectId })
         const layouts = Array.isArray(list.data) ? (list.data as Array<Record<string, unknown>>) : []
         const layout = layouts.find((l) => Number(l.source) === 2) ?? layouts[0]
         if (layout === undefined) return { verified: false, message: '没有列表布局可校验' }
-        const current = await call(ctx.session, 'GET', '/api/platform/Listlayout/Columns', undefined, { listlayoutId: layout.id })
+        const current = await invokeCapability(ctx.session, 'listlayout.columns.get', { listlayoutId: layout.id })
         const have = new Set((Array.isArray(current.data) ? current.data : []).map((c: Record<string, unknown>) => String(c.fieldPath ?? c.field_path ?? '')))
         const need = (step.expected?.columns as string[] | undefined) ?? []
         const missing = need.filter((c) => !have.has(c))
