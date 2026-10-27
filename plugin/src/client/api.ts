@@ -145,4 +145,33 @@ export const api = {
   configLogout: () => call<{ ok: boolean; loggedIn: boolean }>('config/logout', post({})),
   /** 能力目录（工具页的数据源）。返回的 items 形状由 tools.tsx 自己声明。 */
   configCapabilities: () => call<{ session: EgmpSessionView; groups: Array<{ domain: string; items: unknown[] }> }>('config/capabilities'),
+
+  /* ── 自建审批：agent 只开单，人在页面上点，批准后才真写 ── */
+  configApprovals: () => call<{ pending: ApprovalView[]; recent: ApprovalView[] }>('config/approvals'),
+  decideApproval: (approvalId: string, decision: 'allow' | 'deny', note?: string) =>
+    call<{ ok: boolean; approval: ApprovalView }>('config/approvals/decide', post({ approvalId, decision, note })),
+}
+
+/** 一张审批单：planId + 摘要 + **要发给平台的完整 payload**。 */
+export interface ApprovalView {
+  id: string
+  planId: string
+  env: string
+  createdAt: number
+  expiresAt: number
+  status: 'pending' | 'approved' | 'denied' | 'used' | 'expired'
+  summary: { create: number; update: number; skip: number; irreversible: number }
+  steps: Array<{ id: string; kind: string; action: string; title: string; irreversible: boolean }>
+  payload: Array<{
+    stepId: string
+    title: string
+    capabilityId: string | null
+    method: string | null
+    path: string | null
+    params: Record<string, unknown>
+  }>
+  decidedAt?: number
+  decision?: 'allow' | 'deny'
+  note?: string
+  usedAt?: number
 }

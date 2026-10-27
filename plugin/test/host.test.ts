@@ -24,6 +24,7 @@ import { test } from 'node:test'
 import { errorMessage, uiState } from '../src/cloud.ts'
 import { CAPABILITIES } from '../src/config/capabilities.ts'
 import { savePlan } from '../src/config/engine.ts'
+import { writeEgmpSession } from '../src/config/session.ts'
 import { apply, ROUTES } from '../src/index.ts'
 import { buildSnapshotTool } from '../src/tool.ts'
 import { startFakeCloud } from './fake-cloud.mjs'
@@ -41,8 +42,6 @@ interface Mounted {
   disposers: Array<() => void>
   opened: string[]
   tools: Array<{ name: string; execute: (args: unknown, exec?: unknown) => Promise<unknown> }>
-  /** 宿主侧 `tools/pre-execute` 的监听器（审批门就从这里进去）。 */
-  preExecute: Array<(exec: any, next: () => Promise<any>) => any>
 }
 
 function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false): Mounted {
@@ -50,15 +49,10 @@ function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false
   const disposers: Array<() => void> = []
   const opened: string[] = []
   const tools: Mounted['tools'] = []
-  const preExecute: Mounted['preExecute'] = []
   const ctx = {
     logger: { warn: () => {} },
     effect: (fn: () => () => void) => {
       disposers.push(fn())
-      return () => {}
-    },
-    on: (event: string, listener: (exec: any, next: () => Promise<any>) => any) => {
-      if (event === 'tools/pre-execute') preExecute.push(listener)
       return () => {}
     },
     get: (name: string) => (name === 'tools' && withTools
@@ -72,7 +66,7 @@ function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false
     },
   }
   apply(ctx as never, { dshHome, cloudBaseUrl: cloudUrl, openBrowser: (url: string) => opened.push(url) })
-  return { routes, disposers, opened, tools, preExecute }
+  return { routes, disposers, opened, tools }
 }
 
 /** 默认就当"本机浏览器里的插件页面"发的请求：Host 是本机、带自定义头。 */
@@ -720,100 +714,176 @@ test('配置池：默认空池，加入才可用；当前连接的账号不许�
 /* ─────────────────── 确认门：配置写入必须过一次审批 ─────────────────── */
 
 function planFixture(planId: string, overrides: { create: number; update: number; irreversible: number }): never {
+  const step = (id: string, action: 'create' | 'update'): Record<string, unknown> => ({
+    id,
+    kind: 'picklist',
+    action,
+    title: `选项集 akso-workbench 验证选项集（akw_test_pk__c）· ${action}`,
+    naturalKey: 'picklist:akw_test_pk__c',
+    risk: 'low',
+    irreversible: overrides.irreversible > 0,
+    capabilityId: 'picklist.save',
+    params: {
+      name: 'akso-workbench 验证选项集',
+      code: 'akw_test_pk__c',
+      options: [{ name: '主要变更', code: 'major__c', status: 1, operations: 1, sort: 0 }],
+    },
+    dependsOn: [],
+    warnings: [],
+  })
+  const steps: Array<Record<string, unknown>> = []
+  for (let index = 0; index < overrides.create; index += 1) steps.push(step(`s${steps.length + 1}`, 'create'))
+  for (let index = 0; index < overrides.update; index += 1) steps.push(step(`s${steps.length + 1}`, 'update'))
   return {
     planId,
     createdAt: Date.now(),
     expiresAt: Date.now() + 30 * 60 * 1000,
     env: 'test',
     summary: { create: overrides.create, update: overrides.update, skip: 0, irreversible: overrides.irreversible },
-    steps: overrides.irreversible > 0
-      ? [{
-          id: 's1',
-          kind: 'lifecycle',
-          action: 'create',
-          title: '生命周期 新增状态：评审中',
-          naturalKey: 'lifecycle:review',
-          risk: 'WRITE',
-          irreversible: true,
-          capabilityId: 'lifecycle.status.create',
-          params: {},
-          dependsOn: [],
-          warnings: [],
-        }]
-      : [],
+    steps,
     warnings: [],
     status: 'planned',
     results: [],
   } as never
 }
 
-test('配置执行前必须过一次宿主审批：有写入就问人，只读/无计划/别的工具都放行', async () => {
+/** 假平台：只数请求次数，用来证明「没批准之前一个包都没发出去」。 */
+async function startFakeEgmp(): Promise<{ baseUrl: string; hits: number; close: () => Promise<void> }> {
+  const state = { hits: 0 }
+  const server = createServer((req, res) => {
+    state.hits += 1
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({
+      code: 0,
+      message: 'ok',
+      data: { picklists: { picklist_code: 'akw_test_pk__c', picklist__name: 'akso-workbench 验证选项集' }, picklist_options: [] },
+    }))
+    void req
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address() as AddressInfo
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    get hits() {
+      return state.hits
+    },
+    close: () => new Promise<void>((resolve) => {
+      server.closeAllConnections()
+      server.close(() => resolve())
+    }),
+  }
+}
+
+test('执行计划要人批准：工具只开单、不写平台；批准后再调一次才执行；单子一次性', async () => {
   const home = freshHome()
   const mounted = mount(home, undefined, true)
-  assert.equal(mounted.preExecute.length, 1, '应注册一个 tools/pre-execute 监听器')
-  const gate = mounted.preExecute[0]!
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')
+  assert.ok(applyTool !== undefined, '执行工具应当注册（不需要 DSH 的审批总线）')
 
-  let delegated = 0
-  const next = async () => {
-    delegated += 1
-    return { kind: 'allow' as const }
+  // eGMP 会话指向一个只数次的假平台：门没开的时候它一个请求都不该收到
+  const egmp = await startFakeEgmp()
+  writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() })
+  try {
+    savePlan(home, planFixture('pln_writes', { create: 1, update: 2, irreversible: 1 }))
+
+    // ① 第一次调用：只开单
+    const first = await applyTool!.execute({ planId: 'pln_writes' }) as Record<string, any>
+    assert.equal(first.status, 'awaiting-approval')
+    assert.match(String(first.approvalId), /^apr_/)
+    assert.equal(egmp.hits, 0, '没有批准之前不许碰平台')
+    assert.equal(first.payload.length, 3, '要把每步要发的请求摊给人看（1 建 2 改）')
+    assert.match(String(first.payload[0].path), /^\/api\//)
+
+    // ② 页面上看到那一张单
+    const list = await call(mounted.routes, P.configApprovals, 'GET')
+    assert.equal(list.status, 200)
+    const pending = (list.json.pending ?? []) as Array<Record<string, any>>
+    assert.equal(pending.length, 1)
+    assert.equal(pending[0]!.planId, 'pln_writes')
+    assert.equal(pending[0]!.status, 'pending')
+    assert.equal(pending[0]!.summary.irreversible, 1)
+
+    // ③ 人点允许
+    const decided = await call(mounted.routes, P.configApprovalDecide, 'POST', {
+      approvalId: pending[0]!.id,
+      decision: 'allow',
+    })
+    assert.equal(decided.status, 200)
+    assert.equal(decided.json.approval.status, 'approved')
+    assert.equal(egmp.hits, 0, '点允许本身也不写平台')
+
+    // ④ 再用同一个 planId 调一次：这次才真写
+    const second = await applyTool!.execute({ planId: 'pln_writes' }) as Record<string, any>
+    assert.ok(egmp.hits >= 1, '批准之后必须真的发出请求')
+    assert.ok(second.status !== 'awaiting-approval', `不该再要批准：${JSON.stringify(second)}`)
+
+    // ⑤ 单子用掉了：再调一次要重新审批（一次性核销）
+    const third = await applyTool!.execute({ planId: 'pln_writes' }) as Record<string, any>
+    assert.equal(third.status, 'awaiting-approval', '同一张批准单不能驱动第二次写入')
+    assert.notEqual(third.approvalId, first.approvalId, '应当是一张新的单')
+  } finally {
+    await egmp.close()
   }
-
-  // ① 会写的计划：必须变成 ask，且理由里有人能看懂的数字与不可逆步骤
-  savePlan(home, planFixture('pln_writes', { create: 1, update: 2, irreversible: 1 }))
-  const ask = await gate({ name: 'akso_workbench_config_apply', arguments: { planId: 'pln_writes' } }, next)
-  assert.equal(ask.kind, 'ask', '有写入的执行调用必须走审批')
-  assert.equal(delegated, 0, 'ask 之后不应该继续放行')
-  assert.match(String(ask.reason), /pln_writes/)
-  assert.match(String(ask.reason), /新建 1 步、更新 2 步/)
-  assert.match(String(ask.reason), /不可逆/)
-  assert.ok(ask.displayReason, '审批面板要拿到中英两版文案')
-  assert.equal(typeof ask.displayReason.zh, 'string')
-  assert.equal(typeof ask.displayReason.en, 'string')
-
-  // ② 全是 skip 的计划没有任何写入：问了只是噪音
-  savePlan(home, planFixture('pln_noop', { create: 0, update: 0, irreversible: 0 }))
-  const allowed = await gate({ name: 'akso_workbench_config_apply', arguments: { planId: 'pln_noop' } }, next)
-  assert.equal(allowed.kind, 'allow')
-  assert.equal(delegated, 1)
-
-  // ③ 计划不存在：让工具自己去报错，不弹窗
-  const ghost = await gate({ name: 'akso_workbench_config_apply', arguments: { planId: 'pln_ghost' } }, next)
-  assert.equal(ghost.kind, 'allow')
-  assert.equal(delegated, 2)
-
-  // ④ 别的工具一律不拦（包括只出计划的 plan 工具）
-  const other = await gate({ name: 'akso_workbench_config_plan', arguments: {} }, next)
-  assert.equal(other.kind, 'allow')
-  assert.equal(delegated, 3)
 })
 
-test('拿不到事件总线时**不注册**执行工具：宁少一个工具，也不留一条不过人的写入口', () => {
-  const routes = new Map<string, Captured['handler']>()
-  const tools: Mounted['tools'] = []
-  const ctx = {
-    logger: { warn: () => {} },
-    effect: (fn: () => () => void) => {
-      fn()
-      return () => {}
-    },
-    // 故意不给 on：模拟没有 `tools/pre-execute` 的极简宿主
-    get: (name: string) => (name === 'tools'
-      ? { register: (definition: Mounted['tools'][number]) => { tools.push(definition); return () => {} } }
-      : undefined),
-    webServer: {
-      register: (route: Captured) => {
-        routes.set(route.path, route.handler)
-        return () => routes.delete(route.path)
-      },
-    },
+test('审批单可以拒绝，拒了就不写；过期单不算数', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  const egmp = await startFakeEgmp()
+  writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() })
+  try {
+    savePlan(home, planFixture('pln_writes', { create: 1, update: 0, irreversible: 0 }))
+    const opened = await applyTool.execute({ planId: 'pln_writes' }) as Record<string, any>
+
+    const denied = await call(mounted.routes, P.configApprovalDecide, 'POST', {
+      approvalId: opened.approvalId,
+      decision: 'deny',
+      note: '先别写',
+    })
+    assert.equal(denied.status, 200)
+    assert.equal(denied.json.approval.status, 'denied')
+    assert.equal(denied.json.approval.note, '先别写')
+
+    // 被拒之后再调：开新单，仍然不写
+    const again = await applyTool.execute({ planId: 'pln_writes' }) as Record<string, any>
+    assert.equal(again.status, 'awaiting-approval')
+    assert.notEqual(again.approvalId, opened.approvalId)
+    assert.equal(egmp.hits, 0)
+
+    // 已经处理过的单不能改判
+    const twice = await call(mounted.routes, P.configApprovalDecide, 'POST', {
+      approvalId: opened.approvalId,
+      decision: 'allow',
+    })
+    assert.equal(twice.status, 409)
+
+    // 缺参 / 乱填 decision
+    assert.equal((await call(mounted.routes, P.configApprovalDecide, 'POST', { decision: 'allow' })).status, 400)
+    assert.equal(
+      (await call(mounted.routes, P.configApprovalDecide, 'POST', { approvalId: opened.approvalId, decision: 'maybe' })).status,
+      400,
+    )
+  } finally {
+    await egmp.close()
   }
-  apply(ctx as never, { dshHome: freshHome(), openBrowser: () => {} })
-  assert.deepEqual(
-    tools.map((tool) => tool.name).sort(),
-    ['akso_workbench_accounts', 'akso_workbench_config_plan'],
-    '没有审批门时不能注册 config_apply',
-  )
+})
+
+test('全 skip 的计划没有写入，不需要审批', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  savePlan(home, planFixture('pln_noop', { create: 0, update: 0, irreversible: 0 }))
+  const result = await applyTool.execute({ planId: 'pln_noop' }) as Record<string, any>
+  assert.notEqual(result.status, 'awaiting-approval')
+  const list = await call(mounted.routes, P.configApprovals, 'GET')
+  assert.deepEqual(list.json.pending, [], '没有写入就不该生成待确认单')
+})
+
+test('审批门不再挂在 DSH 的 tools/pre-execute 上（自己的门，自己的账）', () => {
+  const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /tools\/pre-execute/, 'akso-workbench 的审批已经自建，不该再注册 DSH 的门')
+  assert.doesNotMatch(source, /ctx\.approval/, '不该再向 DSH 的 approval 服务提问')
 })
 
 test('HTTP 直连写配置是侧门：默认 403，显式开 env 才回到登录检查', async () => {

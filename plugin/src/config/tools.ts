@@ -4,6 +4,7 @@
  * 与 `tool.ts` 同一套手写 ToolDefinition 形状（零运行时依赖）。
  * 两个工具都要求 eGMP 会话已建立；未登录时返回 loggedIn:false + 提示。
  */
+import { approvalFor, markApprovalUsed, requestApproval } from './approvals.ts'
 import { applyPlan, loadPlan, planBlueprint } from './engine.ts'
 import { readEgmpSession, type EgmpSession } from './session.ts'
 
@@ -76,54 +77,15 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
   }
 }
 
-export interface ApplyApproval {
-  /** 要不要在宿主侧弹一次审批。 */
-  ask: boolean
-  /** 给审批面板看的一句话（同时进审计日志）。 */
-  reason?: string
-  displayReason?: { en: string; zh: string }
-}
-
-/**
- * 「执行前要不要问人」的判定 —— **唯一实现，放在宿主侧**。
- *
- * 由 `tools/pre-execute` 调用，参数直接取模型的工具入参；判定只看**盘上的计划**：
- * 全 `skip` 的计划没有任何写入，问了只是噪音；计划不存在就让工具自己报错。
- * 关键是这里不接受任何「已确认」布尔 —— 那种字段等于让模型自己给自己签字。
- */
-export function applyApprovalFor(dshHome: string, args: unknown): ApplyApproval {
-  const raw = args !== null && typeof args === 'object' ? (args as { planId?: unknown }) : {}
-  const planId = typeof raw.planId === 'string' ? raw.planId.trim() : ''
-  if (planId === '') return { ask: false }
-  const plan = loadPlan(dshHome, planId)
-  if (plan === null) return { ask: false }
-  const writes = plan.summary.create + plan.summary.update
-  if (writes === 0) return { ask: false }
-  const irreversible = plan.steps.filter((s) => s.irreversible)
-  const names = irreversible.slice(0, 5).map((s) => s.title).join('；')
-  const reason = `执行配置计划 ${plan.planId}：新建 ${plan.summary.create} 步、更新 ${plan.summary.update} 步`
-    + (plan.summary.irreversible > 0
-      ? `，其中 ${plan.summary.irreversible} 步不可逆（${names}${irreversible.length > 5 ? ' 等' : ''}）`
-      : '')
-    + '。允许之后才会写平台，且写入即刻生效、平台侧没有回滚。'
-  return {
-    ask: true,
-    reason,
-    displayReason: {
-      en: `Apply config plan ${plan.planId}? ${plan.summary.create} create, ${plan.summary.update} update, `
-        + `${plan.summary.irreversible} irreversible. Writes take effect immediately and cannot be rolled back.`,
-      zh: reason,
-    },
-  }
-}
-
 export function buildConfigApplyTool(deps: ConfigToolDeps) {
   return {
     name: 'akso_workbench_config_apply',
     description:
       '执行一份**已存在**的配置计划（必须先由 akso_workbench_config_plan 生成）。'
       + '逐步执行、每步回读校验；失败即停并返回 checkpoint。不接受临时参数，不能绕过计划。'
-      + '**真正执行前宿主会弹一次审批，只有人点了允许才会写平台**；这一关不在工具参数里，模型无法自己确认。',
+      + '计划里只要有写入，第一次调用**只开审批单、不写平台**（返回 status=awaiting-approval 与完整 payload）；'
+      + '人在「配置工具 → 待确认」里点了允许之后，再用同一个 planId 调一次才真写。'
+      + '这一关不在工具参数里，模型无法自己批准。',
     parameters: {
       type: 'object',
       properties: {
@@ -146,11 +108,38 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
       if (planId === '') return { ok: false, error: '缺少 planId' }
       const plan = loadPlan(deps.dshHome, planId)
       if (plan === null) return { ok: false, error: `计划不存在：${planId}` }
+
+      const writes = plan.summary.create + plan.summary.update
+      if (writes > 0) {
+        const approval = approvalFor(deps.dshHome, planId)
+        const usable = approval !== null && approval.status === 'approved'
+        if (!usable) {
+          // pending 复用同一张单；没单 / 被拒 / 过期 / 已用掉都开一张新的
+          const entry = approval !== null && approval.status === 'pending'
+            ? approval
+            : requestApproval(deps.dshHome, plan)
+          return {
+            ok: false,
+            status: 'awaiting-approval',
+            approvalId: entry.id,
+            planId,
+            summary: entry.summary,
+            payload: entry.payload,
+            message: `这份计划要写平台（新建 ${entry.summary.create} 步、更新 ${entry.summary.update} 步），还没有人批准。`
+              + `审批单 ${entry.id} 已放进「配置工具 → 待确认」，30 分钟内有效：让人核对下面的 payload 并点「允许」，`
+              + '然后用**同一个 planId 再调一次**本工具才会真写。',
+          }
+        }
+      }
+
       try {
         const applied = await applyPlan(session, planId, deps.dshHome)
+        const approval = approvalFor(deps.dshHome, planId)
+        if (approval !== null && approval.status === 'approved') markApprovalUsed(deps.dshHome, approval.id)
         return {
           ok: applied.status === 'applied',
           status: applied.status,
+          approvalId: approval?.id ?? null,
           results: applied.results.map((r) => ({
             step: r.title,
             status: r.status,

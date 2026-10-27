@@ -25,8 +25,9 @@ import { clearSession, readPool, readPrefs, readSession, writePool, writePrefs, 
 import { buildSnapshotTool } from './tool.ts'
 import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
+import { decideApproval, listApprovals } from './config/approvals.ts'
 import { EgmpError, clearEgmpSession, login as egmpLogin, publicSession, readEgmpSession, writeEgmpSession } from './config/session.ts'
-import { buildConfigApplyTool, buildConfigPlanTool, applyApprovalFor } from './config/tools.ts'
+import { buildConfigApplyTool, buildConfigPlanTool } from './config/tools.ts'
 
 export const name = 'akso-workbench'
 export const inject = ['webServer']
@@ -109,6 +110,8 @@ export const ROUTES = {
   configPlan: '/api/akso-workbench/config/plan',
   configPlanGet: '/api/akso-workbench/config/plan-status',
   configApply: '/api/akso-workbench/config/apply',
+  configApprovals: '/api/akso-workbench/config/approvals',
+  configApprovalDecide: '/api/akso-workbench/config/approvals/decide',
   configAudit: '/api/akso-workbench/config/audit',
 } as const
 
@@ -678,6 +681,31 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       sendJson(res, 200, { ok: plan.status === 'applied', plan })
     }),
 
+    route('GET', R.configApprovals, false, async (_req, res) => {
+      const { pending, recent } = listApprovals(dshHome)
+      sendJson(res, 200, { ok: true, pending, recent })
+    }),
+
+    route('POST', R.configApprovalDecide, false, async (_req, res, body) => {
+      const approvalId = text(body.approvalId, 64)
+      const decision = text(body.decision, 8)
+      if (approvalId === '') {
+        sendJson(res, 400, { error: '缺少 approvalId' })
+        return
+      }
+      if (decision !== 'allow' && decision !== 'deny') {
+        sendJson(res, 400, { error: 'decision 只能是 allow 或 deny' })
+        return
+      }
+      const note = text(body.note, 200)
+      const entry = decideApproval(dshHome, approvalId, decision, note)
+      if (entry === null) {
+        sendJson(res, 409, { error: '这张审批单不存在、已过期或已经处理过' })
+        return
+      }
+      sendJson(res, 200, { ok: true, approval: entry })
+    }),
+
     route('GET', R.configAudit, false, async (req, res) => {
       const url = new URL(String(req.url ?? '/'), 'http://127.0.0.1')
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50))
@@ -692,20 +720,11 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     }
   }, 'akso-workbench: routes')
 
-  /* ── 确认门：配置写入必须过一次宿主审批 ──
-     我们只给「理由」，门是 DSH 的（`tools/pre-execute` → `ctx.approval`）：
-     返回 `ask` ⇒ 宿主把问题交给人在 GUI 里点，只有 `allowed-once` 才继续执行；
-     没有审批服务 / 会话策略是 `never` / 人点了拒绝 / 中途取消 ⇒ 调用直接失败（fail closed）。
-     `ask` 的理由来自盘上的计划摘要，不由模型传参决定。 */
-  const approvalArmed = typeof ctx.on === 'function'
-  if (approvalArmed) {
-    ctx.on('tools/pre-execute', (exec: any, next: () => Promise<any>) => {
-      if (exec?.name !== 'akso_workbench_config_apply') return next()
-      const verdict = applyApprovalFor(dshHome, exec.arguments)
-      if (!verdict.ask) return next()
-      return { kind: 'ask', reason: verdict.reason, displayReason: verdict.displayReason }
-    })
-  }
+  /* ── 确认门是我们自己的，不走 DSH 的 approval ──
+     `danger-full-access` 档下会话策略是 `never`，DSH 会把所有 `ask` 静默判拒，写入这条路会被焊死；
+     而且宿主弹窗只显示工具名与参数，看不到要写到平台上的东西。所以改成
+     「工具只开审批单 → 页面里人点允许 → 同一个 planId 再调一次才真写」，
+     批准单一次性、30 分钟过期、全部落盘（见 `config/approvals.ts`）。 */
 
   /* ── 给 agent 的只读工具：让它能读到与界面同一份快照 ── */
   try {
@@ -743,12 +762,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       const planTool = buildConfigPlanTool(configDeps)
       const applyTool = buildConfigApplyTool(configDeps)
       ctx.effect(() => registry.register(planTool), 'akso-workbench: config plan tool')
-      // 没有审批总线就**不注册**执行工具：宁可少一个工具，也不给一条不经过人的写入口
-      if (approvalArmed) {
-        ctx.effect(() => registry.register(applyTool), 'akso-workbench: config apply tool')
-      } else {
-        logger.warn('akso-workbench: 拿不到 tools/pre-execute，配置执行工具不注册（写入必须过审批）')
-      }
+      ctx.effect(() => registry.register(applyTool), 'akso-workbench: config apply tool')
     } else {
       logger.warn('akso-workbench: 没有 tools 服务，agent 读不到快照（界面仍可用）')
     }
