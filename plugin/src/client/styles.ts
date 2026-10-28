@@ -73,24 +73,35 @@ export const CSS = `
 .akw-notice__grow{flex:1;min-width:0}
 
 /* 卡片网格 */
-.akw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin:0;padding:0;list-style:none}
-.akw-card{box-sizing:border-box;display:flex;flex-direction:column;gap:12px;padding:14px;border:1px solid var(--dsw-alias-border-l3);border-radius:16px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-panel);transition:border-color .14s ease,box-shadow .14s ease,transform .14s ease}
+.akw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(276px,1fr));gap:10px;margin:0;padding:0;list-style:none}
+.akw-card{box-sizing:border-box;display:flex;flex-direction:column;gap:9px;padding:11px 12px;border:1px solid var(--dsw-alias-border-l3);border-radius:14px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-panel);transition:border-color .14s ease,box-shadow .14s ease,transform .14s ease}
 .akw-card:hover{border-color:var(--dsw-alias-border-l3);transform:translateY(-1px)}
 .akw-card.is-connected{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary),var(--dsw-elevation-panel)}
-.akw-card__head{display:flex;align-items:center;gap:10px;min-width:0}
-.akw-avatar{flex:none;display:grid;place-items:center;width:32px;height:32px;border-radius:10px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover-solid)}
+.akw-card__head{display:flex;align-items:center;gap:9px;min-width:0}
+.akw-avatar{flex:none;display:grid;place-items:center;width:27px;height:27px;border-radius:8px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover-solid)}
 .akw-card__id{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
-.akw-card__id b{font-size:15px;line-height:20px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.akw-card__id span{font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.akw-badge{flex:none;padding:2px 8px;border:1px solid var(--dsw-alias-state-business-primary);border-radius:999px;font-size:11px;line-height:16px;color:var(--dsw-alias-state-business-primary)}
+.akw-card__id b{font-size:14px;line-height:18px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.akw-card__id span{font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.akw-badge{flex:none;padding:1px 7px;border:1px solid var(--dsw-alias-state-business-primary);border-radius:999px;font-size:10px;line-height:15px;color:var(--dsw-alias-state-business-primary)}
 
-.akw-facts{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin:0;padding:10px 12px;border-radius:12px;background:var(--dsw-alias-bg-base)}
-.akw-facts dt{font-size:11px;line-height:14px;color:var(--dsw-alias-label-caption)}
-.akw-facts dd{margin:2px 0 0;font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.akw-card__actions{display:flex;align-items:center;gap:8px;justify-content:flex-end}
-.akw-card__note{margin:0;font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.akw-card__foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.akw-card__hint{font-size:11px;color:var(--dsw-alias-state-business-primary)}
+.akw-facts{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin:0;padding:7px 9px;border-radius:10px;background:var(--dsw-alias-bg-base)}
+.akw-facts dt{font-size:10px;line-height:13px;color:var(--dsw-alias-label-caption)}
+.akw-facts dd{margin:1px 0 0;font-size:12px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.akw-card__actions{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+.akw-card__note{margin:0;font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.akw-card__foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.akw-card__hint{font-size:10px;color:var(--dsw-alias-state-business-primary)}
+/* 卡片里的按钮比页面别处小一号：卡片密度上来了，「连接agent」不该还占 26px */
+.akw-card .akw-btn--sm{height:24px;padding:0 9px;font-size:11px;border-radius:8px}
+
+/* 盒子筛选：一排 chip；选中态用品牌色实心，和「已连接」同一套语义色 */
+.akw-filter{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.akw-chip{box-sizing:border-box;display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border:1px solid var(--dsw-alias-border-l3);border-radius:999px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer;transition:border-color .14s ease,color .14s ease,background .14s ease}
+.akw-chip:hover{border-color:var(--dsw-alias-label-tertiary);color:var(--dsw-alias-label-primary)}
+.akw-chip:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:1px}
+.akw-chip i{padding:0 5px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover-solid);font-style:normal;font-size:10px;line-height:14px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.akw-chip.is-on{color:var(--dsw-alias-bg-base);background:var(--dsw-alias-state-business-primary);border-color:transparent}
+.akw-chip.is-on i{color:var(--dsw-alias-bg-base);background:transparent;opacity:.72}
 
 /* 配置池标记：圆形色标（在池里才亮） */
 .akw-pool-dot{flex:none;width:8px;height:8px;border-radius:50%;border:1px solid var(--dsw-alias-border-l4);background:transparent}
@@ -114,7 +125,7 @@ export const CSS = `
 .akw-empty__icon{display:grid;place-items:center;width:44px;height:44px;border-radius:16px;background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-tertiary)}
 .akw-empty__title{font-size:15px;font-weight:600}
 .akw-empty__desc{font-size:12px;color:var(--dsw-alias-label-tertiary);max-width:360px}
-.akw-skeleton{height:132px;border-radius:16px;background:var(--dsw-alias-interactive-bg-hover-solid);animation:akw-pulse 1.4s ease-in-out infinite}
+.akw-skeleton{height:116px;border-radius:14px;background:var(--dsw-alias-interactive-bg-hover-solid);animation:akw-pulse 1.4s ease-in-out infinite}
 @keyframes akw-pulse{0%,100%{opacity:.5}50%{opacity:1}}
 
 /* 设备流：验证码 + 重新打开浏览器 */

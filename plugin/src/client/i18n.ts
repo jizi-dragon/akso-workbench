@@ -61,6 +61,11 @@ export const zh = {
   'page.empty.desc': '先去「站点管理」建一个站点，再回来添加账号。',
   'page.filtered.title': '没有匹配的账号',
   'page.filtered.desc': '换个关键词，或者切回「并行账号」看看。',
+  'page.filter.label': '按盒子筛选',
+  'page.filter.all': '全部',
+  'page.filter.nobox': '未分盒子',
+  'page.filter.empty.title': '这个盒子里没有账号',
+  'page.filter.empty.desc': '点「全部」看所有账号，或者去「添加账号」把这个盒子补上。',
   'page.error': '账号库读不出来：{message}',
   'page.retry': '重试',
 
@@ -225,6 +230,11 @@ export const en: Record<keyof typeof zh, string> = {
   'page.empty.desc': 'Create a site first, then come back to add accounts.',
   'page.filtered.title': 'No matching accounts',
   'page.filtered.desc': 'Try another keyword, or switch back to Parallel accounts.',
+  'page.filter.label': 'Filter by box',
+  'page.filter.all': 'All',
+  'page.filter.nobox': 'No box',
+  'page.filter.empty.title': 'No accounts in this box',
+  'page.filter.empty.desc': 'Pick All to see every account, or add one under Add account.',
   'page.error': 'Could not read the library: {message}',
   'page.retry': 'Retry',
 

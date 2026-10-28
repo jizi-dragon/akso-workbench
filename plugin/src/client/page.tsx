@@ -210,6 +210,8 @@ function LoginGate({ tr, embedded = false }: { tr: (key: string, vars?: Record<s
 
 function AccountsTab({ tr, query }: { tr: (key: string, vars?: Record<string, string | number>) => string; query: string }) {
   const state = useStore()
+  /** 盒子的选中值：`null` = 全部。盒子名本身用 `''` 表示"没分盒子"，两者要能区分开。 */
+  const [box, setBox] = useState<string | null>(null)
 
   const q = query.trim().toLowerCase()
   const matched = q === ''
@@ -217,71 +219,126 @@ function AccountsTab({ tr, query }: { tr: (key: string, vars?: Record<string, st
     : state.accounts.filter((account) => [account.tabName, account.username, account.siteName, account.siteHost, account.note, account.box]
       .some((field) => String(field ?? '').toLowerCase().includes(q)))
 
-  if (matched.length === 0) {
-    return (
-      <div className="akw-empty">
-        <span className="akw-empty__icon" aria-hidden="true">◍</span>
-        <span className="akw-empty__title">{state.accounts.length === 0 ? tr('page.empty.title') : tr('page.filtered.title')}</span>
-        <span className="akw-empty__desc">{state.accounts.length === 0 ? tr('page.empty.desc') : tr('page.filtered.desc')}</span>
-      </div>
-    )
+  /**
+   * 卡片上显示的「盒子」是**回落过的**：账号自己没填就显示默认盒。
+   * 筛选按同一口径来 —— 看得见什么就按什么筛，否则会出现"卡片写着 akso-devops、
+   * 点 akso-devops 却筛不到它"的矛盾。
+   */
+  const boxOf = (account: (typeof state.accounts)[number]): string =>
+    (account.box.trim() !== '' ? account.box : state.defaultBox).trim()
+
+  /** 只统计**当前查询命中**的那批：数字必须和列表对得上，不能拿全量去标。 */
+  const buckets: Array<{ name: string; count: number }> = []
+  for (const account of matched) {
+    const name = boxOf(account)
+    const hit = buckets.find((item) => item.name === name)
+    if (hit === undefined) buckets.push({ name, count: 1 })
+    else hit.count += 1
   }
+  buckets.sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'))
+
+  /** 选中的盒子在快照里没了（账号删了 / 盒子改名），退回「全部」，不留一个筛不出东西的死选中。 */
+  const active = box !== null && buckets.some((item) => item.name === box) ? box : null
+  const visible = active === null ? matched : matched.filter((account) => boxOf(account) === active)
+  const emptyAll = state.accounts.length === 0
 
   return (
-    <ul className="akw-grid">
-      {matched.map((account) => {
-        const isConnected = account.id === state.currentAccountId
-        const connecting = state.busy === `connect:${account.id}`
-        const inPool = state.poolAccountIds.includes(account.id)
-        const title = account.tabName.trim() !== '' ? account.tabName : account.username
-        const site = account.siteName !== '' ? account.siteName : account.siteHost
-        return (
-          <li key={account.id} className={`akw-card${isConnected ? ' is-connected' : ''}`}>
-            <div className="akw-card__head">
-              <span className="akw-avatar" aria-hidden="true">{title.slice(0, 1).toUpperCase()}</span>
-              <div className="akw-card__id">
-                <b title={title}>{title}</b>
-                <span title={site || account.baseUrl}>{site === '' ? '—' : site}</span>
-              </div>
-              {isConnected ? <span className="akw-badge">{tr('page.tag.connected')}</span> : null}
-            </div>
-            <dl className="akw-facts">
-              <div>
-                <dt>{tr('page.card.username')}</dt>
-                <dd title={account.username}>{account.username}</dd>
-              </div>
-              <div>
-                <dt>{tr('page.card.box')}</dt>
-                <dd title={account.box}>{account.box || state.defaultBox || '—'}</dd>
-              </div>
-            </dl>
-            {account.note !== '' ? <p className="akw-card__note">{account.note}</p> : null}
-            <div className="akw-card__foot">
-              <span
-                className={`akw-pool-dot${inPool ? ' is-on' : ''}`}
-                role="img"
-                aria-label={inPool ? tr('pool.mark.in') : tr('pool.mark.out')}
-                title={inPool ? tr('pool.mark.in') : tr('pool.mark.out')}
-              />
-              <div className="akw-card__actions">
-                {isConnected ? (
-                  <span className="akw-card__hint">{tr('page.tag.connectedHint')}</span>
-                ) : (
-                  <button
-                    type="button"
-                    className="akw-btn akw-btn--sm"
-                    disabled={state.busy !== null}
-                    onClick={() => void connectAccount(account.id)}
-                  >
-                    {connecting ? tr('page.action.connecting') : tr('page.action.connect')}
-                  </button>
-                )}
-              </div>
-            </div>
-          </li>
-        )
-      })}
-    </ul>
+    <>
+      {/* 只有一个盒子时这一行没有信息量，直接不渲染 */}
+      {emptyAll || buckets.length < 2 ? null : (
+        <div className="akw-filter" role="group" aria-label={tr('page.filter.label')}>
+          <button
+            type="button"
+            className={`akw-chip${active === null ? ' is-on' : ''}`}
+            aria-pressed={active === null}
+            onClick={() => setBox(null)}
+          >
+            {tr('page.filter.all')}
+            <i>{matched.length}</i>
+          </button>
+          {buckets.map((item) => (
+            <button
+              key={item.name === '' ? '(no box)' : item.name}
+              type="button"
+              className={`akw-chip${active === item.name ? ' is-on' : ''}`}
+              aria-pressed={active === item.name}
+              title={item.name === '' ? tr('page.filter.nobox') : item.name}
+              onClick={() => setBox(item.name)}
+            >
+              {item.name === '' ? tr('page.filter.nobox') : item.name}
+              <i>{item.count}</i>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {visible.length === 0 ? (
+        <div className="akw-empty">
+          <span className="akw-empty__icon" aria-hidden="true">◍</span>
+          <span className="akw-empty__title">
+            {emptyAll ? tr('page.empty.title') : active === null ? tr('page.filtered.title') : tr('page.filter.empty.title')}
+          </span>
+          <span className="akw-empty__desc">
+            {emptyAll ? tr('page.empty.desc') : active === null ? tr('page.filtered.desc') : tr('page.filter.empty.desc')}
+          </span>
+        </div>
+      ) : (
+        <ul className="akw-grid">
+          {visible.map((account) => {
+            const isConnected = account.id === state.currentAccountId
+            const connecting = state.busy === `connect:${account.id}`
+            const inPool = state.poolAccountIds.includes(account.id)
+            const title = account.tabName.trim() !== '' ? account.tabName : account.username
+            const site = account.siteName !== '' ? account.siteName : account.siteHost
+            return (
+              <li key={account.id} className={`akw-card${isConnected ? ' is-connected' : ''}`}>
+                <div className="akw-card__head">
+                  <span className="akw-avatar" aria-hidden="true">{title.slice(0, 1).toUpperCase()}</span>
+                  <div className="akw-card__id">
+                    <b title={title}>{title}</b>
+                    <span title={site || account.baseUrl}>{site === '' ? '—' : site}</span>
+                  </div>
+                  {isConnected ? <span className="akw-badge">{tr('page.tag.connected')}</span> : null}
+                </div>
+                <dl className="akw-facts">
+                  <div>
+                    <dt>{tr('page.card.username')}</dt>
+                    <dd title={account.username}>{account.username}</dd>
+                  </div>
+                  <div>
+                    <dt>{tr('page.card.box')}</dt>
+                    <dd title={account.box}>{account.box || state.defaultBox || '—'}</dd>
+                  </div>
+                </dl>
+                {account.note !== '' ? <p className="akw-card__note">{account.note}</p> : null}
+                <div className="akw-card__foot">
+                  <span
+                    className={`akw-pool-dot${inPool ? ' is-on' : ''}`}
+                    role="img"
+                    aria-label={inPool ? tr('pool.mark.in') : tr('pool.mark.out')}
+                    title={inPool ? tr('pool.mark.in') : tr('pool.mark.out')}
+                  />
+                  <div className="akw-card__actions">
+                    {isConnected ? (
+                      <span className="akw-card__hint">{tr('page.tag.connectedHint')}</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="akw-btn akw-btn--sm"
+                        disabled={state.busy !== null}
+                        onClick={() => void connectAccount(account.id)}
+                      >
+                        {connecting ? tr('page.action.connecting') : tr('page.action.connect')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </>
   )
 }
 
