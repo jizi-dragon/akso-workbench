@@ -12,7 +12,9 @@
  *   - `risk` 只描述**平台层面的影响**，不代表审批级别；
  *   - `irreversible` 为 true 的操作在 plan 里必须被标红；
  *   - `evidence` 对应文档里的标记：`verified` = ✅（抓包或验证环境跑通），
- *     `partial` = ⚠️（监听/推断，字段名或参数仍有不确定）。
+ *     `partial` = ⚠️（监听/推断，字段名或参数仍有不确定）——这是**文档来源**的可信度；
+ *   - `testStatus` 是**本工具的实测台账**：`verified` = 已由用户在测试中确认（卡片绿色「已验证」），
+ *     `stale` = 尚未确认（卡片红色「过期」）。只在 `APPROVED_TOOL_IDS` 里登记才会变成 verified。
  */
 
 export type Domain =
@@ -30,6 +32,9 @@ export type Domain =
 export type Risk = 'low' | 'medium' | 'high'
 
 export type Evidence = 'verified' | 'partial'
+
+/** 本工具的实测台账状态（卡片徽标）：verified=已验证（绿），stale=过期（红）。 */
+export type TestStatus = 'verified' | 'stale'
 
 export interface CapabilityParam {
   name: string
@@ -49,6 +54,8 @@ export interface Capability {
   risk: Risk
   irreversible?: boolean
   evidence: Evidence
+  /** 由 `APPROVED_TOOL_IDS` 在模块加载时写入，见文件末尾。 */
+  testStatus?: TestStatus
   params: CapabilityParam[]
   /** 工具页的预填请求；引擎用同一形状生成 plan。少数接口（如菜单排序）整份 body 就是数组。 */
   example: Record<string, unknown> | unknown[]
@@ -1313,6 +1320,18 @@ export const CAPABILITIES: Capability[] = [
     notes: ['content 里是 {!$...} 变量与 <a href> 片段，直接可用。'],
   },
 ]
+
+/**
+ * 实测台账见 `../shared/approved-tools.ts`（客户端直接读它，改名单不用重启 host）。
+ * 模块加载时把台账状态写到每条能力上，客户端拿到的 JSON 里就带 testStatus。
+ */
+import { APPROVED_TOOL_IDS } from '../shared/approved-tools.ts'
+
+for (const capability of CAPABILITIES) {
+  capability.testStatus = APPROVED_TOOL_IDS.has(capability.id) ? 'verified' : 'stale'
+}
+
+export { APPROVED_TOOL_IDS }
 
 export function findCapability(id: string): Capability | undefined {
   return CAPABILITIES.find((c) => c.id === id)

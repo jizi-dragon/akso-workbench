@@ -247,11 +247,14 @@ export const CSS = `
 .akw-cfg__stat{display:flex;align-items:baseline;gap:5px;padding:4px 9px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;font-variant-numeric:tabular-nums}
 .akw-cfg__stat b{font-size:13px;font-weight:600}
 .akw-cfg__stat em{font-style:normal;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.akw-cfg__stat.is-ok b{color:var(--dsw-alias-state-success-primary)}
 .akw-cfg__stat.is-danger b{color:var(--dsw-alias-state-error-primary)}
 .akw-cfg__stat.is-warn b{color:var(--dsw-alias-state-warn-primary)}
 
 /* 写入不可逆：一句提示，不用整块告警条 */
 .akw-cfg__legend{margin:-4px 0 0;padding-left:10px;border-left:2px solid var(--dsw-alias-state-warn-primary);font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-tertiary)}
+.akw-cfg__legend b.is-ok{color:var(--dsw-alias-state-success-primary)}
+.akw-cfg__legend b.is-danger{color:var(--dsw-alias-state-error-primary)}
 .akw-cfg__session{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px dashed var(--dsw-alias-border-l3);border-radius:12px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .akw-cfg__session b{font-weight:600;color:var(--dsw-alias-label-primary)}
 .akw-cfg__dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-caption)}

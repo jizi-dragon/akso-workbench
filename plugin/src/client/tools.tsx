@@ -6,13 +6,15 @@
  *   → 右栏是这一区的接口卡片（点开看参数表 + 请求示例 + 返回 + 备注）。
  *
  * 目录与 `docs/reference/Akso平台内部API接口清单.md` 的 47 条一一对应；
- * 卡片上的 ✅/⚠️ 就是文档里的实测/推断标记，别把 ⚠️ 当成能直接上生产的接口。
+ * 卡片底部的「已验证 / 过期」是**实测台账**：用户在测试中确认过输入输出的接口才标已验证（绿），
+ * 其余一律标过期（红），见 capabilities.ts 的 APPROVED_TOOL_IDS。
  *
  * 定位仍是**台账**：只读能力目录（GET config/capabilities）+ 管 host 侧的 eGMP 会话，
  * 不写配置；写入走 plan/apply 工具，必须由人确认。
  */
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from './api.ts'
+import { APPROVED_TOOL_IDS } from '../shared/approved-tools.ts'
 
 interface Param {
   name: string
@@ -32,6 +34,7 @@ interface Capability {
   risk: 'low' | 'medium' | 'high'
   irreversible?: boolean
   evidence: 'verified' | 'partial'
+  testStatus?: 'verified' | 'stale'
   params: Param[]
   example: unknown
   returns?: string
@@ -87,6 +90,9 @@ const SECTIONS: Section[] = [
 ]
 
 const RISK_LABEL: Record<Capability['risk'], string> = { low: '低', medium: '中', high: '高' }
+
+/** 卡片左下角的实测徽标：只有用户在测试里确认过的 id 才是「已验证」。 */
+const isVerified = (item: Capability): boolean => APPROVED_TOOL_IDS.has(item.id)
 
 /** 只读但走 POST 的接口，列表里要按"查询"展示。 */
 const READ_IDS = new Set([
@@ -184,7 +190,7 @@ function ExampleBlock({ example }: { example: unknown }) {
 
 function CapabilityCard({ item, open, onToggle }: { item: Capability; open: boolean; onToggle: () => void }) {
   const kind = kindOf(item)
-  const verified = item.evidence === 'verified'
+  const verified = isVerified(item)
   return (
     <article
       className={`akw-cfg__card${item.irreversible === true ? ' is-blocked' : ''}${open ? ' is-open' : ''}`}
@@ -215,7 +221,7 @@ function CapabilityCard({ item, open, onToggle }: { item: Capability; open: bool
       <p className="akw-cfg__desc">{item.description}</p>
 
       <div className="akw-cfg__meta">
-        <span className={`akw-cfg__tag ${verified ? 'is-ok' : 'is-warn'}`}>{verified ? '✅ 实测' : '⚠️ 部分'}</span>
+        <span className={`akw-cfg__tag ${verified ? 'is-ok' : 'is-danger'}`}>{verified ? '已验证' : '过期'}</span>
         <span className="akw-cfg__count">风险 {RISK_LABEL[item.risk]} · {item.params.length} 参数</span>
         <span className="akw-cfg__more">{open ? '收起' : '详情'}</span>
       </div>
@@ -411,8 +417,8 @@ export function ConfigToolsTab() {
 
   const stats = useMemo(() => ({
     total: sectionItems.length,
-    verified: sectionItems.filter((item) => item.evidence === 'verified').length,
-    partial: sectionItems.filter((item) => item.evidence === 'partial').length,
+    verified: sectionItems.filter((item) => isVerified(item)).length,
+    stale: sectionItems.filter((item) => !isVerified(item)).length,
     irreversible: sectionItems.filter((item) => item.irreversible === true).length,
     params: sectionItems.reduce((sum, item) => sum + item.params.length, 0),
     writes: sectionItems.filter((item) => kindOf(item) === 'write').length,
@@ -452,14 +458,16 @@ export function ConfigToolsTab() {
             <span className="akw-cfg__stat"><b>{stats.total}</b><em>接口</em></span>
             {stats.writes > 0 ? <span className="akw-cfg__stat"><b>{stats.writes}</b><em>写入</em></span> : null}
             {stats.total === 0 ? null : <span className="akw-cfg__stat"><b>{stats.params}</b><em>参数</em></span>}
-            {stats.partial > 0 ? <span className="akw-cfg__stat is-warn"><b>{stats.partial}</b><em>待验证</em></span> : null}
+            {stats.verified > 0 ? <span className="akw-cfg__stat is-ok"><b>{stats.verified}</b><em>已验证</em></span> : null}
+            {stats.stale > 0 ? <span className="akw-cfg__stat is-danger"><b>{stats.stale}</b><em>过期</em></span> : null}
             {stats.irreversible > 0 ? <span className="akw-cfg__stat is-danger"><b>{stats.irreversible}</b><em>不可逆</em></span> : null}
           </div>
         </div>
 
         {stats.writes > 0 ? (
           <p className="akw-cfg__legend">
-            写入即生效，平台侧没有回滚；✅ 是抓包/验证环境跑通，⚠️ 是监听或推断，上生产前先在测试对象上验证。
+            写入即生效，平台侧没有回滚；<b className="is-ok">已验证</b> = 你在测试中确认过输入与输出的接口，
+            <b className="is-danger">过期</b> = 还没验证过，调用前先核对参数。上生产前先在测试对象上跑一遍。
             示例是参数对象：path / query 参数会拼进 URL，其余整体作为请求体。
           </p>
         ) : null}
