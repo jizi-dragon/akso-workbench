@@ -50,6 +50,16 @@ interface Session {
   savedAt: number | null
 }
 
+/** 账号条的一条：只有 hasPassword，没有口令字段 —— 口令从不进浏览器。 */
+interface CredentialRow {
+  id: string
+  label: string
+  account: string
+  baseUrl: string
+  siteName: string
+  hasPassword: boolean
+}
+
 type SectionId = 'auth' | 'model' | 'layout' | 'lifecycle' | 'workflow' | 'menu'
 
 interface Section {
@@ -312,11 +322,13 @@ function EgmpSessionPanel({ session, onChange }: { session: Session | null; onCh
             </button>
           ) : (
             <button type="button" className="akw-btn akw-btn--sm" onClick={() => setOpen(!open)} aria-expanded={open}>
-              {open ? '收起' : '登录 eGMP'}
+              {open ? '收起' : '手动登录'}
             </button>
           )}
         </div>
       </div>
+
+      {!loggedIn ? <CredentialLogin onDone={onChange} /> : null}
 
       {open && !loggedIn ? (
         <form className="akw-form akw-form--single" onSubmit={(event) => void submit(event)}>
@@ -369,6 +381,94 @@ function EgmpSessionPanel({ session, onChange }: { session: Session | null; onCh
           </div>
         </form>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * 账号库登录：口令存在 akso-cloud（Fernet 加密），host 按账号 id 取一次明文、
+ * 立刻换成 JWT 后丢掉。页面拿到的只有 `hasPassword`，所以这里只显示 ····。
+ */
+function CredentialLogin({ onDone }: { onDone: (next: Session) => void }) {
+  const [rows, setRows] = useState<CredentialRow[] | null>(null)
+  const [current, setCurrent] = useState<string | null>(null)
+  const [cloudLoggedIn, setCloudLoggedIn] = useState(true)
+  const [busyId, setBusyId] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      try {
+        const payload = await api.configCredentials()
+        if (!alive) return
+        setRows(payload.accounts)
+        setCurrent(payload.current)
+        setCloudLoggedIn(payload.cloudLoggedIn)
+      } catch (e) {
+        if (alive) setError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+    return () => { alive = false }
+  }, [])
+
+  async function useAccount(row: CredentialRow): Promise<void> {
+    if (busyId !== '') return
+    setBusyId(row.id)
+    setError('')
+    try {
+      const result = await api.configLoginWithAccount(row.id)
+      onDone({
+        loggedIn: true,
+        baseUrl: result.session.baseUrl,
+        account: result.session.account,
+        savedAt: result.session.savedAt,
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  return (
+    <div className="akw-cfg__creds">
+      <div className="akw-cfg__credshead">
+        <b>用账号库口令登录</b>
+        <span>口令存在 akso-cloud，host 取到后立刻换 JWT —— 浏览器只显示 ····，拿不到明文</span>
+      </div>
+      {!cloudLoggedIn ? (
+        <p className="akw-cfg__hint">akso-cloud 未登录：先在账号页登录，账号条里才有口令可用。</p>
+      ) : rows === null ? (
+        <p className="akw-cfg__hint">读取账号库…</p>
+      ) : rows.length === 0 ? (
+        <p className="akw-cfg__hint">账号库里还没有账号。</p>
+      ) : (
+        <ul className="akw-cfg__credlist">
+          {rows.map((row) => (
+            <li key={row.id} className={`akw-cfg__credrow${row.id === current ? ' is-current' : ''}`}>
+              <div className="akw-cfg__credtext">
+                <b>{row.label}</b>
+                <span className="akw-cfg__credmeta">
+                  {row.account} · {row.siteName}
+                  {row.id === current ? ' · 当前连接' : ''}
+                </span>
+                <span className="akw-cfg__credmask" aria-label="口令已隐藏">········</span>
+              </div>
+              <button
+                type="button"
+                className="akw-btn akw-btn--sm akw-btn--primary"
+                onClick={() => void useAccount(row)}
+                disabled={!row.hasPassword || busyId !== ''}
+                title={row.hasPassword ? `用账号库里存的口令登录 ${row.baseUrl}` : '这个账号在 akso-cloud 里没有存口令'}
+              >
+                {busyId === row.id ? '登录中…' : row.hasPassword ? '登录' : '无口令'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error !== '' ? <p className="akw-cfg__hint is-error">{error}</p> : null}
     </div>
   )
 }

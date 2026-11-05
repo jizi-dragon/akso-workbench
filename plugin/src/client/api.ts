@@ -155,6 +155,20 @@ export const api = {
   configLogin: (input: { baseUrl: string; account: string; password: string }) =>
     call<EgmpSessionView & { ok: boolean }>('config/login', post(input)),
   configLogout: () => call<{ ok: boolean; loggedIn: boolean }>('config/logout', post({})),
+  /** 账号库里能拿来登录 eGMP 的账号（**不含口令**，只有 hasPassword）。 */
+  configCredentials: () =>
+    call<{
+      accounts: Array<{ id: string; label: string; account: string; baseUrl: string; siteName: string; hasPassword: boolean }>
+      current: string | null
+      cloudLoggedIn: boolean
+    }>('config/credentials'),
+  /** 让 host 去账号库取口令换 JWT：口令不下发浏览器，响应里只有会话摘要。 */
+  configLoginWithAccount: (accountId?: string) =>
+    call<{
+      ok: boolean
+      session: EgmpSessionView
+      account: { id: string; account: string; baseUrl: string; label: string; siteName: string }
+    }>('config/login-with-account', post(accountId === undefined ? {} : { accountId })),
   /** 能力目录（工具页的数据源）。返回的 items 形状由 tools.tsx 自己声明。 */
   configCapabilities: () =>
     call<{ session: EgmpSessionView; groups: Array<{ domain: string; label?: string; items: unknown[] }> }>(

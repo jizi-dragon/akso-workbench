@@ -24,6 +24,7 @@ import * as cloud from './cloud.ts'
 import { clearSession, readPool, readPrefs, readSession, writePool, writePrefs, writeSession } from './store.ts'
 import { buildSnapshotTool } from './tool.ts'
 import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
+import { cloudCredentialProvider, toCredentialAccount } from './credentials.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
 import { EgmpError, clearEgmpSession, login as egmpLogin, publicSession, readEgmpSession, tokenView, writeEgmpSession } from './config/session.ts'
 import { buildConfigApplyTool, buildConfigPlanTool, type AskQuestion, type ToolExec } from './config/tools.ts'
@@ -105,6 +106,8 @@ export const ROUTES = {
   configSession: '/api/akso-workbench/config/session',
   configToken: '/api/akso-workbench/config/token',
   configLogin: '/api/akso-workbench/config/login',
+  configCredentials: '/api/akso-workbench/config/credentials',
+  configLoginWithAccount: '/api/akso-workbench/config/login-with-account',
   configLogout: '/api/akso-workbench/config/logout',
   configInvoke: '/api/akso-workbench/config/invoke',
   configPlan: '/api/akso-workbench/config/plan',
@@ -612,6 +615,59 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       const session = await egmpLogin(String(body.baseUrl ?? ''), String(body.account ?? ''), String(body.password ?? ''))
       writeEgmpSession(dshHome, session)
       sendJson(res, 200, { ok: true, ...publicSession(session) })
+    }),
+
+    /* ───────────── 配置：账号库凭据（口令只在 host 里过一次，不回浏览器） ───────────── */
+
+    route('GET', R.configCredentials, false, async (_req, res) => {
+      const accounts = (snapshot?.accounts ?? []).map(toCredentialAccount)
+      sendJson(res, 200, {
+        accounts,
+        current: readPrefs(dshHome).currentAccountId,
+        cloudLoggedIn: readSession(dshHome) !== null,
+      })
+    }),
+
+    /**
+     * 用账号库里存的口令登录 eGMP：host 取明文 → 立刻换 JWT → 丢口令。
+     * 响应里只有会话摘要（publicSession），任何情况下都不回口令。
+     */
+    route('POST', R.configLoginWithAccount, false, async (_req, res, body) => {
+      const cloudSession = readSession(dshHome)
+      if (cloudSession === null) {
+        sendJson(res, 401, { error: 'akso-cloud 未登录，取不到账号口令' })
+        return
+      }
+      const wanted = text(body.accountId, 120)
+      const accountId = wanted !== '' ? wanted : (readPrefs(dshHome).currentAccountId ?? '')
+      if (accountId === '') {
+        sendJson(res, 400, { error: '没有指定账号，账号条上也没有当前连接的账号' })
+        return
+      }
+      if (snapshot === null) await sync(cloudSession)
+      const provider = cloudCredentialProvider({
+        accounts: () => snapshot?.accounts ?? [],
+        cloudSession: () => {
+          const current = readSession(dshHome)
+          return current === null ? null : { baseUrl: current.baseUrl, token: current.token }
+        },
+        currentId: () => readPrefs(dshHome).currentAccountId,
+      })
+      const credential = await provider.reveal(accountId)
+      const session = await egmpLogin(credential.baseUrl, credential.account, credential.password)
+      writeEgmpSession(dshHome, session)
+      const account = (snapshot?.accounts ?? []).find((item) => item.id === accountId)
+      sendJson(res, 200, {
+        ok: true,
+        session: publicSession(session),
+        account: {
+          id: accountId,
+          account: credential.account,
+          baseUrl: credential.baseUrl,
+          label: account === undefined ? credential.account : toCredentialAccount(account).label,
+          siteName: account?.siteName ?? '',
+        },
+      })
     }),
 
     route('POST', R.configLogout, false, async (_req, res) => {

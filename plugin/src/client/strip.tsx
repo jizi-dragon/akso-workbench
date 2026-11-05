@@ -132,8 +132,27 @@ function Picker(props: {
   tokenError: string | null
   onClose: () => void
   onAdd: () => void
+  onLoggedIn: () => void
 }) {
-  const { tr, accounts, current, token, tokenError, onClose, onAdd } = props
+  const { tr, accounts, current, token, tokenError, onClose, onAdd, onLoggedIn } = props
+  const [busyId, setBusyId] = useState('')
+  const [loginError, setLoginError] = useState('')
+
+  /** 账号条的「一键换 JWT」：口令在 akso-cloud，host 取一次就换票，页面看不到明文。 */
+  async function loginWith(account: CloudAccount): Promise<void> {
+    if (busyId !== '') return
+    setBusyId(account.id)
+    setLoginError('')
+    try {
+      await api.configLoginWithAccount(account.id)
+      onLoggedIn()
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusyId('')
+    }
+  }
+
   return (
     <div className="akw-picker" role="dialog" aria-label={tr('strip.picker.title')}>
       <div className="akw-picker__head">
@@ -152,7 +171,7 @@ function Picker(props: {
           {accounts.map((account) => {
             const isOn = account.id === current
             return (
-              <li key={account.id}>
+              <li key={account.id} className="akw-picker__row">
                 <button
                   type="button"
                   className={`akw-picker__item${isOn ? ' is-on' : ''}`}
@@ -166,11 +185,25 @@ function Picker(props: {
                   <span className="akw-picker__site">{account.siteName !== '' ? account.siteName : account.siteHost}</span>
                   {isOn ? <span className="akw-picker__tick" aria-hidden="true">✓</span> : null}
                 </button>
+                <button
+                  type="button"
+                  className="akw-picker__jwt"
+                  disabled={!account.hasPassword || busyId !== ''}
+                  title={
+                    account.hasPassword
+                      ? `用账号库里 ${account.username} 的口令登录 ${account.baseUrl}（口令不显示）`
+                      : '这个账号在 akso-cloud 里没有存口令'
+                  }
+                  onClick={() => void loginWith(account)}
+                >
+                  {busyId === account.id ? '…' : 'JWT'}
+                </button>
               </li>
             )
           })}
         </ul>
       )}
+      {loginError !== '' ? <p className="akw-picker__err">{loginError}</p> : null}
       <TokenSection tr={tr} view={token} error={tokenError} />
       {current !== null ? (
         <button
@@ -289,6 +322,18 @@ export function AccountStrip(props: StripProps = {}) {
           onAdd={() => {
             setOpen(false)
             props.openPanel?.()
+          }}
+          onLoggedIn={() => {
+            // 换到新票后立刻重取一次 token 视图，面板上的到期时间才是新的
+            void (async () => {
+              try {
+                setToken(await api.configToken())
+                setTokenError(null)
+              } catch (error) {
+                setToken(null)
+                setTokenError(error instanceof Error ? error.message : String(error))
+              }
+            })()
           }}
         />
       ) : null}

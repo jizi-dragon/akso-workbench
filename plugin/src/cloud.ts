@@ -316,6 +316,30 @@ export async function createSite(
   return call(baseUrl, '/api/sites', { method: 'POST', token, body }, fetchImpl)
 }
 
+/**
+ * `GET /api/accounts/:id/password` → 明文口令。
+ *
+ * ★ 最敏感的端点：akso-cloud 用 Fernet 加密存口令，这是唯一的解密出口。
+ *   只允许在 host 进程里调用，并且**只用来换 JWT**：不回传浏览器、不进日志、不落盘。
+ */
+export async function revealPassword(
+  baseUrl: string,
+  token: string,
+  accountId: string,
+  fetchImpl: FetchImpl = fetch,
+): Promise<string> {
+  const payload = (await call(
+    baseUrl,
+    `/api/accounts/${encodeURIComponent(accountId)}/password`,
+    { token },
+    fetchImpl,
+  )) as { password?: unknown }
+  if (typeof payload.password !== 'string' || payload.password === '') {
+    throw new CloudError(200, '/api/accounts/:id/password', '账号库里没有这个账号的口令')
+  }
+  return payload.password
+}
+
 export async function renameBox(
   baseUrl: string,
   token: string,
