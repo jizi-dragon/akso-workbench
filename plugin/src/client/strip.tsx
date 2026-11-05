@@ -48,33 +48,23 @@ function remainingOf(expiresAt: number | null): { expired: boolean; value: strin
 }
 
 /**
- * 令牌一角：**默认只显示"有没有、还剩多久"**，点「查看」才把 JWT 原文摊开。
- * 令牌存在 host 侧的 `egmp-session.json`，这里只是它的只读镜像 —— 页面刷新不会留任何副本。
+ * 令牌一行：**只做展示** —— 有没有、签发到几点、到期到几点。
+ * 令牌本体留在 host 的 `egmp-session.json` 里，接口只回时间戳（`token` 恒为 null），
+ * 页面既不需要、也拿不到明文 —— 用户不用自己换票，也不该在这里把票抄走。
  */
-function TokenSection(props: { tr: Translate; view: EgmpTokenView | null; error: string | null }) {
+function TokenMeta(props: { tr: Translate; view: EgmpTokenView | null; error: string | null }) {
   const { tr, view, error } = props
-  const [reveal, setReveal] = useState(false)
-  const [copied, setCopied] = useState(false)
-
-  const token = view?.token ?? null
   const remain = remainingOf(view?.expiresAt ?? null)
-  // 少于 5 分钟就换成警示色 —— 这一行本来就是拿来判断"要不要现在刷新"的
   const left = view?.expiresAt == null ? null : view.expiresAt - Date.now()
+  // 少于 5 分钟就换成警示色 —— 这一行本来就是拿来判断"要不要现在刷新"的
   const warn = left !== null && left > 0 && left < 5 * 60 * 1000
 
-  useEffect(() => {
-    if (!copied) return
-    const timer = window.setTimeout(() => setCopied(false), 1600)
-    return () => window.clearTimeout(timer)
-  }, [copied])
-
-  const meta = (() => {
+  const state = (() => {
     if (error !== null) return error
     if (view === null) return tr('strip.token.loading')
     if (!view.loggedIn) return tr('strip.token.off')
-    if (remain.expired) return `${view.account ?? ''} · ${tr('strip.token.expired')}`
-    const left = remain.value === '' ? '' : ` · ${tr('strip.token.remaining', { value: remain.value })}`
-    return `${view.account ?? ''}${left}`
+    if (remain.expired) return tr('strip.token.expired')
+    return remain.value === '' ? tr('strip.token.on') : tr('strip.token.remaining', { value: remain.value })
   })()
 
   const tone = view?.loggedIn === true && !remain.expired && error === null
@@ -86,38 +76,12 @@ function TokenSection(props: { tr: Translate; view: EgmpTokenView | null; error:
       <div className={`akw-token__row${tone}`}>
         <span className="akw-token__dot" aria-hidden="true" />
         <span className="akw-token__name">{tr('strip.token.title')}</span>
-        <span className="akw-token__meta" title={meta}>{meta}</span>
-        {token !== null ? (
-          <button type="button" className="akw-token__toggle" onClick={() => setReveal((value) => !value)}>
-            {reveal ? tr('strip.token.hide') : tr('strip.token.show')}
-          </button>
-        ) : null}
+        <span className="akw-token__meta" title={state}>{state}</span>
       </div>
-      {reveal && token !== null ? (
-        <div className="akw-token__body">
-          <div className="akw-token__times">
-            <span>{tr('strip.token.issued', { value: clockOf(view?.issuedAt ?? null) })}</span>
-            <span>{tr('strip.token.expires', { value: clockOf(view?.expiresAt ?? null) })}</span>
-          </div>
-          <pre className="akw-token__raw">{token}</pre>
-          <div className="akw-token__acts">
-            <button
-              type="button"
-              className="akw-btn akw-btn--sm"
-              onClick={() => {
-                void (async () => {
-                  try {
-                    await navigator.clipboard.writeText(token)
-                    setCopied(true)
-                  } catch {
-                    setCopied(false)
-                  }
-                })()
-              }}
-            >
-              {copied ? tr('strip.token.copied') : tr('strip.token.copy')}
-            </button>
-          </div>
+      {view?.loggedIn === true ? (
+        <div className="akw-token__times">
+          {view.issuedAt !== null ? <span>{tr('strip.token.issued', { value: clockOf(view.issuedAt) })}</span> : null}
+          <span>{tr('strip.token.expires', { value: clockOf(view.expiresAt) })}</span>
         </div>
       ) : null}
     </div>
@@ -132,27 +96,8 @@ function Picker(props: {
   tokenError: string | null
   onClose: () => void
   onAdd: () => void
-  onLoggedIn: () => void
 }) {
-  const { tr, accounts, current, token, tokenError, onClose, onAdd, onLoggedIn } = props
-  const [busyId, setBusyId] = useState('')
-  const [loginError, setLoginError] = useState('')
-
-  /** 账号条的「一键换 JWT」：口令在 akso-cloud，host 取一次就换票，页面看不到明文。 */
-  async function loginWith(account: CloudAccount): Promise<void> {
-    if (busyId !== '') return
-    setBusyId(account.id)
-    setLoginError('')
-    try {
-      await api.configLoginWithAccount(account.id)
-      onLoggedIn()
-    } catch (error) {
-      setLoginError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setBusyId('')
-    }
-  }
-
+  const { tr, accounts, current, token, tokenError, onClose, onAdd } = props
   return (
     <div className="akw-picker" role="dialog" aria-label={tr('strip.picker.title')}>
       <div className="akw-picker__head">
@@ -171,7 +116,7 @@ function Picker(props: {
           {accounts.map((account) => {
             const isOn = account.id === current
             return (
-              <li key={account.id} className="akw-picker__row">
+              <li key={account.id}>
                 <button
                   type="button"
                   className={`akw-picker__item${isOn ? ' is-on' : ''}`}
@@ -185,26 +130,12 @@ function Picker(props: {
                   <span className="akw-picker__site">{account.siteName !== '' ? account.siteName : account.siteHost}</span>
                   {isOn ? <span className="akw-picker__tick" aria-hidden="true">✓</span> : null}
                 </button>
-                <button
-                  type="button"
-                  className="akw-picker__jwt"
-                  disabled={!account.hasPassword || busyId !== ''}
-                  title={
-                    account.hasPassword
-                      ? `用账号库里 ${account.username} 的口令登录 ${account.baseUrl}（口令不显示）`
-                      : '这个账号在 akso-cloud 里没有存口令'
-                  }
-                  onClick={() => void loginWith(account)}
-                >
-                  {busyId === account.id ? '…' : 'JWT'}
-                </button>
               </li>
             )
           })}
         </ul>
       )}
-      {loginError !== '' ? <p className="akw-picker__err">{loginError}</p> : null}
-      <TokenSection tr={tr} view={token} error={tokenError} />
+      <TokenMeta tr={tr} view={token} error={tokenError} />
       {current !== null ? (
         <button
           type="button"
@@ -233,7 +164,31 @@ export function AccountStrip(props: StripProps = {}) {
     void refresh()
   }, [])
 
-  // 令牌只在面板打开时取一次（关掉就随组件留着，下次打开重取，免得看到过期的"剩余时间"）
+  // 令牌是自动的：这里只负责读回来显示。每分钟问一次，过期时 host 会顺手换新票
+  // （口令在 akso-cloud，页面从不接触明文，也没有"刷新令牌"按钮）。
+  useEffect(() => {
+    let alive = true
+    const load = async (): Promise<void> => {
+      try {
+        const view = await api.configToken()
+        if (!alive) return
+        setToken(view)
+        setTokenError(null)
+      } catch (error) {
+        if (!alive) return
+        setToken(null)
+        setTokenError(error instanceof Error ? error.message : String(error))
+      }
+    }
+    void load()
+    const timer = window.setInterval(() => void load(), 60_000)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  // 打开小面板时再取一次：看到的一定是当下这张票的剩余时间
   useEffect(() => {
     if (!open) return
     let alive = true
@@ -287,6 +242,25 @@ export function AccountStrip(props: StripProps = {}) {
   const pool = new Set(state.poolAccountIds)
   const poolAccounts = state.accounts.filter((account) => pool.has(account.id))
 
+  // 令牌状态的三个事实：有效（绿）· 快到期（黄，<5 分钟）· 过期/没有（红）
+  const remain = remainingOf(token?.expiresAt ?? null)
+  const jwtLeft = token?.expiresAt == null ? null : token.expiresAt - Date.now()
+  const jwtValid = token?.loggedIn === true && !remain.expired && tokenError === null
+  const jwtWarn = jwtValid && jwtLeft !== null && jwtLeft < 5 * 60 * 1000
+  const jwtTone = jwtValid ? (jwtWarn ? ' is-warn' : ' is-ok') : (token === null && tokenError === null ? ' is-idle' : ' is-off')
+  const jwtLabel = (() => {
+    if (tokenError !== null) return tr('strip.jwt.error')
+    if (token === null) return tr('strip.jwt.loading')
+    if (token.loggedIn !== true) return tr('strip.jwt.none')
+    if (remain.expired) return tr('strip.jwt.expired')
+    return tr('strip.jwt.valid', { value: remain.value })
+  })()
+  const jwtTitle = (() => {
+    if (tokenError !== null) return tokenError
+    if (token?.expiresAt == null) return ''
+    return `${clockOf(token.issuedAt)} 签发 · ${clockOf(token.expiresAt)} 到期（打开面板看详情）`
+  })()
+
   return (
     <div className="akw-strip" ref={rootRef}>
       {connected !== null ? (
@@ -311,6 +285,16 @@ export function AccountStrip(props: StripProps = {}) {
           {poolAccounts.length === 0 ? tr('strip.add') : tr('strip.connect')}
         </button>
       )}
+      <button
+        type="button"
+        className={`akw-strip__jwt${jwtTone}`}
+        title={jwtTitle}
+        aria-label={`eGMP 令牌：${jwtLabel}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="akw-strip__jwtDot" aria-hidden="true" />
+        {jwtLabel}
+      </button>
       {open ? (
         <Picker
           tr={tr}
@@ -322,18 +306,6 @@ export function AccountStrip(props: StripProps = {}) {
           onAdd={() => {
             setOpen(false)
             props.openPanel?.()
-          }}
-          onLoggedIn={() => {
-            // 换到新票后立刻重取一次 token 视图，面板上的到期时间才是新的
-            void (async () => {
-              try {
-                setToken(await api.configToken())
-                setTokenError(null)
-              } catch (error) {
-                setToken(null)
-                setTokenError(error instanceof Error ? error.message : String(error))
-              }
-            })()
           }}
         />
       ) : null}

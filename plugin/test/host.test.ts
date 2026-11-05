@@ -949,9 +949,9 @@ test('engine 用到的能力 id 都在目录里（拼错会静默变成"查不�
   assert.deepEqual(missing, [], `这些 id 不在能力目录里：${missing.join(', ')}`)
 })
 
-/* ─────────────── 令牌详情：只在人要的时候给，且必须带自定义头 ─────────────── */
+/* ─────────────── 令牌详情：只给时间戳（原文不出 host），且必须带自定义头 ─────────────── */
 
-test('令牌详情：原文 + 从 JWT 解出的签发/到期时间', async () => {
+test('令牌详情：只回从 JWT 解出的签发/到期时间，原文不出 host', async () => {
   const home = freshHome()
   const mounted = mount(home)
   const claims = Buffer.from(JSON.stringify({ iat: 1_700_000_000, exp: 1_700_003_600, sub: 'liyulong' })).toString('base64url')
@@ -965,7 +965,8 @@ test('令牌详情：原文 + 从 JWT 解出的签发/到期时间', async () =>
 
   const view = await call(mounted.routes, P.configToken, 'GET')
   assert.equal(view.status, 200)
-  assert.equal(view.json.token, token)
+  assert.equal(view.json.token, null, '账号条只做展示：JWT 原文不下发浏览器')
+  assert.equal(view.json.loggedIn, true)
   assert.equal(view.json.account, 'liyulong')
   assert.equal(view.json.issuedAt, 1_700_000_000_000)
   assert.equal(view.json.expiresAt, 1_700_003_600_000)
@@ -979,13 +980,14 @@ test('令牌详情：原文 + 从 JWT 解出的签发/到期时间', async () =>
   assert.equal(none.json.expiresAt, null)
 })
 
-test('JWT 解不开时不许崩：只回 null，不影响登录态', async () => {
+test('JWT 解不开时不许崩：时间戳回 null，登录态照旧', async () => {
   const home = freshHome()
   const mounted = mount(home)
   writeEgmpSession(home, { baseUrl: 'https://standard-val.aksoegmp.com', account: 'liyulong', token: 'not-a-jwt', savedAt: 1 })
   const view = await call(mounted.routes, P.configToken, 'GET')
   assert.equal(view.status, 200)
-  assert.equal(view.json.token, 'not-a-jwt')
+  assert.equal(view.json.loggedIn, true)
+  assert.equal(view.json.token, null)
   assert.equal(view.json.issuedAt, null)
   assert.equal(view.json.expiresAt, null)
 })
@@ -1110,6 +1112,53 @@ test('选项集回读：平台留下的旧选项不算失败，只在消息里�
 
 /* ─────────────── call：文档里其余接口按能力目录原样调用 ─────────────── */
 
+/** 一张能解出 iat/exp 的 JWT：只有 payload 有意义，签名是摆设（平台侧不校验）。 */
+function jwtFor(ttlMs: number, now = Date.now()): string {
+  const enc = (value: Record<string, unknown>): string => Buffer.from(JSON.stringify(value)).toString('base64url')
+  return [
+    enc({ alg: 'none', typ: 'JWT' }),
+    enc({ sub: 'liyulong', iat: Math.floor(now / 1000), exp: Math.floor((now + ttlMs) / 1000) }),
+    'sig',
+  ].join('.')
+}
+
+/** 假 eGMP：只实现 Auth（账号+口令 → JWT），用来验「过期自动续票」。 */
+async function startFakeAuth(): Promise<{
+  baseUrl: string
+  token: string
+  hits: () => number
+  body: () => Record<string, unknown>
+  close: () => Promise<void>
+}> {
+  const state = { hits: 0, body: {} as Record<string, unknown>, token: jwtFor(50 * 60_000) }
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = []
+    req.on('data', (chunk: Buffer) => chunks.push(chunk))
+    req.on('end', () => {
+      try {
+        state.body = chunks.length === 0 ? {} : (JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>)
+      } catch {
+        state.body = {}
+      }
+      state.hits += 1
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ code: 0, errorCode: 0, message: null, data: state.token }))
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address() as AddressInfo
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    token: state.token,
+    hits: () => state.hits,
+    body: () => state.body,
+    close: () => new Promise<void>((resolve) => {
+      server.closeAllConnections()
+      server.close(() => resolve())
+    }),
+  }
+}
+
 test('call 资源：按目录生成一步、不比对现状；未知能力/缺必填参数在计划阶段就挡住', async () => {
   const home = freshHome()
   const session = { baseUrl: 'https://example.invalid', account: 'tester', token: 'jwt', savedAt: Date.now() }
@@ -1139,3 +1188,47 @@ test('call 资源：按目录生成一步、不比对现状；未知能力/缺�
   )
 })
 
+
+test('令牌过期：账号条自己用账号库口令换新票，页面只拿到有效期', async () => {
+  const home = freshHome()
+  const cloud = await startFakeCloud()
+  const egmp = await startFakeAuth()
+  try {
+    const { routes } = mount(home, cloud.url)
+    await loginWith(routes)
+    const site = await call(routes, P.siteCreate, 'POST', { baseUrl: egmp.baseUrl })
+    const siteId = (site.json.sites as Array<{ id: string }>)[0]!.id
+    const created = await call(routes, P.accountCreate, 'POST', { siteId, username: 'liyulong', password: 'pw-secret' })
+    const accountId = (created.json.accounts as Array<{ id: string }>)[0]!.id
+    await call(routes, P.poolToggle, 'POST', { id: accountId, inPool: true })
+    await call(routes, P.accountCurrent, 'POST', { id: accountId })
+
+    // ① 旧票已过期：一次 GET 就把新票换回来（口令来自 akso-cloud，账号来自账号条）
+    writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'liyulong', token: jwtFor(-60_000), savedAt: Date.now() - 3_600_000 })
+    const res = await call(routes, P.configToken, 'GET')
+    assert.equal(res.status, 200)
+    assert.equal(res.json.refreshed, true)
+    assert.equal(res.json.token, null, 'JWT 本体不下发浏览器：页面只读时间')
+    assert.equal(res.json.account, 'liyulong')
+    assert.ok(Number(res.json.expiresAt) > Date.now(), '到期时间应当是新的')
+    assert.equal(egmp.hits(), 1, '换票只发一次 Auth')
+    assert.deepEqual(egmp.body(), { account: 'liyulong', password: 'pw-secret' })
+
+    // ② 新票已落盘：下一次读不再换票
+    const saved = JSON.parse(readFileSync(join(home, 'akso-workbench', 'egmp-session.json'), 'utf8')) as { token: string }
+    assert.equal(saved.token, egmp.token)
+    const again = await call(routes, P.configToken, 'GET')
+    assert.equal(again.json.refreshed, false)
+    assert.equal(egmp.hits(), 1)
+
+    // ③ 没连账号：给原因，不硬造一张假票
+    await call(routes, P.accountCurrent, 'POST', { id: '' })
+    writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'liyulong', token: jwtFor(-60_000), savedAt: Date.now() })
+    const bare = await call(routes, P.configToken, 'GET')
+    assert.equal(bare.json.refreshed, false)
+    assert.match(String(bare.json.reason), /还没有连接账号/)
+  } finally {
+    await egmp.close()
+    await cloud.close()
+  }
+})

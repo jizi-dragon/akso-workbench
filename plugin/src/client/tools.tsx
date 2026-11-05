@@ -9,8 +9,11 @@
  * 卡片底部的「已验证 / 过期」是**实测台账**：用户在测试中确认过输入输出的接口才标已验证（绿），
  * 其余一律标过期（红），见 capabilities.ts 的 APPROVED_TOOL_IDS。
  *
- * 定位仍是**台账**：只读能力目录（GET config/capabilities）+ 管 host 侧的 eGMP 会话，
- * 不写配置；写入走 plan/apply 工具，必须由人确认。
+ * 定位仍是**台账**：只读能力目录（GET config/capabilities），不写配置；
+ * 写入走 plan/apply 工具，必须由人确认。
+ *
+ * 这里**不显示登录态**：eGMP 令牌由底部账号条自动取（akso-cloud 里的账号口令）、
+ * 过期自动续，本页只负责把 47 条接口讲清楚。
  */
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from './api.ts'
@@ -43,23 +46,6 @@ interface Capability {
 
 interface Group { domain: string; label?: string; items: Capability[] }
 
-interface Session {
-  loggedIn: boolean
-  baseUrl: string | null
-  account: string | null
-  savedAt: number | null
-}
-
-/** 账号条的一条：只有 hasPassword，没有口令字段 —— 口令从不进浏览器。 */
-interface CredentialRow {
-  id: string
-  label: string
-  account: string
-  baseUrl: string
-  siteName: string
-  hasPassword: boolean
-}
-
 type SectionId = 'auth' | 'model' | 'layout' | 'lifecycle' | 'workflow' | 'menu'
 
 interface Section {
@@ -72,7 +58,7 @@ interface Section {
 }
 
 const SECTIONS: Section[] = [
-  { id: 'auth', label: '认证', hint: 'eGMP OpenAPI 登录换 JWT。写入（生成计划 / 执行）都靠 host 侧这个会话。', domains: ['auth'] },
+  { id: 'auth', label: '认证', hint: 'eGMP OpenAPI 登录换 JWT。令牌由底部账号条自动获取、过期自动续，这里只列出接口本身（排障 / 自动化时用）。', domains: ['auth'] },
   {
     id: 'model',
     label: '对象建模',
@@ -252,230 +238,8 @@ function CapabilityCard({ item, open, onToggle }: { item: Capability; open: bool
   )
 }
 
-/**
- * eGMP 会话条 + 登录表单。
- *
- * 口令只往 host 发这一次（host 换 JWT 落盘，浏览器不保存任何凭据），
- * 登录成功后 host 的 `config/session` 才有内容；写入（plan/apply）靠它。
- */
-function EgmpSessionPanel({ session, onChange }: { session: Session | null; onChange: (next: Session) => void }) {
-  const [open, setOpen] = useState(false)
-  const [baseUrl, setBaseUrl] = useState('')
-  const [account, setAccount] = useState('')
-  const [password, setPassword] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-
-  const loggedIn = session?.loggedIn === true
-
-  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault()
-    if (busy) return
-    setBusy(true)
-    setError('')
-    try {
-      const next = await api.configLogin({ baseUrl: baseUrl.trim(), account: account.trim(), password })
-      onChange({ loggedIn: true, baseUrl: next.baseUrl, account: next.account, savedAt: next.savedAt })
-      setPassword('')
-      setOpen(false)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function logout(): Promise<void> {
-    if (busy) return
-    setBusy(true)
-    setError('')
-    try {
-      await api.configLogout()
-      onChange({ loggedIn: false, baseUrl: null, account: null, savedAt: null })
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className={`akw-cfg__auth${loggedIn ? ' is-on' : ''}`}>
-      <div className="akw-cfg__session">
-        <span className="akw-cfg__dot" aria-hidden="true" />
-        {session === null ? (
-          <span className="akw-cfg__sessiontext">读取 eGMP 会话状态…</span>
-        ) : loggedIn ? (
-          <span className="akw-cfg__sessiontext">
-            eGMP 已登录：<b>{session.account ?? '—'}</b> · {session.baseUrl ?? '—'}
-            <em>令牌只在 host 侧，浏览器拿不到</em>
-          </span>
-        ) : (
-          <span className="akw-cfg__sessiontext">
-            eGMP 未登录 —— 查询类接口不受影响；<b>写入（生成计划 / 执行）需要先登录</b>。
-          </span>
-        )}
-        <div className="akw-cfg__sessionacts">
-          {loggedIn ? (
-            <button type="button" className="akw-btn akw-btn--sm akw-btn--ghost" onClick={() => void logout()} disabled={busy}>
-              退出登录
-            </button>
-          ) : (
-            <button type="button" className="akw-btn akw-btn--sm" onClick={() => setOpen(!open)} aria-expanded={open}>
-              {open ? '收起' : '手动登录'}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {!loggedIn ? <CredentialLogin onDone={onChange} /> : null}
-
-      {open && !loggedIn ? (
-        <form className="akw-form akw-form--single" onSubmit={(event) => void submit(event)}>
-          <div className="akw-form__head">
-            <h2>登录 eGMP</h2>
-            <span>口令只用于换 JWT，不落盘；令牌存在 host 侧</span>
-          </div>
-          <label className="akw-field akw-field--wide">
-            <span className="akw-field__label">环境地址</span>
-            <input
-              className="akw-input"
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder="https://<你的 eGMP 环境>"
-              autoComplete="url"
-              spellCheck={false}
-              required
-            />
-          </label>
-          <label className="akw-field">
-            <span className="akw-field__label">账号</span>
-            <input
-              className="akw-input"
-              value={account}
-              onChange={(event) => setAccount(event.target.value)}
-              autoComplete="username"
-              spellCheck={false}
-              required
-            />
-          </label>
-          <label className="akw-field">
-            <span className="akw-field__label">口令</span>
-            <input
-              className="akw-input"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="current-password"
-              required
-            />
-          </label>
-          {error !== '' ? <p className="akw-cfg__hint is-error">{error}</p> : null}
-          <div className="akw-form__actions">
-            <button type="button" className="akw-btn akw-btn--sm akw-btn--ghost" onClick={() => setOpen(false)} disabled={busy}>
-              取消
-            </button>
-            <button type="submit" className="akw-btn akw-btn--sm akw-btn--primary" disabled={busy}>
-              {busy ? '登录中…' : '连接'}
-            </button>
-          </div>
-        </form>
-      ) : null}
-    </div>
-  )
-}
-
-/**
- * 账号库登录：口令存在 akso-cloud（Fernet 加密），host 按账号 id 取一次明文、
- * 立刻换成 JWT 后丢掉。页面拿到的只有 `hasPassword`，所以这里只显示 ····。
- */
-function CredentialLogin({ onDone }: { onDone: (next: Session) => void }) {
-  const [rows, setRows] = useState<CredentialRow[] | null>(null)
-  const [current, setCurrent] = useState<string | null>(null)
-  const [cloudLoggedIn, setCloudLoggedIn] = useState(true)
-  const [busyId, setBusyId] = useState('')
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    let alive = true
-    void (async () => {
-      try {
-        const payload = await api.configCredentials()
-        if (!alive) return
-        setRows(payload.accounts)
-        setCurrent(payload.current)
-        setCloudLoggedIn(payload.cloudLoggedIn)
-      } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : String(e))
-      }
-    })()
-    return () => { alive = false }
-  }, [])
-
-  async function useAccount(row: CredentialRow): Promise<void> {
-    if (busyId !== '') return
-    setBusyId(row.id)
-    setError('')
-    try {
-      const result = await api.configLoginWithAccount(row.id)
-      onDone({
-        loggedIn: true,
-        baseUrl: result.session.baseUrl,
-        account: result.session.account,
-        savedAt: result.session.savedAt,
-      })
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusyId('')
-    }
-  }
-
-  return (
-    <div className="akw-cfg__creds">
-      <div className="akw-cfg__credshead">
-        <b>用账号库口令登录</b>
-        <span>口令存在 akso-cloud，host 取到后立刻换 JWT —— 浏览器只显示 ····，拿不到明文</span>
-      </div>
-      {!cloudLoggedIn ? (
-        <p className="akw-cfg__hint">akso-cloud 未登录：先在账号页登录，账号条里才有口令可用。</p>
-      ) : rows === null ? (
-        <p className="akw-cfg__hint">读取账号库…</p>
-      ) : rows.length === 0 ? (
-        <p className="akw-cfg__hint">账号库里还没有账号。</p>
-      ) : (
-        <ul className="akw-cfg__credlist">
-          {rows.map((row) => (
-            <li key={row.id} className={`akw-cfg__credrow${row.id === current ? ' is-current' : ''}`}>
-              <div className="akw-cfg__credtext">
-                <b>{row.label}</b>
-                <span className="akw-cfg__credmeta">
-                  {row.account} · {row.siteName}
-                  {row.id === current ? ' · 当前连接' : ''}
-                </span>
-                <span className="akw-cfg__credmask" aria-label="口令已隐藏">········</span>
-              </div>
-              <button
-                type="button"
-                className="akw-btn akw-btn--sm akw-btn--primary"
-                onClick={() => void useAccount(row)}
-                disabled={!row.hasPassword || busyId !== ''}
-                title={row.hasPassword ? `用账号库里存的口令登录 ${row.baseUrl}` : '这个账号在 akso-cloud 里没有存口令'}
-              >
-                {busyId === row.id ? '登录中…' : row.hasPassword ? '登录' : '无口令'}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {error !== '' ? <p className="akw-cfg__hint is-error">{error}</p> : null}
-    </div>
-  )
-}
-
 export function ConfigToolsTab() {
   const [groups, setGroups] = useState<Group[]>([])
-  const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [sectionId, setSectionId] = useState<SectionId>('auth')
@@ -489,7 +253,6 @@ export function ConfigToolsTab() {
         const payload = await api.configCapabilities()
         if (!alive) return
         setGroups((payload.groups ?? []) as unknown as Group[])
-        setSession((payload.session ?? null) as Session | null)
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -570,10 +333,6 @@ export function ConfigToolsTab() {
             <b className="is-danger">过期</b> = 还没验证过，调用前先核对参数。上生产前先在测试对象上跑一遍。
             示例是参数对象：path / query 参数会拼进 URL，其余整体作为请求体。
           </p>
-        ) : null}
-
-        {section.id === 'auth' ? (
-          <EgmpSessionPanel session={session} onChange={setSession} />
         ) : null}
 
         {section.tabs !== undefined ? (

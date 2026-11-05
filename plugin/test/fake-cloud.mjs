@@ -37,6 +37,8 @@ export function startFakeCloud(options = {}) {
     boxes: [{ name: DEFAULT_BOX, isDefault: true, disabled: true, autoDisabled: true, count: 0, siteId: '', siteName: '' }],
   }
   const tokens = new Map()
+  /** accountId → 明文口令（真云端是 Fernet 密文，这里只要"能取到同一串"） */
+  const passwords = new Map()
   /** deviceCode → { userCode, status, email, token } */
   const devices = new Map()
   let deviceCodes = 0
@@ -196,8 +198,21 @@ export function startFakeCloud(options = {}) {
         updatedAt: now,
       }
       state.accounts.unshift(account)
+      passwords.set(account.id, String(body.password))
       state.revision++
       send(res, 200, account)
+      return
+    }
+    // 真云端：`GET /api/accounts/:id/password` → {password}（Fernet 解密后的明文，仅 owner）
+    const passwordMatch = /^\/api\/accounts\/([^/]+)\/password$/.exec(path)
+    if (passwordMatch && req.method === 'GET') {
+      const target = decodeURIComponent(passwordMatch[1])
+      const password = passwords.get(target)
+      if (password === undefined) {
+        send(res, 404, { detail: '该账号没有存密码' })
+        return
+      }
+      send(res, 200, { password })
       return
     }
     const accountMatch = /^\/api\/accounts\/([^/]+)$/.exec(path)

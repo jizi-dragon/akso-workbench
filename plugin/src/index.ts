@@ -26,7 +26,7 @@ import { buildSnapshotTool } from './tool.ts'
 import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
 import { cloudCredentialProvider, toCredentialAccount } from './credentials.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
-import { EgmpError, clearEgmpSession, login as egmpLogin, publicSession, readEgmpSession, tokenView, writeEgmpSession } from './config/session.ts'
+import { EgmpError, clearEgmpSession, login as egmpLogin, publicSession, readEgmpSession, tokenView, writeEgmpSession, type EgmpSession } from './config/session.ts'
 import { buildConfigApplyTool, buildConfigPlanTool, type AskQuestion, type ToolExec } from './config/tools.ts'
 
 export const name = 'akso-workbench'
@@ -272,8 +272,45 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     return next
   }
 
-  function handleError(res: any, error: unknown): void {
-    if (error instanceof EgmpError) {
+  /** 账号库凭据的唯一入口：口令只在这里被取一次，取完立刻换 JWT。 */
+  function credentialProvider(): ReturnType<typeof cloudCredentialProvider> {
+    return cloudCredentialProvider({
+      accounts: () => snapshot?.accounts ?? [],
+      cloudSession: () => {
+        const current = readSession(dshHome)
+        return current === null ? null : { baseUrl: current.baseUrl, token: current.token }
+      },
+      currentId: () => readPrefs(dshHome).currentAccountId,
+    })
+  }
+
+  /**
+   * 令牌自动续期 —— **用户不需要自己换票**。
+   * 有效（剩 > 2 分钟）就直接用；过期就拿账号条当前账号的口令去换一张，换完落盘。
+   * 换不到（没连账号 / akso-cloud 没登录 / 没存口令）就原样返回旧会话，并把原因带出去。
+   */
+  async function ensureEgmpSession(): Promise<{ session: EgmpSession | null; refreshed: boolean; reason: string | null }> {
+    const existing = readEgmpSession(dshHome)
+    if (existing !== null) {
+      const expiresAt = tokenView(existing).expiresAt
+      if (expiresAt === null || expiresAt - Date.now() > 120_000) return { session: existing, refreshed: false, reason: null }
+    }
+    const accountId = readPrefs(dshHome).currentAccountId
+    if (accountId === null) return { session: existing, refreshed: false, reason: '账号条还没有连接账号' }
+    const cloudSession = readSession(dshHome)
+    if (cloudSession === null) return { session: existing, refreshed: false, reason: 'akso-cloud 未登录，取不到账号口令' }
+    try {
+      if (snapshot === null) await sync(cloudSession)
+      const credential = await credentialProvider().reveal(accountId)
+      const session = await egmpLogin(credential.baseUrl, credential.account, credential.password)
+      writeEgmpSession(dshHome, session)
+      return { session, refreshed: true, reason: null }
+    } catch (error) {
+      return { session: existing, refreshed: false, reason: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  function handleError(res: any, error: unknown): void {    if (error instanceof EgmpError) {
       sendJson(res, 502, { error: error.message, code: error.code, traceId: error.traceId, path: error.path })
       return
     }
@@ -608,7 +645,10 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 403, { error: `forbidden: 缺少 ${CLIENT_HEADER} 请求头` })
         return
       }
-      sendJson(res, 200, tokenView(readEgmpSession(dshHome)))
+      // 账号条只是个显示器：过期了在这里顺手换一张新票，用户不用点任何按钮
+      const ensured = await ensureEgmpSession()
+      // `token` 恒为 null：令牌本体只留在 host 的 egmp-session.json，页面不需要也拿不到明文
+      sendJson(res, 200, { ...tokenView(ensured.session), token: null, refreshed: ensured.refreshed, reason: ensured.reason })
     }),
 
     route('POST', R.configLogin, false, async (_req, res, body) => {
@@ -645,15 +685,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         return
       }
       if (snapshot === null) await sync(cloudSession)
-      const provider = cloudCredentialProvider({
-        accounts: () => snapshot?.accounts ?? [],
-        cloudSession: () => {
-          const current = readSession(dshHome)
-          return current === null ? null : { baseUrl: current.baseUrl, token: current.token }
-        },
-        currentId: () => readPrefs(dshHome).currentAccountId,
-      })
-      const credential = await provider.reveal(accountId)
+      const credential = await credentialProvider().reveal(accountId)
       const session = await egmpLogin(credential.baseUrl, credential.account, credential.password)
       writeEgmpSession(dshHome, session)
       const account = (snapshot?.accounts ?? []).find((item) => item.id === accountId)
@@ -701,9 +733,9 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 403, { error: DIRECT_WRITE_HINT })
         return
       }
-      const session = readEgmpSession(dshHome)
+      const session = (await ensureEgmpSession()).session
       if (session === null) {
-        sendJson(res, 401, { error: '还没有登录 eGMP' })
+        sendJson(res, 401, { error: '还没有登录 eGMP：账号条里连一个账号就能自动换票' })
         return
       }
       const params = body.params !== null && typeof body.params === 'object' ? (body.params as Record<string, unknown>) : {}
@@ -713,9 +745,9 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
 
     /* ───────────── 配置：计划 → 执行 → 审计 ───────────── */
     route('POST', R.configPlan, false, async (_req, res, body) => {
-      const session = readEgmpSession(dshHome)
+      const session = (await ensureEgmpSession()).session
       if (session === null) {
-        sendJson(res, 401, { error: '还没有登录 eGMP' })
+        sendJson(res, 401, { error: '还没有登录 eGMP：账号条里连一个账号就能自动换票' })
         return
       }
       const plan = await planBlueprint(session, body.blueprint as never, dshHome)
@@ -738,9 +770,9 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 403, { error: DIRECT_WRITE_HINT })
         return
       }
-      const session = readEgmpSession(dshHome)
+      const session = (await ensureEgmpSession()).session
       if (session === null) {
-        sendJson(res, 401, { error: '还没有登录 eGMP' })
+        sendJson(res, 401, { error: '还没有登录 eGMP：账号条里连一个账号就能自动换票' })
         return
       }
       const planId = text(body.planId, 120)

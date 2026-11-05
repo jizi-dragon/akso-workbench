@@ -151,6 +151,16 @@ export const CSS = `
 
 .akw-strip__add{flex:none;height:24px;padding:0 10px;border-radius:999px;border:1px dashed var(--dsw-alias-border-l3);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:22px;cursor:pointer;white-space:nowrap;transition:color .14s ease,border-color .14s ease}
 .akw-strip__add:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-state-business-primary)}
+/* 令牌只是显示：有效/剩多久/已过期，点一下开面板看签发与到期时间 */
+.akw-strip__jwt{display:inline-flex;align-items:center;gap:5px;flex:none;height:24px;padding:0 10px 0 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l3);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11.5px;line-height:22px;cursor:pointer;white-space:nowrap;transition:border-color .14s ease,color .14s ease}
+.akw-strip__jwt:hover{border-color:var(--dsw-alias-border-l4);color:var(--dsw-alias-label-primary)}
+.akw-strip__jwtDot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-caption);flex:none}
+.akw-strip__jwt.is-ok{color:var(--dsw-alias-label-secondary)}
+.akw-strip__jwt.is-ok .akw-strip__jwtDot{background:var(--dsw-alias-state-success-primary)}
+.akw-strip__jwt.is-warn{border-color:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-state-warn-primary)}
+.akw-strip__jwt.is-warn .akw-strip__jwtDot{background:var(--dsw-alias-state-warn-primary)}
+.akw-strip__jwt.is-off{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}
+.akw-strip__jwt.is-off .akw-strip__jwtDot{background:var(--dsw-alias-state-error-primary)}
 .akw-strip__retry{height:24px;padding:0 10px;border-radius:999px;border:1px solid var(--dsw-alias-state-error-primary);background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;cursor:pointer}
 
 /* 换/清连接的小面板（点已连接的胶囊弹出；点外面或 Esc 关闭） */
@@ -170,15 +180,8 @@ export const CSS = `
 .akw-picker__empty p{margin:0;font-size:12px;color:var(--dsw-alias-label-tertiary)}
 .akw-picker__clear{align-self:flex-start;height:26px;padding:0 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;cursor:pointer}
 .akw-picker__clear:hover{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l4)}
-/* 账号条每一行：左边选中账号，右边「JWT」用账号库口令换票（口令不显示） */
-.akw-picker__row{display:flex;align-items:center;gap:4px}
-.akw-picker__item{flex:1;min-width:0}
-.akw-picker__jwt{flex:none;height:26px;padding:0 9px;border:1px solid var(--dsw-alias-border-l3);border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;letter-spacing:.4px;cursor:pointer}
-.akw-picker__jwt:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l4);color:var(--dsw-alias-label-primary)}
-.akw-picker__jwt:disabled{opacity:.45;cursor:not-allowed}
-.akw-picker__err{margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-state-error-primary)}
 
-/* 令牌一角：一行摘要 + 展开后的原文（默认不摊开，免得一开面板就是一大串 base64） */
+/* 令牌一角：只显示"有没有 · 签发/到期"，正文（JWT）不摊开 —— 用户不需要自己取票 */
 .akw-token{display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2)}
 .akw-token__row{display:flex;align-items:center;gap:6px;min-width:0}
 .akw-token__dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
@@ -187,12 +190,7 @@ export const CSS = `
 .akw-token__row.is-off .akw-token__dot{background:var(--dsw-alias-state-error-primary)}
 .akw-token__name{flex:none;font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .akw-token__meta{flex:1;min-width:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
-.akw-token__toggle{flex:none;height:22px;padding:0 8px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}
-.akw-token__toggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.akw-token__body{display:flex;flex-direction:column;gap:6px}
 .akw-token__times{display:flex;gap:10px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
-.akw-token__raw{max-height:76px;margin:0;padding:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:16px;overflow:auto;word-break:break-all;white-space:pre-wrap;user-select:all}
-.akw-token__acts{display:flex;justify-content:flex-end}
 
 /* 登录门（akso-pass 的 login-mask 形态） */
 .akw-body--center{align-items:center;justify-content:center}
@@ -274,18 +272,6 @@ export const CSS = `
 .akw-cfg__sessiontext em{margin-left:6px;font-style:normal;color:var(--dsw-alias-label-caption)}
 .akw-cfg__sessionacts{display:flex;flex:none;gap:6px}
 
-/* 账号库登录：口令永远只显示 ····，一行一个账号 */
-.akw-cfg__creds{display:grid;gap:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
-.akw-cfg__credshead{display:grid;gap:2px}
-.akw-cfg__credshead b{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary)}
-.akw-cfg__credshead span{font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-caption)}
-.akw-cfg__credlist{display:grid;gap:6px;margin:0;padding:0;list-style:none}
-.akw-cfg__credrow{display:flex;align-items:center;gap:10px;padding:7px 9px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-2)}
-.akw-cfg__credrow.is-current{border-color:var(--dsw-alias-state-business-primary);background:var(--dsw-alias-bg-layer-1)}
-.akw-cfg__credtext{display:grid;gap:1px;flex:1;min-width:0}
-.akw-cfg__credtext b{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.akw-cfg__credmeta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.akw-cfg__credmask{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;letter-spacing:1px;color:var(--dsw-alias-label-caption)}
 
 .akw-cfg__subtabs{align-self:flex-start;display:flex;flex-wrap:wrap;gap:3px;padding:3px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
 .akw-cfg__subtab{display:flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:0;border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12.5px;cursor:pointer;transition:background .14s ease,color .14s ease}
