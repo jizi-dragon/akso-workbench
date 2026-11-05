@@ -36,6 +36,7 @@ interface Capability {
   path: string
   risk: 'low' | 'medium' | 'high'
   irreversible?: boolean
+  readonly?: boolean
   evidence: 'verified' | 'partial'
   testStatus?: 'verified' | 'stale'
   params: Param[]
@@ -90,21 +91,12 @@ const RISK_LABEL: Record<Capability['risk'], string> = { low: '低', medium: '�
 /** 卡片左下角的实测徽标：只有用户在测试里确认过的 id 才是「已验证」。 */
 const isVerified = (item: Capability): boolean => APPROVED_TOOL_IDS.has(item.id)
 
-/** 只读但走 POST 的接口，列表里要按"查询"展示。 */
-const READ_IDS = new Set([
-  'object.field.page',
-  'object.fields.outfield',
-  'workflow.page.list',
-  'lifecycle.useraction.get',
-  'menu.group.list',
-  'notice.template.list',
-])
-
+/** 只读但走 POST 的接口在目录里标了 readonly，列表里按"查询"展示。 */
 type Kind = 'write' | 'query' | 'auth'
 
 function kindOf(item: Capability): Kind {
   if (item.domain === 'auth') return 'auth'
-  if (item.method === 'GET' || READ_IDS.has(item.id)) return 'query'
+  if (item.method === 'GET' || item.readonly === true) return 'query'
   return 'write'
 }
 

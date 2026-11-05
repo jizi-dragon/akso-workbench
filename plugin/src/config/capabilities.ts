@@ -53,6 +53,8 @@ export interface Capability {
   path: string
   risk: Risk
   irreversible?: boolean
+  /** 只读但用 POST 的接口（FieldPage / PageViewList 这类）。宿主据此放行"读"，不用开写入开关。 */
+  readonly?: boolean
   evidence: Evidence
   /** 由 `APPROVED_TOOL_IDS` 在模块加载时写入，见文件末尾。 */
   testStatus?: TestStatus
@@ -189,6 +191,7 @@ export const CAPABILITIES: Capability[] = [
     method: 'POST',
     path: '/api/platform/BasicObject/FieldPage',
     risk: 'low',
+    readonly: true,
     evidence: 'verified',
     params: [
       p('objectId', 'body'),
@@ -197,7 +200,7 @@ export const CAPABILITIES: Capability[] = [
       p('filters', 'body', false, 'object'),
     ],
     example: { objectId: '<objectId>', pageIndex: 1, pageSize: 50, filters: {} },
-    returns: 'data.items[] + data.totalCount。',
+    returns: 'data 是分页对象：count / datas[] / pageIndex / pageSize / pageCount / rows（不是 items/totalCount）。',
   },
   {
     id: 'object.fields.outfield',
@@ -207,11 +210,11 @@ export const CAPABILITIES: Capability[] = [
     method: 'GET',
     path: '/api/platform/BasicObject/FieldsAndOutField',
     risk: 'low',
-    evidence: 'partial',
-    params: [p('basicObjectId', 'query')],
-    example: { basicObjectId: '<objectId>' },
-    returns: 'data 为字段数组（含 obj_field__c.xxx__c 形式的跨对象字段）。',
-    notes: ['文档标 ⚠️：参数名按抓包推断。'],
+    evidence: 'verified',
+    params: [p('objectId', 'query', true, 'string', '对象 id，参数名就是 objectId')],
+    example: { objectId: '<objectId>' },
+    returns: 'data 为字段数组（实测 206 条）：本对象字段 + 可跨对象引用的外部字段（fieldPath 形如 obj_field__c.xxx__c）。',
+    notes: ['参数名必须是 objectId；传 basicObjectId 平台回「Value cannot be null. (Parameter \'objectId\')」。'],
   },
   {
     id: 'query.object.get',
@@ -569,11 +572,11 @@ export const CAPABILITIES: Capability[] = [
     method: 'GET',
     path: '/api/platform/Listlayout/Filters',
     risk: 'low',
-    evidence: 'partial',
-    params: [p('belongId', 'query')],
-    example: { belongId: '<listlayoutId>' },
-    returns: 'data：id / belongId / details / relations（无筛选时为空）。',
-    notes: ['文档标 ⚠️：参数名按前端源码推断。'],
+    evidence: 'verified',
+    params: [p('listlayoutId', 'query', true, 'string', '列表布局 id（不是 belongId）')],
+    example: { listlayoutId: '<listlayoutId>' },
+    returns: 'data 是对象：belongId / conditionName / sceneType / failPrompt / details[] / relations[]。没存过筛选时平台回 502「数据不存在」，不是空数组。',
+    notes: ['参数名是 listlayoutId；传 belongId 平台回「数据不存在」。'],
   },
 
   /* ───────────────────────── 生命周期（4） ───────────────────────── */
@@ -717,10 +720,11 @@ export const CAPABILITIES: Capability[] = [
     method: 'POST',
     path: '/api/config/power/LifestatusUserAction/Get',
     risk: 'low',
+    readonly: true,
     evidence: 'verified',
     params: [p('statusId', 'body')],
     example: { statusId: '<statusId>' },
-    returns: 'data 为动作数组（同 UserAction/Create 的 actions 形状）。',
+    returns: 'data 是对象：{ objectId, lifecycleId, statusId, roles[] }，不是按钮数组。',
   },
 
   /* ───────────────────────── 工作流（18） ───────────────────────── */
@@ -763,7 +767,8 @@ export const CAPABILITIES: Capability[] = [
     evidence: 'verified',
     params: [p('id', 'query', true, 'string', 'workflowConfigId')],
     example: { id: '<workflowConfigId>' },
-    returns: 'data.basicConfig + data.variables。',
+    returns: 'data 就是 basicConfig 本体（扁平）：name / code / status / workflowBasicId / lifecycleId / lifecycleStatusIds / versionNo…，没有 data.basicConfig 这一层。',
+    notes: ['实测：响应没有 variables 字段；改配置时把整个 data 改完再 POST 回 UpdateWorkflowBasic。'],
   },
   {
     id: 'workflow.update',
@@ -804,6 +809,7 @@ export const CAPABILITIES: Capability[] = [
     method: 'POST',
     path: '/api/platform/Workflow/GetWorkflowBasicPageViewList',
     risk: 'low',
+    readonly: true,
     evidence: 'verified',
     params: [
       p('pageIndex', 'body', false, 'number'),
@@ -811,7 +817,7 @@ export const CAPABILITIES: Capability[] = [
       p('pageSize', 'body', false, 'number'),
     ],
     example: { pageIndex: 1, filters: [], pageSize: 20 },
-    returns: 'data.datas[] + data.count。',
+    returns: 'data 是分页对象：count / datas[] / pageCount / rows…（实测 888 条工作流）。',
   },
   {
     id: 'workflow.status.change',
@@ -1300,10 +1306,11 @@ export const CAPABILITIES: Capability[] = [
     method: 'POST',
     path: '/api/platform/MenuGroup/QueryList',
     risk: 'low',
+    readonly: true,
     evidence: 'verified',
     params: [],
     example: {},
-    returns: 'data 为分组数组。',
+    returns: 'data 为分组数组（实测 6 个）：name / code / status / source / sort / id。',
   },
   {
     id: 'notice.template.list',
@@ -1313,10 +1320,11 @@ export const CAPABILITIES: Capability[] = [
     method: 'POST',
     path: '/api/platform/notice/GetMessageTemplateByObject',
     risk: 'low',
+    readonly: true,
     evidence: 'verified',
     params: [p('id', 'body', true, 'string', '对象 id')],
     example: { id: '<objectId>' },
-    returns: 'data 为模板数组：templatetype / name / code / title / jumplink / content / sort。',
+    returns: 'data 为模板数组（实测 95 条）：templatetype / name / code / title / jumplink / content / sort。',
     notes: ['content 里是 {!$...} 变量与 <a href> 片段，直接可用。'],
   },
 ]

@@ -687,8 +687,9 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 400, { error: `未知的 capabilityId：${capabilityId}` })
         return
       }
-      // 写类接口（非 GET）只走 agent 工具 + 人确认；HTTP 直连是调试口，默认关
-      if (capability.method.toUpperCase() !== 'GET' && !allowDirectWrite) {
+      // 写类接口（非 GET）只走 agent 工具 + 人确认；HTTP 直连是调试口，默认关。
+      // 例外：只读但用 POST 的查询（FieldPage / PageViewList / QueryList …）标了 readonly，直接放行。
+      if (capability.method.toUpperCase() !== 'GET' && capability.readonly !== true && !allowDirectWrite) {
         sendJson(res, 403, { error: DIRECT_WRITE_HINT })
         return
       }

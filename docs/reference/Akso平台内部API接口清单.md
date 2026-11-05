@@ -31,8 +31,8 @@
 | 方法 | 路径 | 用途 | 要点 |
 | --- | --- | --- | --- |
 | POST | `/api/platform/BasicObject/SaveBasicObject` | 创建/更新自定义对象 | `code` 需 `__c` 结尾；响应只有 `{code:0,data:true}`，**不返回 objectId**，要用 OpenAPI 反查；`enableLifeCycle=true` **不可逆** |
-| POST | `/api/platform/BasicObject/FieldPage` | 分页查询对象字段（管理端） | `objectId/pageIndex/pageSize/filters`；返回 `data.items[]` + `totalCount`；字段比 OpenAPI 全 |
-| GET | `/api/platform/BasicObject/FieldsAndOutField` | 查询可选字段（含关联/外部字段） | 参数未收录 ⚠️；列表布局选列时用 |
+| POST | `/api/platform/BasicObject/FieldPage` | 分页查询对象字段（管理端） | `objectId/pageIndex/pageSize/filters`；`data` 为分页对象 `count/datas[]/pageCount/rows`（不是 items/totalCount）；字段比 OpenAPI 全 |
+| GET | `/api/platform/BasicObject/FieldsAndOutField` | 查询可选字段（含关联/外部字段） | 参数 `objectId`（不是 basicObjectId）；实测返回 206 条；列表布局选列时用 |
 | GET | `/api/openapi/v1.0/BasicObject/{code}` | 编码反查对象 ID / 生命周期 ID | 返回 `id`、`lifeCycleId`、`enableLifeCycle`；建模后取 objectId 的主要手段 |
 | GET | `/api/openapi/v1.0/BasicObject/field/{objectCode}` | 查询对象字段列表 | 加 `/{fieldCode}` 查单个；返回含系统字段的 `[{id,name,code,dataType,…}]` |
 | GET | `/api/openapi/v1.0/BasicObject/picklist/{code}` | 查询选项集及选项值 | 项里含 `objectPicklistId`（即字段用的 `picklistId`） |
@@ -62,7 +62,7 @@
 | POST | `/api/platform/Listlayout/Save` | 新建列表布局 | 新建后还要 `AddColumns` 才有列 |
 | POST | `/api/platform/Listlayout/AddColumns` | 设置列表列（**全量替换**） | 跨对象列用「查找字段code.关联对象字段code」 |
 | POST | `/api/platform/Listlayout/SaveFilter` | 保存列表过滤条件（upsert） | `belongId/details[]/relations[]/id`；参数来自监听 ⚠️ 未完全验证 |
-| GET | `/api/platform/Listlayout/Filters` | 查询列表过滤条件 | `belongId`；⚠️ 同上 |
+| GET | `/api/platform/Listlayout/Filters` | 查询列表过滤条件 | 参数 `listlayoutId`；没存过过滤器时 502「数据不存在」 |
 
 ### 生命周期（4）
 
@@ -71,16 +71,16 @@
 | POST | `/api/config/lifecycle/Status/Create` | 创建生命周期状态 | 响应 `data` 即新状态 UUID；`lifecycleId` 从对象查询接口取；`workflowCancelStatus` 固定 GUID |
 | PATCH | `/api/config/lifecycle/Status/Update` | 更新生命周期状态 | **全量提交**（先查再合并）；常用于重命名 |
 | POST | `/api/config/lifecycle/UserAction/Create` | 状态上创建「发起工作流」按钮 | `behaviorValue.workflowId` 必须是 **workflowBasicId**（不是 workflowConfigId） |
-| POST | `/api/config/power/LifestatusUserAction/Get` | 查状态已绑定的用户动作 | 绑定前先查；`UserAction/Create` 每调一次**新建一个按钮**、不做合并，重复调会产生重复按钮 |
+| POST | `/api/config/power/LifestatusUserAction/Get` | 查状态已绑定的用户动作 | 返回对象 `{objectId,lifecycleId,statusId,roles[]}`；`UserAction/Create` 每调一次**新建一个按钮**、不做合并 |
 
 ### 工作流（18）
 
 | 方法 | 路径 | 用途 | 要点 |
 | --- | --- | --- | --- |
 | POST | `/api/platform/Workflow/AddWorkflowBasic` | 新建工作流 | 参数必须包在 `basicConfig` 里；返回 `basicConfig.id`(configId) 与 `workflowBasicId`，**两者不同** |
-| GET | `/api/platform/Workflow/GetWorkflowBasic` | 查工作流详情 | `id=workflowConfigId`；更新前先取完整配置合并 |
+| GET | `/api/platform/Workflow/GetWorkflowBasic` | 查工作流详情 | `id=workflowConfigId`；`data` 就是 basicConfig 本体（无 `data.basicConfig` 层）；更新前先取完整配置合并 |
 | POST | `/api/platform/Workflow/UpdateWorkflowBasic` | 更新工作流基础信息 | 乐观锁 `versionNo`，不匹配报冲突；20→40 时 id 变更、versionNo+1 |
-| POST | `/api/platform/Workflow/GetWorkflowBasicPageViewList` | 分页查工作流 | 返回 `data.datas[]` + `data.count` |
+| POST | `/api/platform/Workflow/GetWorkflowBasicPageViewList` | 分页查工作流 | `data` 为分页对象：`count/datas[]/pageCount/rows` |
 | POST | `/api/platform/Workflow/ChangeWorkflowBasicStatus` | 变更工作流状态 | `ids[]/status/workflowBasicId`；**改步骤前必须先置 40（编辑中）** |
 | POST | `/api/platform/Workflow/DeleteWorkflowBasic` | 删除工作流 | 不可恢复 |
 | GET | `/api/platform/Workflow/GetWorkflowSteps` | 查步骤及连线 | 文档写 POST，代码用 GET |
@@ -215,15 +215,15 @@ body 未收录。实测前端是在 `/login` 页面表单登录，成功后 JWT 
 }
 ```
 
-响应 `data.items[]` + `data.totalCount`，单项比 OpenAPI 的 `field/{objectCode}` 更全（带 `statisticsArrange`、布局/校验相关配置），做「字段已存在吗」的比对时用它。
+响应 `data` 是分页对象：`count` / `datas[]` / `pageIndex` / `pageSize` / `pageCount` / `rows` / `hasUp` / `hasNext`（**不是** `items` + `totalCount`），单项比 OpenAPI 的 `field/{objectCode}` 更全（带 `statisticsArrange`、布局/校验相关配置），做「字段已存在吗」的比对时用它。
 
-#### `GET /api/platform/BasicObject/FieldsAndOutField` — 可选字段（含关联/外部） ⚠️
+#### `GET /api/platform/BasicObject/FieldsAndOutField` — 可选字段（含关联/外部） ✅
 
 ```text
-GET /api/platform/BasicObject/FieldsAndOutField?basicObjectId=<objectId>
+GET /api/platform/BasicObject/FieldsAndOutField?objectId=<objectId>
 ```
 
-参数未收录，`basicObjectId` 是照 `Layout/LayoutList` 的同名参数推的；调之前用浏览器抓一次确认。响应 `data[]` 为字段项，列表布局要加「关联对象的字段」时从这里选（`fieldPath` 用点号路径）。
+参数名就是 `objectId`（传 `basicObjectId` 平台会回 `Value cannot be null. (Parameter 'objectId')`）。响应 `data[]` 为字段项，实测 206 条：本对象字段 + 可跨对象引用的外部字段；列表布局要加「关联对象的字段」时从这里选（`fieldPath` 用点号路径）。
 
 #### `GET /api/openapi/v1.0/BasicObject/{code}` — 编码反查对象 ✅
 
@@ -512,13 +512,13 @@ GET /api/platform/Listlayout/Columns?listlayoutId=<listLayoutId>
 - 字符串/日期值要**自带引号**（JSON 里就是 `"\"2026-07-01\""`）；当前用户用 `{!current.user}`。
 - `relations[].logicalOperator`：`1`=AND、`2`=OR；`details[].relationId` 指向它归到哪个条件组。
 
-#### `GET /api/platform/Listlayout/Filters` — 查询过滤条件 ⚠️
+#### `GET /api/platform/Listlayout/Filters` — 查询过滤条件 ✅
 
 ```text
-GET /api/platform/Listlayout/Filters?belongId=<listLayoutId>
+GET /api/platform/Listlayout/Filters?listlayoutId=<listLayoutId>
 ```
 
-响应 `data` 为 `{ id, belongId, details[], relations[] }`；没配过时 `data` 为空。语义同 `SaveFilter`，枚举未穷尽。
+参数名是 `listlayoutId`（传 `belongId` 平台回 502「数据不存在」）。响应 `data` 为对象 `{ belongId, conditionName, sceneType, failPrompt, details[], relations[] }`，`belongId` 回显的就是列表布局 id；**该布局没存过过滤器时平台回 502「数据不存在」**，不是空数组——判空要按错误处理。语义同 `SaveFilter`，枚举未穷尽。
 
 ### 生命周期（4）
 
@@ -608,7 +608,7 @@ GET /api/platform/Listlayout/Filters?belongId=<listLayoutId>
 { "statusId": "<statusId>" }
 ```
 
-响应 `data` 是该状态的用户动作数组（每项含 `actions[]`，`actions[].configs[].behaviorValue.workflowId` 就是已绑的工作流）。绑定/重绑前先查，能避免重复按钮。
+响应 `data` 是**对象**不是数组：`{ objectId, lifecycleId, statusId, roles[] }`（实测 `roles` 里是已绑定的角色/按钮权限，不含 `actions[]` 那种形状）。绑定/重绑前先查，能避免重复按钮。
 
 ### 工作流（18）
 
@@ -641,7 +641,7 @@ GET /api/platform/Listlayout/Filters?belongId=<listLayoutId>
 GET /api/platform/Workflow/GetWorkflowBasic?id=<workflowConfigId>
 ```
 
-响应 `data.basicConfig`（配置全字段，含 `versionNo`）+ `data.variables[]`。改配置前先读，`UpdateWorkflowBasic` 是全量。
+响应 **`data` 就是 basicConfig 本体**（扁平，实测含 `name/code/status/workflowBasicId/objectId/lifecycleId/lifecycleStatusIds/versionNo` 等 40 余键），没有 `data.basicConfig` 这一层，也没有 `variables` 字段。改配置前先读，`UpdateWorkflowBasic` 是全量。
 
 #### `POST /api/platform/Workflow/UpdateWorkflowBasic` — 更新工作流（全量合并） ✅
 
@@ -1278,7 +1278,7 @@ body 是空对象（不是空 body）。响应 `data[]` 为菜单组，含 `appI
 | 菜单 | 3 | `menu.submit`、`menu.sort`、`menu.group.list` |
 | 通知 | 1 | `notice.template.list` |
 
-**5 条仍是 ⚠️**（与上文示例、界面卡片上的标记一致）：`auth.oauth.login`、`auth.oauth.refresh`、`object.fields.outfield`、`listlayout.filter.save`、`listlayout.filter.get`。
+**3 条仍是 ⚠️**（与上文示例、界面卡片上的标记一致）：`auth.oauth.login`、`auth.oauth.refresh`、`listlayout.filter.save`（写接口，待验证）。`object.fields.outfield` 与 `listlayout.filter.get` 已于 2026-11-05 在验证环境跑通，参数名与响应形状按实测改正（见上文各节）。
 
 **口径统一**（原先的三处不一致已随重建改掉）：
 
