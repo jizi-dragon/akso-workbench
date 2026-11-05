@@ -1263,27 +1263,47 @@ body 是空对象（不是空 body）。响应 `data[]` 为菜单组，含 `appI
 
 ## 与本仓 `plugin/src/config/capabilities.ts` 的对照
 
-能力目录已登记 22 条，覆盖本清单里的：认证登录、对象反查、对象/字段/选项集/生命周期状态的**查询**，对象、字段、选项集、生命周期状态的**写入**，表单布局 3 条、列表布局 6 条、菜单 3 条。
+能力目录已按本文重建（2026-11-05），**47 条一一对应**：id、`method`、`path`、参数位置、请求示例都从这份清单取，不再有第二套路径。工具页「配置工具」的二级导航（认证 / 对象建模 / 布局 / 生命周期 / 工作流 / 菜单·通知）也是按目录的域渲染的，接口卡片展开即可看到参数表与请求示例。
 
-清单里有、能力目录里**还没有**的：
+| 域 | 条数 | 能力 id |
+| --- | --- | --- |
+| 认证 | 3 | `auth.login`、`auth.oauth.login`、`auth.oauth.refresh` |
+| 对象 | 4 | `object.save`、`object.field.page`、`object.fields.outfield`、`query.object.get` |
+| 字段 | 2 | `query.fields.list`、`field.save` |
+| 选项集 | 2 | `query.picklist.get`、`picklist.save` |
+| 表单布局 | 3 | `layout.list`、`layout.detail`、`layout.save` |
+| 列表布局 | 6 | `listlayout.list`、`listlayout.columns.get`、`listlayout.save`、`listlayout.columns.set`、`listlayout.filter.save`、`listlayout.filter.get` |
+| 生命周期 | 5 | `query.lifecycle.status.list`、`lifecycle.status.create`、`lifecycle.status.update`、`lifecycle.useraction.create`、`lifecycle.useraction.get` |
+| 工作流 | 18 | `workflow.create` / `get` / `update` / `page.list` / `status.change` / `delete` / `steps.list` / `task.add` / `decision.add` / `action.add` / `start.update` / `task.update` / `decision.update` / `action.update` / `step.copy` / `step.delete` / `step.get` / `controls.list` |
+| 菜单 | 3 | `menu.submit`、`menu.sort`、`menu.group.list` |
+| 通知 | 1 | `notice.template.list` |
 
-| 缺口 | 端点 |
-| --- | --- |
-| 工作流（18 条，整域空白；界面上「工作流处理」也是 0） | `Workflow/*` 全部 |
-| 生命周期用户动作 | `UserAction/Create`、`LifestatusUserAction/Get` |
-| 对象字段的两条管理端读法 | `BasicObject/FieldPage`、`BasicObject/FieldsAndOutField` |
-| 通知模板 | `notice/GetMessageTemplateByObject` |
-| OAuth（有意不接：`Auth` 那条够用） | `Oauth/Login`、`Oauth/RefreshToken` |
+**5 条仍是 ⚠️**（与上文示例、界面卡片上的标记一致）：`auth.oauth.login`、`auth.oauth.refresh`、`object.fields.outfield`、`listlayout.filter.save`、`listlayout.filter.get`。
 
-**三处口径不一致（2026-10-27 在 standard-val 实测过，结论见下）**：
+**口径统一**（原先的三处不一致已随重建改掉）：
 
-| 能力 id | capabilities.ts 现在是 | 本清单是 | 实测 |
-| --- | --- | --- | --- |
-| `query.fields.list` | `GET /openapi/v3.6.4/metadatas/objects/{code}/fileds` | `GET /api/openapi/v1.0/BasicObject/field/{objectCode}` | 两套都通；v1.0 更快（59 ms vs 299 ms）、字段更全（92 键 vs 54 键，带 `id`/`picklistId`/内联 `picklist`） |
-| `query.picklist.get` | `GET /openapi/v3.6.4/metadatas/picklists/{code}` | `GET /api/openapi/v1.0/BasicObject/picklist/{code}` | v3.6.4 通，**入参必须是选项集编码**（传 id / 字段编码一律 `code=0 + data:null`） |
-| `query.lifecycle.status.list` | `GET /api/openapi/v1.0/BasicObject/lifecycleStatus/{objectCode}`（按 objectCode，**已改**） | `GET /api/openapi/v1.0/BasicObject/lifecycleStatus/{objectCode}`（按 objectCode） | 统一到 v1.0 这条：对象元数据只给 `lifeCycleId`（对象侧 id），v3.6.4 的 `lifecycle_status/{编码}` 只认生命周期编码、传 id 会 500「未找到对象生命周期」 |
+- `query.fields.list` → `GET /api/openapi/v1.0/BasicObject/field/{objectCode}`（参数名由 `code` 改为 `objectCode`；v1.0 比 v3.6.4 的 `fileds` 更快、字段更全，92 键带 `id`/`picklistId`）。
+- `query.picklist.get` → `GET /api/openapi/v1.0/BasicObject/picklist/{code}`，**入参必须是选项集编码**（传 id 或字段编码会 `code=0 + data:null`）。
+- `query.lifecycle.status.list` → `GET /api/openapi/v1.0/BasicObject/lifecycleStatus/{objectCode}`，返回**裸数组** `[{belongType,id,code,name,lifecycleId,lifecycleCode,lifecycleName}]`；对象没绑生命周期时是空数组，不是报错。
 
-v1.0 `lifecycleStatus/{objectCode}` 返回**裸数组**：`[{belongType,id,code,name,lifecycleId,lifecycleCode,lifecycleName}]`；对象没绑生命周期时是空数组（不是报错）。
+**引擎的覆盖边界**：`akso_workbench_config_plan` 只对 6 类资源（picklist / object / lifecycle / field / listLayout / menu）做差异比对。`formLayout` **不做自动合并**——`SaveLayoutDetail` 是全量替换，新分区的 `belongId` 由平台按 FullPath 生成（本文标 ⚠️、未实测），硬拼会把 `pages` 写坏，因此计划阶段直接报错并指向下面的 `call` 写法。其余接口（工作流 18 条、状态按钮、通知等）同样用 `kind:"call"` 兜底：
+
+```json
+{
+  "kind": "call",
+  "capability": "workflow.task.add",
+  "params": {
+    "step": {
+      "name": "部门审批",
+      "code": "dept_approve__ak",
+      "stepType": 30,
+      "workflowConfigId": "<configId>"
+    }
+  }
+}
+```
+
+`call` 按能力目录**原样调用**、不比对现状，风险与「不可逆」标记从目录继承；plan 阶段会校验目录里 `required:true` 的参数是否齐（缺了直接报 `call <id> 缺少必填参数：…`）。回读方面只有对象/选项集有稳定判据，其余 step 明确报「暂无稳定回读方式，需人工确认」，不会假装验证过。
 
 
 ## 写入报未授权但已生效（2026-10-27 实测）

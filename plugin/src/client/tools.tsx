@@ -1,13 +1,15 @@
 /**
  * 「配置工具」页（挂在 akso-workbench 页面里，不单独占左栏）。
  *
- * 结构：二级导航（认证/查询 · 对象处理 · 菜单 · 生命周期处理 · 工作流处理）
- *   → 对象处理再按「对象 / 选项集 / 字段 / 表单布局 / 列表布局」分栏
- *   → 右栏是这一区的接口卡片（点开看参数表）。
+ * 结构：二级导航（认证 · 对象建模 · 布局 · 生命周期 · 工作流 · 菜单/通知）
+ *   → 对象建模、布局再分栏
+ *   → 右栏是这一区的接口卡片（点开看参数表 + 请求示例 + 返回 + 备注）。
+ *
+ * 目录与 `docs/reference/Akso平台内部API接口清单.md` 的 47 条一一对应；
+ * 卡片上的 ✅/⚠️ 就是文档里的实测/推断标记，别把 ⚠️ 当成能直接上生产的接口。
  *
  * 定位仍是**台账**：只读能力目录（GET config/capabilities）+ 管 host 侧的 eGMP 会话，
  * 不写配置；写入走 plan/apply 工具，必须由人确认。
- * 生命周期与工作流两区先占位，流程设计好再往里放工具。
  */
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from './api.ts'
@@ -29,10 +31,14 @@ interface Capability {
   path: string
   risk: 'low' | 'medium' | 'high'
   irreversible?: boolean
+  evidence: 'verified' | 'partial'
   params: Param[]
+  example: unknown
+  returns?: string
+  notes?: string[]
 }
 
-interface Group { domain: string; items: Capability[] }
+interface Group { domain: string; label?: string; items: Capability[] }
 
 interface Session {
   loggedIn: boolean
@@ -41,60 +47,62 @@ interface Session {
   savedAt: number | null
 }
 
-type SectionId = 'access' | 'objects' | 'menu' | 'lifecycle' | 'workflow'
+type SectionId = 'auth' | 'model' | 'layout' | 'lifecycle' | 'workflow' | 'menu'
 
 interface Section {
   id: SectionId
   label: string
   hint: string
   domains: string[]
+  /** 有分栏时，右栏只显示当前分栏的域。 */
+  tabs?: Array<{ key: string; label: string }>
 }
 
-/** 分区导航：标签用用户的话，`domains` 对应能力目录里的域。 */
 const SECTIONS: Section[] = [
-  { id: 'access', label: '认证 / 查询', hint: 'eGMP OpenAPI 登录换 JWT，以及只读查询：对象、字段、选项集、生命周期状态。', domains: ['auth', 'query'] },
-  { id: 'objects', label: '对象处理', hint: '对象、选项集、字段、表单布局、列表布局的写入能力。', domains: ['object', 'picklist', 'field', 'layout', 'listlayout'] },
-  { id: 'menu', label: '菜单', hint: '菜单树查询、新建（母/子）与整棵树的排序替换。', domains: ['menu'] },
-  { id: 'lifecycle', label: '生命周期处理', hint: '对象状态机：状态、流转规则。', domains: ['lifecycle'] },
-  { id: 'workflow', label: '工作流处理', hint: '审批流与流程编排。', domains: [] },
+  { id: 'auth', label: '认证', hint: 'eGMP OpenAPI 登录换 JWT。写入（生成计划 / 执行）都靠 host 侧这个会话。', domains: ['auth'] },
+  {
+    id: 'model',
+    label: '对象建模',
+    hint: '对象、字段、选项集的查询与写入 —— 建对象 → 建选项集 → 建字段。',
+    domains: ['object', 'field', 'picklist'],
+    tabs: [
+      { key: 'object', label: '对象' },
+      { key: 'field', label: '字段' },
+      { key: 'picklist', label: '选项集' },
+    ],
+  },
+  {
+    id: 'layout',
+    label: '布局',
+    hint: '表单布局与列表布局：先读全量，改完再全量写回。',
+    domains: ['layout', 'listlayout'],
+    tabs: [
+      { key: 'layout', label: '表单布局' },
+      { key: 'listlayout', label: '列表布局' },
+    ],
+  },
+  { id: 'lifecycle', label: '生命周期', hint: '对象状态机：状态节点、状态上的按钮动作。', domains: ['lifecycle'] },
+  { id: 'workflow', label: '工作流', hint: '审批流：建流程 → 切编辑中 → 加节点 → 配按钮 → 发布。', domains: ['workflow'] },
+  { id: 'menu', label: '菜单 / 通知', hint: '菜单树（母/子、排序）与按对象取通知模板。', domains: ['menu', 'notice'] },
 ]
-/** 对象处理下面的三级分栏。 */
-const OBJECT_TABS: Array<{ key: string; label: string }> = [
-  { key: 'object', label: '对象' },
-  { key: 'picklist', label: '选项集' },
-  { key: 'field', label: '字段' },
-  { key: 'layout', label: '表单布局' },
-  { key: 'listlayout', label: '列表布局' },
-]
 
-/**
- * 台账状态：**只影响展示，不改变引擎行为**。
- *
- * 「未验证」= 接口登记了、但没在真环境跑通过，别当成能用的能力。
- * （2026-10-27 起表单布局写入也归到这一类：不再写「受阻」——它不是做不了，
- *  是 section.belongId / FullPath 的写入规则还没实测。）
- */
-type LedgerLabel = '未验证' | '受阻'
+const RISK_LABEL: Record<Capability['risk'], string> = { low: '低', medium: '中', high: '高' }
 
-const STATUS: Record<string, { label: LedgerLabel; note: string }> = {
-  'layout.save': { label: '未验证', note: 'section.belongId 由 FullPath 生成，写入规则还没实测（验证前引擎仍会拒绝这一步）' },
-  'menu.submit': { label: '未验证', note: '平台没有按 code 预检菜单的接口，尚未在测试环境验证' },
-  'menu.sort': { label: '未验证', note: '全量替换菜单树，尚未在测试环境验证' },
-  'lifecycle.status.create': { label: '未验证', note: '需要对象先开启生命周期（不可逆），尚未验证' },
-  'lifecycle.status.update': { label: '未验证', note: '需要对象先开启生命周期（不可逆），尚未验证' },
-}
+/** 只读但走 POST 的接口，列表里要按"查询"展示。 */
+const READ_IDS = new Set([
+  'object.field.page',
+  'object.fields.outfield',
+  'workflow.page.list',
+  'lifecycle.useraction.get',
+  'menu.group.list',
+  'notice.template.list',
+])
 
-/**
- * 写入 / 查询。
- *
- * 这里不评"风险等级"：**所有写入操作都不可逆**（提交即生效，平台侧没有撤销），
- * 查询类只读、随便点。认证是换 JWT，既不写配置也不读数据，单列一类。
- */
 type Kind = 'write' | 'query' | 'auth'
 
 function kindOf(item: Capability): Kind {
-  if (item.domain === 'query') return 'query'
   if (item.domain === 'auth') return 'auth'
+  if (item.method === 'GET' || READ_IDS.has(item.id)) return 'query'
   return 'write'
 }
 
@@ -133,12 +141,12 @@ function ParamsTable({ params }: { params: Param[] }) {
         </tr>
       </thead>
       <tbody>
-        {params.map((p) => (
-          <tr key={p.name}>
-            <td className="is-mono">{p.name}</td>
-            <td>{p.location}</td>
-            <td>{p.required === true ? '是' : '否'}</td>
-            <td>{p.description ?? '—'}</td>
+        {params.map((param) => (
+          <tr key={param.name}>
+            <td className="is-mono">{param.name}</td>
+            <td>{param.location}</td>
+            <td>{param.required === true ? '是' : '否'}</td>
+            <td>{param.description === undefined || param.description === '' ? '—' : param.description}</td>
           </tr>
         ))}
       </tbody>
@@ -146,11 +154,40 @@ function ParamsTable({ params }: { params: Param[] }) {
   )
 }
 
-function CapabilityCard({ item, open, onToggle }: { item: Capability; open: boolean; onToggle: () => void }) {  const status = STATUS[item.id]
+function ExampleBlock({ example }: { example: unknown }) {
+  const [copied, setCopied] = useState(false)
+  const text = JSON.stringify(example, null, 2) ?? '{}'
+
+  async function copy(event: { stopPropagation: () => void }): Promise<void> {
+    event.stopPropagation()
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <div className="akw-cfg__ex">
+      <div className="akw-cfg__exhead">
+        <span>请求示例</span>
+        <button type="button" className="akw-cfg__copy" onClick={(event) => void copy(event)}>
+          {copied ? '已复制' : '复制'}
+        </button>
+      </div>
+      <pre className="akw-cfg__code">{text}</pre>
+    </div>
+  )
+}
+
+function CapabilityCard({ item, open, onToggle }: { item: Capability; open: boolean; onToggle: () => void }) {
   const kind = kindOf(item)
+  const verified = item.evidence === 'verified'
   return (
     <article
-      className={`akw-cfg__card${status?.label === '受阻' ? ' is-blocked' : ''}${open ? ' is-open' : ''}`}
+      className={`akw-cfg__card${item.irreversible === true ? ' is-blocked' : ''}${open ? ' is-open' : ''}`}
       role="button"
       tabIndex={0}
       aria-expanded={open}
@@ -166,6 +203,7 @@ function CapabilityCard({ item, open, onToggle }: { item: Capability; open: bool
         <strong>{item.title}</strong>
         <div className="akw-cfg__flags">
           <span className={`akw-cfg__tag is-kind-${kind}`}>{KIND_LABEL[kind]}</span>
+          {item.irreversible === true ? <span className="akw-cfg__tag is-danger">不可逆</span> : null}
         </div>
       </div>
 
@@ -177,17 +215,21 @@ function CapabilityCard({ item, open, onToggle }: { item: Capability; open: bool
       <p className="akw-cfg__desc">{item.description}</p>
 
       <div className="akw-cfg__meta">
-        {status === undefined
-          ? <span className="akw-cfg__tag is-ok">已实现</span>
-          : <span className={`akw-cfg__tag ${status.label === '受阻' ? 'is-danger' : 'is-warn'}`}>{status.label}</span>}
-        <span className="akw-cfg__count">{item.params.length} 个参数</span>
+        <span className={`akw-cfg__tag ${verified ? 'is-ok' : 'is-warn'}`}>{verified ? '✅ 实测' : '⚠️ 部分'}</span>
+        <span className="akw-cfg__count">风险 {RISK_LABEL[item.risk]} · {item.params.length} 参数</span>
         <span className="akw-cfg__more">{open ? '收起' : '详情'}</span>
       </div>
 
       {open ? (
         <div className="akw-cfg__detail" onClick={(event) => event.stopPropagation()}>
-          {status !== undefined ? <p className="akw-cfg__note">{status.note}</p> : null}
           <ParamsTable params={item.params} />
+          <ExampleBlock example={item.example} />
+          {item.returns !== undefined ? <p className="akw-cfg__ret"><b>返回</b>{item.returns}</p> : null}
+          {item.notes !== undefined && item.notes.length > 0 ? (
+            <ul className="akw-cfg__notes">
+              {item.notes.map((note) => <li key={note}>{note}</li>)}
+            </ul>
+          ) : null}
         </div>
       ) : null}
     </article>
@@ -330,8 +372,8 @@ export function ConfigToolsTab() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [sectionId, setSectionId] = useState<SectionId>('access')
-  const [objectTab, setObjectTab] = useState('object')
+  const [sectionId, setSectionId] = useState<SectionId>('auth')
+  const [subTab, setSubTab] = useState('')
   const [openId, setOpenId] = useState('')
 
   useEffect(() => {
@@ -340,7 +382,7 @@ export function ConfigToolsTab() {
       try {
         const payload = await api.configCapabilities()
         if (!alive) return
-        setGroups((payload.groups ?? []) as Group[])
+        setGroups((payload.groups ?? []) as unknown as Group[])
         setSession((payload.session ?? null) as Session | null)
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e))
@@ -357,29 +399,28 @@ export function ConfigToolsTab() {
     return map
   }, [groups])
 
-  const section = SECTIONS.find((s) => s.id === sectionId) ?? SECTIONS[0]!
-  /** 生命周期 / 工作流：流程还没做，只留占位，不列已登记的底层接口。 */
-  const placeholder = section.id === 'lifecycle' || section.id === 'workflow'
+  const section = SECTIONS.find((item) => item.id === sectionId) ?? SECTIONS[0]!
   const sectionItems = useMemo(
     () => section.domains.flatMap((domain) => byDomain.get(domain) ?? []),
     [section, byDomain],
   )
-  const visible = useMemo(() => {
-    if (placeholder) return []
-    if (section.id !== 'objects') return sectionItems
-    return byDomain.get(objectTab) ?? []
-  }, [placeholder, section.id, objectTab, sectionItems, byDomain])
+  const activeTab = section.tabs?.some((tab) => tab.key === subTab) === true
+    ? subTab
+    : (section.tabs?.[0]?.key ?? '')
+  const visible = section.tabs === undefined ? sectionItems : (byDomain.get(activeTab) ?? [])
 
   const stats = useMemo(() => ({
     total: sectionItems.length,
-    blocked: sectionItems.filter((item) => STATUS[item.id]?.label === '受阻').length,
-    untested: sectionItems.filter((item) => STATUS[item.id]?.label === '未验证').length,
+    verified: sectionItems.filter((item) => item.evidence === 'verified').length,
+    partial: sectionItems.filter((item) => item.evidence === 'partial').length,
+    irreversible: sectionItems.filter((item) => item.irreversible === true).length,
     params: sectionItems.reduce((sum, item) => sum + item.params.length, 0),
     writes: sectionItems.filter((item) => kindOf(item) === 'write').length,
   }), [sectionItems])
 
   function pick(next: SectionId): void {
     setSectionId(next)
+    setSubTab('')
     setOpenId('')
   }
 
@@ -408,35 +449,34 @@ export function ConfigToolsTab() {
         <div className="akw-cfg__lede">
           <p>{section.hint}</p>
           <div className="akw-cfg__stats">
-            {placeholder ? null : (
-              <>
-                <span className="akw-cfg__stat"><b>{stats.total}</b><em>接口</em></span>
-                {stats.total === 0 ? null : <span className="akw-cfg__stat"><b>{stats.params}</b><em>参数</em></span>}
-                {stats.blocked > 0 ? <span className="akw-cfg__stat is-danger"><b>{stats.blocked}</b><em>受阻</em></span> : null}
-                {stats.untested > 0 ? <span className="akw-cfg__stat is-warn"><b>{stats.untested}</b><em>未验证</em></span> : null}
-              </>
-            )}
+            <span className="akw-cfg__stat"><b>{stats.total}</b><em>接口</em></span>
+            {stats.writes > 0 ? <span className="akw-cfg__stat"><b>{stats.writes}</b><em>写入</em></span> : null}
+            {stats.total === 0 ? null : <span className="akw-cfg__stat"><b>{stats.params}</b><em>参数</em></span>}
+            {stats.partial > 0 ? <span className="akw-cfg__stat is-warn"><b>{stats.partial}</b><em>待验证</em></span> : null}
+            {stats.irreversible > 0 ? <span className="akw-cfg__stat is-danger"><b>{stats.irreversible}</b><em>不可逆</em></span> : null}
           </div>
         </div>
 
-        {!placeholder && stats.writes > 0 ? (
-          <p className="akw-cfg__legend">写入类操作都不可撤销（提交即生效，平台侧没有回滚）；查询类只读。</p>
+        {stats.writes > 0 ? (
+          <p className="akw-cfg__legend">
+            写入即生效，平台侧没有回滚；✅ 是抓包/验证环境跑通，⚠️ 是监听或推断，上生产前先在测试对象上验证。
+            示例是参数对象：path / query 参数会拼进 URL，其余整体作为请求体。
+          </p>
         ) : null}
 
-        {section.id === 'access' ? (
+        {section.id === 'auth' ? (
           <EgmpSessionPanel session={session} onChange={setSession} />
         ) : null}
 
-
-        {section.id === 'objects' ? (
-          <div className="akw-cfg__subtabs" role="group" aria-label="对象处理分类">
-            {OBJECT_TABS.map((tab) => (
+        {section.tabs !== undefined ? (
+          <div className="akw-cfg__subtabs" role="group" aria-label={`${section.label}分类`}>
+            {section.tabs.map((tab) => (
               <button
                 key={tab.key}
                 type="button"
-                aria-pressed={objectTab === tab.key}
-                className={`akw-cfg__subtab${objectTab === tab.key ? ' is-active' : ''}`}
-                onClick={() => { setObjectTab(tab.key); setOpenId('') }}
+                aria-pressed={activeTab === tab.key}
+                className={`akw-cfg__subtab${activeTab === tab.key ? ' is-active' : ''}`}
+                onClick={() => { setSubTab(tab.key); setOpenId('') }}
               >
                 {tab.label}
                 <span>{(byDomain.get(tab.key) ?? []).length}</span>
@@ -461,24 +501,12 @@ export function ConfigToolsTab() {
           </div>
         ) : null}
 
-        {!loading && visible.length === 0 && section.id === 'lifecycle' ? (
+        {!loading && visible.length === 0 && error === '' ? (
           <EmptyState
-            title="生命周期处理还没做"
-            desc="对象状态机的写入流程还没设计，这一区先留空。"
-            note={sectionItems.length > 0 ? `底层已登记 ${sectionItems.length} 个状态写入接口（未验证），等流程定下来再接进来。` : undefined}
+            title="这一栏还没有接口"
+            desc="能力目录里没有登记这个域的接口。"
+            note="检查 plugin/src/config/capabilities.ts 是否漏了域映射。"
           />
-        ) : null}
-
-        {!loading && visible.length === 0 && section.id === 'workflow' ? (
-          <EmptyState
-            title="工作流处理还没做"
-            desc="审批流与流程编排还没有接口封装，这一区先留空。"
-            note="等流程与接口确认后，再把能力登记进 config/capabilities。"
-          />
-        ) : null}
-
-        {!loading && visible.length === 0 && section.id !== 'lifecycle' && section.id !== 'workflow' ? (
-          <div className="akw-cfg__hint">这一区还没有登记接口。</div>
         ) : null}
       </div>
     </div>

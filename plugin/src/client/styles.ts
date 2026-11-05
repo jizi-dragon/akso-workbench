@@ -304,6 +304,18 @@ export const CSS = `
 .akw-cfg__params td{padding:3px 8px 3px 0;color:var(--dsw-alias-label-secondary);vertical-align:top}
 .akw-cfg__params td.is-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-primary)}
 
+/* 请求示例：标题条 + 可滚动代码块，复制按钮贴右上 */
+.akw-cfg__ex{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
+.akw-cfg__exhead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 6px 5px 10px;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:10.5px;line-height:16px;color:var(--dsw-alias-label-caption)}
+.akw-cfg__copy{padding:2px 8px;border:1px solid var(--dsw-alias-border-l3);border-radius:7px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-secondary);font:inherit;font-size:10.5px;line-height:15px;cursor:pointer;transition:border-color .14s ease,color .14s ease}
+.akw-cfg__copy:hover{border-color:var(--dsw-alias-border-l4);color:var(--dsw-alias-label-primary)}
+.akw-cfg__copy:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:1px}
+.akw-cfg__code{max-height:280px;margin:0;padding:8px 10px 9px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10.5px;line-height:1.55;color:var(--dsw-alias-label-secondary);white-space:pre;tab-size:2}
+.akw-cfg__ret{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.akw-cfg__ret b{margin-right:6px;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.akw-cfg__notes{display:grid;gap:3px;margin:0;padding-left:16px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.akw-cfg__notes li::marker{color:var(--dsw-alias-label-caption)}
+
 .akw-cfg__empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;width:100%;max-width:720px;padding:46px 24px;border:1px dashed var(--dsw-alias-border-l3);border-radius:16px;text-align:center}
 .akw-cfg__empty svg{width:48px;height:48px;margin-bottom:2px;color:var(--dsw-alias-label-caption)}
 .akw-cfg__empty b{font-size:14px;font-weight:600;color:var(--dsw-alias-label-secondary)}

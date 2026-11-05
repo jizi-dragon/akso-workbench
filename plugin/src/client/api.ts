@@ -156,5 +156,8 @@ export const api = {
     call<EgmpSessionView & { ok: boolean }>('config/login', post(input)),
   configLogout: () => call<{ ok: boolean; loggedIn: boolean }>('config/logout', post({})),
   /** 能力目录（工具页的数据源）。返回的 items 形状由 tools.tsx 自己声明。 */
-  configCapabilities: () => call<{ session: EgmpSessionView; groups: Array<{ domain: string; items: unknown[] }> }>('config/capabilities'),
+  configCapabilities: () =>
+    call<{ session: EgmpSessionView; groups: Array<{ domain: string; label?: string; items: unknown[] }> }>(
+      'config/capabilities',
+    ),
 }

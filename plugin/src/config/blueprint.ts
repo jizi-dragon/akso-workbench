@@ -7,7 +7,7 @@
  *   - 每个资源带 `kind`，引擎按 kind 找 domain 处理。
  */
 
-export type ResourceKind = 'picklist' | 'object' | 'lifecycle' | 'field' | 'formLayout' | 'listLayout' | 'menu'
+export type ResourceKind = 'picklist' | 'object' | 'lifecycle' | 'field' | 'formLayout' | 'listLayout' | 'menu' | 'call'
 
 export interface PicklistOptionSpec {
   name: string
@@ -71,6 +71,21 @@ export interface MenuResource {
   listLayoutCode?: string
 }
 
+/**
+ * 兜底资源：直接按能力目录里的 id 调用。
+ *
+ * 用于还没被建模成结构化资源的接口（工作流 18 条、状态按钮、通知等）。
+ * 引擎只做"必填参数检查 + 原样调用 + 回读"，不做差异比对 —— 幂等性由参数自己保证。
+ */
+export interface CallResource {
+  kind: 'call'
+  /** 能力目录里的 id，例如 workflow.task.add */
+  capability: string
+  /** 卡片标题，缺省用能力标题 */
+  title?: string
+  params?: Record<string, unknown>
+}
+
 export type Resource =
   | PicklistResource
   | ObjectResource
@@ -79,6 +94,7 @@ export type Resource =
   | FormLayoutResource
   | ListLayoutResource
   | MenuResource
+  | CallResource
 
 export interface Blueprint {
   version?: number
@@ -93,7 +109,7 @@ export interface ValidationResult {
   warnings: string[]
 }
 
-const KIND_SET = new Set<ResourceKind>(['picklist', 'object', 'lifecycle', 'field', 'formLayout', 'listLayout', 'menu'])
+const KIND_SET = new Set<ResourceKind>(['picklist', 'object', 'lifecycle', 'field', 'formLayout', 'listLayout', 'menu', 'call'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -177,6 +193,13 @@ export function validateBlueprint(input: unknown): ValidationResult {
         if (resource.menuActionType === 1 && typeof resource.parentMenuId !== 'string') {
           warnings.push(`${at} 子菜单没有 parentMenuId，平台可能拒绝`)
         }
+        break
+      }
+      case 'call': {
+        requireString('capability')
+        if (resource.params !== undefined && !isRecord(resource.params)) errors.push(`${at}.params 必须是 JSON 对象`)
+        if (resource.title !== undefined && typeof resource.title !== 'string') errors.push(`${at}.title 必须是字符串`)
+        warnings.push(`${at} 是 call 资源：跳过差异比对，按参数原样调用 ${String(resource.capability ?? '')}`)
         break
       }
     }

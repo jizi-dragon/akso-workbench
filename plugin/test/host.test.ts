@@ -1107,3 +1107,35 @@ test('选项集回读：平台留下的旧选项不算失败，只在消息里�
     await egmp.close()
   }
 })
+
+/* ─────────────── call：文档里其余接口按能力目录原样调用 ─────────────── */
+
+test('call 资源：按目录生成一步、不比对现状；未知能力/缺必填参数在计划阶段就挡住', async () => {
+  const home = freshHome()
+  const session = { baseUrl: 'https://example.invalid', account: 'tester', token: 'jwt', savedAt: Date.now() }
+  const blueprint = (resources: unknown[]) => ({ version: 1, env: 'test', resources } as never)
+
+  const plan = await planBlueprint(session, blueprint([
+    { kind: 'call', capability: 'workflow.status.change', params: { ids: ['cfg-1'], status: 40, workflowBasicId: 'wb-1' } },
+  ]), home)
+  assert.equal(plan.steps.length, 1)
+  const step = plan.steps[0]!
+  assert.equal(step.kind, 'call')
+  assert.equal(step.action, 'create')
+  assert.equal(step.capabilityId, 'workflow.status.change')
+  assert.deepEqual(step.params, { ids: ['cfg-1'], status: 40, workflowBasicId: 'wb-1' })
+  assert.equal(step.irreversible, false)
+  assert.match(step.warnings.join(' '), /原样调用 POST \/api\/platform\/Workflow\/ChangeWorkflowBasicStatus/)
+  assert.match(step.warnings.join(' '), /不做差异比对/)
+
+  await assert.rejects(
+    () => planBlueprint(session, blueprint([{ kind: 'call', capability: 'workflow.task.add', params: {} }]), home),
+    /缺少必填参数/,
+    'step 信封是必填参数，漏了就别执行',
+  )
+  await assert.rejects(
+    () => planBlueprint(session, blueprint([{ kind: 'call', capability: 'workflow.nope', params: {} }]), home),
+    /未知能力/,
+  )
+})
+

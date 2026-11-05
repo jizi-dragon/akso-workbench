@@ -174,8 +174,9 @@ export async function request(
   }
   const headers: Record<string, string> = { Authorization: `Bearer ${session.token}`, Accept: 'application/json' }
   const init: RequestInit = { method, headers }
-  if (body !== undefined && method !== 'GET' && method !== 'DELETE') {
-    // ★ 必须显式声明，否则平台回 415
+  if (body !== undefined && method !== 'GET') {
+    // ★ 必须显式声明，否则平台回 415。DELETE 也允许带 body：
+    // 平台的 DeleteWorkflowStep / DeleteWorkflowBasic 都是"DELETE + {id}"（见接口清单）。
     headers['Content-Type'] = 'application/json'
     init.body = JSON.stringify(body)
   }

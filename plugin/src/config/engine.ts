@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { CAPABILITIES, findCapability, type Capability, type Risk } from './capabilities.ts'
 import { call, EgmpError, request, type EgmpSession } from './session.ts'
 import { dataDir } from '../store.ts'
-import type { Blueprint, FieldResource, FormLayoutResource, ListLayoutResource, MenuResource, ObjectResource, PicklistResource, LifecycleResource, ResourceKind } from './blueprint.ts'
+import type { Blueprint, CallResource, FieldResource, FormLayoutResource, ListLayoutResource, MenuResource, ObjectResource, PicklistResource, LifecycleResource, ResourceKind } from './blueprint.ts'
 import { validateBlueprint } from './blueprint.ts'
 
 export interface Step {
@@ -94,7 +94,7 @@ async function getObject(ctx: QueryContext, code: string): Promise<Record<string
 
 async function getFields(ctx: QueryContext, objectCode: string): Promise<Array<Record<string, unknown>>> {
   if (ctx.fields.has(objectCode)) return ctx.fields.get(objectCode)!
-  const json = await tryInvoke(ctx.session, 'query.fields.list', { code: objectCode })
+  const json = await tryInvoke(ctx.session, 'query.fields.list', { objectCode })
   const data = json?.data as Record<string, unknown> | undefined
   const list = Array.isArray(data?.fields) ? (data!.fields as Array<Record<string, unknown>>) : Array.isArray(data) ? (data as Array<Record<string, unknown>>) : []
   ctx.fields.set(objectCode, list)
@@ -384,29 +384,13 @@ export async function planBlueprint(session: EgmpSession, input: Blueprint, dshH
         break
       }
       case 'formLayout': {
-        throw new EgmpError('表单布局写入暂不可用：平台要求 section.belongId 由其 FullPath 生成，具体规则待录制补齐。请先用 listLayout / menu，或等逆向完成。')
+        // 不做自动合并：SaveLayoutDetail 是全量替换，新分区 section.belongId 由平台按 FullPath 生成（文档标 ⚠️），
+        // 硬拼一份大概率把 pages 写坏。这一步只把人指向 call 兜底。
         const spec = resource as FormLayoutResource
-        const object = await getObject(ctx, spec.object)
-        const depends: string[] = []
-        if (object === null && objectStepIds.has(spec.object)) depends.push(objectStepIds.get(spec.object)!)
-        for (const section of spec.sections) for (const field of section.fields) {
-          const key = `${spec.object}.${field}`
-          if (fieldStepIds.has(key)) depends.push(fieldStepIds.get(key)!)
-        }
-        add({
-          kind: 'formLayout',
-          action: 'update',
-          title: `表单布局 ${spec.object}`,
-          naturalKey: `${spec.object}.formLayout`,
-          risk: 'medium',
-          irreversible: false,
-          capabilityId: 'layout.save',
-          params: { objectRef: spec.object, sections: spec.sections },
-          expected: { fields: spec.sections.flatMap((s) => s.fields) },
-          dependsOn: depends,
-          warnings: ['SaveLayoutDetail 是全量提交：执行时会先读原布局再合并'],
-        })
-        break
+        throw new EgmpError(
+          `表单布局 ${spec.object} 不做自动合并：SaveLayoutDetail 是全量替换，新 section 的 belongId 由 FullPath 生成（文档标 ⚠️，未实测）。` +
+            '请改用 kind:"call" + capability:"layout.save"：先 GET LayoutDetail 读全量，按文档改 sections/controls，再把 pages 原值一起提交。',
+        )
       }
       case 'listLayout': {
         const spec = resource as ListLayoutResource
@@ -448,13 +432,45 @@ export async function planBlueprint(session: EgmpSession, input: Blueprint, dshH
             menuActionType: spec.menuActionType,
             ...(spec.parentMenuId !== undefined ? { parentMenuId: spec.parentMenuId } : {}),
             ...(spec.object !== undefined ? { objectCode: spec.object } : {}),
+            ...(spec.layoutCode !== undefined ? { layoutCode: spec.layoutCode } : {}),
+            ...(spec.listLayoutCode !== undefined ? { listLayoutCode: spec.listLayoutCode } : {}),
             source: 2,
             menuType: 1,
             status: 1,
+            childShowType: null,
+            ...(spec.menuActionType === 3 ? { backgroundColor: '#366EF4' } : { createType: 4 }),
           },
           expected: { code: spec.code },
           dependsOn: [],
           warnings: ['平台没有按 code 预检菜单的接口：本步骤不做重复判断'],
+        })
+        break
+      }
+      case 'call': {
+        const spec = resource as CallResource
+        const cap = findCapability(spec.capability)
+        if (cap === undefined) throw new EgmpError(`call 资源引用了未知能力：${spec.capability}`)
+        const params: Record<string, unknown> = { ...(spec.params ?? {}) }
+        const missing = cap.params
+          .filter((param) => param.required === true)
+          .filter((param) => params[param.name] === undefined || params[param.name] === null || params[param.name] === '')
+          .map((param) => param.name)
+        if (missing.length > 0) {
+          throw new EgmpError(`call ${spec.capability} 缺少必填参数：${missing.join('、')}`)
+        }
+        add({
+          kind: 'call',
+          action: 'create',
+          title: spec.title ?? cap.title,
+          naturalKey: spec.capability,
+          risk: cap.risk,
+          irreversible: cap.irreversible === true,
+          capabilityId: cap.id,
+          params,
+          dependsOn: [],
+          warnings: [cap.method === 'GET'
+            ? `只读调用：按能力目录 ${cap.method} ${cap.path} 查询，执行后回显结果`
+            : `按能力目录原样调用 ${cap.method} ${cap.path}，不做差异比对`],
         })
         break
       }
@@ -627,9 +643,9 @@ async function applyStep(ctx: QueryContext, step: Step, res: Resolution): Promis
 
   // 通用：按 capability 调用，执行前解析引用
   const params: Record<string, unknown> = { ...step.params }
-  if (step.kind === 'object' || step.kind === 'picklist') {
+  if (step.kind === 'object' || step.kind === 'picklist' || step.kind === 'call') {
     const json = await invokeCapability(ctx.session, step.capabilityId, params)
-    return { message: 'ok', after: json.data ?? null }
+    return { message: step.kind === 'call' ? `已调用 ${step.capabilityId}` : 'ok', after: json.data ?? null }
   }
   if (step.kind === 'field') {
     const objectCode = String(step.expected?.object ?? '')
@@ -641,7 +657,7 @@ async function applyStep(ctx: QueryContext, step: Step, res: Resolution): Promis
     }
     if (typeof params.referenceObjectCode === 'string') {
       params.referenceObjectId = await resolveObjectId(ctx, res, params.referenceObjectCode)
-      params.objectRelation = {}
+      params.objectRelation = { controlField: null }
       delete params.referenceObjectCode
     }
     const json = await invokeCapability(ctx.session, step.capabilityId, params)
@@ -662,6 +678,23 @@ async function applyStep(ctx: QueryContext, step: Step, res: Resolution): Promis
     if (typeof params.objectCode === 'string') {
       params.objectId = await resolveObjectId(ctx, res, params.objectCode)
       delete params.objectCode
+    }
+    const objectId = typeof params.objectId === 'string' ? params.objectId : ''
+    if (typeof params.layoutCode === 'string' && objectId !== '') {
+      const list = await invokeCapability(ctx.session, 'layout.list', { basicObjectId: objectId, pageIndex: 1, pageSize: 50 })
+      const layouts = ((list.data as Record<string, unknown> | undefined)?.datas ?? []) as Array<Record<string, unknown>>
+      const found = layouts.find((item) => String(item.code ?? '') === params.layoutCode)
+      if (found === undefined) throw new EgmpError(`布局 ${String(params.layoutCode)} 不存在`)
+      params.layoutId = String(found.id ?? '')
+      delete params.layoutCode
+    }
+    if (typeof params.listLayoutCode === 'string' && objectId !== '') {
+      const list = await invokeCapability(ctx.session, 'listlayout.list', { objectId })
+      const layouts = Array.isArray(list.data) ? (list.data as Array<Record<string, unknown>>) : []
+      const found = layouts.find((item) => String(item.code ?? '') === params.listLayoutCode)
+      if (found === undefined) throw new EgmpError(`列表布局 ${String(params.listLayoutCode)} 不存在`)
+      params.listLayoutId = String(found.id ?? '')
+      delete params.listLayoutCode
     }
     const json = await invokeCapability(ctx.session, step.capabilityId, params)
     return { message: 'ok', after: json.data ?? null }
@@ -738,6 +771,20 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
       }
       case 'menu':
         return { verified: false, message: '平台无按 code 回查菜单的接口，需人工在控制台确认' }
+      case 'call': {
+        const params = (step.params ?? {}) as Record<string, unknown>
+        const code = typeof params.code === 'string' ? params.code : ''
+        if (step.capabilityId === 'object.save' && code !== '') {
+          const object = await getObject(ctx, code)
+          return { verified: object !== null, message: object === null ? '回读未找到对象' : '对象存在' }
+        }
+        if (step.capabilityId === 'picklist.save' && code !== '') {
+          const data = await getPicklist(ctx, code)
+          return { verified: data !== null, message: data === null ? '回读未找到选项集' : '选项集存在' }
+        }
+        const cap = findCapability(step.capabilityId)
+        return { verified: false, message: `${cap?.title ?? step.capabilityId} 暂无稳定回读方式，需人工确认` }
+      }
       default:
         return { verified: false, message: '未知类型' }
     }

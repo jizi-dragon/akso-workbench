@@ -70,6 +70,7 @@ const KIND_LABEL: Record<string, string> = {
   formLayout: '表单布局',
   listLayout: '列表布局',
   menu: '菜单',
+  call: '接口',
 }
 
 function actionVerb(action: string): string {
@@ -155,7 +156,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
       properties: {
         blueprint: {
           type: 'string',
-          description: '蓝图 JSON 字符串：{ version, env, resources:[{kind, ...}] }；kind 支持 picklist/object/lifecycle/field/formLayout/listLayout/menu',
+          description: '蓝图 JSON 字符串：{ version, env, resources:[{kind, ...}] }；kind 支持 picklist/object/lifecycle/field/listLayout/menu，以及 call（按能力目录 id 原样调用，用于工作流、状态按钮等 47 条里的其余接口）；formLayout 不做自动合并（全量替换风险高），请用 call + layout.save 提交完整布局',
         },
       },
       required: ['blueprint'],
