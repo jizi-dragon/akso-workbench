@@ -1122,43 +1122,6 @@ function jwtFor(ttlMs: number, now = Date.now()): string {
   ].join('.')
 }
 
-/** 假 eGMP：只实现 Auth（账号+口令 → JWT），用来验「过期自动续票」。 */
-async function startFakeAuth(): Promise<{
-  baseUrl: string
-  token: string
-  hits: () => number
-  body: () => Record<string, unknown>
-  close: () => Promise<void>
-}> {
-  const state = { hits: 0, body: {} as Record<string, unknown>, token: jwtFor(50 * 60_000) }
-  const server = createServer((req, res) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => chunks.push(chunk))
-    req.on('end', () => {
-      try {
-        state.body = chunks.length === 0 ? {} : (JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>)
-      } catch {
-        state.body = {}
-      }
-      state.hits += 1
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ code: 0, errorCode: 0, message: null, data: state.token }))
-    })
-  })
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  const address = server.address() as AddressInfo
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    token: state.token,
-    hits: () => state.hits,
-    body: () => state.body,
-    close: () => new Promise<void>((resolve) => {
-      server.closeAllConnections()
-      server.close(() => resolve())
-    }),
-  }
-}
-
 test('call 资源：按目录生成一步、不比对现状；未知能力/缺必填参数在计划阶段就挡住', async () => {
   const home = freshHome()
   const session = { baseUrl: 'https://example.invalid', account: 'tester', token: 'jwt', savedAt: Date.now() }
@@ -1189,46 +1152,49 @@ test('call 资源：按目录生成一步、不比对现状；未知能力/缺�
 })
 
 
-test('令牌过期：账号条自己用账号库口令换新票，页面只拿到有效期', async () => {
+test('令牌过期：账号条拿账号 id 找云端换新票，口令不经过 host', async () => {
   const home = freshHome()
   const cloud = await startFakeCloud()
-  const egmp = await startFakeAuth()
   try {
     const { routes } = mount(home, cloud.url)
     await loginWith(routes)
-    const site = await call(routes, P.siteCreate, 'POST', { baseUrl: egmp.baseUrl })
+    const site = await call(routes, P.siteCreate, 'POST', { baseUrl: 'https://egmp.example.com' })
     const siteId = (site.json.sites as Array<{ id: string }>)[0]!.id
     const created = await call(routes, P.accountCreate, 'POST', { siteId, username: 'liyulong', password: 'pw-secret' })
     const accountId = (created.json.accounts as Array<{ id: string }>)[0]!.id
     await call(routes, P.poolToggle, 'POST', { id: accountId, inPool: true })
     await call(routes, P.accountCurrent, 'POST', { id: accountId })
 
-    // ① 旧票已过期：一次 GET 就把新票换回来（口令来自 akso-cloud，账号来自账号条）
-    writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'liyulong', token: jwtFor(-60_000), savedAt: Date.now() - 3_600_000 })
+    // ① 旧票已过期：一次 GET 就让云端代登录换回新票（host 只发账号 id）
+    writeEgmpSession(home, { baseUrl: 'https://egmp.example.com', account: 'liyulong', token: jwtFor(-60_000), savedAt: Date.now() - 3_600_000 })
     const res = await call(routes, P.configToken, 'GET')
     assert.equal(res.status, 200)
     assert.equal(res.json.refreshed, true)
     assert.equal(res.json.token, null, 'JWT 本体不下发浏览器：页面只读时间')
     assert.equal(res.json.account, 'liyulong')
     assert.ok(Number(res.json.expiresAt) > Date.now(), '到期时间应当是新的')
-    assert.equal(egmp.hits(), 1, '换票只发一次 Auth')
-    assert.deepEqual(egmp.body(), { account: 'liyulong', password: 'pw-secret' })
+    assert.equal(res.raw.includes('pw-secret'), false, '口令不能出现在任何响应里')
 
-    // ② 新票已落盘：下一次读不再换票
+    // 云端只收到"账号 id"；口令是它自己库里那一条，由它解密后换成票
+    assert.equal(cloud.state.mintedTokens.length, 1, '换票只应发生一次')
+    const minted = cloud.state.mintedTokens[0] as { accountId: string; password: string; token: string }
+    assert.equal(minted.accountId, accountId)
+    assert.equal(minted.password, 'pw-secret')
+
+    // ② 新票已落盘（就是云端发来的那张）：下一次读不再换票
     const saved = JSON.parse(readFileSync(join(home, 'akso-workbench', 'egmp-session.json'), 'utf8')) as { token: string }
-    assert.equal(saved.token, egmp.token)
+    assert.equal(saved.token, minted.token)
     const again = await call(routes, P.configToken, 'GET')
     assert.equal(again.json.refreshed, false)
-    assert.equal(egmp.hits(), 1)
+    assert.equal(cloud.state.mintedTokens.length, 1)
 
     // ③ 没连账号：给原因，不硬造一张假票
     await call(routes, P.accountCurrent, 'POST', { id: '' })
-    writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'liyulong', token: jwtFor(-60_000), savedAt: Date.now() })
+    writeEgmpSession(home, { baseUrl: 'https://egmp.example.com', account: 'liyulong', token: jwtFor(-60_000), savedAt: Date.now() })
     const bare = await call(routes, P.configToken, 'GET')
     assert.equal(bare.json.refreshed, false)
     assert.match(String(bare.json.reason), /还没有连接账号/)
   } finally {
-    await egmp.close()
     await cloud.close()
   }
 })

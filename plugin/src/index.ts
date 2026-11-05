@@ -24,7 +24,7 @@ import * as cloud from './cloud.ts'
 import { clearSession, readPool, readPrefs, readSession, writePool, writePrefs, writeSession } from './store.ts'
 import { buildSnapshotTool } from './tool.ts'
 import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
-import { cloudCredentialProvider, toCredentialAccount } from './credentials.ts'
+import { cloudCredentialProvider } from './credentials.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
 import { EgmpError, clearEgmpSession, login as egmpLogin, publicSession, readEgmpSession, tokenView, writeEgmpSession, type EgmpSession } from './config/session.ts'
 import { buildConfigApplyTool, buildConfigPlanTool, type AskQuestion, type ToolExec } from './config/tools.ts'
@@ -106,8 +106,6 @@ export const ROUTES = {
   configSession: '/api/akso-workbench/config/session',
   configToken: '/api/akso-workbench/config/token',
   configLogin: '/api/akso-workbench/config/login',
-  configCredentials: '/api/akso-workbench/config/credentials',
-  configLoginWithAccount: '/api/akso-workbench/config/login-with-account',
   configLogout: '/api/akso-workbench/config/logout',
   configInvoke: '/api/akso-workbench/config/invoke',
   configPlan: '/api/akso-workbench/config/plan',
@@ -272,7 +270,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     return next
   }
 
-  /** 账号库凭据的唯一入口：口令只在这里被取一次，取完立刻换 JWT。 */
+  /** 账号库凭据的唯一入口：本进程只拿账号 id 去换票，**从不接触明文口令**。 */
   function credentialProvider(): ReturnType<typeof cloudCredentialProvider> {
     return cloudCredentialProvider({
       accounts: () => snapshot?.accounts ?? [],
@@ -286,8 +284,9 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
 
   /**
    * 令牌自动续期 —— **用户不需要自己换票**。
-   * 有效（剩 > 2 分钟）就直接用；过期就拿账号条当前账号的口令去换一张，换完落盘。
-   * 换不到（没连账号 / akso-cloud 没登录 / 没存口令）就原样返回旧会话，并把原因带出去。
+   * 有效（剩 > 2 分钟）就直接用；过期就拿账号条当前账号去 akso-cloud 换一张新票（云端代登录，
+   * 口令不出云端），换完落盘。换不到（没连账号 / akso-cloud 没登录 / 没存口令）就原样返回旧会话，
+   * 并把原因带出去。
    */
   async function ensureEgmpSession(): Promise<{ session: EgmpSession | null; refreshed: boolean; reason: string | null }> {
     const existing = readEgmpSession(dshHome)
@@ -298,11 +297,16 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     const accountId = readPrefs(dshHome).currentAccountId
     if (accountId === null) return { session: existing, refreshed: false, reason: '账号条还没有连接账号' }
     const cloudSession = readSession(dshHome)
-    if (cloudSession === null) return { session: existing, refreshed: false, reason: 'akso-cloud 未登录，取不到账号口令' }
+    if (cloudSession === null) return { session: existing, refreshed: false, reason: 'akso-cloud 未登录，换不到 eGMP 令牌' }
     try {
       if (snapshot === null) await sync(cloudSession)
-      const credential = await credentialProvider().reveal(accountId)
-      const session = await egmpLogin(credential.baseUrl, credential.account, credential.password)
+      const minted = await credentialProvider().mint(accountId)
+      const session: EgmpSession = {
+        baseUrl: minted.baseUrl,
+        account: minted.account,
+        token: minted.token,
+        savedAt: Date.now(),
+      }
       writeEgmpSession(dshHome, session)
       return { session, refreshed: true, reason: null }
     } catch (error) {
@@ -655,51 +659,6 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       const session = await egmpLogin(String(body.baseUrl ?? ''), String(body.account ?? ''), String(body.password ?? ''))
       writeEgmpSession(dshHome, session)
       sendJson(res, 200, { ok: true, ...publicSession(session) })
-    }),
-
-    /* ───────────── 配置：账号库凭据（口令只在 host 里过一次，不回浏览器） ───────────── */
-
-    route('GET', R.configCredentials, false, async (_req, res) => {
-      const accounts = (snapshot?.accounts ?? []).map(toCredentialAccount)
-      sendJson(res, 200, {
-        accounts,
-        current: readPrefs(dshHome).currentAccountId,
-        cloudLoggedIn: readSession(dshHome) !== null,
-      })
-    }),
-
-    /**
-     * 用账号库里存的口令登录 eGMP：host 取明文 → 立刻换 JWT → 丢口令。
-     * 响应里只有会话摘要（publicSession），任何情况下都不回口令。
-     */
-    route('POST', R.configLoginWithAccount, false, async (_req, res, body) => {
-      const cloudSession = readSession(dshHome)
-      if (cloudSession === null) {
-        sendJson(res, 401, { error: 'akso-cloud 未登录，取不到账号口令' })
-        return
-      }
-      const wanted = text(body.accountId, 120)
-      const accountId = wanted !== '' ? wanted : (readPrefs(dshHome).currentAccountId ?? '')
-      if (accountId === '') {
-        sendJson(res, 400, { error: '没有指定账号，账号条上也没有当前连接的账号' })
-        return
-      }
-      if (snapshot === null) await sync(cloudSession)
-      const credential = await credentialProvider().reveal(accountId)
-      const session = await egmpLogin(credential.baseUrl, credential.account, credential.password)
-      writeEgmpSession(dshHome, session)
-      const account = (snapshot?.accounts ?? []).find((item) => item.id === accountId)
-      sendJson(res, 200, {
-        ok: true,
-        session: publicSession(session),
-        account: {
-          id: accountId,
-          account: credential.account,
-          baseUrl: credential.baseUrl,
-          label: account === undefined ? credential.account : toCredentialAccount(account).label,
-          siteName: account?.siteName ?? '',
-        },
-      })
     }),
 
     route('POST', R.configLogout, false, async (_req, res) => {

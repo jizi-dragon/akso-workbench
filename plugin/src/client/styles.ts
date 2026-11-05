@@ -152,15 +152,6 @@ export const CSS = `
 .akw-strip__add{flex:none;height:24px;padding:0 10px;border-radius:999px;border:1px dashed var(--dsw-alias-border-l3);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:22px;cursor:pointer;white-space:nowrap;transition:color .14s ease,border-color .14s ease}
 .akw-strip__add:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-state-business-primary)}
 /* 令牌只是显示：有效/剩多久/已过期，点一下开面板看签发与到期时间 */
-.akw-strip__jwt{display:inline-flex;align-items:center;gap:5px;flex:none;height:24px;padding:0 10px 0 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l3);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11.5px;line-height:22px;cursor:pointer;white-space:nowrap;transition:border-color .14s ease,color .14s ease}
-.akw-strip__jwt:hover{border-color:var(--dsw-alias-border-l4);color:var(--dsw-alias-label-primary)}
-.akw-strip__jwtDot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-caption);flex:none}
-.akw-strip__jwt.is-ok{color:var(--dsw-alias-label-secondary)}
-.akw-strip__jwt.is-ok .akw-strip__jwtDot{background:var(--dsw-alias-state-success-primary)}
-.akw-strip__jwt.is-warn{border-color:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-state-warn-primary)}
-.akw-strip__jwt.is-warn .akw-strip__jwtDot{background:var(--dsw-alias-state-warn-primary)}
-.akw-strip__jwt.is-off{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}
-.akw-strip__jwt.is-off .akw-strip__jwtDot{background:var(--dsw-alias-state-error-primary)}
 .akw-strip__retry{height:24px;padding:0 10px;border-radius:999px;border:1px solid var(--dsw-alias-state-error-primary);background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;cursor:pointer}
 
 /* 换/清连接的小面板（点已连接的胶囊弹出；点外面或 Esc 关闭） */
@@ -181,16 +172,6 @@ export const CSS = `
 .akw-picker__clear{align-self:flex-start;height:26px;padding:0 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;cursor:pointer}
 .akw-picker__clear:hover{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l4)}
 
-/* 令牌一角：只显示"有没有 · 签发/到期"，正文（JWT）不摊开 —— 用户不需要自己取票 */
-.akw-token{display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2)}
-.akw-token__row{display:flex;align-items:center;gap:6px;min-width:0}
-.akw-token__dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
-.akw-token__row.is-on .akw-token__dot{background:var(--dsw-alias-state-success-primary)}
-.akw-token__row.is-warn .akw-token__dot{background:var(--dsw-alias-state-warn-primary)}
-.akw-token__row.is-off .akw-token__dot{background:var(--dsw-alias-state-error-primary)}
-.akw-token__name{flex:none;font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary)}
-.akw-token__meta{flex:1;min-width:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
-.akw-token__times{display:flex;gap:10px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 
 /* 登录门（akso-pass 的 login-mask 形态） */
 .akw-body--center{align-items:center;justify-content:center}

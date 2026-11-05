@@ -35,6 +35,8 @@ export function startFakeCloud(options = {}) {
     accounts: [],
     sites: [],
     boxes: [{ name: DEFAULT_BOX, isDefault: true, disabled: true, autoDisabled: true, count: 0, siteId: '', siteName: '' }],
+    /** 每次代登录记一笔：{ accountId, password } —— 用来断言 host 只拿 id 换票 */
+    mintedTokens: [],
   }
   const tokens = new Map()
   /** accountId → 明文口令（真云端是 Fernet 密文，这里只要"能取到同一串"） */
@@ -203,16 +205,38 @@ export function startFakeCloud(options = {}) {
       send(res, 200, account)
       return
     }
-    // 真云端：`GET /api/accounts/:id/password` → {password}（Fernet 解密后的明文，仅 owner）
-    const passwordMatch = /^\/api\/accounts\/([^/]+)\/password$/.exec(path)
-    if (passwordMatch && req.method === 'GET') {
-      const target = decodeURIComponent(passwordMatch[1])
+    // 真云端：`POST /api/accounts/:id/egmp-token` → 云端代登录，只回 JWT（口令不出云端）
+    // 原 `GET /api/accounts/:id/password` 端点已删除（2026-11-05），这里留着断言用
+    const tokenMatch = /^\/api\/accounts\/([^/]+)\/egmp-token$/.exec(path)
+    if (tokenMatch && req.method === 'POST') {
+      const target = decodeURIComponent(tokenMatch[1])
       const password = passwords.get(target)
-      if (password === undefined) {
+      const account = state.accounts.find((a) => a.id === target)
+      if (password === undefined || account === undefined) {
         send(res, 404, { detail: '该账号没有存密码' })
         return
       }
-      send(res, 200, { password })
+      const now = Date.now()
+      // 假云端"代登录"：只回一张形状像样的 JWT（exp 50 分钟后），口令留在云端不出现
+      const token = [
+        Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url'),
+        Buffer.from(
+          JSON.stringify({ sub: account.username, iat: Math.floor(now / 1000), exp: Math.floor((now + 50 * 60_000) / 1000) }),
+        ).toString('base64url'),
+        'sig',
+      ].join('.')
+      state.mintedTokens.push({ accountId: target, password, token })
+      send(res, 200, {
+        token,
+        baseUrl: account.baseUrl,
+        account: account.username,
+        expiresAt: now + 50 * 60_000,
+      })
+      return
+    }
+    const passwordMatch = /^\/api\/accounts\/([^/]+)\/password$/.exec(path)
+    if (passwordMatch) {
+      send(res, 404, { detail: 'Not Found' })
       return
     }
     const accountMatch = /^\/api\/accounts\/([^/]+)$/.exec(path)
