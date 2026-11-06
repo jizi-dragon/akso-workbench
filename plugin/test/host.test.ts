@@ -1234,3 +1234,40 @@ test('令牌续期：剩 4 分钟提前换票，剩 6 分钟不换；并发只�
     await cloud.close()
   }
 })
+
+test('工具 UID：三个注册工具都有唯一 UID，未登记的工具拒绝注册', async () => {
+  const { TOOL_UIDS, toolUid, withToolUid } = await import('../src/tool-uids.ts')
+
+  // ① DSH 侧能看到的三个工具都在表里（新增工具必须同步）
+  assert.deepEqual(
+    Object.keys(TOOL_UIDS).sort(),
+    ['akso_workbench_accounts', 'akso_workbench_config_apply', 'akso_workbench_config_plan'],
+  )
+
+  // ② 格式与唯一性
+  const uids = Object.values(TOOL_UIDS) as string[]
+  assert.equal(new Set(uids).size, uids.length, 'UID 不能重复')
+  for (const uid of uids) assert.match(uid, /^AKW-TOOL-[A-Z0-9]+(-[A-Z0-9]+)*-V\d+$/)
+
+  // ③ 包装后：返回对象带 _uid、描述带 UID、原定义不被改
+  const base = {
+    name: 'akso_workbench_accounts',
+    description: '读取账号快照',
+    async execute() {
+      return { ok: true }
+    },
+  }
+  const wrapped = withToolUid(base)
+  assert.equal(wrapped.uid, toolUid('akso_workbench_accounts'))
+  assert.match(String(wrapped.description), /UID: AKW-TOOL-ACCOUNTS-V1/)
+  assert.equal((base as { uid?: string }).uid, undefined, '不要改原对象')
+  const value = (await wrapped.execute()) as { _uid?: string; ok?: boolean }
+  assert.equal(value._uid, 'AKW-TOOL-ACCOUNTS-V1')
+  assert.equal(value.ok, true)
+
+  // ④ 没登记就注册：直接抛错（fail closed，不允许“先上线再补”）
+  assert.throws(
+    () => withToolUid({ name: 'akso_workbench_unregistered', async execute() { return {} } }),
+    /没有登记 UID/,
+  )
+})

@@ -23,6 +23,7 @@ import { join } from 'node:path'
 import * as cloud from './cloud.ts'
 import { clearSession, readPool, readPrefs, readSession, writePool, writePrefs, writeSession } from './store.ts'
 import { buildSnapshotTool } from './tool.ts'
+import { withToolUid } from './tool-uids.ts'
 import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
 import { cloudCredentialProvider } from './credentials.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
@@ -211,7 +212,11 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   // 一条 loopback 的 POST 没有人的审批参与，开着它等于给这道门留了个侧门。
   const allowDirectWrite = process.env.AKSO_WORKBENCH_ALLOW_DIRECT_WRITE === '1'
   const DIRECT_WRITE_HINT = '配置写入只走 agent 工具 + 宿主审批；本机调试要直连请设 AKSO_WORKBENCH_ALLOW_DIRECT_WRITE=1'
-  const logger = { warn: (error: unknown) => ctx.logger?.warn?.(error) }
+  const logger = {
+    warn: (error: unknown) => ctx.logger?.warn?.(error),
+    // 工具 UID 的调用链日志：宿主 logger 不保证有 info，取不到就静默
+    info: (message: string) => (ctx.logger as { info?: (m: string) => void } | undefined)?.info?.(message),
+  }
 
   /** 设备流：deviceCode 只在 host 侧，浏览器拿到的是"用户码 + 链接"。 */
   let pendingDevice: { deviceCode: string; startedAt: number; expiresIn: number } | null = null
@@ -784,7 +789,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     // `tools` 是可选服务：没有它（例如极简宿主）时只少一个工具，不该让插件装不上
     const registry = (typeof ctx.get === 'function' ? ctx.get('tools', false) : undefined) ?? ctx.tools
     if (registry !== undefined && registry !== null && typeof registry.register === 'function') {
-      const definition = buildSnapshotTool({
+      const definition = withToolUid(buildSnapshotTool({
         read: () => {
           const session = readSession(dshHome)
           const accounts = snapshot?.accounts ?? []
@@ -808,7 +813,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
           if (session !== null) await sync(session)
         },
         loginHint: '还没有登录 akso-cloud：请打开 DeepSeek Harness 左栏的 akso-workbench，用「在浏览器中登录」完成一次授权。',
-      })
+      }), logger)
       ctx.effect(() => registry.register(definition), 'akso-workbench: snapshot tool')
 
       const questions = (typeof ctx.get === 'function' ? ctx.get('userQuestions', false) : undefined)
@@ -825,8 +830,8 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
           return Array.isArray(selected) ? selected.map((item) => String(item)) : []
         },
       }
-      const planTool = buildConfigPlanTool(configDeps)
-      const applyTool = buildConfigApplyTool(configDeps)
+      const planTool = withToolUid(buildConfigPlanTool(configDeps), logger)
+      const applyTool = withToolUid(buildConfigApplyTool(configDeps), logger)
       ctx.effect(() => registry.register(planTool), 'akso-workbench: config plan tool')
       ctx.effect(() => registry.register(applyTool), 'akso-workbench: config apply tool')
     } else {
