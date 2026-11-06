@@ -171,6 +171,15 @@ export const CSS = `
 .akw-picker__empty p{margin:0;font-size:12px;color:var(--dsw-alias-label-tertiary)}
 .akw-picker__clear{align-self:flex-start;height:26px;padding:0 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;cursor:pointer}
 .akw-picker__clear:hover{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l4)}
+/* 令牌一行：只显示到期时间（签发时间与查看原文已按用户要求移除） */
+.akw-token{display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2);font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.akw-token__dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-state-business-primary);flex:none}
+.akw-token__name{color:var(--dsw-alias-label-secondary)}
+.akw-token__time{color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
+.akw-token.is-warn .akw-token__dot{background:var(--dsw-alias-state-error-primary)}
+.akw-token.is-warn .akw-token__time{color:var(--dsw-alias-state-error-primary)}
+.akw-token.is-off .akw-token__dot{background:var(--dsw-alias-border-l3)}
+.akw-token.is-off .akw-token__time{color:var(--dsw-alias-label-secondary)}
 
 
 /* 登录门（akso-pass 的 login-mask 形态） */
