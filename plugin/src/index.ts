@@ -284,15 +284,30 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
 
   /**
    * 令牌自动续期 —— **用户不需要自己换票**。
-   * 有效（剩 > 2 分钟）就直接用；过期就拿账号条当前账号去 akso-cloud 换一张新票（云端代登录，
+   * 有效（剩 > 5 分钟）就直接用；否则拿账号条当前账号去 akso-cloud 换一张新票（云端代登录，
    * 口令不出云端），换完落盘。换不到（没连账号 / akso-cloud 没登录 / 没存口令）就原样返回旧会话，
    * 并把原因带出去。
+   *
+   * ★ 5 分钟而不是 2 分钟：一次 plan/apply 会连续调很多接口，用同一张 session；
+   *   2 分钟的余量对慢接口/长计划太窄，宁可每 ~50 分钟多代登录一次。
+   * ★ 单飞：并发工具调用同时发现快过期时，只换一张票（云端代登录有审计记录，不该重复）。
    */
-  async function ensureEgmpSession(): Promise<{ session: EgmpSession | null; refreshed: boolean; reason: string | null }> {
+  const REFRESH_MARGIN_MS = 5 * 60 * 1000
+  let ensureInflight: Promise<{ session: EgmpSession | null; refreshed: boolean; reason: string | null }> | null = null
+
+  function ensureEgmpSession(): Promise<{ session: EgmpSession | null; refreshed: boolean; reason: string | null }> {
+    if (ensureInflight !== null) return ensureInflight
+    ensureInflight = ensureEgmpSessionOnce().finally(() => {
+      ensureInflight = null
+    })
+    return ensureInflight
+  }
+
+  async function ensureEgmpSessionOnce(): Promise<{ session: EgmpSession | null; refreshed: boolean; reason: string | null }> {
     const existing = readEgmpSession(dshHome)
     if (existing !== null) {
       const expiresAt = tokenView(existing).expiresAt
-      if (expiresAt === null || expiresAt - Date.now() > 120_000) return { session: existing, refreshed: false, reason: null }
+      if (expiresAt === null || expiresAt - Date.now() > REFRESH_MARGIN_MS) return { session: existing, refreshed: false, reason: null }
     }
     const accountId = readPrefs(dshHome).currentAccountId
     if (accountId === null) return { session: existing, refreshed: false, reason: '账号条还没有连接账号' }

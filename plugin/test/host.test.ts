@@ -1198,3 +1198,39 @@ test('令牌过期：账号条拿账号 id 找云端换新票，口令不经过 
     await cloud.close()
   }
 })
+
+test('令牌续期：剩 4 分钟提前换票，剩 6 分钟不换；并发只换一张', async () => {
+  const home = freshHome()
+  const cloud = await startFakeCloud()
+  try {
+    const { routes } = mount(home, cloud.url)
+    await loginWith(routes)
+    const site = await call(routes, P.siteCreate, 'POST', { baseUrl: 'https://egmp.example.com' })
+    const siteId = (site.json.sites as Array<{ id: string }>)[0]!.id
+    const created = await call(routes, P.accountCreate, 'POST', { siteId, username: 'liyulong', password: 'pw-secret' })
+    const accountId = (created.json.accounts as Array<{ id: string }>)[0]!.id
+    await call(routes, P.poolToggle, 'POST', { id: accountId, inPool: true })
+    await call(routes, P.accountCurrent, 'POST', { id: accountId })
+
+    // ① 只剩 4 分钟：提前换票
+    writeEgmpSession(home, { baseUrl: 'https://egmp.example.com', account: 'liyulong', token: jwtFor(4 * 60_000), savedAt: Date.now() })
+    const near = await call(routes, P.configToken, 'GET')
+    assert.equal(near.json.refreshed, true, '剩 4 分钟应当提前换票')
+    assert.equal(cloud.state.mintedTokens.length, 1)
+
+    // ② 剩 6 分钟：还不需要换
+    writeEgmpSession(home, { baseUrl: 'https://egmp.example.com', account: 'liyulong', token: jwtFor(6 * 60_000), savedAt: Date.now() })
+    const far = await call(routes, P.configToken, 'GET')
+    assert.equal(far.json.refreshed, false, '剩 6 分钟还不到续期阈值')
+    assert.equal(cloud.state.mintedTokens.length, 1)
+
+    // ③ 并发两个请求：单飞，只换一张票
+    writeEgmpSession(home, { baseUrl: 'https://egmp.example.com', account: 'liyulong', token: jwtFor(60_000), savedAt: Date.now() })
+    const [a, b] = await Promise.all([call(routes, P.configToken, 'GET'), call(routes, P.configToken, 'GET')])
+    assert.equal(a.status, 200)
+    assert.equal(b.status, 200)
+    assert.equal(cloud.state.mintedTokens.length, 2, '并发只应换一张票')
+  } finally {
+    await cloud.close()
+  }
+})
