@@ -15,9 +15,8 @@
  * 要浏览器 OAuth 链路、脚本化不了，已按用户要求在 2026-11-09 从目录里删掉，不再出现在卡片上。
  * 同一天又按用户要求删掉 `auth.login`（改为只走 akso-cloud 代登录，agent 不再接触明文口令），
  * 目录 47 → 45 → 44，本名单 43 → 42。
- * 下面 `UNVERIFIED` 注释里的 2 条因环境/协议限制没跑成功，故意**不**进名单：
- * layout.save（新增 section/control 需平台生成 FullPath，只能保真回写）、
- * menu.sort（全量替换且无读整棵树的接口，误操作会把子菜单移出层级）。
+ * 2026-11-09 晚 `layout.save` 经抓包复验通过（LayoutDetail 读全量 → 原地改 → 整份回写），
+ * 本名单 42 → 43；只剩 `menu.sort` 不验证（全量替换且无读整棵树的接口，误操作会把子菜单移出层级）。
  */
 export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   // 对象
@@ -35,6 +34,7 @@ export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   // 布局
   'layout.list',
   'layout.detail',
+  'layout.save',
   // 列表布局
   'listlayout.list',
   'listlayout.columns.get',

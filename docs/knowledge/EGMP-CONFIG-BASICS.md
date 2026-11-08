@@ -53,13 +53,14 @@
 
 ### 2.5 表单布局 `layout.save`（最大的坑）
 - 平台自动生成的布局：有 1 个「流程时间线」分区，**控件为 0** → 控制台打开表单是空的。
-- 新增分区 → `[layout_section] BelongId 不正确，该值必须由 FullPath 生成`。
-- 新增控件 → `[layout_control] BelongId 不正确`。
-- 把读到的结构**原样回写** → `code: 0`（说明只能整份改/保真回写）。
-- 结论：**API 目前只能改已有控件，不能凭空加控件**。要让表单可用：
-  1. 先在控制台人工建一个带控件的「模板对象」，再复制/改造；或
-  2. 找到 `FullPath` 的生成规则（**待验证**，目前没有接口能取）。
-- 所以规范里必须有一条：**布局这一步默认人工做，API 只做属性修改**。
+- 写法：先 `layout.detail` 读全量 → 在 `sections` / `controls` 上改 → **整份写回**（全量替换）。
+- 新建分区只需 `{ id: 新UUID, code, name, type: 1, columnsNum }`；新建控件只需
+  `{ id: 新UUID, sectionId, code, name, fieldId, type: 'AKInput', gridSpan: 1, attrs }`。
+- **不要带 `belongId` / `fullPath`**：带了必报 `[layout_section] BelongId 不正确，该值必须由 FullPath 生成`
+  （2026-11-09 抓包确认：浏览器的真实请求体里没有这两个字段）。
+- 旧分区（尤其 type=4 工作流时间线）原样回传，不能删；`pages` 原样回传，没有分页传 `[]`。
+- 返回 `data` 是布局 id；写完回读 `layout.detail` 确认 sections / controls 数量。
+- 结论：**API 能加分区和控件**，之前「只能人工做」的说法已作废（错在自造了 belongId）。
 
 ### 2.6 列表视图 `listlayout.*`
 - `listlayout.save` 新建（`code` + `objectId`），返回 `{ id }`。
@@ -115,7 +116,7 @@
 | `columns.set` 不带 `status_id__sys` | 500 `已设置在悬停卡和默认列表显示，无法直接删除：状态` | 保留该列 |
 | 先发布工作流，再改节点 | 20→10 静默忽略，改不动 | 草稿期配完再发布 |
 | `workflow.delete` 用 POST | 405 | DELETE + body |
-| 想 `layout.save` 加控件 | `BelongId 不正确…FullPath` | 控制台加，或保真回写 |
+| 想 `layout.save` 加控件，顺手带上 `belongId` | `BelongId 不正确…FullPath` | 去掉 `belongId` / `fullPath`，用最小对象 |
 | 加完节点就以为接上了 | 链是断的 | `start.update` 设 `nextStepId` |
 | 看 `code: 0` 就收工 | 可能被静默忽略 | 回读 |
 

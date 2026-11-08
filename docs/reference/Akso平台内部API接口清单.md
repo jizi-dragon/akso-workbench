@@ -1276,7 +1276,7 @@ body 是空对象（不是空 body）。响应 `data[]` 为菜单组，含 `appI
 
 > 2026-11-09 变更：`auth.oauth.login`、`auth.oauth.refresh` 经实测**无作用**（见上文认证两节），
 > `auth.login` 随后也删了（写入只保留 akso-cloud 代登录，本机不再接受明文口令）；能力目录由 47 条
-> 降为 44 条，卡片标签同步为「已验证 42 / 过期 2」。
+> 降为 44 条，卡片标签同步为「已验证 43 / 过期 1」（`layout.save` 当晚经抓包复验通过）。
 
 | 域 | 条数 | 能力 id |
 | --- | --- | --- |
@@ -1290,7 +1290,7 @@ body 是空对象（不是空 body）。响应 `data[]` 为菜单组，含 `appI
 | 菜单 | 3 | `menu.submit`、`menu.sort`、`menu.group.list` |
 | 通知 | 1 | `notice.template.list` |
 
-**2 条仍是 ⚠️**（与界面卡片上的「过期」标记一致）：`layout.save`（新增 section/control 需平台生成 FullPath，实测只能保真回写）、`menu.sort`（全量替换且无读整棵树的接口，未脚本化）。`auth.oauth.login`、`auth.oauth.refresh` 已于 2026-11-09 实测无作用并删除；`listlayout.filter.save` 已实测通过（`relationId` 须为 GUID、返回 `data: null`，见上文）。`object.fields.outfield` 与 `listlayout.filter.get` 已于 2026-11-05 在验证环境跑通，参数名与响应形状按实测改正（见上文各节）。
+**1 条仍是 ⚠️**（与界面卡片上的「过期」标记一致）：`menu.sort`（全量替换且无读整棵树的接口，未脚本化）。`layout.save` 已于 2026-11-09 晚抓包复验通过——正确姿势是「`LayoutDetail.data` 整份读出 → 原地改 → 整份回写」；新建 section 用 `{ id, code, name, type, columnsNum }`、control 用 `{ id, sectionId, code, name, fieldId, type, gridSpan, attrs }` 即可，但**不要带 `belongId` / `fullPath`**（带上会报 `[layout_section] BelongId 不正确…必须由 FullPath 生成`，见上文表单布局节）。`auth.oauth.login`、`auth.oauth.refresh` 已于 2026-11-09 实测无作用并删除；`listlayout.filter.save` 已实测通过（`relationId` 须为 GUID、返回 `data: null`，见上文）。`object.fields.outfield` 与 `listlayout.filter.get` 已于 2026-11-05 在验证环境跑通，参数名与响应形状按实测改正（见上文各节）。
 
 **口径统一**（原先的三处不一致已随重建改掉）：
 

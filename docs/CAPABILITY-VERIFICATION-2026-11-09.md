@@ -7,16 +7,19 @@
 > 2026-11-09 补记：`auth.oauth.login`、`auth.oauth.refresh` 两条按用户要求已从目录删除
 > （要浏览器 OAuth 链路，脚本化验证不了，也不该作为配置工具暴露）；`auth.login` 随后也删了
 > （写入只保留 akso-cloud 代登录，本机不再接受明文口令）。本文保留它们当时的实测记录仅作历史，
-> 当前目录为 **44 条**（42 已验证 + 2 过期）。
+> 当前目录为 **44 条**（43 已验证 + 1 过期）。
+>
+> 2026-11-09 晚补记：`layout.save` 由用户在实际控制台操作 + 本仓监听框架抓包复验通过，
+> 标签转「已验证」；未验证的只剩 `menu.sort`。
 
 ## 一、结论
 
 | 项 | 数 |
 | --- | --- |
 | 能力总数（当前） | 44 |
-| 实测通过 → 标「已验证」 | **42** |
-| 未通过 → 保持「过期」 | 2（`layout.save`、`menu.sort`） |
-| 顺带修正的目录错误 | 3 处（`workflow.delete` 的方法、`listlayout.filter.save` 示例的 `relationId`、`layout.save` 的写入限制） |
+| 实测通过 → 标「已验证」 | **43** |
+| 未通过 → 保持「过期」 | 1（`menu.sort`） |
+| 顺带修正的目录错误 | 4 处（`workflow.delete` 的方法、`listlayout.filter.save` 示例的 `relationId`、`layout.save` 的示例与 `returns`、`layout.save` 的写入限制） |
 
 - 环境：**standard-val /「公司配置环境」**，`https://standard-val.aksoegmp.com`，账号 `liyulong`（accountId `a_d6c261bab92cab81389847b4`）。
 - 令牌：走 akso-cloud 代登录（`POST /api/accounts/:id/egmp-token`）换取，**没有**在磁盘上写 `egmp-session.json`，也没有让明文口令经过本机。
@@ -119,12 +122,14 @@
 - 变化：无（只读）。
 
 **layout.save** · `POST /api/platform/Layout/SaveLayoutDetail`
-- 输入 A（新建分区）：`sections` 追加一条新 section。
+- 输入 A（自造最小 section）：`sections` 追加一条自己拼的 section。
 - 输出 A：`code: 500`，`"[layout_section] BelongId 不正确，该值必须由 FullPath 生成"`。
-- 输入 B（已有分区里加控件）：`controls` 追加一条。
+- 输入 B（已有分区里自造 control）：`controls` 追加一条。
 - 输出 B：`code: 500`，`"[layout_control] BelongId 不正确"`。
-- 输入 C（保真回写：sections 原样、controls []、pages []）：**通过**，200 / `code: 0`，`data = layoutId`。
-- 变化：C 不改内容（回读一致）。**未通过**：新增 section/control 需要平台自己生成 FullPath，脚本给不出来；目前这条能力只能「读全量 → 改已有内容 → 原样回写」。
+- 输入 C（保真回写：sections 原样、controls `[]`、pages `[]`）：200 / `code: 0`，`data = layoutId`；不改内容。
+- 输入 D（2026-11-09 晚，用户在控制台操作 + CDP 抓包）：把 `LayoutDetail.data` 整份读出 → 新增「基础信息」`basic_info__cs` 分区 + 4 个控件（`name__ak` / `akwv_text__c` / `akwv_num__c` / `akwv_pickfield__c`）→ 整份回写。请求体 3133B，200 / 176ms，`code: 0`，`data = "6767eacd-a060-fe1a-b2f2-e798d2cfa3b7"`。
+- 变化：布局 `akwv1109_base_layout__ak` 由 1 分区 / 0 控件 变为 2 分区 / 4 控件（回读 `LayoutDetail`：2623B → 8116B）。**已通过**，标签转「已验证」。
+- 结论：这条能力不是「拼布局」，是「读全量 → 原地改 → 整份回写」。**之前的判断修正**：新建 section 不需要完整对象，`{ id, code, name, type, columnsNum }` 就够；control 只需 `{ id, sectionId, code, name, fieldId, type, gridSpan, attrs }`。A/B 的报错都指向 `belongId`，而抓包确认浏览器真实请求体里**没有** `belongId` / `fullPath`——照这个形状回传就能通过。
 
 ### 列表布局（6）
 
@@ -290,7 +295,7 @@
 
 1. `workflow.delete`：`method` 由 `POST` 改为 **`DELETE`**；`returns` 改为「data 为被删的 id」；`notes` 补「POST 会 405」「只有草稿能删，20/30 都拒绝，且发布后回不到草稿」。
 2. `listlayout.filter.save`：示例里的 `relationId` / `relations[].id` 由 `"r1"` 改为 GUID 占位符；`evidence` 由 `partial` 改 `verified`；`returns` 改为「data: null（不返回新 id）」；`notes` 补「短名会 400 validation error」。
-3. `layout.save`：`notes` 补实测限制——新增 section/control 报 `BelongId 不正确`（需平台生成 FullPath），目前只能保真回写。
+3. `layout.save`：`example` 改为「把 `layout.detail` 的 `data.sections` / `data.controls` / `data.pages` 原样放回」；`returns` 改「data 为布局 id」；`notes` 重写（整份回传、不自造 `belongId` / `fullPath`、无分页传 `[]`）；`params` 补 `formEditStatus`、`skipRequiredValidation`。此前只补了失败限制，示例仍是会 500 的最小构造。
 
 ## 四、standard-val 上留下的数据（请核对/清理）
 
@@ -307,7 +312,7 @@
 | 7 | 菜单 | `akwv_menu1109__c` / `akwv_child1109__c` | `d27aecb7-…` / `fa41f6b1-…` |
 | 8 | 工作流 | `AKW验证流程1109（改）` | `c38f0819-eac4-d008-1c36-3a24ce8a6dd4`，现停在 **status 30（禁用）**，**删不掉**（见下） |
 
-- `layout.save` 那次保真回写没有改动任何内容。
+- `layout.save` 的保真回写（输入 C）没有改动内容；后来的整份回写（输入 D）给默认布局新增了「基础信息」分区 + 4 个控件，可在控制台的「表单布局」里看到。
 - **没有**创建任何对象实例（业务记录），只有元数据。
 - 工作流删除限制：平台对 20（启用）和 30（禁用）都拒绝删除，且发布后无法退回草稿。这条工作流需要你在控制台另行处理（例如作废/联系管理员），或者留着当验证痕迹。
 - 清理建议：控制台删掉对象 `akwv1109__c` 会连带字段/布局/列表；选项集、状态、菜单、工作流需分别清理。
@@ -323,7 +328,7 @@ node %TEMP%\akw-verify\inspect.mts    # 单条看完整 JSON
 ```
 
 - 每次调用的原始记录在 `%TEMP%\akw-verify\ledger.jsonl`（含 params / code / traceId / 耗时）。
-- 卡片标签：`plugin/src/shared/approved-tools.ts` 的 `APPROVED_TOOL_IDS` 已写入 43 个 id；
-  `npm --prefix plugin run build` 已重建。**重启 DSH 后刷新页面**，卡片页应显示「已验证 43 / 过期 2」。
+- 卡片标签：`plugin/src/shared/approved-tools.ts` 的 `APPROVED_TOOL_IDS` 已写入 **43** 个 id；
+  `npm --prefix plugin run build` 已重建。**重启 DSH 后刷新页面**，卡片页应显示「已验证 43 / 过期 1」。
 - 回归护栏：`plugin/test/host.test.ts` 新增一条测试——台账里的 id 必须都在能力目录里、
-  每条能力的 `testStatus` 必须与台账一致、上面 2 条未通过的不能混进名单。`npm run check` 现为 43 个测试全绿。
+  每条能力的 `testStatus` 必须与台账一致、上面 1 条未通过的不能混进名单。`npm run check` 现为 48 个插件测试全绿（根 37）。

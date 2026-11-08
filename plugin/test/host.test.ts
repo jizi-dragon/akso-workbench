@@ -1446,7 +1446,7 @@ test('实测台账：名单里的 id 都在能力目录里，且与卡片标签�
   }
 
   // ③ 因环境/协议限制没跑通的 2 条必须保持过期，别被顺手写进名单
-  for (const id of ['layout.save', 'menu.sort']) {
+  for (const id of ['menu.sort']) {
     assert.ok(!APPROVED_TOOL_IDS.has(id), `${id} 还没验证通过，不应进名单`)
   }
 })
