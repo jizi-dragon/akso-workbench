@@ -23,8 +23,8 @@
 | 方法 | 路径 | 用途 | 要点 |
 | --- | --- | --- | --- |
 | POST | `/api/openapi/v1.0/Auth` | 账号密码登录换 JWT | 响应 `data` 即 JWT（或 `data.token`），约 55 分钟过期 |
-| POST | `/api/auth/Oauth/Login` | 前端 OAuth 登录 | body 未记录；建模场景用上面那条更简单 |
-| POST | `/api/auth/Oauth/RefreshToken` | 刷新 token | 传 `refreshToken`；skill 未使用（直接重登） |
+| POST | `/api/auth/Oauth/Login` | 前端 OAuth 登录 | body 未记录；建模场景用上面那条更简单。**2026-11-09 实测无作用**（见下节），已从工具目录删除 |
+| POST | `/api/auth/Oauth/RefreshToken` | 刷新 token | 传 `refreshToken`；skill 未使用（直接重登）。**2026-11-09 实测无作用**（见下节），已从工具目录删除 |
 
 ### 对象（7）
 
@@ -169,6 +169,11 @@ curl -s -X POST "$BASE/api/platform/BasicObject/SaveBasicObject" \
 
 #### `POST /api/auth/Oauth/Login` — 前端 OAuth 登录 ⚠️
 
+> **2026-11-09 实测：无作用。** 脚本直接打这个接口（standard-val），返回 `code: 2001`、
+> `message: "Security headers missing"`；它只在浏览器 `/login` 页面的 OAuth 跳转链路里能用，
+> 需要浏览器带来的安全头/会话，**脚本化场景没有任何价值**。已从工具目录
+> `plugin/src/config/capabilities.ts` 删除，不再出现在配置工具卡片上。
+
 body 未收录。实测前端是在 `/login` 页面表单登录，成功后 JWT 落在 cookie `__auth_token__`（`auth.js` 的 DOM 登录就是抠这个 cookie）。所以这条路不用猜 body，直接：
 
 ```text
@@ -176,6 +181,10 @@ body 未收录。实测前端是在 `/login` 页面表单登录，成功后 JWT 
 ```
 
 #### `POST /api/auth/Oauth/RefreshToken` — 刷新 token ⚠️
+
+> **2026-11-09 实测：无作用。** 传假 `refreshToken` 返回 `code: 401`、`message: "Unauthorized"`；
+> 真 refreshToken 只能由浏览器 OAuth 链路拿，本机脚本拿不到，**这条路对建模场景没有意义**。
+> 已从工具目录删除。
 
 ```json
 { "refreshToken": "<refreshToken>" }
@@ -1263,11 +1272,14 @@ body 是空对象（不是空 body）。响应 `data[]` 为菜单组，含 `appI
 
 ## 与本仓 `plugin/src/config/capabilities.ts` 的对照
 
-能力目录已按本文重建（2026-11-05），**47 条一一对应**：id、`method`、`path`、参数位置、请求示例都从这份清单取，不再有第二套路径。工具页「配置工具」的二级导航（认证 / 对象建模 / 布局 / 生命周期 / 工作流 / 菜单·通知）也是按目录的域渲染的，接口卡片展开即可看到参数表与请求示例。
+能力目录已按本文重建（2026-11-05），**44 条一一对应**：id、`method`、`path`、参数位置、请求示例都从这份清单取，不再有第二套路径。工具页「配置工具」的二级导航（对象建模 / 布局 / 生命周期 / 工作流 / 菜单·通知）也是按目录的域渲染的，接口卡片展开即可看到参数表与请求示例。
+
+> 2026-11-09 变更：`auth.oauth.login`、`auth.oauth.refresh` 经实测**无作用**（见上文认证两节），
+> `auth.login` 随后也删了（写入只保留 akso-cloud 代登录，本机不再接受明文口令）；能力目录由 47 条
+> 降为 44 条，卡片标签同步为「已验证 42 / 过期 2」。
 
 | 域 | 条数 | 能力 id |
 | --- | --- | --- |
-| 认证 | 3 | `auth.login`、`auth.oauth.login`、`auth.oauth.refresh` |
 | 对象 | 4 | `object.save`、`object.field.page`、`object.fields.outfield`、`query.object.get` |
 | 字段 | 2 | `query.fields.list`、`field.save` |
 | 选项集 | 2 | `query.picklist.get`、`picklist.save` |
@@ -1278,7 +1290,7 @@ body 是空对象（不是空 body）。响应 `data[]` 为菜单组，含 `appI
 | 菜单 | 3 | `menu.submit`、`menu.sort`、`menu.group.list` |
 | 通知 | 1 | `notice.template.list` |
 
-**3 条仍是 ⚠️**（与上文示例、界面卡片上的标记一致）：`auth.oauth.login`、`auth.oauth.refresh`、`listlayout.filter.save`（写接口，待验证）。`object.fields.outfield` 与 `listlayout.filter.get` 已于 2026-11-05 在验证环境跑通，参数名与响应形状按实测改正（见上文各节）。
+**2 条仍是 ⚠️**（与界面卡片上的「过期」标记一致）：`layout.save`（新增 section/control 需平台生成 FullPath，实测只能保真回写）、`menu.sort`（全量替换且无读整棵树的接口，未脚本化）。`auth.oauth.login`、`auth.oauth.refresh` 已于 2026-11-09 实测无作用并删除；`listlayout.filter.save` 已实测通过（`relationId` 须为 GUID、返回 `data: null`，见上文）。`object.fields.outfield` 与 `listlayout.filter.get` 已于 2026-11-05 在验证环境跑通，参数名与响应形状按实测改正（见上文各节）。
 
 **口径统一**（原先的三处不一致已随重建改掉）：
 

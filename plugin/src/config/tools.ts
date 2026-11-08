@@ -1,66 +1,38 @@
 /**
  * 给 agent 的配置工具：**只能出计划 / 执行已有计划**，拿不到任何裸写端点。
  *
- * 与 `tool.ts` 同一套手写 ToolDefinition 形状（零运行时依赖）。
- * 两个工具都要求 eGMP 会话已建立；未登录时返回 loggedIn:false + 提示。
+ * 写入前有两道门，缺一不可：
  *
- * 写入前的确认走宿主自己的「用户提问」通道（与 ask_user_question 同一套界面）：
- * 工具在对话里弹出一张卡片，人点「允许这次写入」之后才真的发请求；
- * 点「拒绝」或通道不可用 ⇒ 一律不写（fail closed）。
+ *   1. **账号门**：写入会话必须来自底部账号条 —— `openSession` 由 host 解析，
+ *      账号条为空 / 账号不在配置池 / 换不到票，一律拿不到会话，工具直接拒绝。
+ *   2. **审批门**：把这一批要写的东西整理成审批表，挂到 host 的审批门上等，
+ *      对话框里弹出审批窗，人点「同意」才继续；「拒绝 / 补充 / 超时」都不写。
+ *
+ * 引擎 `applyPlan` 还会再验一次（计划指纹 / 目标环境 / 账号 / 审批记录），
+ * 所以就算有人绕过工具直接调 HTTP，也过不了引擎这一关。
  */
 import { CAPABILITIES } from './capabilities.ts'
-import { applyPlan, loadPlan, planBlueprint, type Plan } from './engine.ts'
-import { readEgmpSession, type EgmpSession } from './session.ts'
+import { applyPlan, loadPlan, planBlueprint, planHash, recordApprovalDecision, saveApproval, type Plan } from './engine.ts'
+import type { ApprovalGate, ApprovalReport, ApprovalReportStep } from './approval.ts'
+import type { EgmpSession } from './session.ts'
 
-/** 人点了这个选项才算同意写入。 */
-export const APPROVE_LABEL = '允许这次写入'
-/** 另一个选项；只是拒绝，不需要额外语义。 */
-export const DENY_LABEL = '拒绝'
-
-export interface AskOption {
-  label: string
-  description?: string
+/** host 解析出来的写入会话；`session: null` 时 `reason` 一定是人话。 */
+export interface WriteSession {
+  session: EgmpSession | null
+  reason: string | null
 }
-
-export interface AskQuestion {
-  id: string
-  header?: string
-  question: string
-  detail?: string
-  options: AskOption[]
-  /**
-   * 走宿主的「计划审阅」版式：卡片只显示标题 + 一段摘要，正文（detail 的 markdown）
-   * 自动在右侧栏打开 —— 比把整段 JSON 塞进提问卡片干净得多。
-   * 约束（宿主会校验）：approve 必须是 options 里的某个 label，且必须有 detail。
-   */
-  intent?: { kind: 'plan-review'; approve: string }
-}
-
-/** 工具执行上下文里我们真正用得到的两样（agent / 中断信号）。 */
-export interface ToolExec {
-  agent?: unknown
-  signal?: unknown
-}
-
-/**
- * 把问题交给宿主的人机通道，返回人选中的标签。
- * 返回 `null` 表示这个宿主没有可用通道（必须当成"没有人同意"）。
- */
-export type ApprovalAsker = (questions: AskQuestion[], exec: ToolExec) => Promise<string[] | null>
 
 export interface ConfigToolDeps {
   dshHome: string
-  ask?: ApprovalAsker
+  /** 只走账号条：拿不到会话就不写（**绝不**回落到磁盘上的旧会话）。 */
+  openSession: () => Promise<WriteSession>
+  /** 对话弹窗那一侧的实现（host 注入）。 */
+  approvals: ApprovalGate
+  /** 当前是否要求审批（环境变量优先，其次页面开关；默认要求）。 */
+  requireApproval: () => boolean
 }
 
-function sessionOf(deps: ConfigToolDeps): EgmpSession | null {
-  return readEgmpSession(deps.dshHome)
-}
-
-const LOGIN_HINT = '还没有登录 eGMP：请打开「akso-workbench · 配置工具」页，填写环境地址与账号完成登录。'
-
-const HOST_PREFIX = 'https://'
-const STEP_JSON_LIMIT = 6000
+const NEEDS_ACCOUNT_HINT = '写入必须使用底部账号条里选中的账号：请先在账号条里连接一个账号（没有就点「添加账号」），再让我重试。'
 
 const KIND_LABEL: Record<string, string> = {
   picklist: '选项集',
@@ -71,6 +43,7 @@ const KIND_LABEL: Record<string, string> = {
   listLayout: '列表布局',
   menu: '菜单',
   call: '接口',
+  workflow: '工作流',
 }
 
 function actionVerb(action: string): string {
@@ -78,8 +51,7 @@ function actionVerb(action: string): string {
 }
 
 /**
- * 卡片标题（宿主取 detail 的**第一行**当标题）。
- * 只有一步时给「更新选项集 akw_test_pk__c」这种人话，多步时给规模。
+ * 审批窗的标题。只有一步时给「更新选项集 akw_test_pk__c」这种人话，多步时给规模。
  */
 export function approvalTitle(plan: Plan): string {
   const edits = plan.steps.filter((step) => step.action !== 'skip')
@@ -98,51 +70,42 @@ export function approvalTitle(plan: Plan): string {
   return `${edits.length} 步变更（${parts.join(' · ') || '无写入'}）`
 }
 
-/**
- * 审批卡正文（markdown）。
- *
- * 结构刻意做成「标题行 / 一行摘要 / 每步一个小节」：宿主的审阅卡只把**第一行**当标题、
- * **第一个段落**当摘要，其余全文在右侧栏里读 —— 所以第一行必须是结论，不能是表头或分隔线。
- */
-export function approvalDetail(plan: Plan, baseUrl: string): string {
-  const host = baseUrl.startsWith(HOST_PREFIX) ? baseUrl.slice(HOST_PREFIX.length) : baseUrl
-  const lines: string[] = []
-  lines.push(approvalTitle(plan))
-  lines.push('')
-  const scale: string[] = []
-  if (plan.summary.create > 0) scale.push(`新建 ${plan.summary.create} 步`)
-  if (plan.summary.update > 0) scale.push(`更新 ${plan.summary.update} 步`)
-  if (plan.summary.skip > 0) scale.push(`跳过 ${plan.summary.skip} 步`)
-  lines.push(`环境 \`${plan.env}\` · 目标 \`${host}\` · ${scale.join(' · ') || '没有要写的内容'}`)
-  lines.push('')
+/** 把计划翻译成弹窗要显示的结构（每一步带真实的方法与路径）。 */
+export function buildApprovalReport(plan: Plan, session: EgmpSession): ApprovalReport {
+  const steps: ApprovalReportStep[] = []
   let index = 0
   for (const step of plan.steps) {
     if (step.action === 'skip') continue
     index += 1
-    const capability = step.capabilityId === undefined
-      ? undefined
-      : CAPABILITIES.find((item) => item.id === step.capabilityId)
-    const method = capability?.method ?? 'POST'
-    const path = capability?.path ?? ''
-    const tags: string[] = [`\`${method} ${path}\``]
-    if (step.irreversible) tags.push('不可逆')
-    else if (step.risk === 'high') tags.push('高风险')
-    lines.push(`**${index}. ${step.title}**`)
-    lines.push(tags.join(' · '))
-    lines.push('')
-    let payload = JSON.stringify(step.params ?? {}, null, 2)
-    if (payload.length > STEP_JSON_LIMIT) {
-      payload = `${payload.slice(0, STEP_JSON_LIMIT)}\n…（已截断，完整内容见计划文件 ${plan.planId}.json）`
-    }
-    lines.push('```json')
-    lines.push(payload)
-    lines.push('```')
-    lines.push('')
+    const capability = CAPABILITIES.find((item) => item.id === step.capabilityId)
+    steps.push({
+      index,
+      action: step.action,
+      kind: step.kind,
+      title: step.title,
+      method: capability?.method ?? 'POST',
+      path: capability?.path ?? '',
+      risk: step.risk,
+      irreversible: step.irreversible,
+      params: step.params,
+      warnings: step.warnings,
+    })
   }
-  lines.push('---')
-  lines.push('')
-  lines.push(`计划 \`${plan.planId}\` · 写入即刻生效，平台侧没有回滚接口。`)
-  return lines.join('\n')
+  const baseUrl = session.baseUrl
+  return {
+    planId: plan.planId,
+    title: approvalTitle(plan),
+    env: plan.env,
+    baseUrl,
+    host: baseUrl.startsWith('https://') ? baseUrl.slice('https://'.length) : baseUrl,
+    account: session.account,
+    accountId: session.accountId ?? '',
+    summary: plan.summary,
+    steps,
+    createdAt: plan.createdAt,
+    expiresAt: plan.expiresAt,
+    hash: planHash(plan),
+  }
 }
 
 export function buildConfigPlanTool(deps: ConfigToolDeps) {
@@ -150,13 +113,14 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
     name: 'akso_workbench_config_plan',
     description:
       '把一份配置蓝图（JSON）转换成执行计划：读取平台现状、去重、按依赖排序、标出风险与不可逆步骤。'
-      + '**只生成计划，不写任何配置**。返回 planId、差异摘要与逐步清单；执行必须由人确认后调用 apply 工具。',
+      + '**只生成计划，不写任何配置**。返回 planId、差异摘要与逐步清单；执行必须由人在审批窗里同意后调用 apply 工具。'
+      + '写入账号取自底部账号条：账号条为空时本工具会返回 needs-account，并不会拿别的账号凑合。',
     parameters: {
       type: 'object',
       properties: {
         blueprint: {
           type: 'string',
-          description: '蓝图 JSON 字符串：{ version, env, resources:[{kind, ...}] }；kind 支持 picklist/object/lifecycle/field/listLayout/menu，以及 call（按能力目录 id 原样调用，用于工作流、状态按钮等 47 条里的其余接口）；formLayout 不做自动合并（全量替换风险高），请用 call + layout.save 提交完整布局',
+          description: '蓝图 JSON 字符串：{ version, env, resources:[{kind, ...}] }；kind 支持 picklist/object/lifecycle/field/listLayout/menu，以及 call（按能力目录 id 原样调用，用于工作流、状态按钮等 44 条里的其余接口）；formLayout 不做自动合并（全量替换风险高），请用 call + layout.save 提交完整布局',
         },
       },
       required: ['blueprint'],
@@ -169,8 +133,11 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
       },
     },
     async execute(args: unknown): Promise<unknown> {
-      const session = sessionOf(deps)
-      if (session === null) return { loggedIn: false, hint: LOGIN_HINT }
+      const opened = await deps.openSession()
+      const session = opened.session
+      if (session === null) {
+        return { ok: false, status: 'needs-account', error: opened.reason ?? '账号条没有可用的账号', hint: NEEDS_ACCOUNT_HINT }
+      }
       const input = (args ?? {}) as { blueprint?: string }
       let blueprint: unknown
       try {
@@ -184,6 +151,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
           ok: true,
           planId: plan.planId,
           expiresAt: plan.expiresAt,
+          target: plan.target,
           summary: plan.summary,
           warnings: plan.warnings,
           steps: plan.steps.map((s) => ({
@@ -195,7 +163,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
             irreversible: s.irreversible,
             warnings: s.warnings,
           })),
-          next: `涉及 ${plan.summary.irreversible} 个不可逆步骤。请让用户确认后，用 planId=${plan.planId} 调用 akso_workbench_config_apply。`,
+          next: `涉及 ${plan.summary.irreversible} 个不可逆步骤。请让用户确认后，用 planId=${plan.planId} 调用 akso_workbench_config_apply（会弹审批窗，人点「同意」才写）。`,
         }
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -210,9 +178,8 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
     description:
       '执行一份**已存在**的配置计划（必须先由 akso_workbench_config_plan 生成）。'
       + '逐步执行、每步回读校验；某步失败即停并返回 checkpoint。不接受临时参数，不能绕过计划。'
-      + '计划里有写入时，本工具会**在这个对话里弹一张确认卡**：卡片上只留标题与规模，'
-      + '完整内容在右侧栏展开（每条请求的方法、路径、请求体）；人点「允许这次写入」之后才发请求，'
-      + '点「拒绝」则一步都不写。'
+      + '计划里有写入时，本工具会在**对话里弹出一个审批窗**，逐条列出要写的方法、路径、参数与风险；'
+      + '人点「同意」才发请求，点「拒绝」一步都不写，点「补充」则把补充意见回给模型改计划。'
       + '这一关不在工具参数里，模型无法自己批准。',
     parameters: {
       type: 'object',
@@ -229,59 +196,60 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
       },
     },
     async execute(args: unknown, exec?: unknown): Promise<unknown> {
-      const session = sessionOf(deps)
-      if (session === null) return { loggedIn: false, hint: LOGIN_HINT }
+      const opened = await deps.openSession()
+      const session = opened.session
+      if (session === null) {
+        return { ok: false, status: 'needs-account', error: opened.reason ?? '账号条没有可用的账号', hint: NEEDS_ACCOUNT_HINT }
+      }
       const input = (args ?? {}) as { planId?: string }
       const planId = String(input.planId ?? '')
       if (planId === '') return { ok: false, error: '缺少 planId' }
       const plan = loadPlan(deps.dshHome, planId)
       if (plan === null) return { ok: false, error: `计划不存在：${planId}` }
 
-      const writes = plan.summary.create + plan.summary.update
-      if (writes > 0) {
-        if (deps.ask === undefined) {
+      const writes = plan.steps.filter((step) => step.action !== 'skip')
+      const needsApproval = writes.length > 0 && deps.requireApproval()
+      if (needsApproval) {
+        const report = buildApprovalReport(plan, session)
+        const signal = (exec as { signal?: unknown } | undefined)?.signal
+        const decision = await deps.approvals.request(report, signal === undefined ? {} : { signal })
+        // 审批决策留痕：拒批 / 补充 / 超时 / 中断也要能查到（busy 只是"没排上"，不记）
+        if (decision.verdict !== 'busy') {
+          recordApprovalDecision(deps.dshHome, plan, decision.verdict, decision.note)
+        }
+        if (decision.verdict === 'busy') {
+          return { ok: false, status: 'busy', planId, message: '已经有一条审批在等回复，这一条没有执行。' }
+        }
+        if (decision.verdict === 'timeout') {
+          return { ok: false, status: 'approval-timeout', planId, message: '审批窗等了 8 分钟没有回应，平台一步都没写。' }
+        }
+        if (decision.verdict === 'cancelled') {
+          return { ok: false, status: 'cancelled', planId, message: '这次执行被中断（没有收到人的同意），平台一步都没写。' }
+        }
+        if (decision.verdict === 'deny') {
+          return { ok: false, status: 'denied', planId, message: '人没有同意这次写入，平台一步都没写。' }
+        }
+        if (decision.verdict === 'supplement') {
+          const note = decision.note ?? ''
           return {
             ok: false,
-            status: 'no-approval-channel',
-            error: '这个宿主没有可用的确认通道：写入前必须由人点「允许」，所以这一步不执行。',
+            status: 'supplement',
+            planId,
+            note,
+            message: `人没有同意写入，补充了意见：${note === '' ? '（没有文字）' : note}。请按补充意见修改计划，再重新提交审批；这次平台一步都没写。`,
           }
         }
-        const detail = approvalDetail(plan, session.baseUrl)
-        let chosen: string[] | null
-        try {
-          chosen = await deps.ask(
-            [
-              {
-                id: `approve-${planId}`,
-                header: '配置写入确认',
-                question: `执行配置计划 ${planId}？${approvalTitle(plan)}`,
-                detail,
-                options: [
-                  { label: APPROVE_LABEL, description: '按上面的内容写平台；写后无法在平台侧回滚' },
-                  { label: DENY_LABEL, description: '一步都不写，计划保持未执行' },
-                ],
-                intent: { kind: 'plan-review', approve: APPROVE_LABEL },
-              },
-            ],
-            (exec ?? {}) as ToolExec,
-          )
-        } catch (error) {
-          return { ok: false, status: 'no-approval-channel', error: error instanceof Error ? error.message : String(error) }
-        }
-        if (chosen === null) {
-          return { ok: false, status: 'no-approval-channel', error: '这个宿主没有可用的确认通道：写入前必须由人点「允许」，所以这一步不执行。' }
-        }
-        if (!chosen.includes(APPROVE_LABEL)) {
-          return { ok: false, status: 'denied', planId, message: `人没有允许这次写入（选择：${chosen.join('、') || '无'}），平台一步都没写。` }
-        }
+        // approve：先落审批记录（引擎会按指纹再验一次），再执行
+        saveApproval(deps.dshHome, { planId, hash: report.hash, at: Date.now() })
       }
 
       try {
-        const applied = await applyPlan(session, planId, deps.dshHome)
+        const applied = await applyPlan(session, planId, deps.dshHome, { requireApproval: needsApproval })
         return {
           ok: applied.results.every((r) => r.status !== 'failed'),
           status: applied.status,
           planId,
+          approved: needsApproval,
           results: applied.results.map((r) => ({
             step: r.title,
             status: r.status,

@@ -53,6 +53,8 @@ const initial: State = {
   counts: { accounts: 0, sites: 0, boxes: 0 },
   currentAccountId: null,
   poolAccountIds: [],
+  needsAccount: false,
+  needsAccountSince: null,
   error: null,
   flash: null,
   busy: null,
@@ -102,6 +104,8 @@ function fromServer(next: ServerState): Partial<State> {
     counts: next.counts ?? { accounts: 0, sites: 0, boxes: 0 },
     currentAccountId: next.currentAccountId ?? null,
     poolAccountIds: Array.isArray(next.poolAccountIds) ? next.poolAccountIds : [],
+    needsAccount: next.needsAccount === true,
+    needsAccountSince: typeof next.needsAccountSince === 'number' ? next.needsAccountSince : null,
     error: null,
   }
 }

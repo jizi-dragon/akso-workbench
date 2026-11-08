@@ -15,6 +15,11 @@ import { dataDir } from '../store.ts'
 export interface EgmpSession {
   baseUrl: string
   account: string
+  /**
+   * 这张票是从哪个 akso-cloud 账号换来的。
+   * 旧版会话文件没有这个字段 —— 写入路径会把它当成"不可信"，重新换票。
+   */
+  accountId?: string
   token: string
   savedAt: number
 }
@@ -58,9 +63,11 @@ export function readEgmpSession(dshHome: string): EgmpSession | null {
     if (!existsSync(file)) return null
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<EgmpSession> | null
     if (parsed === null || typeof parsed.token !== 'string' || parsed.token === '') return null
+    const accountId = typeof parsed.accountId === 'string' && parsed.accountId !== '' ? parsed.accountId : undefined
     return {
       baseUrl: normalizeBase(parsed.baseUrl),
       account: String(parsed.account ?? ''),
+      ...(accountId === undefined ? {} : { accountId }),
       token: parsed.token,
       savedAt: Number(parsed.savedAt ?? 0),
     }
@@ -218,14 +225,8 @@ export async function call(
   return json
 }
 
-/** 登录：换 JWT。成功后由调用方决定是否落盘。 */
-export async function login(baseUrl: string, account: string, password: string): Promise<EgmpSession> {
-  const base = normalizeBase(baseUrl)
-  if (account === '' || password === '') throw new EgmpError('账号和密码都不能为空')
-  const { status, json } = await request({ baseUrl: base, token: '' }, 'POST', '/api/openapi/v1.0/Auth', { account, password })
-  if (status === 401 || status === 403) throw new EgmpError('账号或密码不正确', { status })
-  if (json.code !== 0 || typeof json.data !== 'string') {
-    throw new EgmpError(String(json.message ?? `登录失败（HTTP ${status}）`), { status })
-  }
-  return { baseUrl: base, account, token: json.data, savedAt: Date.now() }
-}
+/*
+ * 2026-11-09 删除 `login()`：登录只保留「akso-cloud 代登录」一条路
+ * （`plugin/src/credentials.ts` → `POST /api/accounts/:id/egmp-token`）。
+ * 本进程不再接受明文口令，`POST config/login` 也随之删除。
+ */

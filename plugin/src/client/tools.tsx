@@ -1,16 +1,16 @@
 /**
  * 「配置工具」页（挂在 akso-workbench 页面里，不单独占左栏）。
  *
- * 结构：二级导航（认证 · 对象建模 · 布局 · 生命周期 · 工作流 · 菜单/通知）
+ * 结构：二级导航（对象建模 · 布局 · 生命周期 · 工作流 · 菜单/通知）
  *   → 对象建模、布局再分栏
  *   → 右栏是这一区的接口卡片（点开看参数表 + 请求示例 + 返回 + 备注）。
  *
- * 目录与 `docs/reference/Akso平台内部API接口清单.md` 的 47 条一一对应；
+ * 目录与 `docs/reference/Akso平台内部API接口清单.md` 的 44 条一一对应；
  * 卡片底部的「已验证 / 过期」是**实测台账**：用户在测试中确认过输入输出的接口才标已验证（绿），
  * 其余一律标过期（红），见 capabilities.ts 的 APPROVED_TOOL_IDS。
  *
  * 定位仍是**台账**：只读能力目录（GET config/capabilities），不写配置；
- * 写入走 plan/apply 工具，必须由人确认。
+ * 写入走 plan/apply 工具，必须由人确认（审批窗弹在对话里；页面上的开关只决定要不要弹）。
  *
  * 这里**不显示登录态**：eGMP 令牌由底部账号条自动取（akso-cloud 里的账号口令）、
  * 过期自动续，本页只负责把 47 条接口讲清楚。
@@ -47,7 +47,7 @@ interface Capability {
 
 interface Group { domain: string; label?: string; items: Capability[] }
 
-type SectionId = 'auth' | 'model' | 'layout' | 'lifecycle' | 'workflow' | 'menu'
+type SectionId = 'model' | 'layout' | 'lifecycle' | 'workflow' | 'menu'
 
 interface Section {
   id: SectionId
@@ -59,7 +59,6 @@ interface Section {
 }
 
 const SECTIONS: Section[] = [
-  { id: 'auth', label: '认证', hint: 'eGMP OpenAPI 登录换 JWT。令牌由底部账号条自动获取、过期自动续，这里只列出接口本身（排障 / 自动化时用）。', domains: ['auth'] },
   {
     id: 'model',
     label: '对象建模',
@@ -92,10 +91,9 @@ const RISK_LABEL: Record<Capability['risk'], string> = { low: '低', medium: '�
 const isVerified = (item: Capability): boolean => APPROVED_TOOL_IDS.has(item.id)
 
 /** 只读但走 POST 的接口在目录里标了 readonly，列表里按"查询"展示。 */
-type Kind = 'write' | 'query' | 'auth'
+type Kind = 'write' | 'query'
 
 function kindOf(item: Capability): Kind {
-  if (item.domain === 'auth') return 'auth'
   if (item.method === 'GET' || item.readonly === true) return 'query'
   return 'write'
 }
@@ -103,7 +101,6 @@ function kindOf(item: Capability): Kind {
 const KIND_LABEL: Record<Kind, string> = {
   write: '写入',
   query: '查询',
-  auth: '认证',
 }
 
 function EmptyState({ title, desc, note }: { title: string; desc: string; note?: string }) {
@@ -234,9 +231,13 @@ export function ConfigToolsTab() {
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [sectionId, setSectionId] = useState<SectionId>('auth')
+  const [sectionId, setSectionId] = useState<SectionId>('model')
   const [subTab, setSubTab] = useState('')
   const [openId, setOpenId] = useState('')
+  /** 写入前是否弹审批（页面开关）；env 非 null 表示被环境变量强制，勾选框锁住。 */
+  const [requireApproval, setRequireApproval] = useState<boolean | null>(null)
+  const [approvalEnv, setApprovalEnv] = useState<string | null>(null)
+  const [savingApproval, setSavingApproval] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -245,6 +246,8 @@ export function ConfigToolsTab() {
         const payload = await api.configCapabilities()
         if (!alive) return
         setGroups((payload.groups ?? []) as unknown as Group[])
+        setRequireApproval(payload.requireApproval)
+        setApprovalEnv(payload.approvalEnv ?? null)
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -285,6 +288,21 @@ export function ConfigToolsTab() {
     setOpenId('')
   }
 
+  /** 页面开关：写入前是否弹审批。环境变量在时不让人改（host 侧也以环境变量优先）。 */
+  async function toggleApproval(next: boolean): Promise<void> {
+    setSavingApproval(true)
+    try {
+      const result = await api.configPrefs(next)
+      setRequireApproval(result.requireApproval)
+      setApprovalEnv(result.env)
+      setError('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSavingApproval(false)
+    }
+  }
+
   return (
     <div className="akw-cfg">
       <nav className="akw-cfg__tabs" aria-label="配置工具分区">
@@ -317,6 +335,23 @@ export function ConfigToolsTab() {
             {stats.stale > 0 ? <span className="akw-cfg__stat is-danger"><b>{stats.stale}</b><em>过期</em></span> : null}
             {stats.irreversible > 0 ? <span className="akw-cfg__stat is-danger"><b>{stats.irreversible}</b><em>不可逆</em></span> : null}
           </div>
+        </div>
+
+        <div className="akw-cfg__approval">
+          <label>
+            <input
+              type="checkbox"
+              checked={requireApproval !== false}
+              disabled={savingApproval || approvalEnv !== null}
+              onChange={(event) => void toggleApproval(event.target.checked)}
+            />
+            <b>写入前弹出审批</b>
+          </label>
+          <em>
+            {approvalEnv !== null
+              ? `环境变量已强制：${approvalEnv}`
+              : '关掉后 agent 的写入不再询问（只建议本机调试时关）。'}
+          </em>
         </div>
 
         {stats.writes > 0 ? (

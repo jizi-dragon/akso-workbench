@@ -62,6 +62,46 @@ export interface ServerState {
   currentAccountId: string | null
   /** 配置池：允许 agent 登录的账号（底部账号条只列这些） */
   poolAccountIds: string[]
+  /** 工具刚想写入但没有可用账号：界面据此自动弹一次选账号面板 */
+  needsAccount: boolean
+  needsAccountSince: number | null
+}
+
+/** 审批窗里的一步：给人看的「要写什么」，不是给机器的 blueprint。 */
+export interface ApprovalStepView {
+  index: number
+  action: 'create' | 'update'
+  kind: string
+  title: string
+  method: string
+  path: string
+  risk: string
+  irreversible: boolean
+  params: unknown
+  warnings: string[]
+}
+
+export interface ApprovalReportView {
+  planId: string
+  title: string
+  env: string
+  baseUrl: string
+  host: string
+  account: string
+  accountId: string | null
+  summary: { create: number; update: number; skip: number; irreversible: number }
+  steps: ApprovalStepView[]
+  createdAt: number
+  expiresAt: number
+  hash: string
+}
+
+export interface PendingApprovalView {
+  id: string
+  planId: string
+  createdAt: number
+  expiresAt: number
+  report: ApprovalReportView
 }
 
 const BASE = 'api/akso-workbench'
@@ -148,16 +188,22 @@ export const api = {
   renameBox: (source: string, target: string) => call<ServerState>('boxes/rename', post({ source, target })),
   bindBoxSite: (name: string, siteId: string) => call<ServerState>('boxes/bind-site', post({ name, siteId })),
 
-  /* ── eGMP 会话：口令只过去这一次，host 换 JWT 落盘，浏览器不保存任何凭据 ── */
-  configSession: () => call<EgmpSessionView>('config/session'),
+  /* ── eGMP 会话：只走 akso-cloud 代登录，浏览器不保存任何凭据 ── */
   /** 令牌原文 + 到期时间（账号条里点「查看」才调）。 */
   configToken: () => call<EgmpTokenView>('config/token'),
-  configLogin: (input: { baseUrl: string; account: string; password: string }) =>
-    call<EgmpSessionView & { ok: boolean }>('config/login', post(input)),
-  configLogout: () => call<{ ok: boolean; loggedIn: boolean }>('config/logout', post({})),
+  /** 页面开关：写入前是否弹审批窗（环境变量优先，见 capabilities 返回值）。 */
+  configPrefs: (requireApproval: boolean) =>
+    call<{ ok: boolean; saved: boolean; requireApproval: boolean; env: string | null }>('config/prefs', post({ requireApproval })),
+  /** 对话里那张审批窗：当前挂起的一条（没有就 null）。 */
+  configApprovalPending: () => call<{ pending: PendingApprovalView | null }>('config/approval/pending'),
+  configApprovalDecide: (id: string, verdict: 'approve' | 'deny' | 'supplement', note?: string) =>
+    call<{ ok: boolean; verdict: string }>('config/approval/decide', post({ id, verdict, note })),
   /** 能力目录（工具页的数据源）。返回的 items 形状由 tools.tsx 自己声明。 */
   configCapabilities: () =>
-    call<{ session: EgmpSessionView; groups: Array<{ domain: string; label?: string; items: unknown[] }> }>(
-      'config/capabilities',
-    ),
+    call<{
+      session: EgmpSessionView
+      groups: Array<{ domain: string; label?: string; items: unknown[] }>
+      requireApproval: boolean
+      approvalEnv: string | null
+    }>('config/capabilities'),
 }

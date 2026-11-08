@@ -14,8 +14,6 @@ export const TOOL_UIDS = {
   akso_workbench_config_apply: 'AKW-TOOL-CONFIG-APPLY-V1',
 } as const
 
-export type ToolUid = (typeof TOOL_UIDS)[keyof typeof TOOL_UIDS]
-
 /** 取工具 UID；未登记返回 null（调用方应拒绝注册）。 */
 export function toolUid(name: string): string | null {
   return Object.prototype.hasOwnProperty.call(TOOL_UIDS, name) ? TOOL_UIDS[name as keyof typeof TOOL_UIDS] : null
@@ -55,14 +53,16 @@ export function withToolUid<T extends ToolDefinitionLike>(definition: T, log?: T
   const description = `${definition.description ?? ''}\n\nUID: ${uid}（排查用；本工具返回的 _uid 与 host 日志里的 UID 一致）`
   const original = definition.execute.bind(definition)
   const execute = async (...args: never[]): Promise<unknown> => {
+    const startedAt = Date.now()
     log?.info?.(`[${uid}] invoke ${definition.name}`)
     try {
       const value = await original(...args)
-      log?.info?.(`[${uid}] done ${definition.name}`)
+      const ok = !(value !== null && typeof value === 'object' && (value as { ok?: unknown }).ok === false)
+      log?.info?.(`[${uid}] done ${definition.name} ${Date.now() - startedAt}ms ok=${ok}`)
       return tagResult(value, uid)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      log?.warn?.(`[${uid}] failed ${definition.name}: ${message}`)
+      log?.warn?.(`[${uid}] failed ${definition.name} ${Date.now() - startedAt}ms: ${message}`)
       throw error
     }
   }

@@ -18,7 +18,6 @@
  */
 
 export type Domain =
-  | 'auth'
   | 'object'
   | 'field'
   | 'picklist'
@@ -76,7 +75,6 @@ const p = (name: string, location: CapabilityParam['location'], required = true,
 })
 
 export const DOMAIN_LABEL: Record<Domain, string> = {
-  auth: '认证与登录',
   object: '对象',
   field: '字段',
   picklist: '选项集',
@@ -90,7 +88,6 @@ export const DOMAIN_LABEL: Record<Domain, string> = {
 
 /** 工具页分区顺序 = 文档 §接口总表 的顺序。 */
 export const DOMAIN_ORDER: Domain[] = [
-  'auth',
   'object',
   'field',
   'picklist',
@@ -105,50 +102,6 @@ export const DOMAIN_ORDER: Domain[] = [
 const CANCEL_STATUS_ID = '11515107-dce6-4ef1-8d51-b1ffed22040f'
 
 export const CAPABILITIES: Capability[] = [
-  /* ───────────────────────── 认证与登录（3） ───────────────────────── */
-  {
-    id: 'auth.login',
-    domain: 'auth',
-    title: 'OpenAPI 登录（换 JWT）',
-    description: '用平台账号换 JWT；后续所有读写都带它。密码不落盘。',
-    method: 'POST',
-    path: '/api/openapi/v1.0/Auth',
-    risk: 'low',
-    evidence: 'verified',
-    params: [p('account', 'body'), p('password', 'body')],
-    example: { account: '<account>', password: '<password>' },
-    returns: 'data 就是 JWT 字符串本身（约 55 分钟过期）。',
-    notes: ['平台也兼容 data.token / data.access_token，本工具按 data 字符串解析。', '失败时 code ≠ 0 且 data 为空。'],
-  },
-  {
-    id: 'auth.oauth.login',
-    domain: 'auth',
-    title: 'OAuth 登录（浏览器授权）',
-    description: '前端登录页用的 OAuth 入口；脚本化场景请直接用 auth.login。',
-    method: 'POST',
-    path: '/api/auth/Oauth/Login',
-    risk: 'low',
-    evidence: 'partial',
-    params: [],
-    example: {},
-    returns: 'data 含令牌（body 形状未收录）。',
-    notes: ['前端提交的是表单而非 JSON，成功后 JWT 落在 cookie __auth_token__。', '文档标 ⚠️：body 未抓全，不建议脚本依赖。'],
-  },
-  {
-    id: 'auth.oauth.refresh',
-    domain: 'auth',
-    title: 'OAuth 刷新令牌',
-    description: '用 refreshToken 换新令牌。',
-    method: 'POST',
-    path: '/api/auth/Oauth/RefreshToken',
-    risk: 'low',
-    evidence: 'partial',
-    params: [p('refreshToken', 'body')],
-    example: { refreshToken: '<refreshToken>' },
-    returns: 'data 为新令牌（字段名未细验）。',
-    notes: ['文档标 ⚠️：参数名按前端代码推断。'],
-  },
-
   /* ───────────────────────── 对象（7） ───────────────────────── */
   {
     id: 'object.save',
@@ -441,7 +394,7 @@ export const CAPABILITIES: Capability[] = [
       '全量替换：没带上的 section/control 会被删。',
       'pages 必须原值回传，否则报「无法删除其他布局部分 Section」。',
       'type=4 是工作流时间线分区，不能删。',
-      '文档标 ⚠️：section.belongId 由 FullPath 生成，写入规则未实测。',
+      '⚠️ 实测（2026-11-09）：新增 section 报「[layout_section] BelongId 不正确，该值必须由 FullPath 生成」，在已有 section 里加 control 同样报「[layout_control] BelongId 不正确」；目前只有"读全量原样回写"能通过，要加字段先在控制台建好再改。',
     ],
   },
 
@@ -532,19 +485,19 @@ export const CAPABILITIES: Capability[] = [
     method: 'POST',
     path: '/api/platform/Listlayout/SaveFilter',
     risk: 'medium',
-    evidence: 'partial',
+    evidence: 'verified',
     params: [
       p('belongId', 'body'),
-      p('details', 'body', true, 'array', '项含 id / relationId / targetType / targetId / targetCode / logicType / logicValue / targetFieldDataType / index'),
-      p('relations', 'body', true, 'array', '项含 id / logicalOperator / index'),
+      p('details', 'body', true, 'array', '项含 id / relationId / targetType / targetId / targetCode / logicType / logicValue / targetFieldDataType / index；id 与 relationId 必须是 GUID'),
+      p('relations', 'body', true, 'array', '项含 id / logicalOperator / index；id 必须与某条 details.relationId 相同'),
       p('id', 'body', false, 'string', '首次不传，更新时传'),
     ],
     example: {
       belongId: '<listlayoutId>',
       details: [
         {
-          id: '<detailId>',
-          relationId: 'r1',
+          id: '<detailGuid>',
+          relationId: '<relationGuid>',
           targetType: 1,
           targetId: '<fieldId>',
           targetCode: 'change_date__c',
@@ -554,14 +507,14 @@ export const CAPABILITIES: Capability[] = [
           index: 1,
         },
       ],
-      relations: [{ id: 'r1', logicalOperator: 1, index: 1 }],
+      relations: [{ id: '<relationGuid>', logicalOperator: 1, index: 1 }],
     },
-    returns: 'data 为新筛选 id。',
+    returns: 'data: null（实测不返回新筛选 id；带 id 时为覆盖更新）。',
     notes: [
       'logicType：1 等于 / 4 晚于 / 10 为空 / 11 不为空（未穷尽）。',
       '值要自带引号，日期写成 "\\"2026-07-01\\""；当前用户用 {!current.user}。',
       'logicalOperator：1 = AND，2 = OR。',
-      '文档标 ⚠️：字段名来自前端源码，未在验证环境跑通。',
+      '⚠️ relationId / details[].id / relations[].id 必须是 GUID 形态；写 "r1" 这类短名会 HTTP 400「One or more validation errors occurred.」（2026-11-09 实测）。',
     ],
   },
   {
@@ -842,15 +795,19 @@ export const CAPABILITIES: Capability[] = [
     domain: 'workflow',
     title: '删除工作流',
     description: '删除整条流程配置（连同步骤）。',
-    method: 'POST',
+    method: 'DELETE',
     path: '/api/platform/Workflow/DeleteWorkflowBasic',
     risk: 'high',
     irreversible: true,
     evidence: 'verified',
     params: [p('id', 'body', true, 'string', 'workflowConfigId')],
     example: { id: '<workflowConfigId>' },
-    returns: 'data: true。',
-    notes: ['是 POST 带 body，不是 DELETE。', '不可恢复。'],
+    returns: 'data 为被删掉的 workflowConfigId。',
+    notes: [
+      '必须用 DELETE 且 body 带 {id}；用 POST 会 405（2026-11-09 在 standard-val 实测）。',
+      '只有草稿(10)能删：状态 20 报「禁止删除启用状态的流程」、30 报「禁止删除禁用状态的流程」；发布后无法退回草稿，等于删不掉。',
+      '不可恢复。',
+    ],
   },
   {
     id: 'workflow.steps.list',

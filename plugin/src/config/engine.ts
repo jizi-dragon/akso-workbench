@@ -7,12 +7,12 @@
  *   - 每个 domain 自己负责 inspect / applyStep / verify；
  *   - 失败即停，checkpoint 留痕，不做"猜测式重试"。
  */
-import { randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { CAPABILITIES, findCapability, type Capability, type Risk } from './capabilities.ts'
-import { call, EgmpError, request, type EgmpSession } from './session.ts'
+import { findCapability, type Risk } from './capabilities.ts'
+import { call, EgmpError, normalizeBase, request, type EgmpSession } from './session.ts'
 import { dataDir } from '../store.ts'
 import type { Blueprint, CallResource, FieldResource, FormLayoutResource, ListLayoutResource, MenuResource, ObjectResource, PicklistResource, LifecycleResource, ResourceKind } from './blueprint.ts'
 import { validateBlueprint } from './blueprint.ts'
@@ -32,11 +32,20 @@ export interface Step {
   warnings: string[]
 }
 
+/** 计划绑定的目标：环境 + 账号。apply 时逐项比对，防止跨环境/跨账号执行。 */
+export interface PlanTarget {
+  baseUrl: string
+  accountId: string | null
+  account: string
+}
+
 export interface Plan {
   planId: string
   createdAt: number
   expiresAt: number
   env: string
+  /** 生成计划时的目标环境与账号（旧计划文件没有这个字段 → 拒绝执行）。 */
+  target?: PlanTarget
   summary: { create: number; update: number; skip: number; irreversible: number }
   steps: Step[]
   warnings: string[]
@@ -489,6 +498,7 @@ export async function planBlueprint(session: EgmpSession, input: Blueprint, dshH
     createdAt: Date.now(),
     expiresAt: Date.now() + 30 * 60 * 1000,
     env: input.env ?? '',
+    target: { baseUrl: session.baseUrl, accountId: session.accountId ?? null, account: session.account },
     summary,
     steps,
     warnings,
@@ -542,79 +552,6 @@ async function resolvePicklistId(ctx: QueryContext, res: Resolution, picklistCod
   return id
 }
 
-function controlType(dataType: number): string {
-  switch (dataType) {
-    case 3: return 'AKSelectorYesNo'
-    case 4: return 'AKSelectorSingle'
-    case 5:
-    case 7: return 'AKDateTime'
-    case 8: return 'AKFile'
-    case 15:
-    case 16:
-    case 23: return 'AKSelectorObject'
-    case 18: return 'AKRichTextEditor'
-    default: return 'AKInput'
-  }
-}
-
-async function applyFormLayout(ctx: QueryContext, step: Step, res: Resolution): Promise<{ message: string; after: unknown }> {
-  const objectCode = String((step.params as Record<string, unknown>).objectRef)
-  const sections = (step.params as Record<string, unknown>).sections as FormLayoutResource['sections']
-  const objectId = await resolveObjectId(ctx, res, objectCode)
-  const list = await invokeCapability(ctx.session, 'layout.list', { basicObjectId: objectId, pageIndex: 1, pageSize: 20 })
-  const layouts = (list.data as Record<string, unknown> | undefined)?.datas as Array<Record<string, unknown>> | undefined
-  const layout = (layouts ?? []).find((l) => Number(l.source) === 2) ?? (layouts ?? [])[0]
-  if (layout === undefined) throw new EgmpError(`对象 ${objectCode} 没有可用的表单布局`)
-  const layoutId = String(layout.id ?? '')
-  const detail = await invokeCapability(ctx.session, 'layout.detail', { layoutId })
-  const data = (detail.data ?? {}) as Record<string, unknown>
-  const existingSections = Array.isArray(data.sections) ? (data.sections as Array<Record<string, unknown>>) : []
-  const existingControls = Array.isArray(data.controls) ? (data.controls as Array<Record<string, unknown>>) : []
-  const addedSections: Array<Record<string, unknown>> = []
-  const addedControls: Array<Record<string, unknown>> = []
-  for (const [index, section] of sections.entries()) {
-    const code = section.code ?? `cs${index + 1}__cs`
-    let target = existingSections.find((s) => String(s.code ?? '') === code)
-    if (target === undefined) {
-      target = { id: randomUUID(), layoutId, pageId: null, code, name: section.name, type: 1, columnsNum: section.columnsNum ?? 2, required: null, readOnly: null, relationId: '00000000-0000-0000-0000-000000000000' }
-      existingSections.push(target)
-      addedSections.push(target)
-    }
-    for (const fieldCode of section.fields) {
-      const control = existingControls.find((c) => String(c.code ?? '') === fieldCode)
-      if (control !== undefined) continue
-      const fieldId = await resolveFieldId(ctx, res, objectCode, fieldCode)
-      const fields = await getFields(ctx, objectCode)
-      const meta = fields.find((f) => String(f.field_code ?? f.code ?? '') === fieldCode) ?? {}
-      const dataType = Number(meta.field_type ?? meta.dataType ?? 1)
-      const control2 = {
-        id: randomUUID(),
-        layoutId,
-        sectionId: String(target.id),
-        code: fieldCode,
-        name: String(meta.field_name ?? meta.name ?? fieldCode),
-        fieldId,
-        dataType,
-        type: controlType(dataType),
-        gridSpan: 1,
-        sort: existingControls.length + 1,
-        attrs: {},
-      }
-      existingControls.push(control2)
-      addedControls.push(control2)
-    }
-  }
-  const body: Record<string, unknown> = {
-    ...data,
-    sections: existingSections,
-    controls: existingControls,
-    pages: Array.isArray(data.pages) ? data.pages : [],
-    rules: Array.isArray(data.rules) ? data.rules : [],
-  }
-  await invokeCapability(ctx.session, 'layout.save', body)
-  return { message: `已追加 ${addedSections.length} 个分区、${addedControls.length} 个控件`, after: { layoutId, controls: existingControls.length } }
-}
-
 async function applyListLayout(ctx: QueryContext, step: Step, res: Resolution): Promise<{ message: string; after: unknown }> {
   const objectCode = String((step.params as Record<string, unknown>).objectRef)
   const columns = (step.params as Record<string, unknown>).columns as ListLayoutResource['columns']
@@ -638,7 +575,6 @@ async function applyListLayout(ctx: QueryContext, step: Step, res: Resolution): 
 }
 
 async function applyStep(ctx: QueryContext, step: Step, res: Resolution): Promise<{ message: string; after: unknown }> {
-  if (step.kind === 'formLayout') return await applyFormLayout(ctx, step, res)
   if (step.kind === 'listLayout') return await applyListLayout(ctx, step, res)
 
   // 通用：按 capability 调用，执行前解析引用
@@ -742,20 +678,6 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
         const ok = statuses.some((s) => String(s.code ?? s.lifecycle_status_code ?? '') === String(step.expected?.code ?? ''))
         return { verified: ok, message: ok ? '状态存在' : '回读未找到状态' }
       }
-      case 'formLayout': {
-        const objectCode = String((step.params as Record<string, unknown>).objectRef)
-        const objectId = await resolveObjectId(ctx, res, objectCode)
-        const list = await invokeCapability(ctx.session, 'layout.list', { basicObjectId: objectId, pageIndex: 1, pageSize: 20 })
-        const layouts = ((list.data as Record<string, unknown> | undefined)?.datas ?? []) as Array<Record<string, unknown>>
-        const layout = layouts.find((l) => Number(l.source) === 2) ?? layouts[0]
-        if (layout === undefined) return { verified: false, message: '没有布局可校验' }
-        const detail = await invokeCapability(ctx.session, 'layout.detail', { layoutId: layout.id })
-        const controls = Array.isArray((detail.data as Record<string, unknown>)?.controls) ? ((detail.data as Record<string, unknown>).controls as Array<Record<string, unknown>>) : []
-        const need = (step.expected?.fields as string[] | undefined) ?? []
-        const have = new Set(controls.map((c) => String(c.code ?? '')))
-        const missing = need.filter((f) => !have.has(f))
-        return { verified: missing.length === 0, message: missing.length === 0 ? `控件齐全（${need.length}）` : `缺少控件：${missing.join(', ')}` }
-      }
       case 'listLayout': {
         const objectCode = String((step.params as Record<string, unknown>).objectRef)
         const objectId = await resolveObjectId(ctx, res, objectCode)
@@ -793,14 +715,54 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
   }
 }
 
-export async function applyPlan(session: EgmpSession, planId: string, dshHome: string): Promise<Plan> {
+export interface ApplyOptions {
+  /**
+   * 是否要求"人已经审批过"（默认 true）。
+   * 只有调试（环境变量 / 页面开关明确关掉）时才允许 false。
+   */
+  requireApproval?: boolean
+}
+
+export async function applyPlan(session: EgmpSession, planId: string, dshHome: string, options: ApplyOptions = {}): Promise<Plan> {
   const plan = loadPlan(dshHome, planId)
   if (plan === null) throw new EgmpError(`计划不存在：${planId}`)
   if (Date.now() > plan.expiresAt) throw new EgmpError('计划已过期（30 分钟），请重新生成')
   if (plan.status === 'applied') return plan
-  if (plan.summary.irreversible > 0 && plan.warnings.length === 0) {
-    // 不可逆步骤必须在 warnings 里被显式列出；这里只是兜底，不阻断
+
+  // ── 门在引擎里，不在工具里：谁调用 applyPlan 都要过这一关 ──
+  // 判据取自 plan.steps（真实要写的动作），不再看 summary —— summary 是文件里的一行数字，
+  // 改一行就能把"有写入"说成"没写入"。
+  const writes = plan.steps.filter((step) => step.action !== 'skip')
+  if (writes.length > 0) {
+    const target = plan.target
+    if (target === undefined) {
+      throw new EgmpError('这个计划没有记录目标环境与账号，不能执行；请重新生成计划', { code: 'TARGET_MISSING' })
+    }
+    if (normalizeBase(target.baseUrl) !== normalizeBase(session.baseUrl)) {
+      throw new EgmpError(`计划的目标环境与当前会话不一致（计划 ${target.baseUrl}，当前 ${session.baseUrl}），已拒绝执行`, { code: 'TARGET_CHANGED' })
+    }
+    if (target.accountId === null) {
+      throw new EgmpError('这个计划没有绑定账号，不能执行；请从底部账号条选好账号后重新生成', { code: 'TARGET_NO_ACCOUNT' })
+    }
+    if (session.accountId === undefined || session.accountId !== target.accountId) {
+      throw new EgmpError(`计划绑定的账号与当前账号不一致（计划 ${target.accountId}，当前 ${session.accountId ?? '未知'}），已拒绝执行`, { code: 'TARGET_CHANGED' })
+    }
+    if (options.requireApproval !== false) {
+      const approval = readApproval(dshHome, planId)
+      if (approval === null) {
+        throw new EgmpError('这个计划还没有经过人工审批，不能执行；请重新调用 apply，在弹窗里点「同意」', { code: 'APPROVAL_REQUIRED' })
+      }
+      if (approval.hash !== planHash(plan)) {
+        throw new EgmpError('审批记录与计划内容不一致（计划可能被改过），已拒绝执行', { code: 'APPROVAL_MISMATCH' })
+      }
+      if (approval.usedAt !== undefined) {
+        throw new EgmpError('这个计划的审批已经用过了，不能重复执行', { code: 'APPROVAL_USED' })
+      }
+      // 先标记已用再写：中途失败也不能拿同一张审批重试，必须重新审批。
+      markApprovalUsed(dshHome, planId)
+    }
   }
+
   const ctx: QueryContext = { session, objects: new Map(), fields: new Map(), picklists: new Map(), statuses: new Map() }
   const res: Resolution = { objects: new Map(), fields: new Map(), picklists: new Map(), lifecycles: new Map() }
   const started = Date.now()
@@ -864,6 +826,9 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
 
 /* ───────────────────────────── 持久化 ───────────────────────────── */
 
+/** 计划 id 的形状是固定的；`loadPlan` 只认这个形状，路径拼接不会被 `../` 带出去。 */
+const PLAN_ID = /^pln_[a-z0-9]{4,40}$/
+
 function plansDir(dshHome: string): string {
   return join(dataDir(dshHome), 'config-plans')
 }
@@ -872,13 +837,85 @@ function auditDir(dshHome: string): string {
   return join(dataDir(dshHome), 'config-audit')
 }
 
+function approvalsDir(dshHome: string): string {
+  return join(dataDir(dshHome), 'config-approvals')
+}
+
+/** 审批记录：一条计划一张，`hash` 把 steps + env + target 钉死。 */
+export interface ApprovalRecord {
+  planId: string
+  hash: string
+  at: number
+  /** 审批被消费的时间；出现即表示这张审批已经用过了。 */
+  usedAt?: number
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record).sort()
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`
+}
+
+/**
+ * 计划指纹。只覆盖"会改变平台状态"的东西：每个 step 的动作、能力、参数、不可逆标记，
+ * 外加 env 与 target。planId / createdAt / 标题这类不影响写入的字段不参与。
+ */
+export function planHash(plan: Plan): string {
+  const material = {
+    env: plan.env,
+    target: plan.target ?? null,
+    steps: plan.steps.map((step) => ({
+      id: step.id,
+      kind: step.kind,
+      action: step.action,
+      capabilityId: step.capabilityId,
+      params: step.params,
+      irreversible: step.irreversible,
+    })),
+  }
+  return createHash('sha256').update(stableStringify(material)).digest('hex')
+}
+
+export function saveApproval(dshHome: string, record: ApprovalRecord): void {
+  const dir = approvalsDir(dshHome)
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  writeFileSync(join(dir, `${record.planId}.json`), `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+}
+
+export function readApproval(dshHome: string, planId: string): ApprovalRecord | null {
+  if (!PLAN_ID.test(planId)) return null
+  const file = join(approvalsDir(dshHome), `${planId}.json`)
+  if (!existsSync(file)) return null
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<ApprovalRecord>
+    if (typeof parsed.hash !== 'string' || parsed.hash === '') return null
+    return {
+      planId,
+      hash: parsed.hash,
+      at: Number(parsed.at ?? 0),
+      ...(typeof parsed.usedAt === 'number' ? { usedAt: parsed.usedAt } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
+function markApprovalUsed(dshHome: string, planId: string): void {
+  const record = readApproval(dshHome, planId)
+  if (record === null) return
+  saveApproval(dshHome, { ...record, usedAt: Date.now() })
+}
+
 export function savePlan(dshHome: string, plan: Plan): void {
   const dir = plansDir(dshHome)
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, `${plan.planId}.json`), `${JSON.stringify(plan, null, 2)}\n`, 'utf8')
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  writeFileSync(join(dir, `${plan.planId}.json`), `${JSON.stringify(plan, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
 }
 
 export function loadPlan(dshHome: string, planId: string): Plan | null {
+  if (!PLAN_ID.test(planId)) return null
   const file = join(plansDir(dshHome), `${planId}.json`)
   if (!existsSync(file)) return null
   try {
@@ -896,6 +933,8 @@ function audit(dshHome: string, plan: Plan, step: Step, result: StepResult): voi
     at: new Date().toISOString(),
     planId: plan.planId,
     env: plan.env,
+    baseUrl: plan.target?.baseUrl ?? null,
+    accountId: plan.target?.accountId ?? null,
     stepId: step.id,
     kind: step.kind,
     action: step.action,
@@ -911,17 +950,47 @@ function audit(dshHome: string, plan: Plan, step: Step, result: StepResult): voi
   appendFileSync(join(dir, `${month}.jsonl`), `${JSON.stringify(record)}\n`, 'utf8')
 }
 
-export function readAudit(dshHome: string, limit = 50): Array<Record<string, unknown>> {
+export type ApprovalVerdictRecord = 'approve' | 'deny' | 'supplement' | 'timeout' | 'cancelled'
+
+/**
+ * 审批决策留痕：与「写入审计」分文件（`approvals-<月>.jsonl`），
+ * 这样拒批、补充、超时也有记录 —— 只记"写了什么"不够，还要记"谁批的/谁拒的"。
+ */
+export function recordApprovalDecision(
+  dshHome: string,
+  plan: Plan,
+  verdict: ApprovalVerdictRecord,
+  note?: string,
+): void {
+  const dir = auditDir(dshHome)
+  mkdirSync(dir, { recursive: true })
+  const month = new Date().toISOString().slice(0, 7)
+  const record = {
+    at: new Date().toISOString(),
+    planId: plan.planId,
+    env: plan.env,
+    baseUrl: plan.target?.baseUrl ?? null,
+    accountId: plan.target?.accountId ?? null,
+    hash: planHash(plan),
+    verdict,
+    note: note === undefined || note === '' ? null : note,
+  }
+  appendFileSync(join(dir, `approvals-${month}.jsonl`), `${JSON.stringify(record)}\n`, 'utf8')
+}
+
+export function readAudit(dshHome: string, limit = 50, onError?: (error: unknown) => void): Array<Record<string, unknown>> {
   const dir = auditDir(dshHome)
   if (!existsSync(dir)) return []
   const lines: string[] = []
   try {
-    for (const name of readdirSync(dir).filter((n) => n.endsWith('.jsonl')).sort().reverse()) {
+    // 只读写入审计（`YYYY-MM.jsonl`）；`approvals-*.jsonl` 是另一类记录，不混进来
+    for (const name of readdirSync(dir).filter((n) => /^\d{4}-\d{2}\.jsonl$/.test(n)).sort().reverse()) {
       const content = readFileSync(join(dir, name), 'utf8').trim()
       if (content !== '') lines.push(...content.split('\n'))
       if (lines.length >= limit) break
     }
-  } catch {
+  } catch (error) {
+    onError?.(error)
     return []
   }
   return lines.slice(-limit).reverse().map((line) => {
@@ -929,6 +998,3 @@ export function readAudit(dshHome: string, limit = 50): Array<Record<string, unk
   })
 }
 
-export function capabilityList(): Capability[] {
-  return CAPABILITIES
-}

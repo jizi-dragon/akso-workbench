@@ -17,6 +17,11 @@ export interface StoredSession {
 
 export interface Prefs {
   currentAccountId: string | null
+  /**
+   * 页面开关：写入前是否必须人工审批。
+   * `undefined` = 没设过，按默认（**要求审批**）；环境变量优先级更高（见 index.ts）。
+   */
+  requireApproval?: boolean
 }
 
 /**
@@ -82,7 +87,8 @@ export function readPrefs(dshHome: string): Prefs {
   try {
     const parsed = readJson<Partial<Prefs>>(join(dataDir(dshHome), 'prefs.json'), {})
     const id = typeof parsed.currentAccountId === 'string' && parsed.currentAccountId !== '' ? parsed.currentAccountId : null
-    return { currentAccountId: id }
+    const flag = parsed.requireApproval
+    return typeof flag === 'boolean' ? { currentAccountId: id, requireApproval: flag } : { currentAccountId: id }
   } catch {
     return { currentAccountId: null }
   }

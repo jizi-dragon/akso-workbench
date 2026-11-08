@@ -23,8 +23,9 @@ import { test } from 'node:test'
 
 import { errorMessage, uiState } from '../src/cloud.ts'
 import { CAPABILITIES } from '../src/config/capabilities.ts'
-import { savePlan, planBlueprint } from '../src/config/engine.ts'
+import { applyPlan, planBlueprint, saveApproval, savePlan } from '../src/config/engine.ts'
 import { writeEgmpSession } from '../src/config/session.ts'
+import { writePool, writePrefs } from '../src/store.ts'
 import { apply, ROUTES } from '../src/index.ts'
 import { buildSnapshotTool } from '../src/tool.ts'
 import { startFakeCloud } from './fake-cloud.mjs'
@@ -48,7 +49,7 @@ interface Mounted {
   reply: { labels: string[] | null }
 }
 
-function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false, withQuestions = true): Mounted {
+function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false, withQuestions = true, logs?: string[]): Mounted {
   const routes = new Map<string, Captured['handler']>()
   const disposers: Array<() => void> = []
   const opened: string[] = []
@@ -56,7 +57,10 @@ function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false
   const asked: Mounted['asked'] = []
   const reply: Mounted['reply'] = { labels: ['允许这次写入'] }
   const ctx = {
-    logger: { warn: () => {} },
+    logger: {
+      warn: (message: unknown) => { logs?.push(`warn ${String(message)}`) },
+      info: (message: string) => { logs?.push(`info ${message}`) },
+    },
     effect: (fn: () => () => void) => {
       disposers.push(fn())
       return () => {}
@@ -300,13 +304,14 @@ test('围栏在真 HTTP 服务上成立（真 socket、真 header，不是手搓
       body: '{}',
     })
     assert.equal(cross.status, 403)
-    // 写：都齐了 ⇒ 过围栏，落到业务层（没登录 eGMP ⇒ 401，说明不是被围栏挡的）
+    // 写：都齐了 ⇒ 过围栏，落到业务层（账号条没有账号 ⇒ 409，说明不是被围栏挡的）
     const ok = await send(P.configPlan, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-akso-workbench': '1' },
       body: '{}',
     })
-    assert.equal(ok.status, 401, ok.body)
+    assert.equal(ok.status, 409, ok.body)
+    assert.match(ok.body, /NEEDS_ACCOUNT/)
     // 改 Host 假装被别的域名解析过来 ⇒ 403
     const rebound = await send(P.state, { headers: { Host: 'evil.example.com' } })
     assert.equal(rebound.status, 403)
@@ -729,9 +734,22 @@ test('配置池：默认空池，加入才可用；当前连接的账号不许�
   }
 })
 
-/* ─────────────────── 确认门：配置写入必须过一次审批 ─────────────────── */
+/* ─────────────────── 审批门：对话弹窗（HTTP 挂起 + 人决定） ─────────────────── */
 
-function planFixture(planId: string, overrides: { create: number; update: number; irreversible: number }): never {
+const ACCOUNT_ID = 'acct-tester'
+
+/** 写入会话的三个条件：账号条选了它、它在配置池里、磁盘会话绑的就是它。 */
+function writeAccount(home: string, baseUrl: string): void {
+  writeEgmpSession(home, { baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() })
+  writePrefs(home, { currentAccountId: ACCOUNT_ID })
+  writePool(home, { accountIds: [ACCOUNT_ID] })
+}
+
+function planFixture(
+  planId: string,
+  overrides: { create: number; update: number; irreversible: number },
+  baseUrl: string,
+): never {
   const step = (id: string, action: 'create' | 'update'): Record<string, unknown> => ({
     id,
     kind: 'picklist',
@@ -757,12 +775,24 @@ function planFixture(planId: string, overrides: { create: number; update: number
     createdAt: Date.now(),
     expiresAt: Date.now() + 30 * 60 * 1000,
     env: 'test',
+    target: { baseUrl, accountId: ACCOUNT_ID, account: 'tester' },
     summary: { create: overrides.create, update: overrides.update, skip: 0, irreversible: overrides.irreversible },
     steps,
     warnings: [],
     status: 'planned',
     results: [],
   } as never
+}
+
+/** 等审批窗挂出来（工具把请求挂到 gate 上，浏览器侧轮询拿到它）。 */
+async function waitPending(routes: Map<string, Captured['handler']>): Promise<Record<string, any>> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const res = await call(routes, P.configApprovalPending, 'GET')
+    const pending = res.json.pending as Record<string, any> | null
+    if (pending !== null && pending !== undefined) return pending
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.fail('审批窗没有挂出来')
 }
 
 /**
@@ -806,102 +836,215 @@ async function startFakeEgmp(
   }
 }
 
-test('配置写入先在对话里问人：允许才发请求，拒绝就一步都不写', async () => {
+test('配置写入先在对话里弹审批窗：人点同意才发请求', async () => {
   const home = freshHome()
   const mounted = mount(home, undefined, true)
   const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')
   assert.ok(applyTool !== undefined, '执行工具应当注册')
 
   const egmp = await startFakeEgmp()
-  writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() })
+  writeAccount(home, egmp.baseUrl)
   try {
-    savePlan(home, planFixture('pln_writes', { create: 1, update: 2, irreversible: 1 }))
+    savePlan(home, planFixture('pln_writes', { create: 1, update: 2, irreversible: 1 }, egmp.baseUrl))
 
-    // ① 问人：卡片里要能看到要发的步骤与完整 body
-    const allowed = await applyTool!.execute({ planId: 'pln_writes' }, { agent: { id: 'agent-1' } }) as Record<string, any>
-    assert.equal(mounted.asked.length, 1, '有写入就必须问一次人')
-    const question = mounted.asked[0]!.questions[0]!
-    assert.equal(question.header, '配置写入确认')
-    assert.match(String(question.question), /pln_writes/)
-    assert.match(String(question.question), /新建 1 · 更新 2/)
-    assert.deepEqual((question.options as Array<{ label: string }>).map((option) => option.label), ['允许这次写入', '拒绝'])
-    // 宿主的「计划审阅」版式：详情的第一行当标题、第一段当摘要，正文在右侧栏展开
-    assert.deepEqual(question.intent, { kind: 'plan-review', approve: '允许这次写入' }, '要走审阅卡而不是普通提问卡')
-    const detailLines = String(question.detail).split('\n')
-    assert.match(detailLines[0] ?? '', /3 步变更（新建 1 · 更新 2）/, '第一行是标题')
-    assert.ok((detailLines[1] ?? '') === '', '标题后面空一行，摘要才是第一段')
-    assert.match(detailLines[2] ?? '', /环境 `test`/, '摘要给环境')
-    assert.match(String(question.detail), /ObjectPicklist\/save/, '要摊出真实接口路径')
-    assert.match(String(question.detail), /\*\*1\. /, '每步一个小节')
-    assert.match(String(question.detail), /akw_test_pk__c/, '要摊出完整请求体')
-    assert.match(String(question.detail), /不可逆/, '不可逆的步骤要标出来')
-    assert.deepEqual(mounted.asked[0]!.exec?.agent, { id: 'agent-1' }, '提问要挂在发起调用的那个 agent 上')
+    const running = applyTool!.execute({ planId: 'pln_writes' }, { agent: { id: 'agent-1' } }) as Promise<Record<string, any>>
+    const pending = await waitPending(mounted.routes)
+    const report = pending.report as Record<string, any>
 
-    // ② 允许之后才真的发请求
-    assert.ok(egmp.hits >= 1, '允许之后必须真的发出请求')
-    assert.notEqual(allowed.status, 'denied')
+    // 弹窗里看到的是这份计划 + 真实接口 + 完整参数
+    assert.equal(report.planId, 'pln_writes')
+    assert.equal(report.accountId, ACCOUNT_ID)
+    assert.match(String(report.host), /127\.0\.0\.1/)
+    assert.equal((report.steps as unknown[]).length, 3, '跳过的步骤不该出现在审批表里')
+    const first = (report.steps as Array<Record<string, any>>)[0]!
+    assert.equal(first.method, 'POST')
+    assert.match(String(first.path), /ObjectPicklist\/save/)
+    assert.match(JSON.stringify(first.params), /akw_test_pk__c/)
+    assert.equal(first.irreversible, true, '不可逆的步骤要标出来')
+    assert.equal(egmp.hits, 0, '没人同意之前一个包都不许发')
 
-    // ③ 同一步骤换成拒绝：一个包都不许发
-    const before = egmp.hits
-    mounted.reply.labels = ['拒绝']
-    savePlan(home, planFixture('pln_writes2', { create: 1, update: 0, irreversible: 0 }))
-    const denied = await applyTool!.execute({ planId: 'pln_writes2' }, { agent: { id: 'agent-1' } }) as Record<string, any>
-    assert.equal(denied.status, 'denied')
-    assert.equal(egmp.hits, before, '被拒绝时不许碰平台')
-    assert.match(String(denied.message), /一步都没写/)
+    // 点同意之后才真的发请求
+    const decided = await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'approve' })
+    assert.equal(decided.status, 200)
+    const result = await running
+    assert.equal(result.ok, true)
+    assert.equal(result.approved, true)
+    assert.ok(egmp.hits >= 1, '同意之后必须真的发出请求')
   } finally {
     await egmp.close()
   }
 })
 
-test('没有问答通道时拒绝写入（fail closed），不静默放行', async () => {
-  const home = freshHome()
-  const mounted = mount(home, undefined, true, false)
-  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
-  const egmp = await startFakeEgmp()
-  writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() })
-  try {
-    savePlan(home, planFixture('pln_writes', { create: 1, update: 0, irreversible: 0 }))
-    const result = await applyTool.execute({ planId: 'pln_writes' }, {}) as Record<string, any>
-    assert.equal(result.status, 'no-approval-channel')
-    assert.equal(egmp.hits, 0, '没人答应就不许写')
-  } finally {
-    await egmp.close()
-  }
-})
-
-test('问答通道抛错（比如在被委派的子 agent 里）也按拒绝处理', async () => {
+test('人点拒绝：计划一步都不写，审批窗清掉', async () => {
   const home = freshHome()
   const mounted = mount(home, undefined, true)
   const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
   const egmp = await startFakeEgmp()
-  writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() })
-  mounted.reply.labels = null
+  writeAccount(home, egmp.baseUrl)
   try {
-    savePlan(home, planFixture('pln_writes', { create: 1, update: 0, irreversible: 0 }))
-    const result = await applyTool.execute({ planId: 'pln_writes' }, {}) as Record<string, any>
-    assert.equal(result.status, 'no-approval-channel')
+    savePlan(home, planFixture('pln_deny', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
+    const running = applyTool.execute({ planId: 'pln_deny' }, {}) as Promise<Record<string, any>>
+    const pending = await waitPending(mounted.routes)
+    await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'deny' })
+    const result = await running
+    assert.equal(result.status, 'denied')
+    assert.match(String(result.message), /一步都没写/)
+    assert.equal(egmp.hits, 0, '被拒绝时一个包都不许发')
+    const after = await call(mounted.routes, P.configApprovalPending, 'GET')
+    assert.equal(after.json.pending, null, '决定之后审批窗要清掉')
+  } finally {
+    await egmp.close()
+  }
+})
+
+test('人点补充：不写，把补充意见原样回给 agent', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  const egmp = await startFakeEgmp()
+  writeAccount(home, egmp.baseUrl)
+  try {
+    savePlan(home, planFixture('pln_more', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
+    const running = applyTool.execute({ planId: 'pln_more' }, {}) as Promise<Record<string, any>>
+    const pending = await waitPending(mounted.routes)
+
+    // 光点「补充」不写意见：400，审批还挂着
+    const empty = await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'supplement' })
+    assert.equal(empty.status, 400)
+
+    const decided = await call(mounted.routes, P.configApprovalDecide, 'POST', {
+      id: pending.id,
+      verdict: 'supplement',
+      note: '把 code 改成 akw_other__c',
+    })
+    assert.equal(decided.status, 200)
+    const result = await running
+    assert.equal(result.status, 'supplement')
+    assert.equal(result.note, '把 code 改成 akw_other__c')
+    assert.match(String(result.message), /补充意见/)
     assert.equal(egmp.hits, 0)
   } finally {
     await egmp.close()
   }
 })
 
-test('全 skip 的计划没有写入，不需要问人', async () => {
+test('同一时间只挂一条审批：第二条直接 busy，不排队', async () => {
   const home = freshHome()
   const mounted = mount(home, undefined, true)
   const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
-  savePlan(home, planFixture('pln_noop', { create: 0, update: 0, irreversible: 0 }))
-  const result = await applyTool.execute({ planId: 'pln_noop' }, {}) as Record<string, any>
-  assert.notEqual(result.status, 'denied')
-  assert.equal(mounted.asked.length, 0, '没有写入就不该打扰人')
+  const egmp = await startFakeEgmp()
+  writeAccount(home, egmp.baseUrl)
+  try {
+    savePlan(home, planFixture('pln_first', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
+    savePlan(home, planFixture('pln_second', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
+    const first = applyTool.execute({ planId: 'pln_first' }, {}) as Promise<Record<string, any>>
+    const pending = await waitPending(mounted.routes)
+    const second = await applyTool.execute({ planId: 'pln_second' }, {}) as Record<string, any>
+    assert.equal(second.status, 'busy')
+    await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'deny' })
+    assert.equal((await first).status, 'denied')
+    assert.equal(egmp.hits, 0)
+  } finally {
+    await egmp.close()
+  }
 })
 
-test('确认不再走 DSH 的 approval / tools-pre-execute（自己的问题、自己的门）', () => {
+test('账号条为空：工具返回 needs-account，平台一步都不写，界面收到 needsAccount', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  const egmp = await startFakeEgmp()
+  try {
+    // 只有磁盘上的旧会话、账号条没选账号 —— 这就是「不回落旧会话」的场景
+    writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() })
+    savePlan(home, planFixture('pln_none', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
+    const result = await applyTool.execute({ planId: 'pln_none' }, {}) as Record<string, any>
+    assert.equal(result.status, 'needs-account')
+    assert.match(String(result.hint), /账号条/)
+    assert.equal(egmp.hits, 0, '没有账号就不许碰平台')
+
+    const state = await call(mounted.routes, P.state, 'GET')
+    assert.equal(state.json.needsAccount, true, '界面据此自动弹出选账号面板')
+    assert.ok(typeof state.json.needsAccountSince === 'number')
+  } finally {
+    await egmp.close()
+  }
+})
+
+test('没有写入的计划不弹审批窗', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  const egmp = await startFakeEgmp()
+  writeAccount(home, egmp.baseUrl)
+  try {
+    savePlan(home, planFixture('pln_noop', { create: 0, update: 0, irreversible: 0 }, egmp.baseUrl))
+    const result = await applyTool.execute({ planId: 'pln_noop' }, {}) as Record<string, any>
+    assert.equal(result.status, 'applied')
+    assert.equal(result.approved, false)
+    const pending = await call(mounted.routes, P.configApprovalPending, 'GET')
+    assert.equal(pending.json.pending, null, '没有写入就不该打扰人')
+    assert.equal(egmp.hits, 0)
+  } finally {
+    await egmp.close()
+  }
+})
+
+test('计划的目标环境变了：引擎拒绝执行', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  const egmp = await startFakeEgmp()
+  writeAccount(home, egmp.baseUrl)
+  try {
+    // 计划绑的是另一个环境：就算人点了同意，也不许把包发到这边
+    savePlan(home, planFixture('pln_moved', { create: 1, update: 0, irreversible: 0 }, 'https://other.example.com'))
+    const running = applyTool.execute({ planId: 'pln_moved' }, {}) as Promise<Record<string, any>>
+    const pending = await waitPending(mounted.routes)
+    await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'approve' })
+    const result = await running
+    assert.equal(result.ok, false)
+    assert.match(String(result.error), /目标环境/)
+    assert.equal(egmp.hits, 0)
+  } finally {
+    await egmp.close()
+  }
+})
+
+test('引擎自己再验一遍：绕过工具也必须有审批记录', async () => {
+  const home = freshHome()
+  const egmp = await startFakeEgmp()
+  writeAccount(home, egmp.baseUrl)
+  try {
+    const plan = planFixture('pln_engine', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl)
+    savePlan(home, plan)
+    const session = { baseUrl: egmp.baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() }
+    await assert.rejects(
+      () => applyPlan(session, 'pln_engine', home),
+      (error: any) => error?.code === 'APPROVAL_REQUIRED',
+      '没有审批记录时引擎必须拒绝',
+    )
+    assert.equal(egmp.hits, 0)
+
+    // 审批指纹与计划内容对不上（计划被改过）也拒绝
+    saveApproval(home, { planId: 'pln_engine', hash: 'deadbeef', at: Date.now() })
+    await assert.rejects(
+      () => applyPlan(session, 'pln_engine', home),
+      (error: any) => error?.code === 'APPROVAL_MISMATCH',
+    )
+    assert.equal(egmp.hits, 0)
+  } finally {
+    await egmp.close()
+  }
+})
+
+test('审批窗是插件自己的门：不接 DSH 的 approval，也不再走 userQuestions', () => {
   const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
   assert.doesNotMatch(source, /tools\/pre-execute/, '不该再注册 DSH 的 pre-execute 门')
   assert.doesNotMatch(source, /ctx\.approval/, '不该再向 DSH 的 approval 服务提问')
-  assert.match(source, /userQuestions/, '应当走宿主的用户提问通道')
+  assert.doesNotMatch(source, /userQuestions/, '审批不再借用宿主的用户提问通道')
+  assert.match(source, /createApprovalGate/, '应当由插件自己的 approval gate 挂起/唤醒')
+  assert.match(source, /configApprovalDecide/, '应当有浏览器侧回复审批的端点')
 })
 
 test('HTTP 直连：写接口默认 403，读接口放行到登录检查', async () => {
@@ -923,10 +1066,20 @@ test('HTTP 直连：写接口默认 403，读接口放行到登录检查', async
 
   process.env.AKSO_WORKBENCH_ALLOW_DIRECT_WRITE = '1'
   try {
+    // 开关只放行「直连」这条路，不等于放行写入：没账号 409
     const opened = mount(freshHome())
     const res = await call(opened.routes, P.configApply, 'POST', { planId: 'pln_x' })
-    assert.equal(res.status, 401)
-    assert.match(String(res.json.error), /eGMP/)
+    assert.equal(res.status, 409)
+    assert.equal(res.json.code, 'NEEDS_ACCOUNT')
+
+    // 账号准备好了、计划也在，但没有审批记录：引擎这一关照样拒绝
+    const home = freshHome()
+    const withAccount = mount(home)
+    writeAccount(home, 'https://egmp.example.com')
+    savePlan(home, planFixture('pln_direct', { create: 1, update: 0, irreversible: 0 }, 'https://egmp.example.com'))
+    const guarded = await call(withAccount.routes, P.configApply, 'POST', { planId: 'pln_direct' })
+    assert.equal(guarded.status, 502)
+    assert.equal(guarded.json.code, 'APPROVAL_REQUIRED')
   } finally {
     delete process.env.AKSO_WORKBENCH_ALLOW_DIRECT_WRITE
   }
@@ -1066,13 +1219,14 @@ test('选项集回读：平台留下的旧选项不算失败，只在消息里�
     { code: 'urgent__c', name: '紧急变更' },
     { code: 'low__c', name: '低风险变更' },
   ])
-  writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', token: 'jwt', savedAt: Date.now() })
+  writeAccount(home, egmp.baseUrl)
   try {
     const plan = {
       planId: 'pln_extra',
       createdAt: Date.now(),
       expiresAt: Date.now() + 30 * 60 * 1000,
       env: 'test',
+      target: { baseUrl: egmp.baseUrl, accountId: ACCOUNT_ID, account: 'tester' },
       summary: { create: 0, update: 1, skip: 0, irreversible: 0 },
       steps: [{
         id: 's1',
@@ -1100,7 +1254,10 @@ test('选项集回读：平台留下的旧选项不算失败，只在消息里�
       results: [],
     }
     savePlan(home, plan as never)
-    const result = await applyTool.execute({ planId: 'pln_extra' }, { agent: { id: 'agent-1' } }) as Record<string, any>
+    const running = applyTool.execute({ planId: 'pln_extra' }, { agent: { id: 'agent-1' } }) as Promise<Record<string, any>>
+    const pending = await waitPending(mounted.routes)
+    await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'approve' })
+    const result = await running
     assert.equal(result.ok, true)
     assert.equal(result.results[0].status, 'verified', '多出来的旧选项不该把这一步判失败')
     assert.match(String(result.results[0].message), /另有 1 个/)
@@ -1270,4 +1427,86 @@ test('工具 UID：三个注册工具都有唯一 UID，未登记的工具拒绝
     () => withToolUid({ name: 'akso_workbench_unregistered', async execute() { return {} } }),
     /没有登记 UID/,
   )
+})
+
+test('实测台账：名单里的 id 都在能力目录里，且与卡片标签一一对应', async () => {
+  const { APPROVED_TOOL_IDS } = await import('../src/shared/approved-tools.ts')
+  const ids = new Set(CAPABILITIES.map((cap) => cap.id))
+
+  // ① 台账里写错一个 id，卡片会永远标"已验证"却指向不存在的接口
+  for (const id of APPROVED_TOOL_IDS) assert.ok(ids.has(id), `台账里的 ${id} 不在能力目录里`)
+
+  // ② 目录里的 testStatus 必须由台账算出来（防止"名单改了、状态没跟上"）
+  for (const cap of CAPABILITIES) {
+    assert.equal(
+      cap.testStatus,
+      APPROVED_TOOL_IDS.has(cap.id) ? 'verified' : 'stale',
+      `${cap.id} 的 testStatus 与台账不一致`,
+    )
+  }
+
+  // ③ 因环境/协议限制没跑通的 2 条必须保持过期，别被顺手写进名单
+  for (const id of ['layout.save', 'menu.sort']) {
+    assert.ok(!APPROVED_TOOL_IDS.has(id), `${id} 还没验证通过，不应进名单`)
+  }
+})
+
+
+
+test('日志：写入审计带目标账号，审批决策单独留痕，HTTP 请求各一行 access log', async () => {
+  const home = freshHome()
+  const logs: string[] = []
+  const mounted = mount(home, undefined, true, true, logs)
+  const egmp = await startFakeEgmp([{ code: 'major__c', name: '主要变更' }])
+  writeAccount(home, egmp.baseUrl)
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  const month = new Date().toISOString().slice(0, 7)
+  const auditFile = join(home, 'akso-workbench', 'config-audit', `${month}.jsonl`)
+  const decisionsFile = join(home, 'akso-workbench', 'config-audit', `approvals-${month}.jsonl`)
+  try {
+    // ① 拒批：平台一步不写，但"谁拒了哪一版计划"要留痕
+    savePlan(home, planFixture('pln_logdeny', { create: 1, update: 0, irreversible: false }, egmp.baseUrl))
+    const denyRun = applyTool.execute({ planId: 'pln_logdeny' }, {})
+    const denyPending = await waitPending(mounted.routes)
+    await call(mounted.routes, ROUTES.configApprovalDecide, 'POST', { id: denyPending.id, verdict: 'deny' })
+    const denied = (await denyRun) as { status: string }
+    assert.equal(denied.status, 'denied')
+    assert.equal(egmp.hits, 0)
+    assert.ok(existsSync(decisionsFile), '审批决策应落盘')
+    const denyRecord = JSON.parse(readFileSync(decisionsFile, 'utf8').trim().split('\n').at(-1)!) as Record<string, unknown>
+    assert.equal(denyRecord['verdict'], 'deny')
+    assert.equal(denyRecord['planId'], 'pln_logdeny')
+    assert.equal(denyRecord['accountId'], ACCOUNT_ID)
+    assert.equal(denyRecord['baseUrl'], egmp.baseUrl)
+    assert.equal(typeof denyRecord['hash'], 'string')
+
+    // ② 同意并写入：每条步骤审计都要能回答"写到了哪个环境、哪个账号"
+    savePlan(home, planFixture('pln_logapprove', { create: 1, update: 0, irreversible: false }, egmp.baseUrl))
+    const approveRun = applyTool.execute({ planId: 'pln_logapprove' }, {})
+    const approvePending = await waitPending(mounted.routes)
+    await call(mounted.routes, ROUTES.configApprovalDecide, 'POST', { id: approvePending.id, verdict: 'approve' })
+    const applied = (await approveRun) as { ok: boolean }
+    assert.equal(applied.ok, true)
+    assert.ok(existsSync(auditFile), '写入审计应落盘')
+    const auditRecords = readFileSync(auditFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
+    assert.ok(auditRecords.length > 0)
+    for (const record of auditRecords) {
+      assert.equal(record['accountId'], ACCOUNT_ID)
+      assert.equal(record['baseUrl'], egmp.baseUrl)
+    }
+
+    // ③ 两类记录分文件：读审计接口只回写入审计，不混进审批决策
+    const auditApi = await call(mounted.routes, ROUTES.configAudit, 'GET')
+    const apiRecords = (auditApi.json as { records: Array<Record<string, unknown>> }).records
+    assert.ok(apiRecords.length > 0)
+    assert.ok(apiRecords.every((record) => record['verdict'] === undefined))
+
+    // ④ access log：正常请求与围栏 403 各一行
+    assert.ok(logs.some((line) => line.includes('[http] GET') && line.includes('/config/approval/pending')), '应记录轮询请求')
+    assert.ok(logs.some((line) => line.includes('-> 200')), '应记录状态码')
+    await call(mounted.routes, ROUTES.sync, 'POST', {}, '127.0.0.1', { host: '127.0.0.1:60717' })
+    assert.ok(logs.some((line) => line.includes('[http] POST') && line.includes('-> 403')), '被围栏挡掉的请求也要记录')
+  } finally {
+    await egmp.close()
+  }
 })

@@ -27,8 +27,9 @@ import { withToolUid } from './tool-uids.ts'
 import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
 import { cloudCredentialProvider } from './credentials.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
-import { EgmpError, clearEgmpSession, login as egmpLogin, publicSession, readEgmpSession, tokenView, writeEgmpSession, type EgmpSession } from './config/session.ts'
-import { buildConfigApplyTool, buildConfigPlanTool, type AskQuestion, type ToolExec } from './config/tools.ts'
+import { createApprovalGate } from './config/approval.ts'
+import { EgmpError, clearEgmpSession, publicSession, readEgmpSession, tokenView, writeEgmpSession, type EgmpSession } from './config/session.ts'
+import { buildConfigApplyTool, buildConfigPlanTool } from './config/tools.ts'
 
 export const name = 'akso-workbench'
 export const inject = ['webServer']
@@ -37,23 +38,28 @@ const MAX_BODY = 128 * 1024
 const MAX_TEXT = 200
 
 /** 用系统默认浏览器打开（Windows `start` / macOS `open` / Linux `xdg-open`）。 */
-function openExternalUrl(url: string): void {
+function openExternalUrl(url: string, onError?: (message: string) => void): void {
   let parsed: URL
   try {
     parsed = new URL(url)
   } catch {
+    onError?.(`链接不是合法 URL：${url.slice(0, 120)}`)
     return
   }
   // 只放行 http(s)：这个 URL 来自服务端响应，不能变成"打开本地文件/协议"的入口
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    onError?.(`拒绝打开非 http(s) 链接：${parsed.protocol}`)
+    return
+  }
   const command = process.platform === 'win32' ? 'cmd' : process.platform === 'darwin' ? 'open' : 'xdg-open'
   const args = process.platform === 'win32' ? ['/c', 'start', '', parsed.toString()] : [parsed.toString()]
   try {
-    execFile(command, args, () => {
-      // 打不开就算了：界面上还有可复制的链接与码
+    execFile(command, args, (error) => {
+      // 打不开就算了：界面上还有可复制的链接与码 —— 但要留一条日志，别静默
+      if (error !== null) onError?.(`打不开浏览器：${error.message}`)
     })
-  } catch {
-    // 同上
+  } catch (error) {
+    onError?.(`打不开浏览器：${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -83,6 +89,10 @@ interface StatePayload {
   currentAccountId: string | null
   /** 配置池：允许 agent 登录的账号；`pool.json` 不存在时是**空池**（首次使用由用户自己加）。 */
   poolAccountIds: string[]
+  /** 有工具想写，但账号条是空的：界面据此自动弹出选账号面板。 */
+  needsAccount: boolean
+  /** 这一波"需要账号"的时间戳（同一波只弹一次；null = 不需要）。 */
+  needsAccountSince: number | null
 }
 
 /**
@@ -106,8 +116,12 @@ export const ROUTES = {
   configCapabilities: '/api/akso-workbench/config/capabilities',
   configSession: '/api/akso-workbench/config/session',
   configToken: '/api/akso-workbench/config/token',
-  configLogin: '/api/akso-workbench/config/login',
   configLogout: '/api/akso-workbench/config/logout',
+  /** 页面开关：写入是否要求人工审批（环境变量优先级更高）。 */
+  configPrefs: '/api/akso-workbench/config/prefs',
+  /** 对话弹窗：读当前挂着的那条审批 / 回复同意-拒绝-补充。 */
+  configApprovalPending: '/api/akso-workbench/config/approval/pending',
+  configApprovalDecide: '/api/akso-workbench/config/approval/decide',
   configInvoke: '/api/akso-workbench/config/invoke',
   configPlan: '/api/akso-workbench/config/plan',
   configPlanGet: '/api/akso-workbench/config/plan-status',
@@ -159,12 +173,28 @@ export function requestFence(req: any, method: string): string | null {
   return null
 }
 
+interface AccessMeta {
+  method: string
+  path: string
+  startedAt: number
+  logger: { info: (message: string) => void; warn: (error: unknown) => void }
+  logged?: boolean
+}
+
 function sendJson(res: any, status: number, payload: unknown): void {
   const body = JSON.stringify(payload)
   res.statusCode = status
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
   res.setHeader('Cache-Control', 'no-store')
   res.end(body)
+  // 访问日志：每条请求一行（含被围栏挡掉的 403），5xx 走 warn，其余走 info
+  const meta = (res as { __akwAccess?: AccessMeta }).__akwAccess
+  if (meta !== undefined && meta.logged !== true) {
+    meta.logged = true
+    const line = `[http] ${meta.method} ${meta.path} -> ${status} ${Date.now() - meta.startedAt}ms`
+    if (status >= 500) meta.logger.warn(line)
+    else meta.logger.info(line)
+  }
 }
 
 function readBody(req: any): Promise<Record<string, unknown>> {
@@ -206,8 +236,6 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   if (config.enabled === false) return
   const dshHome = config.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
   const baseUrl = cloud.normalizeBase(config.cloudBaseUrl ?? process.env.AKSO_CLOUD_BASE)
-  // 验证/CI 里不希望真的弹一个浏览器窗口时，用 env 关掉（host 仍会返回链接）
-  const openBrowser = process.env.AKSO_WORKBENCH_NO_OPEN === '1' ? () => {} : (config.openBrowser ?? openExternalUrl)
   // 配置写入只走「模型工具 + 宿主审批」。HTTP 直连（invoke/apply）默认关闭：
   // 一条 loopback 的 POST 没有人的审批参与，开着它等于给这道门留了个侧门。
   const allowDirectWrite = process.env.AKSO_WORKBENCH_ALLOW_DIRECT_WRITE === '1'
@@ -218,12 +246,43 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     info: (message: string) => (ctx.logger as { info?: (m: string) => void } | undefined)?.info?.(message),
   }
 
+  // 验证/CI 里不希望真的弹一个浏览器窗口时，用 env 关掉（host 仍会返回链接）
+  const openBrowser = process.env.AKSO_WORKBENCH_NO_OPEN === '1'
+    ? () => {}
+    : (config.openBrowser ?? ((url: string) => openExternalUrl(url, (message) => logger.warn(`[open] ${message}`))))
+
   /** 设备流：deviceCode 只在 host 侧，浏览器拿到的是"用户码 + 链接"。 */
   let pendingDevice: { deviceCode: string; startedAt: number; expiresIn: number } | null = null
 
   /** 唯一的一份快照 —— 所有座位读它，写操作整体替换它。 */
   let snapshot: cloud.CloudSnapshot | null = null
   let syncedAt: number | null = null
+
+  /** 最近一次「工具想写但账号条是空的」的时间；界面按它弹一次选账号面板。 */
+  let needsAccountAt: number | null = null
+
+  /** 对话审批窗与 host 之间的那根线：工具挂起等，浏览器弹窗回复。 */
+  const approvals = createApprovalGate()
+
+  /**
+   * 是否要求人工审批：环境变量 > 页面开关 > 默认（**要求**）。
+   * 环境变量给调试/CI 用：`0` 关、`1` 强制开、不设则看页面开关。
+   */
+  function approvalEnvOverride(): string | null {
+    const raw = (process.env.AKSO_WORKBENCH_REQUIRE_APPROVAL ?? '').trim()
+    const env = raw.toLowerCase()
+    const known = env === '0' || env === 'false' || env === 'off' || env === '1' || env === 'true' || env === 'on'
+    return known ? raw : null
+  }
+
+  function requireApproval(): boolean {
+    const override = approvalEnvOverride()
+    if (override !== null) {
+      const env = override.toLowerCase()
+      return env === '1' || env === 'true' || env === 'on'
+    }
+    return readPrefs(dshHome).requireApproval !== false
+  }
 
   /**
    * 配置池：**默认空池** —— 账号不会自己进来，要人在「配置池 → 添加账号」里挑。
@@ -262,6 +321,8 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       counts: snapshot?.counts ?? { accounts: 0, sites: 0, boxes: 0 },
       currentAccountId: currentId,
       poolAccountIds,
+      needsAccount: needsAccountAt !== null && Date.now() - needsAccountAt < 5 * 60 * 1000,
+      needsAccountSince: needsAccountAt !== null && Date.now() - needsAccountAt < 5 * 60 * 1000 ? needsAccountAt : null,
     }
   }
 
@@ -324,6 +385,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       const session: EgmpSession = {
         baseUrl: minted.baseUrl,
         account: minted.account,
+        accountId,
         token: minted.token,
         savedAt: Date.now(),
       }
@@ -334,18 +396,72 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     }
   }
 
-  function handleError(res: any, error: unknown): void {    if (error instanceof EgmpError) {
+  /**
+   * 写入专用会话 —— **只认底部账号条**。
+   *
+   * 和 `ensureEgmpSession` 的区别（也是以前那个漏洞的补丁）：
+   *   - 先看账号条（`prefs.currentAccountId`），空 ⇒ 直接不给会话，绝不回落到磁盘上的旧会话；
+   *   - 账号必须在配置池里（池子=用户允许 agent 用的账号）；
+   *   - 落盘会话的 `accountId` 必须与账号条一致，否则重新换票 —— 换账号后不会拿着旧账号的票继续写。
+   *
+   * 拿不到会话时 `reason` 是给人看的一句话，界面会据此自动弹出选账号面板。
+   */
+  async function openWriteSession(): Promise<{ session: EgmpSession | null; reason: string | null }> {
+    const prefs = readPrefs(dshHome)
+    const accountId = prefs.currentAccountId
+    if (accountId === null) {
+      needsAccountAt = Date.now()
+      return { session: null, reason: '底部账号条还没有连接账号' }
+    }
+    const pool = readPool(dshHome)?.accountIds ?? []
+    if (!pool.includes(accountId)) {
+      needsAccountAt = Date.now()
+      return { session: null, reason: '当前账号不在配置池里，不能用来写入' }
+    }
+    const existing = readEgmpSession(dshHome)
+    if (existing !== null && existing.accountId === accountId) {
+      const expiresAt = tokenView(existing).expiresAt
+      if (expiresAt === null || expiresAt - Date.now() > REFRESH_MARGIN_MS) {
+        needsAccountAt = null
+        return { session: existing, reason: null }
+      }
+    }
+    const cloudSession = readSession(dshHome)
+    if (cloudSession === null) return { session: null, reason: 'akso-cloud 未登录，换不到 eGMP 令牌' }
+    try {
+      if (snapshot === null) await sync(cloudSession)
+      const minted = await credentialProvider().mint(accountId)
+      const session: EgmpSession = {
+        baseUrl: minted.baseUrl,
+        account: minted.account,
+        accountId,
+        token: minted.token,
+        savedAt: Date.now(),
+      }
+      writeEgmpSession(dshHome, session)
+      needsAccountAt = null
+      return { session, reason: null }
+    } catch (error) {
+      return { session: null, reason: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  function handleError(res: any, error: unknown): void {
+    if (error instanceof EgmpError) {
+      logger.warn(`[egmp] ${error.message}（code=${error.code ?? '-'} traceId=${error.traceId ?? '-'} path=${error.path ?? '-'}）`)
       sendJson(res, 502, { error: error.message, code: error.code, traceId: error.traceId, path: error.path })
       return
     }
     if (error instanceof cloud.CloudError) {
       if (error.status === 401) {
+        logger.info('[cloud] 登录已失效，已清会话')
         clearSession(dshHome)
         snapshot = null
         syncedAt = null
         sendJson(res, 401, { error: '登录已失效，请重新登录' })
         return
       }
+      logger.warn(`[cloud] ${error.message}（status=${error.status} path=${error.path ?? '-'}）`)
       sendJson(res, 502, { error: error.message, cloudStatus: error.status, path: error.path })
       return
     }
@@ -364,6 +480,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       kind: 'exact' as const,
       path,
       handler: async (req: any, res: any) => {
+        ;(res as { __akwAccess?: AccessMeta }).__akwAccess = {
+          method: String(req.method ?? method),
+          path,
+          startedAt: Date.now(),
+          logger,
+        }
         // 围栏①：本机地址 / 同源 / 跨站标记 / 写请求的自定义头
         const fenced = requestFence(req, method)
         if (fenced !== null) {
@@ -587,7 +709,10 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 400, { error: '这个账号不在配置池里：先去「配置池」把它加进来' })
         return
       }
-      writePrefs(dshHome, { currentAccountId: id === '' ? null : id })
+      // 保留页面开关（requireApproval），只改当前账号
+      writePrefs(dshHome, { ...readPrefs(dshHome), currentAccountId: id === '' ? null : id })
+      // 换账号 / 断开连接都清掉"需要账号"的提示：下一次写入会重新判断
+      needsAccountAt = null
       sendJson(res, 200, payload(session))
     }),
 
@@ -675,15 +800,46 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       sendJson(res, 200, { ...tokenView(ensured.session), token: null, refreshed: ensured.refreshed, reason: ensured.reason })
     }),
 
-    route('POST', R.configLogin, false, async (_req, res, body) => {
-      const session = await egmpLogin(String(body.baseUrl ?? ''), String(body.account ?? ''), String(body.password ?? ''))
-      writeEgmpSession(dshHome, session)
-      sendJson(res, 200, { ok: true, ...publicSession(session) })
-    }),
-
     route('POST', R.configLogout, false, async (_req, res) => {
       clearEgmpSession(dshHome)
       sendJson(res, 200, { ok: true, loggedIn: false })
+    }),
+
+    /* ───────────── 配置：页面开关（写入审批） ───────────── */
+    route('POST', R.configPrefs, false, async (_req, res, body) => {
+      const value = body.requireApproval
+      if (typeof value !== 'boolean') {
+        sendJson(res, 400, { error: 'requireApproval 必须是 true / false' })
+        return
+      }
+      const prefs = readPrefs(dshHome)
+      writePrefs(dshHome, { ...prefs, requireApproval: value })
+      sendJson(res, 200, { ok: true, saved: value, requireApproval: requireApproval(), env: approvalEnvOverride() })
+    }),
+
+    /* ───────────── 配置：对话里那张审批窗 ───────────── */
+    route('GET', R.configApprovalPending, false, async (_req, res) => {
+      sendJson(res, 200, { pending: approvals.pending() })
+    }),
+
+    route('POST', R.configApprovalDecide, false, async (_req, res, body) => {
+      const id = text(body.id, 120)
+      const verdict = text(body.verdict, 20)
+      if (verdict !== 'approve' && verdict !== 'deny' && verdict !== 'supplement') {
+        sendJson(res, 400, { error: 'verdict 只能是 approve / deny / supplement' })
+        return
+      }
+      const note = text(body.note, 2000)
+      if (verdict === 'supplement' && note === '') {
+        sendJson(res, 400, { error: '选「补充」时要写一句补充意见' })
+        return
+      }
+      const decision = approvals.decide(id, verdict, note)
+      if (decision === null) {
+        sendJson(res, 404, { error: '这条审批已经结束或不存在' })
+        return
+      }
+      sendJson(res, 200, { ok: true, verdict: decision.verdict })
     }),
 
     /* ───────────── 配置：能力目录（工具页的数据源） ───────────── */
@@ -692,6 +848,8 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         session: publicSession(readEgmpSession(dshHome)),
         groups: groupByDomain(),
         total: CAPABILITIES.length,
+        requireApproval: requireApproval(),
+        approvalEnv: approvalEnvOverride(),
       })
     }),
 
@@ -713,9 +871,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 403, { error: DIRECT_WRITE_HINT })
         return
       }
-      const session = (await ensureEgmpSession()).session
+      const writePath = capability.method.toUpperCase() !== 'GET' && capability.readonly !== true
+      const session = writePath
+        ? (await openWriteSession()).session
+        : (await ensureEgmpSession()).session
       if (session === null) {
-        sendJson(res, 401, { error: '还没有登录 eGMP：账号条里连一个账号就能自动换票' })
+        sendJson(res, writePath ? 409 : 401, { error: '还没有登录 eGMP：账号条里连一个账号就能自动换票' })
         return
       }
       const params = body.params !== null && typeof body.params === 'object' ? (body.params as Record<string, unknown>) : {}
@@ -725,12 +886,14 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
 
     /* ───────────── 配置：计划 → 执行 → 审计 ───────────── */
     route('POST', R.configPlan, false, async (_req, res, body) => {
-      const session = (await ensureEgmpSession()).session
-      if (session === null) {
-        sendJson(res, 401, { error: '还没有登录 eGMP：账号条里连一个账号就能自动换票' })
+      // 计划必须绑定一个"账号条里的账号"，否则 apply 时会被 TARGET_NO_ACCOUNT 拒掉；
+      // 这里提前拦住，并让界面弹出选账号面板。
+      const opened = await openWriteSession()
+      if (opened.session === null) {
+        sendJson(res, 409, { error: opened.reason, code: 'NEEDS_ACCOUNT' })
         return
       }
-      const plan = await planBlueprint(session, body.blueprint as never, dshHome)
+      const plan = await planBlueprint(opened.session, body.blueprint as never, dshHome)
       sendJson(res, 200, { ok: true, plan })
     }),
 
@@ -750,9 +913,9 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 403, { error: DIRECT_WRITE_HINT })
         return
       }
-      const session = (await ensureEgmpSession()).session
-      if (session === null) {
-        sendJson(res, 401, { error: '还没有登录 eGMP：账号条里连一个账号就能自动换票' })
+      const opened = await openWriteSession()
+      if (opened.session === null) {
+        sendJson(res, 409, { error: opened.reason, code: 'NEEDS_ACCOUNT' })
         return
       }
       const planId = text(body.planId, 120)
@@ -760,14 +923,14 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 400, { error: '缺少 planId' })
         return
       }
-      const plan = await applyPlan(session, planId, dshHome)
+      const plan = await applyPlan(opened.session, planId, dshHome, { requireApproval: requireApproval() })
       sendJson(res, 200, { ok: plan.status === 'applied', plan })
     }),
 
     route('GET', R.configAudit, false, async (req, res) => {
       const url = new URL(String(req.url ?? '/'), 'http://127.0.0.1')
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50))
-      sendJson(res, 200, { records: readAudit(dshHome, limit) })
+      sendJson(res, 200, { records: readAudit(dshHome, limit, (error) => logger.warn(`[audit] 读取失败：${error instanceof Error ? error.message : String(error)}`)) })
     }),
   ]
 
@@ -778,11 +941,10 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     }
   }, 'akso-workbench: routes')
 
-  /* ── 写入前的确认走宿主自己的「用户提问」通道（跟 ask_user_question 同一套界面）──
-     不用 DSH 的 approval：完全权限档下会话策略是 `never`，它会把所有 `ask` 静默判拒，
-     写入这条路会被焊死；而这里问的本来就是"要不要写这么一批东西"，
-     当成问题问出来，卡片直接进对话、人点「允许这次写入」之后工具才继续。
-     拿不到通道（或在被委派的子 agent 里）时工具会拒绝执行 —— fail closed。 */
+  /* ── 写入前的审批：对话里弹一个窗，人点「同意 / 拒绝 / 补充」──
+     门本身在 `engine.applyPlan`（计划指纹 + 目标环境 + 账号 + 审批记录），
+     这里只是把「要写什么」送到浏览器、把人的决定收回来；工具与 HTTP 共用同一条门。
+     页面开关 / 环境变量只决定要不要弹窗，关掉审批等于调试模式（默认不关）。 */
 
   /* ── 给 agent 的只读工具：让它能读到与界面同一份快照 ── */
   try {
@@ -816,19 +978,11 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       }), logger)
       ctx.effect(() => registry.register(definition), 'akso-workbench: snapshot tool')
 
-      const questions = (typeof ctx.get === 'function' ? ctx.get('userQuestions', false) : undefined)
-        ?? (ctx as unknown as { userQuestions?: unknown }).userQuestions
       const configDeps = {
         dshHome,
-        /** 把问题交给宿主的问答通道；没有通道就返回 null，工具据此拒绝写入。 */
-        async ask(items: AskQuestion[], exec: ToolExec): Promise<string[] | null> {
-          const seam = questions as { ask?: (request: unknown) => Promise<unknown> } | undefined
-          if (seam === undefined || seam === null || typeof seam.ask !== 'function') return null
-          const answer = await seam.ask({ questions: items, agent: exec.agent, signal: exec.signal }) as
-            { answers?: Array<{ selected?: unknown }> } | undefined
-          const selected = answer?.answers?.[0]?.selected
-          return Array.isArray(selected) ? selected.map((item) => String(item)) : []
-        },
+        openSession: openWriteSession,
+        approvals,
+        requireApproval,
       }
       const planTool = withToolUid(buildConfigPlanTool(configDeps), logger)
       const applyTool = withToolUid(buildConfigApplyTool(configDeps), logger)

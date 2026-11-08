@@ -12,7 +12,7 @@ akso-workbench 的**服务层**（DSH 插件侧的域能力）。不是重写整
 | `skills/` 1,775 行 | **丢弃** | DSH 的 skill（SKILL.md + 脚本） |
 | MCP 客户端 1,032 行 | **丢弃** | DSH 内置 MCP 客户端 |
 | `static/` 11,041 行 + 对话 UI | **丢弃** | DSH 的 Web GUI / client-ui 插件 |
-| `approvals.py` 772 行 | **降到 ~100 行** | 计划文件 + `ask_user_question` 弹窗（见 `docs/10`） |
+| `approvals.py` 772 行 | **降到一个引擎门 + 一个弹窗** | 计划指纹落在 `config-approvals/`，对话里点「同意」才写（见 `docs/10` §5） |
 | `services/egmp/**` 3,851 行 | **移植（本仓）** | 平台语义只有我们知道 |
 | `vault.py` / `accounts.py` | **改为调 akso-cloud** | 不再两处实现同一套账号库 |
 
@@ -22,8 +22,8 @@ akso-workbench 的**服务层**（DSH 插件侧的域能力）。不是重写整
 |---|---|---|
 | `src/egmp/client.ts`（登录 / 信封 / 分页 / token 缓存） | ✅ | `test/client.test.ts` **7/7** |
 | `src/egmp/*`（kernel / queries / replay） | ⏳ | — |
-| 计划文件 + apply（写对象） | ⏳ | 设计见 `docs/10` §5 |
-| DSH 工具注册（`defineTool`） | ⏳ | 需要 `@deepseek-ai/dsh-tools`（插件包依赖） |
+| 计划文件 + apply（写对象） | ✅ | `plugin/test/host.test.ts`（审批门 / 目标绑定 / 回读） |
+| DSH 工具注册（`withToolUid` + `ctx.tools`） | ✅ | 三个工具：账号快照 / 配置计划 / 配置执行 |
 
 ## 跑
 
