@@ -16,10 +16,13 @@
  * 同一天又按用户要求删掉 `auth.login`（改为只走 akso-cloud 代登录，agent 不再接触明文口令），
  * 目录 47 → 45 → 44，本名单 43 → 42。
  * 2026-11-09 晚 `layout.save` 经抓包复验通过（LayoutDetail 读全量 → 原地改 → 整份回写），
- * 本名单 42 → 43；只剩 `menu.sort` 不验证（全量替换且无读整棵树的接口，误操作会把子菜单移出层级）。
+ * 本名单 42 → 43；当时只剩 `menu.sort` 未验证（全量替换且无读整棵树的接口，误操作会把子菜单移出层级）。
  * 同一天新增 `layout.stable.ids`（GetStableComponentIds）并实测通过：临时 id → 稳定 id，
  * 目录 44 → 45、本名单 43 → 44。工作流建流程与布局落地的实测记录见
  * `docs/CAPABILITY-VERIFICATION-2026-11-09.md`。
+ * 2026-11-09 夜新增 3 条生命周期动作能力（`lifecycle.useraction.list`、`lifecycle.enteraction.create`、
+ * `lifecycle.enteraction.list`，抓包确认，未进本名单），并按用户要求删除 `menu.sort`。
+ * 当前目录 47 条、本名单 44 条；3 条新增能力保持「过期」，待脚本实测后入账。
  */
 export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   // 对象

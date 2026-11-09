@@ -88,5 +88,5 @@
   「通用」则所有卡片都显示）+ `| 值 | 含义 | 备注 |` 表。新动作码先在这份文档登记，再改代码。
 - **校验**：`node plugin/scripts/api-guide.mjs --check` 连三份文档一起校验（缺章节 / 多余 id / 解析告警 /
   方案 id 不在目录，有问题 exit 1）；`--seed` 补基础指南骨架；`--list` 看登记状态。
-  `plugin/test/api-guide.test.ts` 与 `plugin/test/config-docs.test.ts` 会断言真文档零告警、44 条全覆盖、
+  `plugin/test/api-guide.test.ts` 与 `plugin/test/config-docs.test.ts` 会断言真文档零告警、目录全覆盖、
   每条恰好一条案例、至少一个标准方案、映射表非空——测试失败时先跑 `--check` 定位。

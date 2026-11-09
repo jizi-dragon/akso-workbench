@@ -1272,25 +1272,25 @@ body 是空对象（不是空 body）。响应 `data[]` 为菜单组，含 `appI
 
 ## 与本仓 `plugin/src/config/capabilities.ts` 的对照
 
-能力目录已按本文重建（2026-11-05），**44 条一一对应**：id、`method`、`path`、参数位置、请求示例都从这份清单取，不再有第二套路径。工具页「配置工具」的二级导航（对象建模 / 布局 / 生命周期 / 工作流 / 菜单·通知）也是按目录的域渲染的，接口卡片展开即可看到参数表与请求示例。
+能力目录早期按本文重建（2026-11-05，44 条一一对应）；2026-11-09 夜为 **47 条**，新增的 3 条生命周期动作能力来自实际抓包（见 `docs/CAPABILITY-VERIFICATION-2026-11-09.md`）。id、`method`、`path`、参数位置、请求示例都从这份清单与实测记录维护，不再有第二套路径。工具页「配置工具」的二级导航（对象建模 / 布局 / 生命周期 / 工作流 / 菜单·通知）也是按目录的域渲染的，接口卡片展开即可看到参数表与请求示例。
 
 > 2026-11-09 变更：`auth.oauth.login`、`auth.oauth.refresh` 经实测**无作用**（见上文认证两节），
-> `auth.login` 随后也删了（写入只保留 akso-cloud 代登录，本机不再接受明文口令）；能力目录由 47 条
-> 降为 44 条，卡片标签同步为「已验证 43 / 过期 1」（`layout.save` 当晚经抓包复验通过）。
+> `auth.login` 随后也删了（写入只保留 akso-cloud 代登录，本机不再接受明文口令）；按 2026-11-09 夜快照，
+> 能力目录 47 条（44 已验证 + 3 条抓包确认、仍标「过期」），`menu.sort` 已按用户要求删除。
 
 | 域 | 条数 | 能力 id |
 | --- | --- | --- |
 | 对象 | 4 | `object.save`、`object.field.page`、`object.fields.outfield`、`query.object.get` |
 | 字段 | 2 | `query.fields.list`、`field.save` |
 | 选项集 | 2 | `query.picklist.get`、`picklist.save` |
-| 表单布局 | 3 | `layout.list`、`layout.detail`、`layout.save` |
+| 表单布局 | 4 | `layout.list`、`layout.detail`、`layout.save`、`layout.stable.ids` |
 | 列表布局 | 6 | `listlayout.list`、`listlayout.columns.get`、`listlayout.save`、`listlayout.columns.set`、`listlayout.filter.save`、`listlayout.filter.get` |
-| 生命周期 | 5 | `query.lifecycle.status.list`、`lifecycle.status.create`、`lifecycle.status.update`、`lifecycle.useraction.create`、`lifecycle.useraction.get` |
+| 生命周期 | 8 | `query.lifecycle.status.list`、`lifecycle.status.create`、`lifecycle.status.update`、`lifecycle.useraction.create`、`lifecycle.useraction.get`、`lifecycle.useraction.list`、`lifecycle.enteraction.create`、`lifecycle.enteraction.list` |
 | 工作流 | 18 | `workflow.create` / `get` / `update` / `page.list` / `status.change` / `delete` / `steps.list` / `task.add` / `decision.add` / `action.add` / `start.update` / `task.update` / `decision.update` / `action.update` / `step.copy` / `step.delete` / `step.get` / `controls.list` |
-| 菜单 | 3 | `menu.submit`、`menu.sort`、`menu.group.list` |
+| 菜单 | 2 | `menu.submit`、`menu.group.list` |
 | 通知 | 1 | `notice.template.list` |
 
-**1 条仍是 ⚠️**（与界面卡片上的「过期」标记一致）：`menu.sort`（全量替换且无读整棵树的接口，未脚本化）。`layout.save` 已于 2026-11-09 晚抓包复验通过——正确姿势是「`LayoutDetail.data` 整份读出 → 原地改 → 整份回写」；新建 section 用 `{ id, code, name, type, columnsNum }`、control 用 `{ id, sectionId, code, name, fieldId, type, gridSpan, attrs }` 即可，但**不要带 `belongId` / `fullPath`**（带上会报 `[layout_section] BelongId 不正确…必须由 FullPath 生成`，见上文表单布局节）。`auth.oauth.login`、`auth.oauth.refresh` 已于 2026-11-09 实测无作用并删除；`listlayout.filter.save` 已实测通过（`relationId` 须为 GUID、返回 `data: null`，见上文）。`object.fields.outfield` 与 `listlayout.filter.get` 已于 2026-11-05 在验证环境跑通，参数名与响应形状按实测改正（见上文各节）。
+**当前 3 条保持「过期」**（与界面卡片一致）：`lifecycle.useraction.list`、`lifecycle.enteraction.create`、`lifecycle.enteraction.list`——真实抓包/回读已确认，未走脚本实测。`menu.sort` 已按用户要求从工具目录删除（全量替换且无读整棵树接口）。`layout.save` 已于 2026-11-09 晚抓包复验通过——正确姿势是「`LayoutDetail.data` 整份读出 → 原地改 → 整份回写」；新建 section 用 `{ id, code, name, type, columnsNum }`、control 用 `{ id, sectionId, code, name, fieldId, type, gridSpan, attrs }` 即可，但**不要带 `belongId` / `fullPath`**（带上会报 `[layout_section] BelongId 不正确…必须由 FullPath 生成`，见上文表单布局节）。`auth.oauth.login`、`auth.oauth.refresh` 已于 2026-11-09 实测无作用并删除；`listlayout.filter.save` 已实测通过（`relationId` 须为 GUID、返回 `data: null`，见上文）。`object.fields.outfield` 与 `listlayout.filter.get` 已于 2026-11-05 在验证环境跑通，参数名与响应形状按实测改正（见上文各节）。
 
 **口径统一**（原先的三处不一致已随重建改掉）：
 

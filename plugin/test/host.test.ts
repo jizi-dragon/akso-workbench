@@ -1102,6 +1102,33 @@ test('engine 用到的能力 id 都在目录里（拼错会静默变成"查不�
   assert.deepEqual(missing, [], `这些 id 不在能力目录里：${missing.join(', ')}`)
 })
 
+test('生命周期挂载能力：进入动作 / 按钮列表的路径与只读标记固定', () => {
+  const byId = new Map(CAPABILITIES.map((cap) => [cap.id, cap]))
+
+  const enter = byId.get('lifecycle.enteraction.create')
+  assert.ok(enter, '缺少 lifecycle.enteraction.create')
+  assert.equal(enter.method, 'POST')
+  assert.equal(enter.path, '/api/config/lifecycle/EnterAction/Create')
+  assert.deepEqual(enter.params.map((item) => item.name), ['code', 'belongId', 'belongType', 'actions'])
+  assert.ok(enter.notes.some((note) => note.includes('isAllowTrigger')), '进入动作必须提醒 isAllowTrigger')
+
+  const enterList = byId.get('lifecycle.enteraction.list')
+  assert.ok(enterList, '缺少 lifecycle.enteraction.list')
+  assert.equal(enterList.method, 'GET')
+  assert.equal(enterList.path, '/api/config/lifecycle/EnterAction/GetListByStatusId')
+  assert.equal(enterList.readonly, true)
+
+  const actionList = byId.get('lifecycle.useraction.list')
+  assert.ok(actionList, '缺少 lifecycle.useraction.list')
+  assert.equal(actionList.method, 'GET')
+  assert.equal(actionList.path, '/api/config/lifecycle/UserAction/GetListByStatusId')
+  assert.equal(actionList.readonly, true)
+
+  const actionGet = byId.get('lifecycle.useraction.get')
+  assert.ok(actionGet, '缺少 lifecycle.useraction.get')
+  assert.match(actionGet.returns, /roles/, 'useraction.get 只回角色授权，不能当按钮列表用')
+})
+
 /* ─────────────── 令牌详情：只给时间戳（原文不出 host），且必须带自定义头 ─────────────── */
 
 test('令牌详情：只回从 JWT 解出的签发/到期时间，原文不出 host', async () => {
@@ -1445,10 +1472,8 @@ test('实测台账：名单里的 id 都在能力目录里，且与卡片标签�
     )
   }
 
-  // ③ 因环境/协议限制没跑通的 2 条必须保持过期，别被顺手写进名单
-  for (const id of ['menu.sort']) {
-    assert.ok(!APPROVED_TOOL_IDS.has(id), `${id} 还没验证通过，不应进名单`)
-  }
+  // ③ 目录里已删除的 menu.sort 不应再出现在台账或卡片上
+  assert.ok(!ids.has('menu.sort'), 'menu.sort 已从目录删除')
 })
 
 

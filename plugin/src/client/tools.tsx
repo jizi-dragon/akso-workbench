@@ -11,7 +11,7 @@
  *   不用重新构建插件。指南只覆盖「介绍 / 返回 / 要点 / 案例」；method、path、参数表、
  *   风险这些结构字段仍以 capabilities.ts 为准。文档里没写的接口回落到目录里的旧文案。
  *
- * 目录与 `docs/reference/Akso平台内部API接口清单.md` 的 44 条一一对应；
+ * 目录的结构字段与 `docs/reference/Akso平台内部API接口清单.md`、实测抓包对齐；
  * 卡片底部的「已验证 / 过期」是**实测台账**：用户在测试中确认过输入输出的接口才标已验证（绿），
  * 其余一律标过期（红），见 capabilities.ts 的 APPROVED_TOOL_IDS。
  *

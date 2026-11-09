@@ -12,7 +12,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, write
 import { join } from 'node:path'
 
 import { findCapability, type Risk } from './capabilities.ts'
-import { call, EgmpError, normalizeBase, request, type EgmpSession } from './session.ts'
+import { call, EgmpError, normalizeBase, type EgmpSession } from './session.ts'
 import { dataDir } from '../store.ts'
 import type { Blueprint, CallResource, FieldResource, FormLayoutResource, ListLayoutResource, MenuResource, ObjectResource, PicklistResource, LifecycleResource, ResourceKind } from './blueprint.ts'
 import { validateBlueprint } from './blueprint.ts'
@@ -149,12 +149,6 @@ export async function invokeCapability(session: EgmpSession, capabilityId: strin
     }
     if (cap.method === 'GET') query[key] = value
     else body[key] = value
-  }
-  // menu.sort 的 body 是数组，不是对象 —— 走底层 request（call 会断言 code===0 并只接受对象体）
-  if (capabilityId === 'menu.sort' && Array.isArray(params.tree)) {
-    const { status, json } = await request(session, cap.method, path, params.tree)
-    if (json.code !== 0) throw new EgmpError(String(json.message ?? `HTTP ${status}`), { status, path })
-    return json
   }
   return await call(session, cap.method, path, cap.method === 'GET' ? undefined : body, cap.method === 'GET' ? query : undefined)
 }

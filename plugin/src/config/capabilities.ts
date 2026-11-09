@@ -58,7 +58,7 @@ export interface Capability {
   /** 由 `APPROVED_TOOL_IDS` 在模块加载时写入，见文件末尾。 */
   testStatus?: TestStatus
   params: CapabilityParam[]
-  /** 工具页的预填请求；引擎用同一形状生成 plan。少数接口（如菜单排序）整份 body 就是数组。 */
+  /** 工具页的预填请求；引擎用同一形状生成 plan。 */
   example: Record<string, unknown> | unknown[]
   /** `data` 的形态，工具页直接展示，省得每次翻文档。 */
   returns?: string
@@ -584,7 +584,7 @@ export const CAPABILITIES: Capability[] = [
     notes: ['参数名是 listlayoutId；传 belongId 平台回「数据不存在」。'],
   },
 
-  /* ───────────────────────── 生命周期（4） ───────────────────────── */
+  /* ───────────────────────── 生命周期（8） ───────────────────────── */
   {
     id: 'lifecycle.status.create',
     domain: 'lifecycle',
@@ -722,14 +722,15 @@ export const CAPABILITIES: Capability[] = [
     returns: 'data 为新按钮 UUID。',
     notes: [
       'behaviorValue.workflowId 要填 workflowBasicId，不是 workflowConfigId——混用会报 500。',
-      '该接口不做合并：每调一次就多一个按钮，重跑前先 LifestatusUserAction/Get 查重。',
+      '按钮只负责 behaviorType 7 拉起流程；发起人签名要在工作流开始节点放电子签名控件（startUpControls），按钮上的 enableSignatures 不是“必签”开关。',
+      '该接口不做合并：每调一次就多一个按钮，重跑前先 `lifecycle.useraction.list` 查重。',
     ],
   },
   {
     id: 'lifecycle.useraction.get',
     domain: 'lifecycle',
-    title: '读状态上的按钮',
-    description: '列出某状态已有的按钮动作，用于查重与读改写。',
+    title: '读状态按钮的权限角色',
+    description: '读某状态按钮的角色授权（不是按钮列表）；按钮本身用 lifecycle.useraction.list。',
     method: 'POST',
     path: '/api/config/power/LifestatusUserAction/Get',
     risk: 'low',
@@ -738,6 +739,95 @@ export const CAPABILITIES: Capability[] = [
     params: [p('statusId', 'body')],
     example: { statusId: '<statusId>' },
     returns: 'data 是对象：{ objectId, lifecycleId, statusId, roles[] }，不是按钮数组。',
+    notes: ['返回的是 roles[] 授权，不含 actions；要读状态上的按钮数组用 `lifecycle.useraction.list`。'],
+  },
+  {
+    id: 'lifecycle.useraction.list',
+    domain: 'lifecycle',
+    title: '读状态上的按钮列表',
+    description: '按状态 id 返回按钮数组；查重、读改写前先调它。',
+    method: 'GET',
+    path: '/api/config/lifecycle/UserAction/GetListByStatusId',
+    risk: 'low',
+    readonly: true,
+    evidence: 'verified',
+    params: [p('statusId', 'query', true, 'string', '生命周期状态 id')],
+    example: { statusId: '<statusId>' },
+    returns: 'data 为按钮数组；每项含 lifecycleStatusId / lifecycleStatusName / group / behaviorTypes / icon / name / code / configs 等；没有按钮时是 []。',
+    notes: [
+      '这是查按钮的接口；`lifecycle.useraction.get` 走权限角色接口，只回 roles。',
+      '按 statusId 过滤，不是按 objectId。',
+    ],
+  },
+  {
+    id: 'lifecycle.enteraction.create',
+    domain: 'lifecycle',
+    title: '新建进入动作（触发流程）',
+    description: '在某个生命周期状态上挂进入动作，通常用 behaviorType 7 拉起提醒工作流。',
+    method: 'POST',
+    path: '/api/config/lifecycle/EnterAction/Create',
+    risk: 'medium',
+    evidence: 'verified',
+    params: [
+      p('code', 'body', true, 'string', '进入动作编码'),
+      p('belongId', 'body', true, 'string', '所属状态 id'),
+      p('belongType', 'body', true, 'number', '1 = 生命周期状态（进入动作）'),
+      p('actions', 'body', true, 'array', '动作数组，项含 name / code / configs / lifecycleId / lifecycleStatusId 等'),
+    ],
+    example: {
+      code: 'return_reminder__c',
+      belongId: '<statusId>',
+      belongType: 1,
+      actions: [
+        {
+          code: 'return_reminder__c',
+          name: '',
+          isEnabled: true,
+          belongType: 1,
+          configs: [
+            {
+              id: '<actionConfigId>',
+              uid: '<actionConfigId>',
+              behaviorType: 7,
+              behaviorValue: { workflowId: '<workflowBasicId>' },
+              belongId: '<statusId>',
+              sort: 0,
+            },
+          ],
+          sort: 1,
+          executeType: 1,
+          description: '已退回触发提醒',
+          lifecycleId: '<lifecycleId>',
+          lifecycleStatusId: '<statusId>',
+          basicObjectId: '<objectId>',
+          objectCode: 'homework__c',
+          enableSignatures: true,
+        },
+      ],
+    },
+    returns: 'data 为新建进入动作 id 数组（演示环境返回 ["84908509-…"]）。',
+    notes: [
+      'belongType 是 1（进入动作）；状态按钮的 belongType 是 2，别混。',
+      '目标工作流必须已发布（status 20）且工作流级 isAllowTrigger:true，否则进入动作选不到/不会触发；该开关启用后不可逆。',
+      'name 可为空，平台回读也可能是 null；用 code 标识。',
+      '该接口不合并：重跑前先用 `lifecycle.enteraction.list` 查重。',
+      'workflowId 填 workflowBasicId，不是 workflowConfigId。',
+    ],
+  },
+  {
+    id: 'lifecycle.enteraction.list',
+    domain: 'lifecycle',
+    title: '读状态上的进入动作',
+    description: '按状态 id 列出进入动作，用于查重与回读。',
+    method: 'GET',
+    path: '/api/config/lifecycle/EnterAction/GetListByStatusId',
+    risk: 'low',
+    readonly: true,
+    evidence: 'verified',
+    params: [p('statusId', 'query', true, 'string', '生命周期状态 id')],
+    example: { statusId: '<statusId>' },
+    returns: 'data 为进入动作数组；每项含 id / code / name / configs 等；没有时是 []。',
+    notes: ['按 statusId 过滤；与 lifecycle.useraction.list 分属两套动作。'],
   },
 
   /* ───────────────────────── 工作流（18） ───────────────────────── */
@@ -768,8 +858,9 @@ export const CAPABILITIES: Capability[] = [
     },
     returns: 'data.basicConfig.id（= workflowConfigId）与 data.basicConfig.workflowBasicId（两个 id 别混用）。',
     notes: [
-      'status=10 草稿；加步骤前必须先切到 40 编辑中。',
-      '提醒工作流（只发提醒、不审批）要把 basicConfig.isAllowTrigger 置 true —— 对应界面「允许从进入动作和事件动作自动启动」，勾上并被进入动作拉起；该开关启用后不可取消。',
+      'status=10 草稿；加步骤前必须先切到 40 编辑中；发布用 ChangeWorkflowBasicStatus 置 status=20。',
+      'isAllowTrigger 只对应「允许从进入动作和事件动作自动启动」：提醒流设为 true；用户动作/状态按钮拉起的审批流保持 false（aa__c 实测 false），不要为了让流程出现在进入动作下拉或为了签名而误开——该开关启用后不可取消。',
+      'isEnable 不是发布开关：aa__c 与 df__c 发布后 isEnable 仍为 false，以 status=20 为准。',
       '工作流不会自己触发：审批流由对象/状态上的动作（behaviorType 7）拉起，提醒流由进入动作拉起；同一对象多条已发布流程可并存。',
     ],
   },
@@ -1260,7 +1351,7 @@ export const CAPABILITIES: Capability[] = [
     notes: ['文档旧版记成 POST，实测是 GET。'],
   },
 
-  /* ───────────────────────── 菜单（3）/ 通知（1） ───────────────────────── */
+  /* ───────────────────────── 菜单（2）/ 通知（1） ───────────────────────── */
   {
     id: 'menu.submit',
     domain: 'menu',
@@ -1307,22 +1398,6 @@ export const CAPABILITIES: Capability[] = [
       '返回的 id 要自己读回来（`GET /api/platform/Menu/GetMenuList`），引擎的 call 参数不做 id 插值，所以母菜单 → 子菜单必须拆成两次 plan。',
       '2026-11-09 实测：作业管理（母，`homework_menu__c`，id 6c7ad784-002a-67cc-d934-3c48870e98cc）→ 作业提交（子，`homework_submit__c`，id 23b197a5-e8f0-f1f8-82a3-28961998d393），列表页/表单都正常打开。',
     ],
-  },
-  {
-    id: 'menu.sort',
-    domain: 'menu',
-    title: '菜单排序（全量）',
-    description: '整棵菜单树按给定顺序重排；body 就是数组。',
-    method: 'POST',
-    path: '/api/platform/Menu/Sort',
-    risk: 'medium',
-    evidence: 'verified',
-    params: [p('tree', 'body', true, 'array', '树形数组，项含 key / children；子项可带 parentId')],
-    example: [
-      { key: '<menuId>', children: [{ key: '<childMenuId>', parentId: '<menuId>', children: [] }] },
-    ],
-    returns: 'data: true。',
-    notes: ['全量替换：没出现在树里的菜单会被移出当前层级。', '引擎把整个数组当 body 发送（不是包一层 params）。'],
   },
   {
     id: 'menu.group.list',

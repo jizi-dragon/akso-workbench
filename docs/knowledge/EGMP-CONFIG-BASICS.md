@@ -23,7 +23,7 @@
 | 状态 | `lifecycle.status.create/update` | 按钮要挂状态 | 状态 id 被按钮/流程引用 |
 | 按钮 | `lifecycle.useraction.create` | 流程由按钮触发（`behaviorType: 7`） | — |
 | 列表 | `listlayout.save/columns.set/filter.save` | 菜单要引用列表 | 列整份替换，删列可能被平台拒绝 |
-| 菜单 | `menu.submit` | 菜单要引用对象+布局+列表 | `menu.sort` 全量替换，别脚本化 |
+| 菜单 | `menu.submit` | 菜单要引用对象+布局+列表 | 菜单排序是整树全量替换，未开工具；需要时走平台页面 |
 | 工作流 | `workflow.*` | 要引用对象/状态/按钮 | **发布后回不到草稿**（20→10 被静默忽略） |
 
 ## 2. 逐层硬约束
@@ -49,7 +49,9 @@
 - 对象 `enableLifeCycle: true` 时平台自带 `init_status__c`（**开启**状态，即初始状态）。
 - 顺序：先 `status.create` 建状态 → `status.update` 改名/启停 → 再 `useraction.create` 挂按钮。
 - 按钮 `behaviorType: 7` 才是「触发流程」的提交按钮；按钮挂在**某个状态**上（`statusId`）。
-- 按钮与具体流程的绑定字段，本次没走到 **待验证**。
+- 按钮与流程的绑定：`actions[0].configs[0].behaviorValue.workflowId` 填 **workflowBasicId**（不是 workflowConfigId）。
+- 退回提醒走「进入动作」`lifecycle.enteraction.create`（`belongType: 1`），不是状态按钮；目标提醒流必须已发布且 `isAllowTrigger: true`，该开关启用后不可逆。
+- 发起人电子签名在**工作流开始节点的电子签名控件**里配；按钮上的 `enableSignatures` 不是“必签”开关。
 
 ### 2.5 表单布局 `layout.save`（最大的坑）
 - 平台自动生成的布局：有 1 个「流程时间线」分区，**控件为 0** → 控制台打开表单是空的。
@@ -74,7 +76,7 @@
 - 菜单 `code` 必须 `xxx__c`；`akwv_menu_1109` 会报 `Code不符合规则`。
 - 子菜单必须同时给 `parentMenuId`、`objectId`、`layoutId`、`listLayoutId`。
 - `menu.group.list` 查的是**菜单分组**（MenuGroup），**看不到新建的菜单**；核对只能进控制台。
-- `menu.sort` 是全量替换且没有「读整棵菜单树」的接口，误操作会把子菜单移出层级——**不要脚本化**。
+- `Menu/Sort` 是全量替换且没有「读整棵菜单树」的接口，误操作会把子菜单移出层级——**不提供工具，需要在控制台操作**。
 
 ### 2.8 工作流 `workflow.*`
 - `create` → `{ configId, workflowBasicId }`，初始 `status: 10`（草稿）。

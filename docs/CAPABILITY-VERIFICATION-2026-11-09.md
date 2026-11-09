@@ -7,18 +7,24 @@
 > 2026-11-09 补记：`auth.oauth.login`、`auth.oauth.refresh` 两条按用户要求已从目录删除
 > （要浏览器 OAuth 链路，脚本化验证不了，也不该作为配置工具暴露）；`auth.login` 随后也删了
 > （写入只保留 akso-cloud 代登录，本机不再接受明文口令）。本文保留它们当时的实测记录仅作历史，
-> 当前目录为 **44 条**（43 已验证 + 1 过期）。
+> 白天目录为 **44 条**（43 已验证 + 1 过期）。
 >
 > 2026-11-09 晚补记：`layout.save` 由用户在实际控制台操作 + 本仓监听框架抓包复验通过，
-> 标签转「已验证」；未验证的只剩 `menu.sort`。
+> 标签转「已验证」；当时未验证的只剩 `menu.sort`。
+>
+> 2026-11-09 夜补记：按作业提交 2.0 的实际演示，新增 3 条生命周期动作能力
+> （`lifecycle.useraction.list`、`lifecycle.enteraction.create`、`lifecycle.enteraction.list`）；
+> 同时按用户要求删除 `menu.sort`（全量替换且无读整棵树的接口，不做工具）。
+> 当前目录 **47 条**：44 条已验证 + 3 条抓包确认但未脚本实测（卡片仍标「过期」）。
 
 ## 一、结论
 
 | 项 | 数 |
 | --- | --- |
-| 能力总数（当前） | 44 |
-| 实测通过 → 标「已验证」 | **43** |
-| 未通过 → 保持「过期」 | 1（`menu.sort`） |
+| 能力总数（当前） | 47 |
+| 实测通过 → 标「已验证」 | **44** |
+| 抓包确认、待脚本实测 → 保持「过期」 | 3（`lifecycle.useraction.list`、`lifecycle.enteraction.create`、`lifecycle.enteraction.list`） |
+| 已删除 | 1（`menu.sort`） |
 | 顺带修正的目录错误 | 4 处（`workflow.delete` 的方法、`listlayout.filter.save` 示例的 `relationId`、`layout.save` 的示例与 `returns`、`layout.save` 的写入限制） |
 
 - 环境：**standard-val /「公司配置环境」**，`https://standard-val.aksoegmp.com`，账号 `liyulong`（accountId `a_d6c261bab92cab81389847b4`）。
@@ -82,7 +88,7 @@
 - 输出：`data[]`，含 `objectPicklistId: 11ecd1ab-…a3e3b795`。
 - 变化：无（只读）。
 
-### 生命周期（5）
+### 生命周期（5 + 3 条夜补）
 
 **lifecycle.status.create** · `POST /api/config/lifecycle/Status/Create`
 - 输入：`{ "lifecycleId": "72d16ca7-…bcc30ce41634", "name": "AKW状态A", "code": "akwv_status_a", "type": 1 }`（随后同样方式建「AKW状态B」）
@@ -167,6 +173,24 @@
 - 输入：`{ "listlayoutId": "0ecab352-…4de1fc" }`
 - 输出：`data.{belongId, details[], relations[], sceneType, ignoreIfRvalueIsNull}`。
 - 变化：无（只读）。
+
+**lifecycle.useraction.list** · `GET /api/config/lifecycle/UserAction/GetListByStatusId?statusId=…`
+- 输入：待提交状态 `46e3ce00-c78e-f5a3-17cd-096ba7343175`、已退回状态 `a077aead-6ad2-6631-b939-815db1378a14`。
+- 输出：按钮数组；用于创建前查重与创建后回读。
+- 变化：只读。
+- 证据：2026-11-09 20:03–20:04 作业提交 2.0 演示抓包，HTTP 200。
+
+**lifecycle.enteraction.create** · `POST /api/config/lifecycle/EnterAction/Create`
+- 输入：`{code:"dd__c", belongId:"a077aead-6ad2-6631-b939-815db1378a14", belongType:1, actions:[{code:"dd__c", configs:[{behaviorType:7, behaviorValue:{workflowId:"d3cd2559-2f43-d5a0-2063-3a24d1ee2875"}}]}]}`（实际 body 还带 `id`/`uid`/`sort`/`executeType` 等）。
+- 输出：`data:["84908509-0d00-be66-284e-fdd867a78756"]`。
+- 变化：已退回状态新增进入动作，绑定提醒流 `df__c`；回读 `name:null`、`isBeforeWorkflowCompleteReminderTask:false`。
+- 证据：2026-11-09 20:04:25，HTTP 200。
+
+**lifecycle.enteraction.list** · `GET /api/config/lifecycle/EnterAction/GetListByStatusId?statusId=…`
+- 输入：已退回状态 `a077aead-6ad2-6631-b939-815db1378a14`。
+- 输出：进入动作数组；用于查重与回读。
+- 变化：只读。
+- 证据：2026-11-09 20:04 作业提交 2.0 演示抓包，HTTP 200。
 
 ### 工作流（18）
 
@@ -265,7 +289,7 @@
 - 输入 D：另建一条**草稿**流程 `c448d5fe-7614-6b94-7056-3a24ce8cbb5b`，`DELETE {id}` → 200 / `code: 0`，`data` 为该 id；`get` 回读 `data: null`。
 - 变化：草稿流程被彻底删除。**结论：必须 DELETE + body，且只有草稿(10)能删。**
 
-### 菜单（3）
+### 菜单（2 + 1 已删除）
 
 **menu.submit** · `POST /api/platform/Menu/Submit`
 - 输入 A：母菜单 `code: "akwv_menu_1109"`。
@@ -279,10 +303,10 @@
 - 输出：6 个分组：所有菜单 / 测试菜单_yl / 偏差管理考核（勿动）/ 业务管理 / 管理端 / 打印中心。
 - 变化：无（只读）。
 
-**menu.sort** · `POST /api/platform/Menu/Sort`
+**menu.sort（2026-11-09 已删除）** · `POST /api/platform/Menu/Sort`
 - 输入：整套菜单树的顺序数组。
 - 输出：**未执行**。
-- 变化：无。**未通过**：这是全量替换，且没有「读整棵菜单树」的接口，脚本误操作会把子菜单移出层级；留给你在控制台手工确认。
+- 变化：无。**未通过且已从工具目录删除**：这是全量替换，且没有「读整棵菜单树」的接口，脚本误操作会把子菜单移出层级；需要时在控制台手工操作。
 
 ### 公告（1）
 

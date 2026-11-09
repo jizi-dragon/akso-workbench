@@ -620,7 +620,8 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 **要点**
 
 - behaviorValue.workflowId 要填 workflowBasicId，不是 workflowConfigId——混用会报 500。
-- 该接口不做合并：每调一次就多一个按钮，重跑前先 LifestatusUserAction/Get 查重。
+- 按钮只负责 behaviorType 7 拉起流程；发起人签名要在工作流开始节点放电子签名控件（startUpControls），按钮上的 enableSignatures 不是“必签”开关。
+- 该接口不做合并：每调一次就多一个按钮，重跑前先 `lifecycle.useraction.list` 查重，不要用 `LifestatusUserAction/Get`（那个只回角色授权）。
 
 **案例**
 
@@ -664,11 +665,110 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 }
 ```
 
-### lifecycle.useraction.get 读状态上的按钮
+### lifecycle.useraction.get 读状态按钮的权限角色
 
-> 列出某状态已有的按钮动作，用于查重与读改写。
+> 读某状态按钮的角色授权（不是按钮列表）；按钮本身用 lifecycle.useraction.list。
 
 **返回**：data 是对象：{ objectId, lifecycleId, statusId, roles[] }，不是按钮数组。
+
+**要点**
+
+- 返回的是 roles[] 授权，不含 actions；要读状态上的按钮数组用 `lifecycle.useraction.list`。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "statusId": "<statusId>"
+}
+```
+
+### lifecycle.useraction.list 读状态上的按钮列表
+
+> 按状态 id 返回按钮数组；查重、读改写前先调它。
+
+**返回**：data 为按钮数组；每项含 lifecycleStatusId / lifecycleStatusName / group / behaviorTypes / icon / name / code / configs 等；没有按钮时是 []。
+
+**要点**
+
+- 这是查按钮的接口；`lifecycle.useraction.get` 走的是权限角色接口，只回 roles。
+- 按 statusId 过滤，不是按 objectId。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "statusId": "<statusId>"
+}
+```
+
+### lifecycle.enteraction.create 新建进入动作（触发流程）
+
+> 在某个生命周期状态上挂进入动作，通常用 behaviorType 7 拉起提醒工作流。
+
+**返回**：data 为新建进入动作 id 数组（演示环境返回 ["84908509-…"]）。
+
+**要点**
+
+- belongType 是 1（进入动作）；状态按钮的 belongType 是 2，别混。
+- 目标工作流必须已发布（status 20）且工作流级 isAllowTrigger:true，否则进入动作选不到/不会触发；该开关启用后不可逆。
+- name 可为空，平台回读也可能是 null；用 code 标识。
+- 该接口不合并：重跑前先用 `lifecycle.enteraction.list` 查重。
+- workflowId 填 workflowBasicId，不是 workflowConfigId。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "code": "return_reminder__c",
+  "belongId": "<statusId>",
+  "belongType": 1,
+  "actions": [
+    {
+      "code": "return_reminder__c",
+      "name": "",
+      "isEnabled": true,
+      "belongType": 1,
+      "configs": [
+        {
+          "id": "<actionConfigId>",
+          "uid": "<actionConfigId>",
+          "behaviorType": 7,
+          "behaviorValue": {
+            "workflowId": "<workflowBasicId>"
+          },
+          "belongId": "<statusId>",
+          "sort": 0
+        }
+      ],
+      "sort": 1,
+      "executeType": 1,
+      "description": "已退回触发提醒",
+      "lifecycleId": "<lifecycleId>",
+      "lifecycleStatusId": "<statusId>",
+      "basicObjectId": "<objectId>",
+      "objectCode": "homework__c",
+      "enableSignatures": true
+    }
+  ]
+}
+```
+
+### lifecycle.enteraction.list 读状态上的进入动作
+
+> 按状态 id 列出进入动作，用于查重与回读。
+
+**返回**：data 为进入动作数组；每项含 id / code / name / configs 等；没有时是 []。
+
+**要点**
+
+- 按 statusId 过滤；与 lifecycle.useraction.list 分属两套动作。
 
 **案例**
 
@@ -690,7 +790,9 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 **要点**
 
-- status=10 草稿；加步骤前必须先切到 40 编辑中。
+- status=10 草稿；加步骤前必须先切到 40 编辑中；发布用 ChangeWorkflowBasicStatus 置 status=20。
+- isAllowTrigger 只对应「允许从进入动作和事件动作自动启动」：提醒流设为 true；用户动作/状态按钮拉起的审批流保持 false（aa__c 实测 false），不要为了让流程出现在进入动作下拉或为了签名而误开——该开关启用后不可取消。
+- isEnable 不是发布开关：aa__c 与 df__c 发布后 isEnable 仍为 false，以 status=20 为准。
 
 **案例**
 
@@ -1302,36 +1404,6 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
   "menuType": 1,
   "childShowType": null
 }
-```
-
-### menu.sort 菜单排序（全量）
-
-> 整棵菜单树按给定顺序重排；body 就是数组。
-
-**返回**：data: true。
-
-**要点**
-
-- 全量替换：没出现在树里的菜单会被移出当前层级。
-- 引擎把整个数组当 body 发送（不是包一层 params）。
-
-**案例**
-
-#### 案例 · 基础调用
-
-```json
-[
-  {
-    "key": "<menuId>",
-    "children": [
-      {
-        "key": "<childMenuId>",
-        "parentId": "<menuId>",
-        "children": []
-      }
-    ]
-  }
-]
 ```
 
 ### menu.group.list 菜单分组列表
