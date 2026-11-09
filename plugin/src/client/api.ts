@@ -205,5 +205,30 @@ export const api = {
       groups: Array<{ domain: string; label?: string; items: unknown[] }>
       requireApproval: boolean
       approvalEnv: string | null
+      /** 「基础API使用指南.md」的读取结果：改完文档刷新页面即生效。 */
+      guide?: {
+        path: string | null
+        updatedAt: string | null
+        warnings: string[]
+        coverage: { total: number; documented: number }
+      }
+      /** 「标准配置使用规范.md」：只有部分接口有标准方案。 */
+      recipesGuide?: {
+        path: string | null
+        updatedAt: string | null
+        warnings: string[]
+        coverage: { total: number; documented: number; recipes: number }
+      }
+      /** 「动作类型映射.md」：按作用域分组，界面按当前接口域过滤。 */
+      actionMap?: {
+        path: string | null
+        updatedAt: string | null
+        warnings: string[]
+        groups: Array<{
+          name: string
+          scope: string[]
+          rows: Array<{ value: string; label: string; note?: string }>
+        }>
+      }
     }>('config/capabilities'),
 }

@@ -234,7 +234,7 @@ export const CAPABILITIES: Capability[] = [
     id: 'field.save',
     domain: 'field',
     title: '新建 / 更新字段',
-    description: '按 code upsert 字段；dataType 决定附加参数（选项、关联、日期格式…）。',
+    description: '按 code upsert 字段；dataType 决定附加参数。注意 dataType 建完不能改、字段也不能删，选错只能停用旧的再新建。',
     method: 'POST',
     path: '/api/platform/BasicObject/SaveField',
     risk: 'medium',
@@ -242,7 +242,7 @@ export const CAPABILITIES: Capability[] = [
     params: [
       p('name', 'body'),
       p('code', 'body'),
-      p('dataType', 'body', true, 'number', '1 文本 / 2 数字 / 3 布尔 / 4 单选 / 5 日期 / 7 日期时间 / 8 附件 / 13·15·16·23 关联 / 14 多行文本 / 18 富文本'),
+      p('dataType', 'body', true, 'number', '1 文本（默认，基本只用它）/ 2 数字 / 3 布尔 / 4 单选 / 5 日期 / 7 日期时间 / 8 附件 / 10 ID / 13 查找 / 14 公式（极少用）/ 15·16·23 关联 / 17 长文本（禁用）/ 18 富文本（禁用）'),
       p('objectId', 'body'),
       p('isRequired', 'body', false, 'boolean'),
       p('invisible', 'body', false, 'boolean'),
@@ -271,6 +271,8 @@ export const CAPABILITIES: Capability[] = [
       'statisticsArrange 必填，最容易漏。',
       'dataType=4 要 picklistId（从 query.picklist.get 的 objectPicklistId 取）；=15 要 referenceObjectId + objectRelation。',
       'dataType=15 平台强制 isRequired=true，=16 强制 false。',
+      '**dataType 建完不能改，字段也不能删**：选错只能把旧字段改名（带「(停用)」）+ `status:2` / `disabled:true` 停用，再用新 code 建一个。对象内字段**名称也唯一**，不先给旧字段改名，新字段会报「字段名称重复」。',
+      '14 是**公式**不是长文本；长文本是 17、富文本 18 —— **这两个类型已禁用**（2026-11-09 管理员规则），一律用 1 文本。',
     ],
   },
   {
@@ -336,10 +338,42 @@ export const CAPABILITIES: Capability[] = [
     notes: ['改布局是"读全量 → 改 → 全量写回"，跳过这步会把 pages 写丢。'],
   },
   {
+    id: 'layout.stable.ids',
+    domain: 'layout',
+    title: '换稳定组件 id',
+    description:
+      '把要新建的 section / control 的临时 id 换成平台稳定 id；不换直接 layout.save 必报「BelongId 不正确」。',
+    method: 'POST',
+    path: '/api/platform/Layout/GetStableComponentIds',
+    risk: 'low',
+    evidence: 'verified',
+    params: [
+      p('componentIds', 'body', true, 'object', '键是临时 uuid，值 { objectId, layoutCode, componentType, componentCode }'),
+    ],
+    example: {
+      componentIds: {
+        '<临时uuid>': {
+          objectId: '<objectId>',
+          layoutCode: '<layoutCode>',
+          componentType: 'layout_section',
+          componentCode: 'basic_info__cs',
+        },
+      },
+    },
+    returns: 'data.stableComponentIds：{ 临时uuid: 稳定 uuid }，键与入参一一对应。',
+    notes: [
+      'componentType 只有两种：`layout_section`（分区）/ `layout_control`（控件）。',
+      '稳定 id 由「对象 + 布局 + 组件类型 + 组件 code」决定，同样的入参永远得到同一个 id，可重复调用。',
+      '一次可批量传多个，分区和控件可以混在一批里换。',
+      '2026-11-09 实测：homework_base_layout__ak 的 basic_info__cs → 1f117d6f-38ec-db8e-9a0f-3ebf47e08885，name__ak → cc4c6465-796f-e33f-7733-87cd19bcfc42。',
+    ],
+  },
+  {
     id: 'layout.save',
     domain: 'layout',
     title: '保存布局（全量替换）',
-    description: '整份布局写回；没带上的 section/control 会被删掉。写入前先读 layout.detail，改完把 data 整份回传。',
+    description:
+      '整份布局写回；没带上的 section/control 会被删掉。写入前先 layout.detail 读全量，新分区/控件的 id 先经 layout.stable.ids 换稳定 id，再整份回写。',
     method: 'POST',
     path: '/api/platform/Layout/SaveLayoutDetail',
     risk: 'high',
@@ -401,6 +435,11 @@ export const CAPABILITIES: Capability[] = [
       '新建 section 只需 `{ id, code, name, type, columnsNum }`；新建 control 只需 `{ id, sectionId, code, name, fieldId, type, gridSpan, attrs }`。id 用新 UUID。',
       '**不要带 `belongId` / `fullPath`**：带上必报「[layout_section] BelongId 不正确，该值必须由 FullPath 生成」；实测请求体里没有这两个字段。',
       '旧 section（如 type=4 工作流时间线）原样回传，不能删；pages 原样回传，没有分页传 []。',
+      '**新分区 / 新控件的 id 必须先经 layout.stable.ids 换成稳定 id**：直接写临时 uuid 会报「[layout_section] BelongId 不正确」，换成稳定 id 后同一个 body 一次通过（2026-11-09 实测）。',
+      '已有分区可以压成最小对象（`{ id, layoutId, pageId: null, name, code, type, sort, hidden, displayOnlyInLifecycleStatusIds: [], expandOnlyInLifecycleStatusIds: [] }`），前提是 `id` 已换成稳定 id；之前报 400 的根因是没换稳定 id，与分区繁简无关（2026-11-09 实测）。',
+      '关联控件的 attrs 里 objectId / listLayoutId 要写成**带引号的字符串**（形如 "\\"<对象id>\\""），再带 createRecordMode:"3" 才能新建关联记录。',
+      '**关联控件的 `listLayoutId` 必须是被关联对象的列表布局**（`GET /api/platform/Listlayout/List?objectId=<被关联对象>` 取主布局，用户对象是 `plat_org_user_table__ak` / `3a175857-27e1-ac0f-14f0-adbfa9724e95`；自关联用本对象的列表布局）。填 `00000000-0000-0000-0000-000000000000` 占位时选择器取不到列，弹窗列表空白。',
+      '控件类型：文本 AKInput / 多行 AKTextArea / 数字 AKInputNumber / 日期时间 AKDateTime / 单选 AKSelectorSingle / 是否 AKSelectorYesNo / 关联 AKSelectorObject。',
       '2026-11-09 抓包验证：给 akwv1109__c 的默认布局加「基础信息」分区 + 4 个控件（名称 / 文本 / 数字 / 单选），200 / 176ms、code 0；回读 LayoutDetail 确认 sections=2、controls=4。',
     ],
   },
@@ -465,7 +504,7 @@ export const CAPABILITIES: Capability[] = [
     id: 'listlayout.columns.set',
     domain: 'listlayout',
     title: '保存列表列（全量替换）',
-    description: '整份列配置写回；跨对象列用 fieldPath 点号路径。',
+    description: '整份列配置写回（全量覆盖，不是增量）；开了生命周期的对象，首列必须是系统状态列 status_id__sys。',
     method: 'POST',
     path: '/api/platform/Listlayout/AddColumns',
     risk: 'medium',
@@ -482,7 +521,13 @@ export const CAPABILITIES: Capability[] = [
       ],
     },
     returns: 'data: true。',
-    notes: ['全量替换，没带上的列会消失。', 'fieldId 始终填目标字段自己的 UUID（不是关联对象字段的）。', '可选字段从 object.fields.outfield 取。'],
+    notes: [
+      '全量替换，没带上的列会消失。',
+      '开了生命周期（`enableLifeCycle: true`）的对象，第一列必须是 `status_id__sys`（`sort: 1`）——整组覆盖时最容易漏，漏了不报错但状态列会没。',
+      '除非明确要求新建列表布局，否则都改对象已有的那条（通常只有一条默认布局）；新建会多一个入口、默认列表却没变。',
+      'fieldId 始终填目标字段自己的 UUID（不是关联对象字段的）。',
+      '可选字段从 object.fields.outfield 取。',
+    ],
   },
   {
     id: 'listlayout.filter.save',
@@ -570,7 +615,11 @@ export const CAPABILITIES: Capability[] = [
       workflowCancelStatus: CANCEL_STATUS_ID,
     },
     returns: 'data 就是新状态的 UUID。',
-    notes: ['workflowCancelStatus 固定 11515107-dce6-4ef1-8d51-b1ffed22040f。'],
+    notes: [
+      'workflowCancelStatus 固定 11515107-dce6-4ef1-8d51-b1ffed22040f。',
+      '建生命周期时平台自带「开启」`init_status__c` 与「关闭」`complete_status__c` 两个状态，先把它们改名复用为首尾（如 待提交 / 已通过），不要另建同义状态；只补中间态。',
+      '状态建完**不能删**，只能停用；`sort` 按实际流转顺序递增（2026-11-09 管理员口径）。',
+    ],
   },
   {
     id: 'lifecycle.status.update',
@@ -608,7 +657,11 @@ export const CAPABILITIES: Capability[] = [
       workflowCancelStatus: CANCEL_STATUS_ID,
     },
     returns: 'data: true。',
-    notes: ['全量更新：漏字段会被平台按默认值覆盖，先 Get 再改。'],
+    notes: [
+      '全量更新：漏字段会被平台按默认值覆盖，先 Get 再改。',
+      '状态**没有删除接口**：要下线只能 `isEnabled: false` 停用；停用后 code 仍被占用，新状态必须换 code。',
+      '`sort` 决定状态显示顺序，按实际流转顺序递增；停用状态排最后（2026-11-09 管理员口径）。',
+    ],
   },
   {
     id: 'lifecycle.useraction.create',
@@ -714,7 +767,11 @@ export const CAPABILITIES: Capability[] = [
       variables: [],
     },
     returns: 'data.basicConfig.id（= workflowConfigId）与 data.basicConfig.workflowBasicId（两个 id 别混用）。',
-    notes: ['status=10 草稿；加步骤前必须先切到 40 编辑中。'],
+    notes: [
+      'status=10 草稿；加步骤前必须先切到 40 编辑中。',
+      '提醒工作流（只发提醒、不审批）要把 basicConfig.isAllowTrigger 置 true —— 对应界面「允许从进入动作和事件动作自动启动」，勾上并被进入动作拉起；该开关启用后不可取消。',
+      '工作流不会自己触发：审批流由对象/状态上的动作（behaviorType 7）拉起，提醒流由进入动作拉起；同一对象多条已发布流程可并存。',
+    ],
   },
   {
     id: 'workflow.get',
@@ -891,6 +948,8 @@ export const CAPABILITIES: Capability[] = [
       'isAssignToPromoter=true 是发起人审批；指定参与者要给 taskAssign（= userControlIds）。',
       'dispatchMode：10 会签 / 20 或签。',
       '按钮字段名注意拼写：isShowResons / resonTitle / responsibieTitle 都是平台原样。',
+      '提醒任务（只提醒、不审批）：isNotifyTaskType=true、isRequireApproval=false、stepTaskApprovals=[]，任务名直接写提醒语；notifyType=-10 是「任务提醒方式：使用提醒策略」。',
+      '审批人从对象字段取：开始节点参与者 selectUserType=40 + fielsObjectIds，任务节点 userControlIds 回填该控件 id（字符串，别传数组）。',
     ],
   },
   {
@@ -1206,7 +1265,7 @@ export const CAPABILITIES: Capability[] = [
     id: 'menu.submit',
     domain: 'menu',
     title: '新建 / 更新菜单',
-    description: '母菜单（menuActionType=3）建分组，子菜单（=1）挂对象与布局。',
+    description: '母菜单（menuActionType=3）建分组，子菜单（=1）挂对象与两套布局；先建母菜单拿 id，再建子菜单。',
     method: 'POST',
     path: '/api/platform/Menu/Submit',
     risk: 'low',
@@ -1242,8 +1301,11 @@ export const CAPABILITIES: Capability[] = [
     },
     returns: 'data.Id（大写 I，个别版本 data.id）。',
     notes: [
-      '母菜单 body：{source:2, menuType:1, backgroundColor:"#366EF4", status:1, name, code, menuActionType:3, childShowType:null}。',
+      '母菜单 body：{source:2, menuType:1, backgroundColor:"#366EF4", status:1, name, code, menuActionType:3, childShowType:null}；顶层母菜单 `parentMenuId` 留空。',
       '子菜单必须先有 parentMenuId，且对象/布局 id 都要有效。',
+      '子菜单三件套：`objectId` + `listLayoutId`（列表布局）+ `layoutId`（表单布局），再带 `createType: 4`，点进去就是对象列表、能直接新建。',
+      '返回的 id 要自己读回来（`GET /api/platform/Menu/GetMenuList`），引擎的 call 参数不做 id 插值，所以母菜单 → 子菜单必须拆成两次 plan。',
+      '2026-11-09 实测：作业管理（母，`homework_menu__c`，id 6c7ad784-002a-67cc-d934-3c48870e98cc）→ 作业提交（子，`homework_submit__c`，id 23b197a5-e8f0-f1f8-82a3-28961998d393），列表页/表单都正常打开。',
     ],
   },
   {

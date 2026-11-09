@@ -17,6 +17,9 @@
  * 目录 47 → 45 → 44，本名单 43 → 42。
  * 2026-11-09 晚 `layout.save` 经抓包复验通过（LayoutDetail 读全量 → 原地改 → 整份回写），
  * 本名单 42 → 43；只剩 `menu.sort` 不验证（全量替换且无读整棵树的接口，误操作会把子菜单移出层级）。
+ * 同一天新增 `layout.stable.ids`（GetStableComponentIds）并实测通过：临时 id → 稳定 id，
+ * 目录 44 → 45、本名单 43 → 44。工作流建流程与布局落地的实测记录见
+ * `docs/CAPABILITY-VERIFICATION-2026-11-09.md`。
  */
 export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   // 对象
@@ -34,6 +37,7 @@ export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   // 布局
   'layout.list',
   'layout.detail',
+  'layout.stable.ids',
   'layout.save',
   // 列表布局
   'listlayout.list',

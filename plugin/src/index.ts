@@ -24,7 +24,10 @@ import * as cloud from './cloud.ts'
 import { clearSession, readPool, readPrefs, readSession, writePool, writePrefs, writeSession } from './store.ts'
 import { buildSnapshotTool } from './tool.ts'
 import { withToolUid } from './tool-uids.ts'
-import { CAPABILITIES, groupByDomain } from './config/capabilities.ts'
+import { CAPABILITIES } from './config/capabilities.ts'
+import { groupedCapabilitiesWithGuide, guideCoverage, loadApiGuide } from './config/api-guide.ts'
+import { loadRecipeBook, recipeCoverage } from './config/recipes.ts'
+import { loadActionMap } from './config/action-map.ts'
 import { cloudCredentialProvider } from './credentials.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
 import { createApprovalGate } from './config/approval.ts'
@@ -844,12 +847,43 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
 
     /* ───────────── 配置：能力目录（工具页的数据源） ───────────── */
     route('GET', R.configCapabilities, false, async (_req, res) => {
+      // 简介 / 返回 / 要点 / 案例都从「基础API使用指南.md」现读（按 mtime 缓存），
+      // 所以改完文档刷新页面就能看到，不用重新构建插件。
+      const guide = loadApiGuide()
+      // 标准配置方案与动作类型映射也是现读：只有部分接口有方案，没方案的卡片不显示这一栏。
+      const recipes = loadRecipeBook()
+      const actionMap = loadActionMap()
+      const groups = groupedCapabilitiesWithGuide(guide).map((group) => ({
+        ...group,
+        items: group.items.map((item) => {
+          const list = recipes.byCapability.get(item.id)
+          return list === undefined || list.length === 0 ? item : { ...item, recipes: list }
+        }),
+      }))
       sendJson(res, 200, {
         session: publicSession(readEgmpSession(dshHome)),
-        groups: groupByDomain(),
+        groups,
         total: CAPABILITIES.length,
         requireApproval: requireApproval(),
         approvalEnv: approvalEnvOverride(),
+        guide: {
+          path: guide.displayPath,
+          updatedAt: guide.mtimeMs > 0 ? new Date(guide.mtimeMs).toISOString() : null,
+          warnings: guide.warnings,
+          coverage: guideCoverage(guide),
+        },
+        recipesGuide: {
+          path: recipes.displayPath,
+          updatedAt: recipes.mtimeMs > 0 ? new Date(recipes.mtimeMs).toISOString() : null,
+          warnings: recipes.warnings,
+          coverage: recipeCoverage(recipes),
+        },
+        actionMap: {
+          path: actionMap.displayPath,
+          updatedAt: actionMap.mtimeMs > 0 ? new Date(actionMap.mtimeMs).toISOString() : null,
+          warnings: actionMap.warnings,
+          groups: actionMap.groups,
+        },
       })
     }),
 

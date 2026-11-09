@@ -3,7 +3,13 @@
  *
  * 结构：二级导航（对象建模 · 布局 · 生命周期 · 工作流 · 菜单/通知）
  *   → 对象建模、布局再分栏
- *   → 右栏是这一区的接口卡片（点开看参数表 + 请求示例 + 返回 + 备注）。
+ *   → 右栏是这一区的接口卡片；**点卡片弹窗看详情**（不在卡片里原地展开，
+ *     否则一张卡片的参数表会把同排其它卡片挤变形）。
+ *
+ * 文案来源：`docs/knowledge/基础API使用指南.md`。
+ *   host 每次下发能力目录时现读这份文档（按 mtime 缓存），所以改完文档**刷新页面**就生效，
+ *   不用重新构建插件。指南只覆盖「介绍 / 返回 / 要点 / 案例」；method、path、参数表、
+ *   风险这些结构字段仍以 capabilities.ts 为准。文档里没写的接口回落到目录里的旧文案。
  *
  * 目录与 `docs/reference/Akso平台内部API接口清单.md` 的 44 条一一对应；
  * 卡片底部的「已验证 / 过期」是**实测台账**：用户在测试中确认过输入输出的接口才标已验证（绿），
@@ -13,9 +19,9 @@
  * 写入走 plan/apply 工具，必须由人确认（审批窗弹在对话里；页面上的开关只决定要不要弹）。
  *
  * 这里**不显示登录态**：eGMP 令牌由底部账号条自动取（akso-cloud 里的账号口令）、
- * 过期自动续，本页只负责把 47 条接口讲清楚。
+ * 过期自动续，本页只负责把接口讲清楚。
  */
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.ts'
 import { APPROVED_TOOL_IDS } from '../shared/approved-tools.ts'
 
@@ -25,6 +31,51 @@ interface Param {
   required?: boolean
   type?: string
   description?: string
+}
+
+/** 文档里的一个调用案例（`#### 案例 …` 一节）。 */
+interface ApiCase {
+  title: string
+  note?: string
+  params: unknown
+  expected?: string
+}
+
+/** 标准配置方案里的一步：开头是接口 id，后面是做什么。 */
+interface RecipeStep {
+  api?: string
+  text: string
+}
+
+/** 「标准配置使用规范.md」里的一个方案。 */
+interface Recipe {
+  capabilityId: string
+  title: string
+  summary?: string
+  steps: RecipeStep[]
+  checks: string[]
+  payload?: unknown
+  expected?: string
+}
+
+interface ActionGroup {
+  name: string
+  scope: string[]
+  rows: Array<{ value: string; label: string; note?: string }>
+}
+
+interface RecipeGuideInfo {
+  path: string | null
+  updatedAt: string | null
+  warnings: string[]
+  coverage: { total: number; documented: number; recipes: number }
+}
+
+interface ActionMapInfo {
+  path: string | null
+  updatedAt: string | null
+  warnings: string[]
+  groups: ActionGroup[]
 }
 
 interface Capability {
@@ -43,6 +94,19 @@ interface Capability {
   example: unknown
   returns?: string
   notes?: string[]
+  /** 指南里的一条案例；没写时 host 回落到目录里的 example。 */
+  case?: ApiCase
+  /** 指南登记了这一条。 */
+  documented?: boolean
+  /** 标准配置方案（「标准配置使用规范.md」）；只有部分接口有。 */
+  recipes?: Recipe[]
+}
+
+interface GuideInfo {
+  path: string | null
+  updatedAt: string | null
+  warnings: string[]
+  coverage: { total: number; documented: number }
 }
 
 interface Group { domain: string; label?: string; items: Capability[] }
@@ -103,6 +167,8 @@ const KIND_LABEL: Record<Kind, string> = {
   query: '查询',
 }
 
+const caseOf = (item: Capability): ApiCase => item.case ?? { title: '基础示例', params: item.example }
+
 function EmptyState({ title, desc, note }: { title: string; desc: string; note?: string }) {
   return (
     <div className="akw-cfg__empty">
@@ -122,7 +188,7 @@ function EmptyState({ title, desc, note }: { title: string; desc: string; note?:
 function ParamsTable({ params }: { params: Param[] }) {
   if (params.length === 0) return <div className="akw-cfg__noparam">无参数</div>
   return (
-    <table className="akw-cfg__params">
+    <table className="akw-api__params">
       <thead>
         <tr>
           <th>参数</th>
@@ -145,12 +211,11 @@ function ParamsTable({ params }: { params: Param[] }) {
   )
 }
 
-function ExampleBlock({ example }: { example: unknown }) {
+function CodeBlock({ value, label = '请求参数' }: { value: unknown; label?: string }) {
   const [copied, setCopied] = useState(false)
-  const text = JSON.stringify(example, null, 2) ?? '{}'
+  const text = JSON.stringify(value, null, 2) ?? '{}'
 
-  async function copy(event: { stopPropagation: () => void }): Promise<void> {
-    event.stopPropagation()
+  async function copy(): Promise<void> {
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
@@ -161,32 +226,282 @@ function ExampleBlock({ example }: { example: unknown }) {
   }
 
   return (
-    <div className="akw-cfg__ex">
-      <div className="akw-cfg__exhead">
-        <span>请求示例</span>
-        <button type="button" className="akw-cfg__copy" onClick={(event) => void copy(event)}>
+    <div className="akw-api__code">
+      <div className="akw-api__codehead">
+        <span>{label}</span>
+        <button type="button" className="akw-api__copy" onClick={() => void copy()}>
           {copied ? '已复制' : '复制'}
         </button>
       </div>
-      <pre className="akw-cfg__code">{text}</pre>
+      <pre>{text}</pre>
     </div>
   )
 }
 
-function CapabilityCard({ item, open, onToggle }: { item: Capability; open: boolean; onToggle: () => void }) {
+/** 一条案例：说明 + 参数代码块 + 预期，直接展开在折叠体里，不再套一层。 */
+function CaseBlock({ item }: { item: ApiCase }) {
+  return (
+    <div className="akw-api__caseBody is-flat">
+      <p className="akw-api__caseTitle">{item.title}</p>
+      {item.note !== undefined ? <p className="akw-api__caseNote">{item.note}</p> : null}
+      <CodeBlock value={item.params} />
+      {item.expected !== undefined ? (
+        <p className="akw-api__expect"><b>预期</b>{item.expected}</p>
+      ) : null}
+    </div>
+  )
+}
+
+/** 标准配置方案：一条方案一层折叠，步骤 / 校验 / 示例都在折叠体里。 */
+function RecipeList({ recipes }: { recipes: Recipe[] }) {
+  return (
+    <div className="akw-api__recipes">
+      {recipes.map((recipe, index) => (
+        <details key={`${recipe.title}-${index}`} className="akw-api__recipe" open={index === 0}>
+          <summary>
+            <span className="akw-api__caseTitle">{recipe.title}</span>
+            <span className="akw-api__caseNo">{recipe.steps.length} 步</span>
+          </summary>
+          <div className="akw-api__caseBody">
+            {recipe.summary !== undefined ? <p className="akw-api__caseNote">{recipe.summary}</p> : null}
+            {recipe.steps.length > 0 ? (
+              <ol className="akw-api__steps">
+                {recipe.steps.map((step, stepIndex) => (
+                  <li key={`${step.text}-${stepIndex}`}>
+                    {step.api !== undefined ? <code className="akw-api__stepApi">{step.api}</code> : null}
+                    <span>{step.text}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+            {recipe.checks.length > 0 ? (
+              <div className="akw-api__checks">
+                <b>校验</b>
+                <ul>
+                  {recipe.checks.map((check) => <li key={check}>{check}</li>)}
+                </ul>
+              </div>
+            ) : null}
+            {recipe.payload !== undefined ? <CodeBlock value={recipe.payload} label="示例请求" /> : null}
+            {recipe.expected !== undefined ? (
+              <p className="akw-api__expect"><b>预期</b>{recipe.expected}</p>
+            ) : null}
+          </div>
+        </details>
+      ))}
+    </div>
+  )
+}
+
+/** 动作类型映射：按作用域分组的小表。 */
+function ActionMapTable({ groups }: { groups: ActionGroup[] }) {
+  return (
+    <div className="akw-api__actions">
+      {groups.map((group) => (
+        <div key={group.name} className="akw-api__actionGroup">
+          <div className="akw-api__actionHead">
+            <b>{group.name}</b>
+            {group.scope.length > 0 ? <em>{group.scope.join(' / ')}</em> : null}
+          </div>
+          <table className="akw-api__params">
+            <thead>
+              <tr>
+                <th>值</th>
+                <th>含义</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody>
+              {group.rows.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="akw-api__actionEmpty">
+                    待补：这组映射还没登记值，先在「动作类型映射.md」里补表再刷新。
+                  </td>
+                </tr>
+              ) : (
+                group.rows.map((row) => (
+                  <tr key={`${group.name}-${row.value}`}>
+                    <td className="is-mono">{row.value}</td>
+                    <td>{row.label}</td>
+                    <td>{row.note ?? '—'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function CapabilityDialog({ item, guide, recipesGuide, actionMap, onClose }: {
+  item: Capability
+  guide: GuideInfo | null
+  recipesGuide: RecipeGuideInfo | null
+  actionMap: ActionMapInfo | null
+  onClose: () => void
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
   const kind = kindOf(item)
   const verified = isVerified(item)
+  const oneCase = caseOf(item)
+  const recipes = item.recipes ?? []
+  // 只显示与当前接口域相关的几组动作映射。
+  const actionGroups = (actionMap?.groups ?? []).filter((group) =>
+    group.scope.length === 0 || group.scope.includes('通用') || group.scope.includes(item.domain),
+  )
+
+  useEffect(() => {
+    const restore = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    closeRef.current?.focus()
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onCloseRef.current()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      restore?.focus()
+    }
+  }, [])
+
+  return (
+    <div
+      className="akw-api"
+      role="presentation"
+      onClick={(event) => {
+        // 只认点在遮罩本身上：在窗内按下、拖到遮罩上松手，不该关窗。
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        className="akw-api__card"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${item.title} 接口详情`}
+      >
+        <header className="akw-api__head">
+          <div className="akw-api__headMain">
+            <b>{item.title}</b>
+            <code className="akw-api__id">{item.id}</code>
+          </div>
+          <button ref={closeRef} type="button" className="akw-api__close" aria-label="关闭" onClick={onClose}>
+            ✕
+          </button>
+        </header>
+
+        <div className="akw-api__endpoint">
+          <b className={`is-kind-${kind}`}>{item.method}</b>
+          <span>{item.path}</span>
+        </div>
+
+        <div className="akw-api__flags">
+          <span className={`akw-cfg__tag ${verified ? 'is-ok' : 'is-danger'}`}>{verified ? '已验证' : '过期'}</span>
+          <span className="akw-cfg__tag">风险 {RISK_LABEL[item.risk]}</span>
+          {item.irreversible === true ? <span className="akw-cfg__tag is-danger">不可逆</span> : null}
+          {item.documented === false ? <span className="akw-cfg__tag">文案回落到目录</span> : null}
+        </div>
+
+        <div className="akw-api__body">
+          <p className="akw-api__intro">{item.description}</p>
+
+          <details className="akw-api__fold" open>
+            <summary>
+              <span>参数介绍</span>
+              <i>{item.params.length}</i>
+            </summary>
+            <div className="akw-api__foldBody">
+              <ParamsTable params={item.params} />
+            </div>
+          </details>
+
+          <details className="akw-api__fold">
+            <summary>
+              <span>案例介绍</span>
+              <i>1</i>
+            </summary>
+            <div className="akw-api__foldBody">
+              <CaseBlock item={oneCase} />
+            </div>
+          </details>
+
+          {recipes.length > 0 ? (
+            <details className="akw-api__fold">
+              <summary>
+                <span>标准配置用法</span>
+                <i>{recipes.length}</i>
+              </summary>
+              <div className="akw-api__foldBody">
+                <RecipeList recipes={recipes} />
+                {recipesGuide !== null && recipesGuide.path !== null ? (
+                  <p className="akw-api__source">
+                    方案来自 <code>{recipesGuide.path}</code>
+                    {recipesGuide.updatedAt === null ? null : `（${formatTime(recipesGuide.updatedAt)} 更新）`}
+                  </p>
+                ) : null}
+              </div>
+            </details>
+          ) : null}
+
+          <details className="akw-api__fold">
+            <summary>
+              <span>输出结果</span>
+              <i>{item.returns !== undefined ? '有' : '—'}</i>
+            </summary>
+            <div className="akw-api__foldBody">
+              <p className="akw-api__ret">
+                {item.returns !== undefined ? item.returns : '目录里没有记录返回结构；以实际调用结果为准。'}
+              </p>
+              {item.notes !== undefined && item.notes.length > 0 ? (
+                <ul className="akw-api__notes">
+                  {item.notes.map((note) => <li key={note}>{note}</li>)}
+                </ul>
+              ) : null}
+            </div>
+          </details>
+        </div>
+
+        <footer className="akw-api__foot">
+          <span>
+            {guide === null || guide.path === null
+              ? '文案来自接口目录'
+              : `文案来自 ${guide.path}${guide.updatedAt === null ? '' : ` · ${formatTime(guide.updatedAt)} 更新`}`
+            }
+          </span>
+          <span className="akw-api__footHint">改文档后刷新页面即可生效，无需重新构建。</span>
+        </footer>
+      </div>
+    </div>
+  )
+}
+
+function formatTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function CapabilityCard({ item, onOpen }: { item: Capability; onOpen: () => void }) {
+  const kind = kindOf(item)
+  const verified = isVerified(item)
+  const recipeCount = item.recipes?.length ?? 0
   return (
     <article
-      className={`akw-cfg__card${item.irreversible === true ? ' is-blocked' : ''}${open ? ' is-open' : ''}`}
+      className={`akw-cfg__card${item.irreversible === true ? ' is-blocked' : ''}`}
       role="button"
       tabIndex={0}
-      aria-expanded={open}
-      onClick={onToggle}
+      aria-haspopup="dialog"
+      onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          onToggle()
+          onOpen()
         }
       }}
     >
@@ -207,33 +522,23 @@ function CapabilityCard({ item, open, onToggle }: { item: Capability; open: bool
 
       <div className="akw-cfg__meta">
         <span className={`akw-cfg__tag ${verified ? 'is-ok' : 'is-danger'}`}>{verified ? '已验证' : '过期'}</span>
-        <span className="akw-cfg__count">风险 {RISK_LABEL[item.risk]} · {item.params.length} 参数</span>
-        <span className="akw-cfg__more">{open ? '收起' : '详情'}</span>
+        <span className="akw-cfg__count">风险 {RISK_LABEL[item.risk]} · {item.params.length} 参数{recipeCount > 0 ? ` · ${recipeCount} 标准方案` : ''}</span>
+        <span className="akw-cfg__more">详情</span>
       </div>
-
-      {open ? (
-        <div className="akw-cfg__detail" onClick={(event) => event.stopPropagation()}>
-          <ParamsTable params={item.params} />
-          <ExampleBlock example={item.example} />
-          {item.returns !== undefined ? <p className="akw-cfg__ret"><b>返回</b>{item.returns}</p> : null}
-          {item.notes !== undefined && item.notes.length > 0 ? (
-            <ul className="akw-cfg__notes">
-              {item.notes.map((note) => <li key={note}>{note}</li>)}
-            </ul>
-          ) : null}
-        </div>
-      ) : null}
     </article>
   )
 }
 
 export function ConfigToolsTab() {
   const [groups, setGroups] = useState<Group[]>([])
+  const [guide, setGuide] = useState<GuideInfo | null>(null)
+  const [recipesGuide, setRecipesGuide] = useState<RecipeGuideInfo | null>(null)
+  const [actionMap, setActionMap] = useState<ActionMapInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [sectionId, setSectionId] = useState<SectionId>('model')
   const [subTab, setSubTab] = useState('')
-  const [openId, setOpenId] = useState('')
+  const [detailId, setDetailId] = useState('')
   /** 写入前是否弹审批（页面开关）；env 非 null 表示被环境变量强制，勾选框锁住。 */
   const [requireApproval, setRequireApproval] = useState<boolean | null>(null)
   const [approvalEnv, setApprovalEnv] = useState<string | null>(null)
@@ -246,6 +551,9 @@ export function ConfigToolsTab() {
         const payload = await api.configCapabilities()
         if (!alive) return
         setGroups((payload.groups ?? []) as unknown as Group[])
+        setGuide(payload.guide ?? null)
+        setRecipesGuide(payload.recipesGuide ?? null)
+        setActionMap(payload.actionMap ?? null)
         setRequireApproval(payload.requireApproval)
         setApprovalEnv(payload.approvalEnv ?? null)
       } catch (e) {
@@ -260,6 +568,12 @@ export function ConfigToolsTab() {
   const byDomain = useMemo(() => {
     const map = new Map<string, Capability[]>()
     for (const group of groups) map.set(group.domain, group.items)
+    return map
+  }, [groups])
+
+  const byId = useMemo(() => {
+    const map = new Map<string, Capability>()
+    for (const group of groups) for (const item of group.items) map.set(item.id, item)
     return map
   }, [groups])
 
@@ -282,10 +596,12 @@ export function ConfigToolsTab() {
     writes: sectionItems.filter((item) => kindOf(item) === 'write').length,
   }), [sectionItems])
 
+  const detail = detailId === '' ? null : (byId.get(detailId) ?? null)
+
   function pick(next: SectionId): void {
     setSectionId(next)
     setSubTab('')
-    setOpenId('')
+    setDetailId('')
   }
 
   /** 页面开关：写入前是否弹审批。环境变量在时不让人改（host 侧也以环境变量优先）。 */
@@ -354,14 +670,6 @@ export function ConfigToolsTab() {
           </em>
         </div>
 
-        {stats.writes > 0 ? (
-          <p className="akw-cfg__legend">
-            写入即生效，平台侧没有回滚；<b className="is-ok">已验证</b> = 你在测试中确认过输入与输出的接口，
-            <b className="is-danger">过期</b> = 还没验证过，调用前先核对参数。上生产前先在测试对象上跑一遍。
-            示例是参数对象：path / query 参数会拼进 URL，其余整体作为请求体。
-          </p>
-        ) : null}
-
         {section.tabs !== undefined ? (
           <div className="akw-cfg__subtabs" role="group" aria-label={`${section.label}分类`}>
             {section.tabs.map((tab) => (
@@ -370,7 +678,7 @@ export function ConfigToolsTab() {
                 type="button"
                 aria-pressed={activeTab === tab.key}
                 className={`akw-cfg__subtab${activeTab === tab.key ? ' is-active' : ''}`}
-                onClick={() => { setSubTab(tab.key); setOpenId('') }}
+                onClick={() => { setSubTab(tab.key); setDetailId('') }}
               >
                 {tab.label}
                 <span>{(byDomain.get(tab.key) ?? []).length}</span>
@@ -385,12 +693,7 @@ export function ConfigToolsTab() {
         {!loading && visible.length > 0 ? (
           <div className="akw-cfg__grid">
             {visible.map((item) => (
-              <CapabilityCard
-                key={item.id}
-                item={item}
-                open={openId === item.id}
-                onToggle={() => setOpenId(openId === item.id ? '' : item.id)}
-              />
+              <CapabilityCard key={item.id} item={item} onOpen={() => setDetailId(item.id)} />
             ))}
           </div>
         ) : null}
@@ -403,6 +706,16 @@ export function ConfigToolsTab() {
           />
         ) : null}
       </div>
+
+      {detail !== null ? (
+        <CapabilityDialog
+          item={detail}
+          guide={guide}
+          recipesGuide={recipesGuide}
+          actionMap={actionMap}
+          onClose={() => setDetailId('')}
+        />
+      ) : null}
     </div>
   )
 }
