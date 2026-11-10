@@ -25,6 +25,7 @@ import { errorMessage, uiState } from '../src/cloud.ts'
 import { CAPABILITIES } from '../src/config/capabilities.ts'
 import { applyPlan, planBlueprint, saveApproval, savePlan } from '../src/config/engine.ts'
 import { writeEgmpSession } from '../src/config/session.ts'
+import { buildBusinessSummary } from '../src/config/tools.ts'
 import { writePool, writePrefs } from '../src/store.ts'
 import { apply, ROUTES } from '../src/index.ts'
 import { buildSnapshotTool } from '../src/tool.ts'
@@ -836,6 +837,76 @@ async function startFakeEgmp(
   }
 }
 
+test('审批窗业务摘要：按「新建 / 更新 × 种类」归并，同类去重，跳过的不出现', () => {
+  const step = (kind: string, action: string, name: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: `${kind}-${action}-${name}`,
+    kind,
+    action,
+    title: `${kind} ${name}`,
+    naturalKey: `${kind}:${name}`,
+    risk: 'low',
+    irreversible: false,
+    capabilityId: 'picklist.save',
+    params: { name, ...extra },
+    dependsOn: [],
+    warnings: [],
+  })
+  const groups = buildBusinessSummary({
+    planId: 'pln_biz',
+    createdAt: 0,
+    expiresAt: 0,
+    env: 'test',
+    summary: { create: 2, update: 2, skip: 1, irreversible: 0 },
+    steps: [
+      step('field', 'create', '作业标题', { object: 'homework__c' }),
+      step('object', 'create', '作业提交', { code: 'homework__c' }),
+      step('field', 'create', '作业标题'),
+      step('field', 'skip', '附件'),
+      step('menu', 'update', '作业提交'),
+      step('lifecycle', 'update', '待审核'),
+      {
+        id: 'wf-1',
+        kind: 'call',
+        action: 'create',
+        title: '新建审批流',
+        naturalKey: 'call:workflow.create',
+        risk: 'medium',
+        irreversible: false,
+        capabilityId: 'workflow.create',
+        params: { name: '作业审批流', code: 'homework_flow' },
+        dependsOn: [],
+        warnings: [],
+      },
+      {
+        id: 'ua-1',
+        kind: 'call',
+        action: 'create',
+        title: '加状态按钮',
+        naturalKey: 'call:lifecycle.useraction.create',
+        risk: 'low',
+        irreversible: false,
+        capabilityId: 'lifecycle.useraction.create',
+        params: { name: '提交', statusId: 1, belongType: 2 },
+        dependsOn: [],
+        warnings: [],
+      },
+    ],
+    warnings: [],
+    status: 'planned',
+    results: [],
+  } as never)
+  // 对象在前、同种资源只念一次名字、按种类排序（稳定）。工作流与状态按钮从「接口」里分出来，
+  // 各念自己的名字——审核的人一眼能看出"这条流程 + 这个按钮"，而不是"三次接口调用"。
+  assert.deepEqual(groups, [
+    { action: 'create', kind: 'object', names: ['作业提交'] },
+    { action: 'create', kind: 'field', names: ['作业标题'] },
+    { action: 'update', kind: 'lifecycle', names: ['待审核'] },
+    { action: 'create', kind: 'action', names: ['提交'] },
+    { action: 'update', kind: 'menu', names: ['作业提交'] },
+    { action: 'create', kind: 'workflow', names: ['作业审批流'] },
+  ])
+})
+
 test('配置写入先在对话里弹审批窗：人点同意才发请求', async () => {
   const home = freshHome()
   const mounted = mount(home, undefined, true)
@@ -856,6 +927,11 @@ test('配置写入先在对话里弹审批窗：人点同意才发请求', async
     assert.equal(report.accountId, ACCOUNT_ID)
     assert.match(String(report.host), /127\.0\.0\.1/)
     assert.equal((report.steps as unknown[]).length, 3, '跳过的步骤不该出现在审批表里')
+    // 弹窗顶部是业务摘要：先说新建 / 更新了什么，接口与参数折在下面
+    assert.deepEqual(report.business, [
+      { action: 'create', kind: 'picklist', names: ['akso-workbench 验证选项集'] },
+      { action: 'update', kind: 'picklist', names: ['akso-workbench 验证选项集'] },
+    ])
     const first = (report.steps as Array<Record<string, any>>)[0]!
     assert.equal(first.method, 'POST')
     assert.match(String(first.path), /ObjectPicklist\/save/)

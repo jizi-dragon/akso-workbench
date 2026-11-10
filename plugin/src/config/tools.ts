@@ -12,8 +12,8 @@
  * 所以就算有人绕过工具直接调 HTTP，也过不了引擎这一关。
  */
 import { CAPABILITIES } from './capabilities.ts'
-import { applyPlan, loadPlan, planBlueprint, planHash, recordApprovalDecision, saveApproval, type Plan } from './engine.ts'
-import type { ApprovalGate, ApprovalReport, ApprovalReportStep } from './approval.ts'
+import { applyPlan, loadPlan, planBlueprint, planHash, recordApprovalDecision, saveApproval, type Plan, type Step } from './engine.ts'
+import type { ApprovalBusinessGroup, ApprovalGate, ApprovalReport, ApprovalReportStep } from './approval.ts'
 import type { EgmpSession } from './session.ts'
 
 /** host 解析出来的写入会话；`session: null` 时 `reason` 一定是人话。 */
@@ -70,6 +70,57 @@ export function approvalTitle(plan: Plan): string {
   return `${edits.length} 步变更（${parts.join(' · ') || '无写入'}）`
 }
 
+/**
+ * 业务摘要里的先后：先对象，再挂在对象上的东西，最后接口/流程。
+ * 只影响展示顺序，不影响施工顺序。
+ */
+const BUSINESS_KIND_ORDER: readonly string[] = ['object', 'picklist', 'field', 'lifecycle', 'action', 'listLayout', 'formLayout', 'menu', 'workflow', 'call']
+
+/**
+ * 步骤归到哪一类「业务资源」。`call` 是按能力目录原样调的，但工作流和状态按钮
+ * 对用户来说仍是独立的东西，不该混进「接口」里念。
+ */
+function businessKind(step: Step): string {
+  if (step.kind !== 'call') return step.kind
+  if (step.capabilityId.startsWith('workflow.')) return 'workflow'
+  if (step.capabilityId.startsWith('lifecycle.useraction') || step.capabilityId.startsWith('lifecycle.enteraction')) return 'action'
+  return 'call'
+}
+
+/** 一步的「人话名字」：对象 / 字段 / 状态 / 菜单取 name，布局取对象，接口取标题。 */
+function businessName(step: Step): string {
+  const params = (step.params ?? {}) as Record<string, unknown>
+  const name = typeof params.name === 'string' ? params.name.trim() : ''
+  if (name !== '') return name
+  const objectCode = typeof params.object === 'string' ? params.object.trim() : ''
+  if (objectCode !== '') return objectCode
+  return step.title
+}
+
+/**
+ * 计划 → 业务摘要：按「新建 / 更新 × 资源种类」归并，同类合并名称。
+ * 弹窗顶部先说人话，逐条接口折在下面，避免把一屏 JSON 甩给人审。
+ */
+export function buildBusinessSummary(plan: Plan): ApprovalBusinessGroup[] {
+  const groups: ApprovalBusinessGroup[] = []
+  for (const step of plan.steps) {
+    if (step.action === 'skip') continue
+    const kind = businessKind(step)
+    let group = groups.find((item) => item.action === step.action && item.kind === kind)
+    if (group === undefined) {
+      group = { action: step.action, kind, names: [] }
+      groups.push(group)
+    }
+    const name = businessName(step)
+    if (!group.names.includes(name)) group.names.push(name)
+  }
+  const rank = (kind: string): number => {
+    const index = BUSINESS_KIND_ORDER.indexOf(kind)
+    return index === -1 ? BUSINESS_KIND_ORDER.length : index
+  }
+  return groups.sort((a, b) => rank(a.kind) - rank(b.kind))
+}
+
 /** 把计划翻译成弹窗要显示的结构（每一步带真实的方法与路径）。 */
 export function buildApprovalReport(plan: Plan, session: EgmpSession): ApprovalReport {
   const steps: ApprovalReportStep[] = []
@@ -101,6 +152,7 @@ export function buildApprovalReport(plan: Plan, session: EgmpSession): ApprovalR
     account: session.account,
     accountId: session.accountId ?? '',
     summary: plan.summary,
+    business: buildBusinessSummary(plan),
     steps,
     createdAt: plan.createdAt,
     expiresAt: plan.expiresAt,

@@ -23,6 +23,18 @@ export interface ApprovalReportStep {
   warnings: string[]
 }
 
+/**
+ * 审批窗顶部的「业务摘要」：只说新建 / 更新了哪几类东西、分别叫什么。
+ * 人审的是「要改什么」，所以这里**不出现**方法、路径、参数。
+ */
+export interface ApprovalBusinessGroup {
+  action: 'create' | 'update'
+  /** 资源种类（object / field / lifecycle / menu / call …），文案由界面按语言翻。 */
+  kind: string
+  /** 同类资源的人话名称，已去重；顺序与计划一致。 */
+  names: string[]
+}
+
 /** 弹窗要展示的全部内容；`hash` 是计划指纹，写审批记录时原样存下。 */
 export interface ApprovalReport {
   planId: string
@@ -33,6 +45,8 @@ export interface ApprovalReport {
   account: string
   accountId: string
   summary: { create: number; update: number; skip: number; irreversible: number }
+  /** 业务摘要（弹窗顶部）；技术细节留在 steps 里，折起来看。 */
+  business: ApprovalBusinessGroup[]
   steps: ApprovalReportStep[]
   createdAt: number
   expiresAt: number

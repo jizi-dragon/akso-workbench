@@ -403,8 +403,22 @@ export const CSS = `
 .akw-approval__meta div{display:flex;flex-direction:column;gap:2px;min-width:0}
 .akw-approval__meta span{font-size:10.5px;line-height:14px;color:var(--dsw-alias-label-caption)}
 .akw-approval__meta b{font-size:12.5px;line-height:18px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.akw-approval__summary{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--dsw-alias-label-secondary)}
-.akw-approval__count{margin-left:auto;font-size:11px;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}
+.akw-approval__summary{font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-secondary)}
+.akw-approval__summary.is-warn{color:var(--dsw-alias-state-error-primary)}
+.akw-approval__business{display:flex;flex-direction:column;gap:7px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
+.akw-approval__businessHead{font-size:10.5px;line-height:14px;color:var(--dsw-alias-label-caption)}
+.akw-approval__businessList{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
+.akw-approval__businessList li{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-size:12.5px;line-height:19px;color:var(--dsw-alias-label-primary)}
+.akw-approval__verb{flex:none;padding:0 7px;border-radius:999px;font-size:10px;line-height:16px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-state-business-primary)}
+.akw-approval__verb.is-update{color:var(--dsw-alias-state-warn-primary,#b26a00)}
+.akw-approval__kind{font-weight:600}
+.akw-approval__names{min-width:0;color:var(--dsw-alias-label-secondary);word-break:break-word}
+.akw-approval__details{display:flex;flex-direction:column;min-height:0}
+.akw-approval__details>summary{cursor:pointer;list-style:none;font-size:11.5px;line-height:18px;color:var(--dsw-alias-label-caption)}
+.akw-approval__details>summary::-webkit-details-marker{display:none}
+.akw-approval__details>summary::before{content:'▸ '}
+.akw-approval__details[open]>summary::before{content:'▾ '}
+.akw-approval__details .akw-approval__steps{margin-top:8px}
 .akw-approval__steps{display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;padding-right:2px}
 .akw-approval__step{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l3);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
 .akw-approval__stepHead{display:flex;align-items:center;gap:8px}

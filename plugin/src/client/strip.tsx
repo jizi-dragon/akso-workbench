@@ -26,6 +26,23 @@ interface StripProps {
 
 type Translate = (key: string, vars?: Record<string, string | number>) => string
 
+/** 业务摘要里资源种类（host 只给 kind，翻哪门语言由界面决定）。 */
+const APPROVAL_KIND_KEY: Record<string, string> = {
+  object: 'approval.kind.object',
+  picklist: 'approval.kind.picklist',
+  field: 'approval.kind.field',
+  lifecycle: 'approval.kind.lifecycle',
+  action: 'approval.kind.action',
+  listLayout: 'approval.kind.listLayout',
+  formLayout: 'approval.kind.formLayout',
+  menu: 'approval.kind.menu',
+  workflow: 'approval.kind.workflow',
+  call: 'approval.kind.call',
+}
+
+/** 一行里最多念几个名字，再多就「等 N 项」——弹窗要一眼看完，不是清单。 */
+const APPROVAL_NAME_LIMIT = 6
+
 function accountLabel(account: CloudAccount): string {
   const head = account.tabName.trim() !== '' ? account.tabName : account.username
   const tail = account.siteName !== '' ? account.siteName : account.siteHost
@@ -130,6 +147,8 @@ function ApprovalModal(props: { tr: Translate }) {
   const report = pending.report
   const expired = pending.expiresAt <= now
   const total = report.steps.length
+  /* 旧 host 还没有 business 字段：降级成「只有逐条接口」，不要白屏。 */
+  const business = Array.isArray(report.business) ? report.business : []
 
   const decide = async (verdict: 'approve' | 'deny' | 'supplement'): Promise<void> => {
     if (busy) return
@@ -167,30 +186,58 @@ function ApprovalModal(props: { tr: Translate }) {
           <div><span>{tr('approval.account')}</span><b>{report.account}</b></div>
         </div>
 
-        <div className="akw-approval__summary">
-          {tr('approval.summary', { create: report.summary.create, update: report.summary.update })}
-          <span className="akw-approval__count">{tr('approval.stepCount', { count: total })}</span>
-        </div>
+        {business.length > 0 ? (
+          <div className="akw-approval__business">
+            <div className="akw-approval__businessHead">{tr('approval.business')}</div>
+            <ul className="akw-approval__businessList">
+              {business.map((group) => {
+                const shown = group.names.slice(0, APPROVAL_NAME_LIMIT)
+                const rest = group.names.length - shown.length
+                return (
+                  <li key={`${group.action}-${group.kind}`}>
+                    <span className={`akw-approval__verb is-${group.action}`}>
+                      {group.action === 'create' ? tr('approval.create') : tr('approval.update')}
+                    </span>
+                    <b className="akw-approval__kind">{tr(APPROVAL_KIND_KEY[group.kind] ?? group.kind)}</b>
+                    <span className="akw-approval__names">
+                      {shown.join(tr('approval.listSeparator'))}
+                      {rest > 0 ? tr('approval.moreNames', { count: rest }) : ''}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        ) : null}
 
-        <div className="akw-approval__steps">
-          {report.steps.map((step) => (
-            <div className="akw-approval__step" key={`${step.index}-${step.path}`}>
-              <div className="akw-approval__stepHead">
-                <b>{step.index}. {step.title}</b>
-                <span className={`akw-approval__action is-${step.action}`}>{step.action === 'create' ? tr('approval.create') : tr('approval.update')}</span>
-              </div>
-              <code className="akw-approval__endpoint">{step.method} {step.path}</code>
-              <pre className="akw-approval__params">{JSON.stringify(step.params, null, 2)}</pre>
-              {step.irreversible || step.risk === 'high' || step.warnings.length > 0 ? (
-                <div className="akw-approval__warn">
-                  {step.irreversible ? <span className="akw-approval__tag is-bad">{tr('approval.irreversible')}</span> : null}
-                  {step.risk === 'high' ? <span className="akw-approval__tag is-bad">{tr('approval.riskHigh')}</span> : null}
-                  {step.warnings.map((warning) => <span className="akw-approval__tag" key={warning}>{warning}</span>)}
+        {report.summary.irreversible > 0 ? (
+          <div className="akw-approval__summary is-warn">
+            {tr('approval.irreversibleCount', { count: report.summary.irreversible })}
+          </div>
+        ) : null}
+
+        <details className="akw-approval__details">
+          <summary>{tr('approval.showSteps', { count: total })}</summary>
+          <div className="akw-approval__steps">
+            {report.steps.map((step) => (
+              <div className="akw-approval__step" key={`${step.index}-${step.path}`}>
+                <div className="akw-approval__stepHead">
+                  <b>{step.index}. {step.title}</b>
+                  <span className={`akw-approval__action is-${step.action}`}>{step.action === 'create' ? tr('approval.create') : tr('approval.update')}</span>
                 </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
+                <code className="akw-approval__endpoint">{step.method} {step.path}</code>
+                <pre className="akw-approval__params">{JSON.stringify(step.params, null, 2)}</pre>
+                {step.irreversible || step.risk === 'high' || step.warnings.length > 0 ? (
+                  <div className="akw-approval__warn">
+                    {step.irreversible ? <span className="akw-approval__tag is-bad">{tr('approval.irreversible')}</span> : null}
+                    {step.risk === 'high' ? <span className="akw-approval__tag is-bad">{tr('approval.riskHigh')}</span> : null}
+                    {step.warnings.map((warning) => <span className="akw-approval__tag" key={warning}>{warning}</span>)}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </details>
 
         {writing ? (
           <textarea

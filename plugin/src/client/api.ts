@@ -90,6 +90,8 @@ export interface ApprovalReportView {
   account: string
   accountId: string | null
   summary: { create: number; update: number; skip: number; irreversible: number }
+  /** 业务摘要（弹窗顶部）：只说新建 / 更新了什么，不列接口与参数。 */
+  business: Array<{ action: 'create' | 'update'; kind: string; names: string[] }>
   steps: ApprovalStepView[]
   createdAt: number
   expiresAt: number
