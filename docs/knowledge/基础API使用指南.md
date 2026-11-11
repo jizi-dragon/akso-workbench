@@ -666,15 +666,15 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 }
 ```
 
-### lifecycle.useraction.get 读状态按钮的权限角色
+### lifecycle.useraction.get 读状态用户动作的权限角色
 
-> 读某状态按钮的角色授权（不是按钮列表）；按钮本身用 lifecycle.useraction.list。
+> 读某状态用户动作的角色授权（不是用户动作列表）；动作本身用 lifecycle.useraction.list。
 
-**返回**：data 是对象：{ objectId, lifecycleId, statusId, roles[] }，不是按钮数组。
+**返回**：data 是对象：{ objectId, lifecycleId, statusId, roles[] }，不是用户动作数组。
 
 **要点**
 
-- 返回的是 roles[] 授权，不含 actions；要读状态上的按钮数组用 `lifecycle.useraction.list`。
+- 返回的是 roles[] 授权，不含 actions；要读状态上的用户动作数组用 `lifecycle.useraction.list`。
 
 **案例**
 
@@ -686,15 +686,15 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 }
 ```
 
-### lifecycle.useraction.list 读状态上的按钮列表
+### lifecycle.useraction.list 读取用户动作
 
-> 按状态 id 返回按钮数组；查重、读改写前先调它。
+> 按状态 id 返回用户动作数组（平台界面上的按钮）；查重、读改写前先调它。
 
-**返回**：data 为按钮数组；每项含 lifecycleStatusId / lifecycleStatusName / group / behaviorTypes / icon / name / code / configs 等；没有按钮时是 []。
+**返回**：data 为用户动作数组；每项含 lifecycleStatusId / lifecycleStatusName / group / behaviorTypes / icon / name / code / configs 等；没有动作时是 []。
 
 **要点**
 
-- 这是查按钮的接口；`lifecycle.useraction.get` 走的是权限角色接口，只回 roles。
+- 这是查用户动作的接口（界面叫按钮）；`lifecycle.useraction.get` 走的是权限角色接口，只回 roles。
 - 按 statusId 过滤，不是按 objectId。
 
 **案例**
@@ -718,6 +718,8 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 - belongType 是 1（进入动作）；状态按钮的 belongType 是 2，别混。
 - 目标工作流必须已发布（status 20）且工作流级 isAllowTrigger:true，否则进入动作选不到/不会触发；该开关启用后不可逆。
 - name 可为空，平台回读也可能是 null；用 code 标识。
+- isEnabled 与 sort 会被服务端归一化：实测传 false/99，回读为 true/2；不要拿返回值当输入回显。
+- configs 传 [] 可创建“无配置”的进入动作；真正拉起工作流仍需 behaviorType 7 的 config。
 - 该接口不合并：重跑前先用 `lifecycle.enteraction.list` 查重。
 - workflowId 填 workflowBasicId，不是 workflowConfigId。
 
@@ -765,7 +767,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 > 按状态 id 列出进入动作，用于查重与回读。
 
-**返回**：data 为进入动作数组；每项含 id / code / name / configs 等；没有时是 []。
+**返回**：data 为进入动作数组；实测每项含 id / sort / belongId / name / isEnabled / description / modifiedTime / belongType / executeType，不含 code、configs；没有时是 []。
 
 **要点**
 

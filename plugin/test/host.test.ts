@@ -1178,7 +1178,7 @@ test('engine 用到的能力 id 都在目录里（拼错会静默变成"查不�
   assert.deepEqual(missing, [], `这些 id 不在能力目录里：${missing.join(', ')}`)
 })
 
-test('生命周期挂载能力：进入动作 / 按钮列表的路径与只读标记固定', () => {
+test('生命周期挂载能力：进入动作 / 用户动作的路径与只读标记固定', () => {
   const byId = new Map(CAPABILITIES.map((cap) => [cap.id, cap]))
 
   const enter = byId.get('lifecycle.enteraction.create')
@@ -1202,7 +1202,7 @@ test('生命周期挂载能力：进入动作 / 按钮列表的路径与只读�
 
   const actionGet = byId.get('lifecycle.useraction.get')
   assert.ok(actionGet, '缺少 lifecycle.useraction.get')
-  assert.match(actionGet.returns, /roles/, 'useraction.get 只回角色授权，不能当按钮列表用')
+  assert.match(actionGet.returns, /roles/, 'useraction.get 只回角色授权，不能当用户动作列表用')
 })
 
 /* ─────────────── 令牌详情：只给时间戳（原文不出 host），且必须带自定义头 ─────────────── */
