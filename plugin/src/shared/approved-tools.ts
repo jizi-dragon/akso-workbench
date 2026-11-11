@@ -21,8 +21,9 @@
  * 目录 44 → 45、本名单 43 → 44。工作流建流程与布局落地的实测记录见
  * `docs/CAPABILITY-VERIFICATION-2026-11-09.md`。
  * 2026-11-09 夜新增 3 条生命周期动作能力（`lifecycle.useraction.list`、`lifecycle.enteraction.create`、
- * `lifecycle.enteraction.list`，抓包确认，未进本名单），并按用户要求删除 `menu.sort`。
- * 当前目录 47 条、本名单 44 条；3 条新增能力保持「过期」，待脚本实测后入账。
+ * `lifecycle.enteraction.list`，当时仅抓包确认，未进本名单），并按用户要求删除 `menu.sort`。
+ * 2026-11-11 在 standard-val 上真调通过三条能力，用户核对输入/输出后确认；三条均已进本名单。
+ * 当前目录 47 条、本名单 47 条，卡片不再有「过期」。
  */
 export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   // 对象
@@ -54,6 +55,9 @@ export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   'lifecycle.status.update',
   'lifecycle.useraction.create',
   'lifecycle.useraction.get',
+  'lifecycle.useraction.list',
+  'lifecycle.enteraction.create',
+  'lifecycle.enteraction.list',
   // 工作流
   'workflow.create',
   'workflow.get',

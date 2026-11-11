@@ -16,6 +16,9 @@
 > （`lifecycle.useraction.list`、`lifecycle.enteraction.create`、`lifecycle.enteraction.list`）；
 > 同时按用户要求删除 `menu.sort`（全量替换且无读整棵树的接口，不做工具）。
 > 当前目录 **47 条**：44 条已验证 + 3 条抓包确认但未脚本实测（卡片仍标「过期」）。
+>
+> 2026-11-11 补记：上述 3 条已在 standard-val 真调通过并经用户核对确认，全部入账；
+> 当前目录 47 条、名单 47 条，卡片不再有「过期」。详见 `CAPABILITY-VERIFICATION-2026-11-11.md`。
 
 ## 一、结论
 

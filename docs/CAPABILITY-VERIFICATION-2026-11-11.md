@@ -100,6 +100,8 @@
 - 清理：该接口没有删除能力；本次用未登记的 `DELETE /api/config/lifecycle/EnterAction/Delete`
   传**裸数组** `["2188e7da-b46f-fd8a-a073-3a90fc439aef"]` 删除，返回 `{code:0,data:true}`。
   回读只剩原动作 `c27798f2-…`。该删除端点不应加入能力目录。
+- 用户核对阶段另建过一条 `af530be6-aa6b-ea31-b01e-2aff4f07ab25`（描述“手工核对用，请勿使用，可删除”），
+  用户确认三条全部通过后也已用同一端点删除；当前该状态只剩原动作。
 
 ## 四、命名修正
 
@@ -108,9 +110,10 @@
 - `lifecycle.useraction.get` 同步改为「读状态用户动作的权限角色」。
 - `lifecycle.enteraction.list` 的 `returns` 改为实际字段列表。
 
-## 五、是否追加白名单
+## 五、白名单（已确认）
 
-先不追加。按流程，需要用户确认这三条实测结果后，再把：
+2026-11-11 用户核对上述输入/输出后确认通过，以下三条已加入
+`plugin/src/shared/approved-tools.ts` 的 `APPROVED_TOOL_IDS`：
 
 ```text
 lifecycle.useraction.list
@@ -118,4 +121,4 @@ lifecycle.enteraction.list
 lifecycle.enteraction.create
 ```
 
-加入 `plugin/src/shared/approved-tools.ts` 的 `APPROVED_TOOL_IDS`，UI 才会从「过期」转「已验证」。
+加入后目录 47 条、名单 47 条，卡片不再显示「过期」。重新构建插件并刷新页面即可看到。
