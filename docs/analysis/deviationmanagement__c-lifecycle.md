@@ -10,7 +10,7 @@
 >
 > 流程图：[deviationmanagement__c-lifecycle.drawio](deviationmanagement__c-lifecycle.drawio) ｜ [PNG 预览](deviationmanagement__c-lifecycle.png)
 >
-> 画法：只画生命周期状态流转，竖向排列，黑色箭头；状态样式取自便笺本「生命周期状态」。
+> 画法：竖向排列；状态用便笺本「生命周期状态」，用户动作用便笺本「用户动作」（橙色胶囊）；黑色箭头表示流转方向。工作流节点、进入动作和条件不展开。
 >
 > 模块展示：[便笺本模块展示.drawio](便笺本模块展示.drawio) ｜ [PNG](便笺本模块展示.png)
 
