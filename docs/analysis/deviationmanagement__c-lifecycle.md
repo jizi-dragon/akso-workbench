@@ -9,6 +9,8 @@
 > 数据口径：只读；状态以 `Status/GetList` 的 `isEnabled` 为准；动作类型以 `GetById` 的 `configs` 为准。
 >
 > 流程图：[deviationmanagement__c-lifecycle.drawio](deviationmanagement__c-lifecycle.drawio) ｜ [PNG 预览](deviationmanagement__c-lifecycle.png)
+>
+> 画法：只画生命周期状态流转，黑色箭头；状态样式取自便笺本「生命周期状态」。
 
 ## 1. 概览
 
