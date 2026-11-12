@@ -457,4 +457,50 @@ export const CSS = `
   .akw-cfg__lede{flex-direction:column;align-items:flex-start;gap:8px}
   .akw-cfg__tab{padding:0 9px}
 }
+/* 对象分析 */
+.akw-analysis{display:flex;flex-direction:column;gap:14px;width:100%;max-width:1180px;margin:0 auto;padding:0 0 28px}
+.akw-analysis__hero{display:flex;flex-direction:column;gap:12px;padding:16px 18px;border:1px solid var(--dsw-alias-border-l2);border-radius:16px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-panel)}
+.akw-analysis__hero h2{margin:0;font-size:17px;line-height:22px;font-weight:600}
+.akw-analysis__hero p{margin:5px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.akw-analysis__form{display:flex;gap:8px;align-items:center}
+.akw-analysis__input{flex:1;min-width:0;height:34px;padding:0 12px;border:1px solid var(--dsw-alias-border-l3);border-radius:11px;background:var(--dsw-specific-input-major);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;outline:0}
+.akw-analysis__input:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-business-primary) 18%,transparent)}
+.akw-analysis__examples{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.akw-analysis__empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:180px;border:1px dashed var(--dsw-alias-border-l3);border-radius:16px;text-align:center;color:var(--dsw-alias-label-tertiary)}
+.akw-analysis__empty b{font-size:14px;color:var(--dsw-alias-label-secondary)}
+.akw-analysis__empty span{font-size:12px}
+.akw-analysis__error{padding:10px 12px;border:1px solid var(--dsw-alias-state-error-primary);border-radius:11px;background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 8%,transparent);color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px}
+.akw-analysis__summary{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-layer-1)}
+.akw-analysis__object{min-width:0}
+.akw-analysis__object h3{margin:0 0 5px;font-size:16px;line-height:22px;font-weight:600}
+.akw-analysis__meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;line-height:17px;color:var(--dsw-alias-label-tertiary)}
+.akw-analysis__meta code{font-size:11px;color:var(--dsw-alias-state-business-primary)}
+.akw-analysis__stats{display:grid;grid-template-columns:repeat(4,auto);gap:8px;flex:none}
+.akw-analysis__stats div{display:flex;flex-direction:column;align-items:center;gap:1px;min-width:58px;padding:6px 9px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:var(--dsw-alias-bg-layer-2)}
+.akw-analysis__stats b{font-size:16px;line-height:20px;font-variant-numeric:tabular-nums}
+.akw-analysis__stats span{font-size:10px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.akw-analysis__notice{padding:8px 11px;border:1px dashed var(--dsw-alias-state-warning-primary);border-radius:10px;background:color-mix(in srgb,var(--dsw-alias-state-warning-primary) 7%,transparent);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
+.akw-analysis__warnings{margin:0;padding:8px 11px 8px 28px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:17px}
+.akw-status-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:10px}
+.akw-status{display:flex;flex-direction:column;gap:8px;padding:11px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:13px;background:var(--dsw-alias-bg-layer-1);min-width:0}
+.akw-status__head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.akw-status__head div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.akw-status__head b{font-size:13px;line-height:18px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.akw-status__head code{font-size:10px;line-height:14px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.akw-status__head>span{flex:none;font-size:10px;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}
+.akw-status__counts{display:flex;gap:10px;font-size:10px;color:var(--dsw-alias-label-tertiary)}
+.akw-status__none{margin:0;padding:6px 0;font-size:11px;color:var(--dsw-alias-label-caption)}
+.akw-status__actions{display:flex;flex-direction:column;gap:6px}
+.akw-action{padding:7px 8px;border:1px solid var(--dsw-alias-border-l3);border-radius:9px;background:var(--dsw-alias-bg-layer-2)}
+.akw-action__head{display:flex;align-items:center;gap:6px;min-width:0}
+.akw-action__head b{font-size:12px;line-height:17px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.akw-action__head code{font-size:9px;color:var(--dsw-alias-label-caption);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.akw-badge{flex:none;padding:1px 5px;border-radius:5px;font-size:9px;line-height:14px;font-weight:600;white-space:nowrap}
+.akw-badge.is-user{color:var(--dsw-alias-state-business-primary);background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 11%,transparent)}
+.akw-badge.is-enter{color:var(--dsw-alias-state-warning-primary);background:color-mix(in srgb,var(--dsw-alias-state-warning-primary) 12%,transparent)}
+.akw-action__effect{display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:3px;font-size:10px;line-height:15px;color:var(--dsw-alias-label-secondary)}
+.akw-action__id{margin-top:2px;font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:9px;line-height:14px;color:var(--dsw-alias-label-caption);word-break:break-all;user-select:all}
+.akw-action__desc{margin:3px 0 0;font-size:10px;line-height:15px;color:var(--dsw-alias-label-tertiary)}
+@media (max-width: 820px){.akw-analysis__summary{flex-direction:column}.akw-analysis__stats{width:100%;grid-template-columns:repeat(4,1fr)}.akw-status-grid{grid-template-columns:1fr}.akw-analysis__form{flex-direction:column;align-items:stretch}}
+
 `

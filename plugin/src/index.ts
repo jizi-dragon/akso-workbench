@@ -33,6 +33,7 @@ import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from 
 import { createApprovalGate } from './config/approval.ts'
 import { EgmpError, clearEgmpSession, publicSession, readEgmpSession, tokenView, writeEgmpSession, type EgmpSession } from './config/session.ts'
 import { buildConfigApplyTool, buildConfigPlanTool } from './config/tools.ts'
+import { analyzeObject } from './analysis.ts'
 
 export const name = 'akso-workbench'
 export const inject = ['webServer']
@@ -120,6 +121,7 @@ export const ROUTES = {
   configSession: '/api/akso-workbench/config/session',
   configToken: '/api/akso-workbench/config/token',
   configLogout: '/api/akso-workbench/config/logout',
+  analysisObject: '/api/akso-workbench/analysis/object',
   /** 页面开关：写入是否要求人工审批（环境变量优先级更高）。 */
   configPrefs: '/api/akso-workbench/config/prefs',
   /** 对话弹窗：读当前挂着的那条审批 / 回复同意-拒绝-补充。 */
@@ -789,6 +791,20 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       sendJson(res, 200, publicSession(readEgmpSession(dshHome)))
     }),
 
+    route('POST', R.analysisObject, false, async (_req, res, body) => {
+      const query = text(body.query, 200)
+      if (query === '') {
+        sendJson(res, 400, { error: '请输入对象 id 或 code' })
+        return
+      }
+      const ensured = await ensureEgmpSession()
+      if (ensured.session === null) {
+        sendJson(res, 409, { error: ensured.reason ?? '还没有连接 eGMP 账号' })
+        return
+      }
+      const result = await analyzeObject(ensured.session, query)
+      sendJson(res, 200, result)
+    }),
     route('GET', R.configToken, false, async (req, res) => {
       // 令牌是凭据：GET 也要求自定义头。跨站既设不了这个头，也读不到响应体，
       // 但要挡住 `<img src>` / `<script src>` 这类"不需要读响应也能发出去"的引用。

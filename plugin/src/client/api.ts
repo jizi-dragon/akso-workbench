@@ -153,6 +153,37 @@ export interface EgmpTokenView extends EgmpSessionView {
   expiresAt: number | null
 }
 
+export interface AnalysisActionView {
+  id: string
+  code: string
+  name: string
+  description: string
+  kind: 'user' | 'enter'
+  behaviorTypes: number[]
+  behaviorLabels: string[]
+  workflowId: string | null
+  workflowName: string | null
+  configCount: number
+}
+
+export interface AnalysisStatusView {
+  id: string
+  name: string
+  code: string
+  sort: number
+  isEnabled: boolean
+  userActions: AnalysisActionView[]
+  enterActions: AnalysisActionView[]
+}
+
+export interface AnalysisResultView {
+  object: { id: string; code: string; name: string; lifecycleId: string; enableLifeCycle: boolean }
+  lifecycle: { id: string; name: string } | null
+  statuses: AnalysisStatusView[]
+  totals: { statuses: number; enabledStatuses: number; userActions: number; enterActions: number }
+  enterCondition: { count: number; configured: boolean; readable: boolean }
+  warnings: string[]
+}
 export const api = {
   state: () => call<ServerState>('state'),
 
@@ -201,6 +232,9 @@ export const api = {
   configApprovalDecide: (id: string, verdict: 'approve' | 'deny' | 'supplement', note?: string) =>
     call<{ ok: boolean; verdict: string }>('config/approval/decide', post({ id, verdict, note })),
   /** 能力目录（工具页的数据源）。返回的 items 形状由 tools.tsx 自己声明。 */
+  /** 对象分析：输入对象 id/code，读生命周期、状态、动作。 */
+  analyzeObject: (query: string) => call<AnalysisResultView>('analysis/object', post({ query })),
+
   configCapabilities: () =>
     call<{
       session: EgmpSessionView

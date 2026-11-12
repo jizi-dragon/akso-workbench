@@ -30,6 +30,7 @@ import {
   togglePool,
 } from './state.ts'
 import { ConfigToolsTab } from './tools.tsx'
+import { ObjectAnalysisTab } from './analysis.tsx'
 
 type Tab = 'accounts' | 'pool' | 'add' | 'sites' | 'boxes'
 
@@ -1040,7 +1041,7 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
 
       {section === 'analysis' ? (
         <div className="akw-body">
-          <PendingModule title="对象分析" note="入口先留着，内容还没接入。" />
+          <ObjectAnalysisTab />
         </div>
       ) : null}
     </div>
