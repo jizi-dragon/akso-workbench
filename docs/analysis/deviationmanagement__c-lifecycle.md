@@ -7,6 +7,8 @@
 > 环境：`https://standard-val.aksoegmp.com`  
 > 读取时间：2026-11-12  
 > 数据口径：只读；状态以 `Status/GetList` 的 `isEnabled` 为准；动作类型以 `GetById` 的 `configs` 为准。
+>
+> 流程图：[deviationmanagement__c-lifecycle.drawio](deviationmanagement__c-lifecycle.drawio) ｜ [PNG 预览](deviationmanagement__c-lifecycle.png)
 
 ## 1. 概览
 
