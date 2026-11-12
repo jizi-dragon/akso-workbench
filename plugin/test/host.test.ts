@@ -1210,9 +1210,12 @@ test('生命周期挂载能力：进入动作 / 用户动作的路径与只读�
 test('令牌详情：只回从 JWT 解出的签发/到期时间，原文不出 host', async () => {
   const home = freshHome()
   const mounted = mount(home)
-  const claims = Buffer.from(JSON.stringify({ iat: 1_700_000_000, exp: 1_700_003_600, sub: 'liyulong' })).toString('base64url')
+  const iat = Math.floor(Date.now() / 1000) - 10
+  const exp = iat + 3600
+  const claims = Buffer.from(JSON.stringify({ iat, exp, sub: 'liyulong' })).toString('base64url')
   const token = `eyJhbGciOiJIUzI1NiJ9.${claims}.c2ln`
-  writeEgmpSession(home, { baseUrl: 'https://standard-val.aksoegmp.com', account: 'liyulong', token, savedAt: 1_700_000_000_000 })
+  writePrefs(home, { currentAccountId: 'a_token_test' })
+  writeEgmpSession(home, { baseUrl: 'https://standard-val.aksoegmp.com', account: 'liyulong', accountId: 'a_token_test', token, savedAt: Date.now() })
 
   // 不带自定义头：连读都不给（防止 <img src> 这类"不需要读响应也能发出去"的引用）
   const refused = await call(mounted.routes, P.configToken, 'GET', undefined, '127.0.0.1', { host: '127.0.0.1:60717' })
@@ -1224,8 +1227,8 @@ test('令牌详情：只回从 JWT 解出的签发/到期时间，原文不出 h
   assert.equal(view.json.token, null, '账号条只做展示：JWT 原文不下发浏览器')
   assert.equal(view.json.loggedIn, true)
   assert.equal(view.json.account, 'liyulong')
-  assert.equal(view.json.issuedAt, 1_700_000_000_000)
-  assert.equal(view.json.expiresAt, 1_700_003_600_000)
+  assert.equal(view.json.issuedAt, iat * 1000)
+  assert.equal(view.json.expiresAt, exp * 1000)
 
   // 没登录：200，但不给令牌
   const bare = mount(freshHome())
@@ -1239,7 +1242,8 @@ test('令牌详情：只回从 JWT 解出的签发/到期时间，原文不出 h
 test('JWT 解不开时不许崩：时间戳回 null，登录态照旧', async () => {
   const home = freshHome()
   const mounted = mount(home)
-  writeEgmpSession(home, { baseUrl: 'https://standard-val.aksoegmp.com', account: 'liyulong', token: 'not-a-jwt', savedAt: 1 })
+  writePrefs(home, { currentAccountId: 'a_token_test' })
+  writeEgmpSession(home, { baseUrl: 'https://standard-val.aksoegmp.com', account: 'liyulong', accountId: 'a_token_test', token: 'not-a-jwt', savedAt: 1 })
   const view = await call(mounted.routes, P.configToken, 'GET')
   assert.equal(view.status, 200)
   assert.equal(view.json.loggedIn, true)
@@ -1473,23 +1477,56 @@ test('令牌续期：剩 4 分钟提前换票，剩 6 分钟不换；并发只�
     await call(routes, P.accountCurrent, 'POST', { id: accountId })
 
     // ① 只剩 4 分钟：提前换票
-    writeEgmpSession(home, { baseUrl: 'https://egmp.example.com', account: 'liyulong', token: jwtFor(4 * 60_000), savedAt: Date.now() })
+    writeEgmpSession(home, { baseUrl: 'https://egmp.example.com', account: 'liyulong', accountId, token: jwtFor(4 * 60_000), savedAt: Date.now() })
     const near = await call(routes, P.configToken, 'GET')
     assert.equal(near.json.refreshed, true, '剩 4 分钟应当提前换票')
     assert.equal(cloud.state.mintedTokens.length, 1)
 
     // ② 剩 6 分钟：还不需要换
-    writeEgmpSession(home, { baseUrl: 'https://egmp.example.com', account: 'liyulong', token: jwtFor(6 * 60_000), savedAt: Date.now() })
+    writeEgmpSession(home, { baseUrl: 'https://egmp.example.com', account: 'liyulong', accountId, token: jwtFor(6 * 60_000), savedAt: Date.now() })
     const far = await call(routes, P.configToken, 'GET')
     assert.equal(far.json.refreshed, false, '剩 6 分钟还不到续期阈值')
     assert.equal(cloud.state.mintedTokens.length, 1)
 
     // ③ 并发两个请求：单飞，只换一张票
-    writeEgmpSession(home, { baseUrl: 'https://egmp.example.com', account: 'liyulong', token: jwtFor(60_000), savedAt: Date.now() })
+    writeEgmpSession(home, { baseUrl: 'https://egmp.example.com', account: 'liyulong', accountId, token: jwtFor(4 * 60_000), savedAt: Date.now() })
     const [a, b] = await Promise.all([call(routes, P.configToken, 'GET'), call(routes, P.configToken, 'GET')])
     assert.equal(a.status, 200)
     assert.equal(b.status, 200)
     assert.equal(cloud.state.mintedTokens.length, 2, '并发只应换一张票')
+  } finally {
+    await cloud.close()
+  }
+})
+
+test('账号条换账号：不复用旧账号的 eGMP 会话', async () => {
+  const home = freshHome()
+  const cloud = await startFakeCloud()
+  try {
+    const { routes } = mount(home, cloud.url)
+    await loginWith(routes)
+    const site = await call(routes, P.siteCreate, 'POST', { baseUrl: 'https://egmp.example.com' })
+    const siteId = (site.json.sites as Array<{ id: string }>)[0]!.id
+    const created = await call(routes, P.accountCreate, 'POST', { siteId, username: 'liyulong', password: 'pw-secret' })
+    const accountId = (created.json.accounts as Array<{ id: string }>)[0]!.id
+    await call(routes, P.poolToggle, 'POST', { id: accountId, inPool: true })
+    await call(routes, P.accountCurrent, 'POST', { id: accountId })
+
+    // 旧账号的票还没过期，但账号条已经切到新账号：不能拿旧票继续用。
+    writeEgmpSession(home, {
+      baseUrl: 'https://old-environment.example.com',
+      account: 'old-user',
+      accountId: 'a_old_account',
+      token: jwtFor(30 * 60_000),
+      savedAt: Date.now(),
+    })
+
+    const view = await call(routes, P.configToken, 'GET')
+    assert.equal(view.status, 200)
+    assert.equal(view.json.refreshed, true, '账号条账号变了，必须重新换票')
+    assert.equal(view.json.baseUrl, 'https://egmp.example.com')
+    assert.equal(view.json.account, 'liyulong')
+    assert.equal(cloud.state.mintedTokens.length, 1)
   } finally {
     await cloud.close()
   }

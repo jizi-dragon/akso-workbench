@@ -7,6 +7,7 @@
  * ★ **所有写操作都返回整份新快照**（host 侧写完后统一回拉 `/api/ui/state`）——
  *   因此这里不需要"本地猜一个结果"，数据一致性由 host 的快照保证。
  */
+import type { AnalysisWorkflow } from '../analysis-workflow.ts'
 
 export interface CloudAccount {
   id: string
@@ -162,7 +163,9 @@ export interface AnalysisActionView {
   behaviorTypes: number[]
   behaviorLabels: string[]
   workflowId: string | null
+  workflowIds: string[]
   workflowName: string | null
+  targetStatusId: string | null
   configCount: number
 }
 
@@ -177,9 +180,11 @@ export interface AnalysisStatusView {
 }
 
 export interface AnalysisResultView {
+  source: { baseUrl: string; account: string }
   object: { id: string; code: string; name: string; lifecycleId: string; enableLifeCycle: boolean }
   lifecycle: { id: string; name: string } | null
   statuses: AnalysisStatusView[]
+  workflows: AnalysisWorkflow[]
   totals: { statuses: number; enabledStatuses: number; userActions: number; enterActions: number }
   enterCondition: { count: number; configured: boolean; readable: boolean }
   warnings: string[]

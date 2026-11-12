@@ -375,15 +375,26 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   }
 
   async function ensureEgmpSessionOnce(): Promise<{ session: EgmpSession | null; refreshed: boolean; reason: string | null }> {
-    const existing = readEgmpSession(dshHome)
-    if (existing !== null) {
-      const expiresAt = tokenView(existing).expiresAt
-      if (expiresAt === null || expiresAt - Date.now() > REFRESH_MARGIN_MS) return { session: existing, refreshed: false, reason: null }
-    }
+    // ★ 只认底部账号条：先看 prefs.currentAccountId，空就不给会话。
+    // 绝不能因为磁盘上还留着一张未过期的旧票，就继续用旧账号/旧环境——
+    // 对象分析、能力查询和账号条展示都走这里，环境判断不能靠上下文猜。
     const accountId = readPrefs(dshHome).currentAccountId
-    if (accountId === null) return { session: existing, refreshed: false, reason: '账号条还没有连接账号' }
+    if (accountId === null) {
+      return { session: null, refreshed: false, reason: '底部账号条还没有连接账号' }
+    }
+
+    const existing = readEgmpSession(dshHome)
+    if (existing !== null && existing.accountId === accountId) {
+      const expiresAt = tokenView(existing).expiresAt
+      if (expiresAt === null || expiresAt - Date.now() > REFRESH_MARGIN_MS) {
+        return { session: existing, refreshed: false, reason: null }
+      }
+    }
+
     const cloudSession = readSession(dshHome)
-    if (cloudSession === null) return { session: existing, refreshed: false, reason: 'akso-cloud 未登录，换不到 eGMP 令牌' }
+    if (cloudSession === null) {
+      return { session: null, refreshed: false, reason: 'akso-cloud 未登录，换不到 eGMP 令牌' }
+    }
     try {
       if (snapshot === null) await sync(cloudSession)
       const minted = await credentialProvider().mint(accountId)
@@ -397,7 +408,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       writeEgmpSession(dshHome, session)
       return { session, refreshed: true, reason: null }
     } catch (error) {
-      return { session: existing, refreshed: false, reason: error instanceof Error ? error.message : String(error) }
+      return { session: null, refreshed: false, reason: error instanceof Error ? error.message : String(error) }
     }
   }
 

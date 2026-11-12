@@ -12,6 +12,7 @@
  */
 import { loadActionMap } from './config/action-map.ts'
 import { call, EgmpError, type EgmpSession } from './config/session.ts'
+import { readWorkflowAnalysis, type AnalysisWorkflow } from './analysis-workflow.ts'
 
 export interface AnalysisAction {
   id: string
@@ -22,7 +23,10 @@ export interface AnalysisAction {
   behaviorTypes: number[]
   behaviorLabels: string[]
   workflowId: string | null
+  workflowIds: string[]
   workflowName: string | null
+  /** behaviorType=9 且改的是当前对象时，目标状态 id。 */
+  targetStatusId: string | null
   configCount: number
 }
 
@@ -37,6 +41,11 @@ export interface AnalysisStatus {
 }
 
 export interface AnalysisResult {
+  /** 这次分析实际使用的环境与账号：文档/流程图必须把它写进去，避免和环境误判混在一起。 */
+  source: {
+    baseUrl: string
+    account: string
+  }
   object: {
     id: string
     code: string
@@ -49,6 +58,8 @@ export interface AnalysisResult {
     name: string
   } | null
   statuses: AnalysisStatus[]
+  /** 状态动作直接引用到的已发布/草稿工作流；按 workflowBasicId 展开。 */
+  workflows: AnalysisWorkflow[]
   totals: {
     statuses: number
     enabledStatuses: number
@@ -149,25 +160,6 @@ async function readLifecycleName(session: EgmpSession, code: string): Promise<st
   }
 }
 
-async function readWorkflowNames(session: EgmpSession, ids: string[]): Promise<Map<string, string>> {
-  const map = new Map<string, string>()
-  if (ids.length === 0) return map
-  try {
-    const response = await call(session, 'POST', '/api/platform/Workflow/GetWorkflowBasicPageViewList', {
-      pageIndex: 1,
-      pageSize: 1000,
-      filters: [],
-    })
-    for (const row of rowsOf(response)) {
-      const id = text(row.workflowBasicId) || text(row.id)
-      if (id !== '' && ids.includes(id)) map.set(id, text(row.name) || id)
-    }
-  } catch {
-    // 工作流名称不是主链；失败时保留 id，界面仍能看。
-  }
-  return map
-}
-
 async function readAction(
   session: EgmpSession,
   statusId: string,
@@ -183,23 +175,35 @@ async function readAction(
 
   for (const row of rows) {
     let detail = row
-    if (kind === 'enter') {
-      const id = text(row.id)
-      if (id !== '') {
-        try {
-          const full = await call(session, 'GET', '/api/config/lifecycle/EnterAction/GetById', undefined, { id })
-          const data = record(full.data)
-          if (Object.keys(data).length > 0) detail = data
-        } catch {
-          // 详情失败就保留 list 外壳；behaviorType 会为空，界面显示“未配置具体动作”。
-        }
+    const id = text(row.id)
+    if (id !== '') {
+      const detailPath =
+        kind === 'user'
+          ? '/api/config/lifecycle/UserAction/GetById'
+          : '/api/config/lifecycle/EnterAction/GetById'
+      try {
+        const full = await call(session, 'GET', detailPath, undefined, { id })
+        const data = record(full.data)
+        if (Object.keys(data).length > 0) detail = data
+      } catch {
+        // 详情失败就保留 list 外壳；behaviorType 会为空，界面显示“未配置具体动作”。
       }
     }
     const configs = actionConfigs(detail)
     const behaviorTypes = configs
       .map((config) => number(config.behaviorType, 0))
       .filter((value) => value > 0)
-    const workflowId = text(record(configs[0]?.behaviorValue).workflowId) || null
+    const workflowIds: string[] = []
+    let targetStatusId: string | null = null
+    for (const config of configs) {
+      const value = record(config.behaviorValue)
+      const workflowId = text(value.workflowId)
+      if (workflowId !== '' && !workflowIds.includes(workflowId)) workflowIds.push(workflowId)
+      if (number(config.behaviorType) === 9 && text(value.relatedObjectId) === '') {
+        const statusId = text(value.statusId) || text(value.targetStatusId)
+        if (statusId !== '' && targetStatusId === null) targetStatusId = statusId
+      }
+    }
     actions.push({
       id: text(detail.id) || text(row.id),
       code: text(detail.code) || text(row.code),
@@ -208,8 +212,10 @@ async function readAction(
       kind,
       behaviorTypes,
       behaviorLabels: [],
-      workflowId,
+      workflowId: workflowIds[0] ?? null,
+      workflowIds,
       workflowName: null,
+      targetStatusId,
       configCount: configs.length,
     })
   }
@@ -229,6 +235,7 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
   const enableLifeCycle = bool(object.enableLifeCycle)
   const warnings: string[] = []
   const result: AnalysisResult = {
+    source: { baseUrl: session.baseUrl, account: session.account },
     object: {
       id: text(object.id),
       code: text(object.code) || code,
@@ -238,6 +245,7 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
     },
     lifecycle: null,
     statuses: [],
+    workflows: [],
     totals: { statuses: 0, enabledStatuses: 0, userActions: 0, enterActions: 0 },
     enterCondition: { count: 0, configured: false, readable: true },
     warnings,
@@ -301,20 +309,28 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
     })
   }
 
-  const workflowIds = new Set<string>()
-  for (const status of result.statuses) {
-    for (const action of [...status.userActions, ...status.enterActions]) {
-      if (action.workflowId !== null) workflowIds.add(action.workflowId)
+  try {
+    const workflowAnalysis = await readWorkflowAnalysis(session, result.statuses, behaviorMap, result.object.id)
+    result.workflows = workflowAnalysis.workflows
+    for (const status of result.statuses) {
+      for (const action of [...status.userActions, ...status.enterActions]) {
+        if (action.workflowId !== null) {
+          action.workflowName = workflowAnalysis.names.get(action.workflowId) ?? null
+        }
+        action.behaviorLabels = behaviorLabels(action.behaviorTypes, behaviorMap)
+      }
+      result.totals.userActions += status.userActions.length
+      result.totals.enterActions += status.enterActions.length
     }
-  }
-  const workflowNames = await readWorkflowNames(session, [...workflowIds])
-  for (const status of result.statuses) {
-    for (const action of [...status.userActions, ...status.enterActions]) {
-      if (action.workflowId !== null) action.workflowName = workflowNames.get(action.workflowId) ?? null
-      action.behaviorLabels = behaviorLabels(action.behaviorTypes, behaviorMap)
+  } catch (error) {
+    warnings.push(`工作流展开失败：${error instanceof Error ? error.message : String(error)}`)
+    for (const status of result.statuses) {
+      for (const action of [...status.userActions, ...status.enterActions]) {
+        action.behaviorLabels = behaviorLabels(action.behaviorTypes, behaviorMap)
+      }
+      result.totals.userActions += status.userActions.length
+      result.totals.enterActions += status.enterActions.length
     }
-    result.totals.userActions += status.userActions.length
-    result.totals.enterActions += status.enterActions.length
   }
 
   result.totals.statuses = statuses.length
