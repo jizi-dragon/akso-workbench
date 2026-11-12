@@ -666,8 +666,8 @@ export const CAPABILITIES: Capability[] = [
   {
     id: 'lifecycle.useraction.create',
     domain: 'lifecycle',
-    title: '新建状态按钮（含动作）',
-    description: '在某个状态上挂一个按钮，动作可绑定"提交流程"。每调一次都会新建一个按钮。',
+    title: '新建用户动作',
+    description: '在某个状态上新建一个用户动作（平台界面叫按钮），动作可绑定"提交流程"。每调一次都会新建一个。',
     method: 'POST',
     path: '/api/config/lifecycle/UserAction/Create',
     risk: 'medium',
