@@ -850,7 +850,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       // 简介 / 返回 / 要点 / 案例都从「基础API使用指南.md」现读（按 mtime 缓存），
       // 所以改完文档刷新页面就能看到，不用重新构建插件。
       const guide = loadApiGuide()
-      // 标准配置方案与动作类型映射也是现读：只有部分接口有方案，没方案的卡片不显示这一栏。
+      // 标准配置方案与系统常用映射表也是现读：只有部分接口有方案，没方案的卡片不显示这一栏。
       const recipes = loadRecipeBook()
       const actionMap = loadActionMap()
       const groups = groupedCapabilitiesWithGuide(guide).map((group) => ({

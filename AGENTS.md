@@ -92,7 +92,7 @@
 
 - **三份文档各管一段**：`docs/knowledge/基础API使用指南.md` 管「这条接口是什么」（介绍 / 返回 / 要点 /
   **一条**案例）；`docs/knowledge/标准配置使用规范.md` 管「怎么用它配出标准配置」（同一接口可以有多个方案，
-  多步骤流程写这里）；`docs/knowledge/动作类型映射.md` 管「系统里的数字动作是什么」（stepType / status /
+  多步骤流程写这里）；`docs/knowledge/系统常用映射表.md` 管「系统里的数字动作是什么」（stepType / status /
   behaviorType / belongType / menuActionType 等码表）。
 - **读法**：host 每次 `GET config/capabilities` 现读三份文档（按 mtime + size 缓存），改完刷新页面即生效，
   不用 build，也不用重启 host。环境变量 `AKSO_WORKBENCH_API_GUIDE` / `AKSO_WORKBENCH_RECIPE_BOOK` /

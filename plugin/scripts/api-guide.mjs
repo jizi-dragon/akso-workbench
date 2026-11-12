@@ -104,7 +104,7 @@ const actionMap = actionPath === null ? null : parseActionMap(readFileSync(actio
 if (actionMap === null) {
   problems.push(`找不到 ${ACTION_MAP_FILENAME}：应放在仓库的 ${ACTION_MAP_RELATIVE}`)
 } else {
-  for (const warning of actionMap.warnings) problems.push(`动作类型映射：${warning}`)
+  for (const warning of actionMap.warnings) problems.push(`系统常用映射表：${warning}`)
 }
 
 /* 字段类型硬规则：长文本 17 / 富文本 18 已禁用，文档里不许再出现这两种 dataType 的写法 */

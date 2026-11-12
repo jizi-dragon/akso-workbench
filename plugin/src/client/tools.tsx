@@ -293,7 +293,7 @@ function RecipeList({ recipes }: { recipes: Recipe[] }) {
   )
 }
 
-/** 动作类型映射：按作用域分组的小表。 */
+/** 系统常用映射表：按作用域分组的小表。 */
 function ActionMapTable({ groups }: { groups: ActionGroup[] }) {
   return (
     <div className="akw-api__actions">
@@ -315,7 +315,7 @@ function ActionMapTable({ groups }: { groups: ActionGroup[] }) {
               {group.rows.length === 0 ? (
                 <tr>
                   <td colSpan={3} className="akw-api__actionEmpty">
-                    待补：这组映射还没登记值，先在「动作类型映射.md」里补表再刷新。
+                    待补：这组映射还没登记值，先在「系统常用映射表.md」里补表再刷新。
                   </td>
                 </tr>
               ) : (

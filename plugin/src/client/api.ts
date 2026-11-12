@@ -221,7 +221,7 @@ export const api = {
         warnings: string[]
         coverage: { total: number; documented: number; recipes: number }
       }
-      /** 「动作类型映射.md」：按作用域分组，界面按当前接口域过滤。 */
+      /** 「系统常用映射表.md」：按作用域分组，界面按当前接口域过滤。 */
       actionMap?: {
         path: string | null
         updatedAt: string | null

@@ -1,5 +1,5 @@
 /**
- * 「标准配置使用规范」与「动作类型映射」解析器的判据。
+ * 「标准配置使用规范」与「系统常用映射表」解析器的判据。
  *
  * 两份文档都是卡片详情里的**运行时**数据源：改完刷新页面即生效，不重新 build。
  * 解析器坏了不会抛，只会让「标准配置用法」空着、或让动作类型表显示错的数字——
@@ -96,7 +96,7 @@ test('解析：步骤续行并入上一条；没有步骤的方案留告警', ()
 })
 
 const ACTIONS = `
-# 动作类型映射
+# 系统常用映射表
 
 ## 工作流步骤类型（stepType）
 
@@ -171,10 +171,10 @@ test('真文档：两份都在、零告警、方案挂在真实能力 id 上', (
   for (const id of book.byCapability.keys()) assert.ok(ids.has(id), `${id} 不在能力目录`)
 
   const actionPath = findActionMapPath()
-  assert.ok(actionPath !== null && existsSync(actionPath), 'docs/knowledge/动作类型映射.md 应存在')
+  assert.ok(actionPath !== null && existsSync(actionPath), 'docs/knowledge/系统常用映射表.md 应存在')
   const actionMap = loadActionMap()
   assert.deepEqual(actionMap.warnings, [])
-  assert.ok(actionMap.groups.length >= 5, '动作类型映射至少覆盖步骤类型 / 状态 / 行为类型等几组')
+  assert.ok(actionMap.groups.length >= 5, '系统常用映射表至少覆盖步骤类型 / 状态 / 行为类型等几组')
   assert.ok(
     actionMap.groups.filter((group) => group.rows.length > 0).length >= 4,
     '至少四组有真实映射行（空组是「待补」占位，允许存在）',

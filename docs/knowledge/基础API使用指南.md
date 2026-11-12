@@ -5,7 +5,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 配套还有三份文档（各自负责不同的东西）：
 
 - `标准配置使用规范.md`：一类配置怎么用接口一步步做出来（可以一个接口多条方案），卡片上的「标准配置用法」读它。
-- `动作类型映射.md`：平台里那些数字编码（stepType、behaviorType、menuActionType …）的含义，卡片详情里的「动作类型映射」读它。
+- `系统常用映射表.md`：平台里那些数字编码（stepType、behaviorType、menuActionType …）的含义，卡片详情里的「系统常用映射表」读它。
 - `标准配置思路规范.md`：接到配置任务时先读——蓝图要答哪 8 个问题、六张表怎么填、施工顺序、一次审批还是多次、改错了怎么停用重建。不进卡片。
 
 > 文档只负责**怎么讲清楚**这条接口；接口本身的 method / path / 参数名称 / 风险等级仍以 `plugin/src/config/capabilities.ts` 为唯一事实源。两边对不上时，先改目录、再补文档。
@@ -663,6 +663,48 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
       ]
     }
   ]
+}
+```
+
+### query.lifecycle.status.config.list 读生命周期状态配置（未验证）
+
+> 读生命周期状态的配置详情，补足 openapi 状态列表没有的 `isEnabled` / `sort`。**2026-11-12 实测，未入账。**
+
+**返回**：`data.datas` 为全量状态数组；每项含 `id / name / code / lifecycleId / sort / isEnabled / description` 等。
+
+**要点**
+
+- 服务端当前忽略 `lifecycleId` 查询参数，一次返回 4014 条；调用后必须按 `lifecycleId` 客户端过滤。
+- 只支持 GET；POST 返回 405。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "lifecycleId": "<lifecycleId>"
+}
+```
+
+### query.lifecycle.enterrule.list 读生命周期进入条件（未验证）
+
+> 读生命周期上挂载的进入条件规则；返回空数组表示未配置。**2026-11-12 实测，未入账。**
+
+**返回**：`data` 为进入条件数组；`homework2__c` / `audit_plan__c` 均返回 `[]`，非空结构尚未验证。
+
+**要点**
+
+- 只找到 `GetList`；`Get` / `GetByLifecycleId` 均为 404。
+- 空数组不要当成接口失败，表示当前生命周期没有配置进入条件。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "lifecycleId": "<lifecycleId>"
 }
 ```
 

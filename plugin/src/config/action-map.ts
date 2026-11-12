@@ -1,7 +1,7 @@
 /**
- * 「动作类型映射」—— 平台把「做什么动作」写成数字，集中记成表。
+ * 「系统常用映射表」—— 平台把「做什么动作」写成数字，集中记成表。
  *
- * 文档是 `docs/knowledge/动作类型映射.md`，host 每次取能力目录时按 mtime 读一遍，
+ * 文档是 `docs/knowledge/系统常用映射表.md`，host 每次取能力目录时按 mtime 读一遍，
  * 改完**刷新页面**即生效，不用重新 build。
  *
  * 文档格式：
@@ -18,7 +18,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const ACTION_MAP_FILENAME = '动作类型映射.md'
+export const ACTION_MAP_FILENAME = '系统常用映射表.md'
 /** 仓库内相对路径；解析时从插件目录逐级向上找。 */
 export const ACTION_MAP_RELATIVE = join('docs', 'knowledge', ACTION_MAP_FILENAME)
 
