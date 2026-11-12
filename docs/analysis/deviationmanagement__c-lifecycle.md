@@ -10,7 +10,7 @@
 >
 > 流程图：[deviationmanagement__c-lifecycle.drawio](deviationmanagement__c-lifecycle.drawio) ｜ [PNG 预览](deviationmanagement__c-lifecycle.png)
 >
-> 画法：竖向排列；状态用「生命周期状态」，用户动作用「用户动作」，审批流任务用「用户任务」，分支用「判断」；黑色箭头表示流转方向。进入动作和条件不展开。
+> 画法：竖向排列；状态用「生命周期状态」，用户动作用「用户动作」，审批流任务用「用户任务」，分支用「判断」；黑色箭头表示流转方向。进入动作和条件不展开。布局与连线规则见 [标准对象分析流程](../knowledge/标准对象分析流程.md) 第 8 章。
 >
 > 模块展示：[便笺本模块展示.drawio](便笺本模块展示.drawio) ｜ [PNG](便笺本模块展示.png)
 
