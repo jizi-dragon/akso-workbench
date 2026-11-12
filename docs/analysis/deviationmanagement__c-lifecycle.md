@@ -10,7 +10,9 @@
 >
 > 流程图：[deviationmanagement__c-lifecycle.drawio](deviationmanagement__c-lifecycle.drawio) ｜ [PNG 预览](deviationmanagement__c-lifecycle.png)
 >
-> 画法：只画生命周期状态流转，黑色箭头；状态样式取自便笺本「生命周期状态」。
+> 画法：只画生命周期状态流转，竖向排列，黑色箭头；状态样式取自便笺本「生命周期状态」。
+>
+> 模块展示：[便笺本模块展示.drawio](便笺本模块展示.drawio) ｜ [PNG](便笺本模块展示.png)
 
 ## 1. 概览
 
