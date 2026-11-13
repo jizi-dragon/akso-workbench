@@ -17,7 +17,7 @@
   - host 日志打 `[UID] invoke/done/failed <tool>`，DSH 侧一次调用能与 host 日志对上。
 - **稳定性**：UID 一旦用于排查就**不复用**到别的工具；工具删除时保留 UID 并注明 retired，
   避免历史日志对错工具。
-- **验证**：`plugin/test/host.test.ts` 断言三个注册工具的 UID 齐全、唯一、格式正确，
+- **验证**：`plugin/test/host.test.ts` 断言四个注册工具的 UID 齐全、唯一、格式正确，
   且未登记工具会被拒绝；加工具时必须同步更新该断言。
 
 ## 日志与审计

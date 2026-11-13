@@ -411,6 +411,11 @@ export function ObjectAnalysisTab() {
 
   useEffect(() => {
     void refreshHistory()
+    const onFocus = (): void => {
+      void refreshHistory()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [])
 
   async function openHistory(item: AnalysisHistoryView): Promise<void> {

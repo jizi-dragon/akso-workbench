@@ -12,6 +12,7 @@ export const TOOL_UIDS = {
   akso_workbench_accounts: 'AKW-TOOL-ACCOUNTS-V1',
   akso_workbench_config_plan: 'AKW-TOOL-CONFIG-PLAN-V1',
   akso_workbench_config_apply: 'AKW-TOOL-CONFIG-APPLY-V1',
+  akso_workbench_object_analysis: 'AKW-TOOL-OBJECT-ANALYSIS-V1',
 } as const
 
 /** 取工具 UID；未登记返回 null（调用方应拒绝注册）。 */

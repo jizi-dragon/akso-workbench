@@ -583,8 +583,8 @@ test('工具经 ctx.tools 真注册，且读到的是**同一条链路**的数�
     const { routes, tools } = mount(freshHome(), cloud.url, true)
     assert.deepEqual(
       tools.map((tool) => tool.name).sort(),
-      ['akso_workbench_accounts', 'akso_workbench_config_apply', 'akso_workbench_config_plan'],
-      '插件应把三个工具都注册进 tools 服务',
+      ['akso_workbench_accounts', 'akso_workbench_config_apply', 'akso_workbench_config_plan', 'akso_workbench_object_analysis'],
+      '插件应把四个工具都注册进 tools 服务',
     )
     const snapshotTool = tools.find((tool) => tool.name === 'akso_workbench_accounts')
     assert.ok(snapshotTool, '缺 akso_workbench_accounts')
@@ -1532,13 +1532,13 @@ test('账号条换账号：不复用旧账号的 eGMP 会话', async () => {
   }
 })
 
-test('工具 UID：三个注册工具都有唯一 UID，未登记的工具拒绝注册', async () => {
+test('工具 UID：四个注册工具都有唯一 UID，未登记的工具拒绝注册', async () => {
   const { TOOL_UIDS, toolUid, withToolUid } = await import('../src/tool-uids.ts')
 
-  // ① DSH 侧能看到的三个工具都在表里（新增工具必须同步）
+  // ① DSH 侧能看到的四个工具都在表里（新增工具必须同步）
   assert.deepEqual(
     Object.keys(TOOL_UIDS).sort(),
-    ['akso_workbench_accounts', 'akso_workbench_config_apply', 'akso_workbench_config_plan'],
+    ['akso_workbench_accounts', 'akso_workbench_config_apply', 'akso_workbench_config_plan', 'akso_workbench_object_analysis'],
   )
 
   // ② 格式与唯一性

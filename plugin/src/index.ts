@@ -34,6 +34,7 @@ import { createApprovalGate } from './config/approval.ts'
 import { EgmpError, clearEgmpSession, publicSession, readEgmpSession, tokenView, writeEgmpSession, type EgmpSession } from './config/session.ts'
 import { buildConfigApplyTool, buildConfigPlanTool } from './config/tools.ts'
 import { analyzeObject } from './analysis.ts'
+import { buildAnalysisTool } from './analysis-tool.ts'
 import { listAnalysisHistory, readAnalysisHistory, saveAnalysisHistory } from './analysis-history.ts'
 
 export const name = 'akso-workbench'
@@ -367,6 +368,23 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
    */
   const REFRESH_MARGIN_MS = 5 * 60 * 1000
   let ensureInflight: Promise<{ session: EgmpSession | null; refreshed: boolean; reason: string | null }> | null = null
+
+  type ObjectAnalysisRun =
+    | { ok: true; result: Awaited<ReturnType<typeof analyzeObject>>; history: ReturnType<typeof saveAnalysisHistory> }
+    | { ok: false; status: number; error: string }
+
+  /** 页面和 agent 工具共用的唯一分析入口：都走这里，都会写同一条历史。 */
+  async function runObjectAnalysis(raw: string): Promise<ObjectAnalysisRun> {
+    const query = raw.trim()
+    if (query === '') return { ok: false, status: 400, error: '请输入对象 id 或 code' }
+    const ensured = await ensureEgmpSession()
+    if (ensured.session === null) {
+      return { ok: false, status: 409, error: ensured.reason ?? '还没有连接 eGMP 账号' }
+    }
+    const result = await analyzeObject(ensured.session, query)
+    const history = saveAnalysisHistory(dshHome, query, result)
+    return { ok: true, result, history }
+  }
 
   function ensureEgmpSession(): Promise<{ session: EgmpSession | null; refreshed: boolean; reason: string | null }> {
     if (ensureInflight !== null) return ensureInflight
@@ -821,18 +839,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
 
     route('POST', R.analysisObject, false, async (_req, res, body) => {
       const query = text(body.query, 200)
-      if (query === '') {
-        sendJson(res, 400, { error: '请输入对象 id 或 code' })
+      const out = await runObjectAnalysis(query)
+      if (!out.ok) {
+        sendJson(res, out.status, { error: out.error })
         return
       }
-      const ensured = await ensureEgmpSession()
-      if (ensured.session === null) {
-        sendJson(res, 409, { error: ensured.reason ?? '还没有连接 eGMP 账号' })
-        return
-      }
-      const result = await analyzeObject(ensured.session, query)
-      const history = saveAnalysisHistory(dshHome, query, result)
-      sendJson(res, 200, { ...result, history })
+      sendJson(res, 200, { ...out.result, history: out.history })
     }),
     route('GET', R.configToken, false, async (req, res) => {
       // 令牌是凭据：GET 也要求自定义头。跨站既设不了这个头，也读不到响应体，
@@ -1067,6 +1079,14 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       const applyTool = withToolUid(buildConfigApplyTool(configDeps), logger)
       ctx.effect(() => registry.register(planTool), 'akso-workbench: config plan tool')
       ctx.effect(() => registry.register(applyTool), 'akso-workbench: config apply tool')
+      const analysisTool = withToolUid(buildAnalysisTool({
+        run: async (query) => {
+          const out = await runObjectAnalysis(query)
+          if (!out.ok) return { ok: false, error: out.error }
+          return { ok: true, result: out.result, historyId: out.history.id }
+        },
+      }), logger)
+      ctx.effect(() => registry.register(analysisTool), 'akso-workbench: object analysis tool')
     } else {
       logger.warn('akso-workbench: 没有 tools 服务，agent 读不到快照（界面仍可用）')
     }
