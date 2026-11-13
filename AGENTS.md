@@ -42,6 +42,7 @@
 - 口令不离开 akso-cloud；host 只拿「账号 id」换 eGMP 令牌，日志/响应里不得出现 token 原文。
   本机不再接受明文口令（`session.login` / `POST config/login` / `auth.login` 能力都已删除）。
 - 改完跑：`npm run typecheck:plugin`、`npm --prefix plugin test`、`npm --prefix plugin run build`。
+- **生命周期/工作流流程图固定用便笺本模块**：唯一图形源是 `docs/analysis/便笺本.xml`（用户提供），代码样式集中在 `plugin/src/shared/sticky-notes.ts`。生命周期状态=浅蓝 `#bdd7ee` 矩形；用户动作=橙色 `#ed7d31` 胶囊；用户任务=橙色 `#ed7d31` 矩形；判断=橙色 `#f4b183` 菱形；开始/结束=`#70ad47` 圆形；连线=黑色箭头。生成 drawio 不得自创配色或圆角；`plugin/test/analysis-artifacts.test.ts` 会断言源文件存在且 drawio 只含这些颜色。
 - **字段类型规则（2026-11-09 管理员口径）**：一律用文本 `dataType: 1`；**长文本 17、富文本 18 已禁用**，
   不再新建、不再使用（`node plugin/scripts/api-guide.mjs --check` 会扫文档里的 17/18 并报错）。
   字段建完不能改类型、也不能删，选错只能改名停用 + 新建。

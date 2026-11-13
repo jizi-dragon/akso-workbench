@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
@@ -269,6 +270,21 @@ test('drawio：是 mxfile XML，含生命周期页和工作流页，且转义 XM
   assert.match(xml, /关联对象/)
   assert.doesNotMatch(xml, /<svg/)
   assert.doesNotMatch(xml, /CAPA & 计划/)
+})
+
+test('便笺本：固定源文件存在，drawio 只用便笺本的形状与颜色', () => {
+  const library = readFileSync(new URL('../../docs/analysis/便笺本.xml', import.meta.url), 'utf8')
+  for (const name of ['用户动作', '用户任务', '通知', '生命周期状态', '判断', '工作流', '泳道图']) {
+    assert.ok(library.includes(name), `便笺本缺少模块：${name}`)
+  }
+
+  const xml = buildAnalysisDrawio(fixture(), { generatedAt: fixedDate })
+  assert.match(xml, /fillColor=#bdd7ee;strokeColor=#939393/)
+  assert.match(xml, /fillColor=#ed7d31;strokeColor=#939393/)
+  assert.match(xml, /fillColor=#f4b183;strokeColor=#939393/)
+  assert.match(xml, /fillColor=#70ad47;strokeColor=#939393/)
+  assert.match(xml, /strokeColor=#000000/)
+  assert.doesNotMatch(xml, /#dae8fc|#6c8ebf|#4d6a86|#d5e8d4|#fff2cc|#ffe6cc/)
 })
 
 test('SVG：总览包含全部状态，未知触发源放右侧而不是省略', () => {

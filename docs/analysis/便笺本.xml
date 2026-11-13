@@ -1,0 +1,51 @@
+<mxlibrary>[
+  {
+    "xml": "&lt;mxGraphModel&gt;&lt;root&gt;&lt;mxCell id=\"0\"/&gt;&lt;mxCell id=\"1\" parent=\"0\"/&gt;&lt;mxCell id=\"2\" parent=\"1\" style=\"vsdxID=27;fillColor=#ed7d31;gradientColor=none;shape=stencil(vVTbcoMgEP0aHmWQjYk8J/Y/mAaVKRFnJY39++Jg0kC0Txnf9nLY5RyWJXAcWtkrwtng0H6pmz67lsCJcK67VqF23iJQETjWFlWD9tqdg9/LCTlZF/s9VRjDuZxNRzj7ubvB/whYo7snrHgbVuKnz+HjDrQQAY4zHnIq9iE0xhXuFfeCljAjMjnqIUPrpNO2C/kZbSQ2KvP9strIJkoNN6X6l/Aim7Q5MJof1gkJmsd0+IHuiohOog/bisli3xXO70CmwuzKRJny8fZjxOlF6Q3EWZuwtalNuACnRZkM7eIv2GRi//t/3vhbCLU2JuyT53y6QHwoLB+ofgE=);strokeColor=#939393;points=[[0,0.5,0],[1,0.5,0],[0.5,1,0],[0.5,0,0],[0.03,0.09,0],[0.97,0.09,0],[0.03,0.91,0],[0.97,0.91,0]];labelBackgroundColor=none;rounded=0;html=1;whiteSpace=wrap;\" vertex=\"1\"&gt;&lt;mxGeometry height=\"28\" width=\"85\" x=\"-4.547473508864641e-13\" as=\"geometry\"/&gt;&lt;/mxCell&gt;&lt;/root&gt;&lt;/mxGraphModel&gt;",
+    "w": 85,
+    "h": 28.000000000000004,
+    "aspect": "fixed",
+    "title": "用户动作"
+  },
+  {
+    "xml": "&lt;mxGraphModel&gt;&lt;root&gt;&lt;mxCell id=\"0\"/&gt;&lt;mxCell id=\"1\" parent=\"0\"/&gt;&lt;mxCell id=\"2\" parent=\"1\" style=\"vsdxID=28;fillColor=#ed7d31;gradientColor=none;shape=stencil(nZBLDoAgDERP0z3SIyjew0SURgSD+Lu9kMZoXLhwN9O+tukAlrNpJg1SzDH4QW/URgNYgZTkjA4UkwJUgGXng+6DX1zLfmoymdXo17xh5zmRJ6Q42BWCfc2oJfdAr+Yv+AP9Cb7OJ3H/2JG1HNGz/84klThPVCc=);strokeColor=#939393;points=[[0.5,1,0],[1,0.5,0],[0.5,0,0],[0,0.5,0],[0.5,0.5,0]];labelBackgroundColor=none;rounded=0;html=1;whiteSpace=wrap;\" vertex=\"1\"&gt;&lt;mxGeometry height=\"28\" width=\"85\" x=\"-4.547473508864641e-13\" y=\"-1.1368683772161603e-13\" as=\"geometry\"/&gt;&lt;/mxCell&gt;&lt;/root&gt;&lt;/mxGraphModel&gt;",
+    "w": 85,
+    "h": 28.000000000000004,
+    "aspect": "fixed",
+    "title": "用户任务"
+  },
+  {
+    "xml": "&lt;mxGraphModel&gt;&lt;root&gt;&lt;mxCell id=\"0\"/&gt;&lt;mxCell id=\"1\" parent=\"0\"/&gt;&lt;mxCell id=\"2\" parent=\"1\" style=\"vsdxID=31;fillColor=#fee599;gradientColor=none;shape=stencil(nZBLDoAgDERP0z3SIyjew0SURgSD+Lu9kMZoXLhwN9O+tukAlrNpJg1SzDH4QW/URgNYgZTkjA4UkwJUgGXng+6DX1zLfmoymdXo17xh5zmRJ6Q42BWCfc2oJfdAr+Yv+AP9Cb7OJ3H/2JG1HNGz/84klThPVCc=);strokeColor=#939393;points=[[0.5,1,0],[1,0.5,0],[0.5,0,0],[0,0.5,0],[0.5,0.5,0]];labelBackgroundColor=none;rounded=0;html=1;whiteSpace=wrap;\" vertex=\"1\"&gt;&lt;mxGeometry height=\"28\" width=\"85\" x=\"-4.547473508864641e-13\" as=\"geometry\"/&gt;&lt;/mxCell&gt;&lt;/root&gt;&lt;/mxGraphModel&gt;",
+    "w": 85,
+    "h": 28.000000000000004,
+    "aspect": "fixed",
+    "title": "通知"
+  },
+  {
+    "xml": "&lt;mxGraphModel&gt;&lt;root&gt;&lt;mxCell id=\"0\"/&gt;&lt;mxCell id=\"1\" parent=\"0\"/&gt;&lt;mxCell id=\"2\" parent=\"1\" style=\"vsdxID=33;fillColor=#bdd7ee;gradientColor=none;shape=stencil(nZBLDoAgDERP0z3SIyjew0SURgSD+Lu9kMZoXLhwN9O+tukAlrNpJg1SzDH4QW/URgNYgZTkjA4UkwJUgGXng+6DX1zLfmoymdXo17xh5zmRJ6Q42BWCfc2oJfdAr+Yv+AP9Cb7OJ3H/2JG1HNGz/84klThPVCc=);strokeColor=#939393;points=[[0.5,1,0],[1,0.5,0],[0.5,0,0],[0,0.5,0],[0.5,0.5,0]];labelBackgroundColor=none;rounded=0;html=1;whiteSpace=wrap;\" vertex=\"1\"&gt;&lt;mxGeometry height=\"28\" width=\"85\" x=\"-4.547473508864641e-13\" y=\"1.1368683772161603e-13\" as=\"geometry\"/&gt;&lt;/mxCell&gt;&lt;/root&gt;&lt;/mxGraphModel&gt;",
+    "w": 85,
+    "h": 28.000000000000004,
+    "aspect": "fixed",
+    "title": "生命周期状态"
+  },
+  {
+    "xml": "&lt;mxGraphModel&gt;&lt;root&gt;&lt;mxCell id=\"0\"/&gt;&lt;mxCell id=\"1\" parent=\"0\"/&gt;&lt;mxCell id=\"2\" parent=\"1\" style=\"vsdxID=35;fillColor=#f4b183;gradientColor=none;shape=stencil(nZBNDoUgDIRP0z3SeAKf3sNElEYEg/h3+wdpjIaFC3cz9OukDGC16HZWIMUSvBvVTl3QgD+QkqxWnkJUgDVg1TuvBu9W27Gf20QmNbktJRy8V4q0IsXJthDsG2YN2Qd7DS+4fGGz3Bfyc2Z2axT3J3syhjt6zvNS4hMXivUf);strokeColor=#939393;points=[[0.5,1,0],[1,0.5,0],[0.5,0,0],[0,0.5,0]];labelBackgroundColor=none;rounded=0;html=1;whiteSpace=wrap;\" vertex=\"1\"&gt;&lt;mxGeometry height=\"23\" width=\"55\" x=\"-4.547473508864641e-13\" y=\"-1.1368683772161603e-13\" as=\"geometry\"/&gt;&lt;/mxCell&gt;&lt;/root&gt;&lt;/mxGraphModel&gt;",
+    "w": 55,
+    "h": 23,
+    "aspect": "fixed",
+    "title": "判断"
+  },
+  {
+    "xml": "&lt;mxGraphModel&gt;&lt;root&gt;&lt;mxCell id=\"0\"/&gt;&lt;mxCell id=\"1\" parent=\"0\"/&gt;&lt;UserObject label=\"\" link=\"data:page/id,LNJwnv05yzgIl2kj5C5z\" tags=\"背景\" id=\"2\"&gt;&lt;mxCell parent=\"1\" style=\"vsdxID=126;fillColor=#70ad47;gradientColor=none;shape=stencil(rVFBDsIwDHtNj5VCK14wxj8ilm0VZZ3SAuX3tAoIBhwQ4mbHjhMlyjZxxJmUgZg47OnsujQqu1HGuGkkdqkgZVtlmz4wDRyOUyd8xuqs6BBONSFLH9QOAxdha6FbcSLvisR5oQEvvfegFXyMgqwxu6g5JEwuTIupHnkgXcbo3uNwyxEpnonmt/Ivi/1nLfhirQIeZ+6d9/KlZ/31LaUkL7XtFQ==);points=[[0.5,0,0],[0.5,0.5,0],[0,0.5,0],[0.5,1,0],[1,0.5,0],[0.15,0.85,0],[0.85,0.85,0],[0.85,0.15,0],[0.15,0.15,0]];labelBackgroundColor=none;rounded=0;html=1;whiteSpace=wrap;\" vertex=\"1\"&gt;&lt;mxGeometry height=\"55\" width=\"55\" as=\"geometry\"/&gt;&lt;/mxCell&gt;&lt;/UserObject&gt;&lt;mxCell id=\"3\" parent=\"2\" style=\"text;vsdxID=126;fillColor=none;gradientColor=none;labelBackgroundColor=none;rounded=0;html=1;whiteSpace=wrap;verticalAlign=middle;align=center;overflow=width;strokeColor=none;;html=1;\" value=\"&amp;lt;div style=&amp;quot;font-size: 1px&amp;quot;&amp;gt;&amp;lt;font style=&amp;quot;font-size: 11.29px; font-family: Calibri; color: rgb(254, 255, 255); direction: ltr; letter-spacing: 0px; line-height: 120%; opacity: 1;&amp;quot;&amp;gt;&amp;lt;br&amp;gt;&amp;lt;/font&amp;gt;&amp;lt;/div&amp;gt;\" vertex=\"1\"&gt;&lt;mxGeometry height=\"41.3\" width=\"48.18\" x=\"3.44\" y=\"6.82\" as=\"geometry\"/&gt;&lt;/mxCell&gt;&lt;/root&gt;&lt;/mxGraphModel&gt;",
+    "w": 55,
+    "h": 55,
+    "aspect": "fixed",
+    "title": "工作流"
+  },
+  {
+    "xml": "&lt;mxGraphModel&gt;&lt;root&gt;&lt;mxCell id=\"0\"/&gt;&lt;mxCell id=\"1\" parent=\"0\"/&gt;&lt;UserObject label=\"\" tags=\"背景\" id=\"2\"&gt;&lt;mxCell parent=\"1\" style=\"vsdxID=11;fillColor=none;gradientColor=none;points=[];labelBackgroundColor=none;rounded=0;strokeColor=none;html=1;whiteSpace=wrap;connectable=0;\" vertex=\"1\"&gt;&lt;mxGeometry height=\"318\" width=\"2417\" as=\"geometry\"/&gt;&lt;/mxCell&gt;&lt;/UserObject&gt;&lt;mxCell id=\"3\" parent=\"2\" style=\"vsdxID=12;fillColor=#ffffff;gradientColor=none;shape=stencil(nZBLDoAgDERP0z3SIyjew0SURgSD+Lu9kMZoXLhwN9O+tukAlrNpJg1SzDH4QW/URgNYgZTkjA4UkwJUgGXng+6DX1zLfmoymdXo17xh5zmRJ6Q42BWCfc2oJfdAr+Yv+AP9Cb7OJ3H/2JG1HNGz/84klThPVCc=);points=[];labelBackgroundColor=none;rounded=0;html=1;whiteSpace=wrap;connectable=0;\" vertex=\"1\"&gt;&lt;mxGeometry height=\"318\" width=\"2417\" as=\"geometry\"/&gt;&lt;/mxCell&gt;&lt;mxCell id=\"4\" parent=\"2\" style=\"verticalAlign=middle;align=center;overflow=width;vsdxID=13;rotation=270;fillColor=#ffffff;gradientColor=none;shape=stencil(nZBLDoAgDERP0z3SIyjew0SURgSD+Lu9kMZoXLhwN9O+tukAlrNpJg1SzDH4QW/URgNYgZTkjA4UkwJUgGXng+6DX1zLfmoymdXo17xh5zmRJ6Q42BWCfc2oJfdAr+Yv+AP9Cb7OJ3H/2JG1HNGz/84klThPVCc=);points=[];labelBackgroundColor=none;rounded=0;html=1;whiteSpace=wrap;connectable=0;\" value=\"&amp;lt;div style=&amp;quot;font-size: 1px&amp;quot;&amp;gt;&amp;lt;font style=&amp;quot;font-size:16.93px;font-family:Calibri;color:#4672c4;direction:ltr;letter-spacing:0px;line-height:120%;opacity:1&amp;quot;&amp;gt;批准人&amp;lt;br/&amp;gt;&amp;lt;/font&amp;gt;&amp;lt;/div&amp;gt;\" vertex=\"1\"&gt;&lt;mxGeometry height=\"74\" width=\"318\" x=\"-123\" y=\"122\" as=\"geometry\"/&gt;&lt;/mxCell&gt;&lt;/root&gt;&lt;/mxGraphModel&gt;",
+    "w": 2417,
+    "h": 318,
+    "aspect": "fixed",
+    "title": "泳道图"
+  }
+]</mxlibrary>

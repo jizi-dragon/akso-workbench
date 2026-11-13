@@ -8,6 +8,7 @@
  *   状态直改边只来自 behaviorType=9；behaviorType=46 是改关联对象，不能画成本对象边。
  */
 import type { AnalysisWorkflow, AnalysisWorkflowStep } from '../analysis-workflow.ts'
+import { STICKY_STYLES } from './sticky-notes.ts'
 import { workflowStepTypeLabel } from './workflow-labels.ts'
 
 export interface ArtifactAction {
@@ -402,15 +403,12 @@ function edge(id: string, source: string, target: string, value: string, style: 
 
 function workflowNodeStyle(stepType: number): string {
   if (stepType === 10 || stepType === 20) {
-    return 'ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=center;'
+    return `${STICKY_STYLES.startEnd}align=center;fontColor=#ffffff;fontStyle=1;`
   }
   if (stepType === 70) {
-    return 'rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=center;'
+    return `${STICKY_STYLES.decision}align=center;`
   }
-  if (stepType === 90) {
-    return 'rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;align=left;spacingLeft=8;'
-  }
-  return 'rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;spacingLeft=8;'
+  return `${STICKY_STYLES.userTask}align=left;spacingLeft=8;`
 }
 
 function workflowStepLabel(step: AnalysisWorkflowStep, index: number): string {
@@ -484,7 +482,7 @@ function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
       cell(
         `st_${status.id}`,
         `${index + 1}. ${status.name}\n${status.code}\n用户 ${status.userActions.length} / 进入 ${status.enterActions.length}`,
-        'rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;spacingLeft=10;',
+        `${STICKY_STYLES.lifecycleStatus}align=left;spacingLeft=10;`,
         70,
         y,
         340,
@@ -527,7 +525,7 @@ function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
         `st_${item.from}`,
         `st_${item.to}`,
         labelText,
-        'edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#4d6a86;fontSize=9;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=1;entryY=0.5;',
+        `${STICKY_STYLES.edge}fontSize=9;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=1;entryY=0.5;`,
       ),
     )
     // 让边有一个明确的垂直锚点，避免 drawio 自动绕到右侧。
@@ -541,6 +539,7 @@ function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
   } else {
     notes.push(`状态直改边 ${edges.length} 条：实线来自状态动作或已确认触发源的工作流。`)
   }
+  notes.push('图形固定遵循便笺本：状态为 #bdd7ee 矩形，判断为 #f4b183 菱形，开始/结束为 #70ad47 圆形，连线为黑色箭头（docs/analysis/便笺本.xml）。')
   notes.push('本页列出全部状态；状态按 status.sort 排列。右侧红色框列出触发源未确认的工作流及其目标状态，不猜测源状态；具体步骤见各工作流页。')
   notes.push('工作流里 behaviorType=46 的动作改的是关联对象，不画在本页。')
 
@@ -591,7 +590,7 @@ function workflowPage(workflow: AnalysisWorkflow, index: number): string {
         from,
         to,
         item.label,
-        'edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#4d6a86;fontSize=9;dashed=0;labelBackgroundColor=#ffffff;',
+        `${STICKY_STYLES.edge}fontSize=9;dashed=0;labelBackgroundColor=#ffffff;`,
       ),
     )
   })
@@ -618,7 +617,7 @@ function workflowPage(workflow: AnalysisWorkflow, index: number): string {
   for (const cellXml of cells) out.push(cellXml)
   let noteY = top + steps.length * gap + 24
   const notes = [
-    '橙色 = 动作节点；绿色椭圆 = 开始/结束；黄色菱形 = 判断。',
+    '图形固定遵循便笺本：橙色矩形 = 任务/动作，绿色圆形 = 开始/结束，橙色菱形 = 判断，黑色箭头 = 流转（docs/analysis/便笺本.xml）。',
     '动作节点里的“本对象 → 状态”才是本对象生命周期变更；“关联对象”不是本对象的状态边。',
   ]
   for (const note of notes) {
@@ -721,7 +720,7 @@ export function buildAnalysisSvg(result: ArtifactAnalysis, options: ArtifactOpti
   const yOf = new Map<string, number>()
   const out: string[] = []
   out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`)
-  out.push('<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#4d6a86"/></marker></defs>')
+  out.push('<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#000000"/></marker></defs>')
   out.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`)
   out.push(`<text x="${left}" y="40" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="24" font-weight="700" fill="#1f2937">${escapeXml(result.object.name)}（${escapeXml(result.object.code)}）生命周期总览</text>`)
   out.push(`<text x="${left}" y="64" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="12" fill="#64748b">环境：${escapeXml(result.source.baseUrl)}    账号：${escapeXml(result.source.account)}    生成：${escapeXml(generatedAt.toISOString())}</text>`)
@@ -730,7 +729,7 @@ export function buildAnalysisSvg(result: ArtifactAnalysis, options: ArtifactOpti
   statuses.forEach((status, index) => {
     const y = top + index * statusGap
     yOf.set(status.id, y)
-    out.push(`<rect x="${left}" y="${y}" width="${statusW}" height="${statusH}" rx="8" fill="#dae8fc" stroke="#6c8ebf"/>`)
+    out.push(`<rect x="${left}" y="${y}" width="${statusW}" height="${statusH}" rx="0" fill="#bdd7ee" stroke="#939393"/>`)
     out.push(`<text x="${left + 14}" y="${y + 23}" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="14" font-weight="600" fill="#1f2937">${index + 1}. ${escapeXml(status.name)}</text>`)
     out.push(`<text x="${left + 14}" y="${y + 41}" font-family="Consolas,'Courier New',monospace" font-size="11" fill="#475569">${escapeXml(status.code)}</text>`)
     out.push(`<text x="${left + 14}" y="${y + 57}" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="10" fill="#64748b">用户 ${status.userActions.length} / 进入 ${status.enterActions.length} · 启用：${status.isEnabled ? '是' : '否'}</text>`)
@@ -752,10 +751,10 @@ export function buildAnalysisSvg(result: ArtifactAnalysis, options: ArtifactOpti
     const toY = (yOf.get(item.to) ?? top) + statusH / 2
     const right = left + statusW
     // 只从右侧绕出再回到右侧：不穿过状态列，避免线压在状态文字上。
-    out.push(`<path d="M${right} ${fromY} C${right + 72} ${fromY}, ${right + 72} ${toY}, ${right} ${toY}" fill="none" stroke="#4d6a86" stroke-width="1.4" marker-end="url(#arrow)"/>`)
+    out.push(`<path d="M${right} ${fromY} C${right + 72} ${fromY}, ${right + 72} ${toY}, ${right} ${toY}" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>`)
     // 侧栏已给出工作流名，这里只保留步骤名，避免标签伸进右侧清单。
     const edgeLabels = [...item.labels].map((label) => label.split(' / ').slice(1).join(' / ') || label)
-    out.push(`<text x="${right + 14}" y="${(fromY + toY) / 2 + 3}" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="9" fill="#4d6a86" stroke="#ffffff" stroke-width="3" paint-order="stroke">${escapeXml(shortText(edgeLabels.join(' / '), 24))}</text>`)
+    out.push(`<text x="${right + 14}" y="${(fromY + toY) / 2 + 3}" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="9" fill="#000000" stroke="#ffffff" stroke-width="3" paint-order="stroke">${escapeXml(shortText(edgeLabels.join(' / '), 24))}</text>`)
   }
 
   const noteY = Math.max(top + statuses.length * statusGap + 34, sideTop + panelH + 30)
