@@ -9,6 +9,7 @@
  */
 import type { AnalysisWorkflow, AnalysisWorkflowStep } from '../analysis-workflow.ts'
 import { STICKY_STYLES } from './sticky-notes.ts'
+import { layoutLayered } from './lifecycle-layout.ts'
 import { workflowStepTypeLabel } from './workflow-labels.ts'
 
 export interface ArtifactAction {
@@ -401,6 +402,21 @@ function edge(id: string, source: string, target: string, value: string, style: 
   return `<mxCell id="${id}" value="${label(value)}" style="${style}" edge="1" parent="1" source="${source}" target="${target}"><mxGeometry relative="1" as="geometry"/></mxCell>`
 }
 
+function edgeWithPoints(
+  id: string,
+  source: string,
+  target: string,
+  value: string,
+  style: string,
+  points: Array<{ x: number; y: number }>,
+): string {
+  const waypoints =
+    points.length === 0
+      ? ''
+      : `<Array as="points">${points.map((point) => `<mxPoint x="${Math.round(point.x)}" y="${Math.round(point.y)}"/>`).join('')}</Array>`
+  return `<mxCell id="${id}" value="${label(value)}" style="${style}" edge="1" parent="1" source="${source}" target="${target}"><mxGeometry relative="1" as="geometry">${waypoints}</mxGeometry></mxCell>`
+}
+
 function workflowNodeStyle(stepType: number): string {
   if (stepType === 10 || stepType === 20) {
     return `${STICKY_STYLES.startEnd}align=center;fontColor=#ffffff;fontStyle=1;`
@@ -468,24 +484,82 @@ function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
     }
   }
 
-  const nodeH = 66
-  const gap = 112
-  const top = 112
-  const sideX = 560
+  const nodeW = 300
+  const nodeH = 104
+  const orderOf = new Map(statuses.map((status, index) => [status.id, index]))
+  const layoutEdges = edges
+    .map((item, index) => ({ id: `se_${index}`, from: item.from, to: item.to, index }))
+    .filter((item) => (orderOf.get(item.from) ?? 0) < (orderOf.get(item.to) ?? 0))
+    .map(({ id, from, to }) => ({ id, from, to }))
+  // 用 status.sort 加一条不可见的“排序链”，避免 dagre 把无连线状态排到最上面，
+  // 也让主链尽量保持竖向；这条链只参与布局，不渲染。
+  for (let index = 0; index + 1 < statuses.length; index += 1) {
+    const from = statuses[index]
+    const to = statuses[index + 1]
+    if (from === undefined || to === undefined) continue
+    layoutEdges.push({ id: `rank_${index}`, from: from.id, to: to.id })
+  }
+  const layout = layoutLayered(
+    statuses.map((status) => ({ id: status.id, width: nodeW, height: nodeH })),
+    layoutEdges,
+  )
+  // dagre 只负责纵向分层；同一层里为了避开回边会把主链摆成锯齿。
+  // 这里取“最长前向路径”作为主链，把主链节点对齐到同一列，支线放右列。
+  const forward = edges
+    .filter((item) => (orderOf.get(item.from) ?? 0) < (orderOf.get(item.to) ?? 0))
+    .map((item) => ({ from: item.from, to: item.to }))
+  const distance = new Map<string, number>()
+  const previous = new Map<string, string>()
+  for (const status of statuses) {
+    let best = 1
+    let prev: string | undefined
+    for (const edge of forward) {
+      if (edge.to !== status.id) continue
+      const value = (distance.get(edge.from) ?? 1) + 1
+      if (value > best) {
+        best = value
+        prev = edge.from
+      }
+    }
+    distance.set(status.id, best)
+    if (prev !== undefined) previous.set(status.id, prev)
+  }
+  let tail = statuses[0]?.id
+  let longest = 0
+  for (const status of statuses) {
+    const value = distance.get(status.id) ?? 0
+    if (value > longest) {
+      longest = value
+      tail = status.id
+    }
+  }
+  const main = new Set<string>()
+  for (let cursor = tail; cursor !== undefined; cursor = previous.get(cursor)) {
+    main.add(cursor)
+    if (main.size > statuses.length) break
+  }
+  const mainX = 120
+  const branchX = mainX + 360
+  for (const [id, node] of layout.nodes) {
+    node.x = main.has(id) ? mainX : branchX
+  }
+  const offsetX = 0
+  const offsetY = 120
+  const top = offsetY
+  const panelX = Math.max(820, branchX + 340)
   const sideTop = 140
   const cells: string[] = []
-  const yOf = new Map<string, number>()
   statuses.forEach((status, index) => {
-    const y = top + index * gap
-    yOf.set(status.id, y)
+    const placed = layout.nodes.get(status.id)
+    if (placed === undefined) return
     cells.push(
       cell(
         `st_${status.id}`,
         `${index + 1}. ${status.name}\n${status.code}\n用户 ${status.userActions.length} / 进入 ${status.enterActions.length}`,
         `${STICKY_STYLES.lifecycleStatus}align=left;spacingLeft=10;`,
-        70,
-        y,
-        340,
+        placed.x + offsetX,
+        placed.y + offsetY,
+        nodeW,
         nodeH,
       ),
     )
@@ -507,7 +581,7 @@ function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
         'unknown_panel',
         unknownLines.join('\n'),
         'text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacing=8;fillColor=#fff5f5;strokeColor=#b85450;dashed=1;rounded=1;fontSize=10;',
-        sideX,
+        panelX,
         sideTop,
         360,
         unknownPanelH,
@@ -515,22 +589,80 @@ function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
     )
   }
 
+  type Side = 'top' | 'bottom' | 'left' | 'right'
+  const center = (id: string): { x: number; y: number } => {
+    const node = layout.nodes.get(id)
+    if (node === undefined) return { x: 0, y: 0 }
+    return { x: node.x + node.width / 2, y: node.y + node.height / 2 }
+  }
+  const sideOf = (from: string, to: string): { out: Side; in: Side } => {
+    const source = center(from)
+    const target = center(to)
+    const dx = target.x - source.x
+    const dy = target.y - source.y
+    if (Math.abs(dy) >= Math.abs(dx)) {
+      return dy >= 0 ? { out: 'bottom', in: 'top' } : { out: 'top', in: 'bottom' }
+    }
+    return dx >= 0 ? { out: 'right', in: 'left' } : { out: 'left', in: 'right' }
+  }
+  const sides = edges.map((item) => sideOf(item.from, item.to))
+  const outGroups = new Map<string, number[]>()
+  const inGroups = new Map<string, number[]>()
+  sides.forEach((side, index) => {
+    const item = edges[index]
+    if (item === undefined) return
+    const outKey = `${item.from}:${side.out}`
+    const inKey = `${item.to}:${side.in}`
+    outGroups.set(outKey, [...(outGroups.get(outKey) ?? []), index])
+    inGroups.set(inKey, [...(inGroups.get(inKey) ?? []), index])
+  })
+  const fraction = (index: number, group: number[] | undefined, vertical: boolean): number => {
+    if (group === undefined || group.length <= 1) return 0.5
+    const sorted = [...group].sort((left, right) => {
+      const a = edges[left]
+      const b = edges[right]
+      if (a === undefined || b === undefined) return 0
+      const ac = center(vertical ? a.to : a.from)
+      const bc = center(vertical ? b.to : b.from)
+      return (vertical ? ac.x - bc.x : ac.y - bc.y) || left - right
+    })
+    const position = sorted.indexOf(index)
+    return (position + 1) / (sorted.length + 1)
+  }
   edges.forEach((item, index) => {
-    const fromY = (yOf.get(item.from) ?? top) + nodeH
-    const toY = yOf.get(item.to) ?? top
+    const side = sides[index]
+    if (side === undefined) return
     const labelText = [...item.labels].join('\n')
+    const vertical = side.out === 'top' || side.out === 'bottom'
+    const outFraction = fraction(index, outGroups.get(`${item.from}:${side.out}`), vertical)
+    const inFraction = fraction(index, inGroups.get(`${item.to}:${side.in}`), vertical)
+    const out =
+      side.out === 'bottom'
+        ? `exitX=${outFraction.toFixed(3)};exitY=1;`
+        : side.out === 'top'
+          ? `exitX=${outFraction.toFixed(3)};exitY=0;`
+          : side.out === 'right'
+            ? `exitX=1;exitY=${outFraction.toFixed(3)};`
+            : `exitX=0;exitY=${outFraction.toFixed(3)};`
+    const into =
+      side.in === 'top'
+        ? `entryX=${inFraction.toFixed(3)};entryY=0;`
+        : side.in === 'bottom'
+          ? `entryX=${inFraction.toFixed(3)};entryY=1;`
+          : side.in === 'left'
+            ? `entryX=0;entryY=${inFraction.toFixed(3)};`
+            : `entryX=1;entryY=${inFraction.toFixed(3)};`
+    const points: Array<{ x: number; y: number }> = []
     cells.push(
-      edge(
+      edgeWithPoints(
         `state_edge_${index}`,
         `st_${item.from}`,
         `st_${item.to}`,
         labelText,
-        `${STICKY_STYLES.edge}fontSize=9;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=1;entryY=0.5;`,
+        `${STICKY_STYLES.edge}fontSize=9;labelBackgroundColor=#ffffff;${out}${into}`,
+        points,
       ),
     )
-    // 让边有一个明确的垂直锚点，避免 drawio 自动绕到右侧。
-    void fromY
-    void toY
   })
 
   const notes: string[] = []
@@ -543,17 +675,18 @@ function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
   notes.push('本页列出全部状态；状态按 status.sort 排列。右侧红色框列出触发源未确认的工作流及其目标状态，不猜测源状态；具体步骤见各工作流页。')
   notes.push('工作流里 behaviorType=46 的动作改的是关联对象，不画在本页。')
 
-  const height = Math.max(760, top + statuses.length * gap + 180, sideTop + unknownPanelH + 80)
+  const height = Math.max(760, layout.height + offsetY + 100, sideTop + unknownPanelH + 80)
+  const pageWidth = Math.max(1100, panelX + 420)
   const out: string[] = []
   out.push(`<diagram id="lifecycle" name="生命周期总览">`)
-  out.push(`<mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="${height}">`)
+  out.push(`<mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="${pageWidth}" pageHeight="${height}">`)
   out.push('<root>')
   out.push('<mxCell id="0"/>')
   out.push('<mxCell id="1" parent="0"/>')
   out.push(cell('title', `${result.object.name}（${result.object.code}）生命周期总览`, 'text;html=1;align=left;fontSize=22;fontStyle=1;', 40, 20, 900, 32))
   out.push(cell('meta', `环境：${result.source.baseUrl}\n账号：${result.source.account}\n生成：${generatedAt.toISOString()}\n生命周期：${result.lifecycle?.name ?? '—'}`, 'text;html=1;align=left;fontSize=10;verticalAlign=top;', 40, 54, 900, 56))
   for (const cellXml of cells) out.push(cellXml)
-  let noteY = top + statuses.length * gap + 28
+  let noteY = layout.height + offsetY + 24
   for (const note of notes) {
     out.push(cell(`note_${noteY}`, note, 'text;html=1;align=left;fontSize=10;fontColor=#666666;', 70, noteY, 860, 22))
     noteY += 22
