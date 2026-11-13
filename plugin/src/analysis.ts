@@ -160,10 +160,32 @@ async function readLifecycleName(session: EgmpSession, code: string): Promise<st
   }
 }
 
+/** 用户动作的 behaviorTypes 只在 GetUserAction 的权限视图里返回；GetById 常为 data:null。 */
+async function readUserActionBehaviors(session: EgmpSession, objectId: string): Promise<Map<string, number[]>> {
+  const result = new Map<string, number[]>()
+  if (objectId === '') return result
+  try {
+    const response = await call(session, 'GET', '/api/config/lifecycle/UserAction/GetUserAction', undefined, { objectId })
+    const data = record(response.data)
+    for (const item of array(data.userActionPerms).map(record)) {
+      const id = text(item.actionId)
+      if (id === '') continue
+      const types = array(item.behaviorTypes)
+        .map((value) => number(value, 0))
+        .filter((value) => value > 0)
+      if (types.length > 0) result.set(id, types)
+    }
+  } catch {
+    // 权限视图不可用时保留空数组；界面仍会显示 list 外壳。
+  }
+  return result
+}
+
 async function readAction(
   session: EgmpSession,
   statusId: string,
   kind: 'user' | 'enter',
+  userBehaviors: Map<string, number[]> = new Map(),
 ): Promise<AnalysisAction[]> {
   const path =
     kind === 'user'
@@ -190,9 +212,12 @@ async function readAction(
       }
     }
     const configs = actionConfigs(detail)
-    const behaviorTypes = configs
+    let behaviorTypes = configs
       .map((config) => number(config.behaviorType, 0))
       .filter((value) => value > 0)
+    if (behaviorTypes.length === 0 && kind === 'user') {
+      behaviorTypes = userBehaviors.get(id) ?? []
+    }
     const workflowIds: string[] = []
     let targetStatusId: string | null = null
     for (const config of configs) {
@@ -285,11 +310,12 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
     }
   }
 
+  const userBehaviors = await readUserActionBehaviors(session, result.object.id)
   const enabledStatuses = statuses.filter((row) => row.isEnabled !== false)
   for (const row of enabledStatuses) {
     const statusId = text(row.id)
     const [userActions, enterActions] = await Promise.all([
-      readAction(session, statusId, 'user').catch((error: unknown) => {
+      readAction(session, statusId, 'user', userBehaviors).catch((error: unknown) => {
         warnings.push(`${text(row.name)} 的用户动作读取失败：${error instanceof Error ? error.message : String(error)}`)
         return []
       }),
