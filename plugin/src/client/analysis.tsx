@@ -7,7 +7,7 @@
  * 多对象时先给一张「对比总览」，下面每个对象是可展开的明细；单对象直接展开，
  * 保持原来的阅读路径。
  */
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 
 import { parseAnalysisQueries } from '../shared/analysis-query.ts'
 import {
@@ -17,7 +17,7 @@ import {
   buildAnalysisSvg,
 } from '../shared/analysis-artifacts.ts'
 import { workflowStepTypeLabel } from '../shared/workflow-labels.ts'
-import { api, type AnalysisActionView, type AnalysisResultView } from './api.ts'
+import { api, type AnalysisActionView, type AnalysisHistoryView, type AnalysisResultView } from './api.ts'
 
 interface AnalysisEntry {
   query: string
@@ -386,11 +386,49 @@ function ComparisonCard({ entry }: { entry: AnalysisEntry }) {
   )
 }
 
+function historyTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
 export function ObjectAnalysisTab() {
   const [query, setQuery] = useState('')
   const [entries, setEntries] = useState<AnalysisEntry[]>([])
   const [inputError, setInputError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [history, setHistory] = useState<AnalysisHistoryView[]>([])
+  const [historyError, setHistoryError] = useState('')
+
+  async function refreshHistory(): Promise<void> {
+    try {
+      const payload = await api.analysisHistory()
+      setHistory(payload.items)
+      setHistoryError('')
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  useEffect(() => {
+    void refreshHistory()
+  }, [])
+
+  async function openHistory(item: AnalysisHistoryView): Promise<void> {
+    if (loading) return
+    setLoading(true)
+    setHistoryError('')
+    try {
+      const result = await api.analysisHistoryItem(item.id)
+      setEntries([{ query: item.query, result, error: '' }])
+      setQuery(item.query)
+      setInputError('')
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   async function run(value: string) {
     if (loading) return
@@ -414,6 +452,7 @@ export function ObjectAnalysisTab() {
         }),
       )
       setEntries(next)
+      void refreshHistory()
     } finally {
       setLoading(false)
     }
@@ -474,6 +513,36 @@ export function ObjectAnalysisTab() {
           <span className="akw-analysis__hint">多个对象用逗号分隔，最多 3 个。</span>
         </div>
       </section>
+
+      <details className="akw-analysis__history" open={history.length > 0}>
+        <summary>
+          历史分析 <span>{history.length}</span>
+          <em>点一条即可打开当时的分析结果，不用重新请求</em>
+        </summary>
+        {historyError !== '' ? <p className="akw-analysis__history-error">{historyError}</p> : null}
+        {history.length === 0 ? (
+          <p className="akw-analysis__history-empty">还没有历史；每次分析成功后会自动留一份。</p>
+        ) : (
+          <div className="akw-analysis__history-list">
+            {history.slice(0, 12).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="akw-analysis__history-item"
+                disabled={loading}
+                onClick={() => void openHistory(item)}
+              >
+                <span>{historyTime(item.createdAt)}</span>
+                <b>{item.objectName}</b>
+                <code>{item.objectCode}</code>
+                <em>
+                  {item.enabledStatuses} 状态 · {item.userActions + item.enterActions} 动作 · {item.workflows} 工作流
+                </em>
+              </button>
+            ))}
+          </div>
+        )}
+      </details>
 
       {inputError !== '' ? <div className="akw-analysis__error">{inputError}</div> : null}
 

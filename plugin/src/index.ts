@@ -34,6 +34,7 @@ import { createApprovalGate } from './config/approval.ts'
 import { EgmpError, clearEgmpSession, publicSession, readEgmpSession, tokenView, writeEgmpSession, type EgmpSession } from './config/session.ts'
 import { buildConfigApplyTool, buildConfigPlanTool } from './config/tools.ts'
 import { analyzeObject } from './analysis.ts'
+import { listAnalysisHistory, readAnalysisHistory, saveAnalysisHistory } from './analysis-history.ts'
 
 export const name = 'akso-workbench'
 export const inject = ['webServer']
@@ -122,6 +123,7 @@ export const ROUTES = {
   configToken: '/api/akso-workbench/config/token',
   configLogout: '/api/akso-workbench/config/logout',
   analysisObject: '/api/akso-workbench/analysis/object',
+  analysisHistory: '/api/akso-workbench/analysis/history',
   /** 页面开关：写入是否要求人工审批（环境变量优先级更高）。 */
   configPrefs: '/api/akso-workbench/config/prefs',
   /** 对话弹窗：读当前挂着的那条审批 / 回复同意-拒绝-补充。 */
@@ -802,6 +804,21 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       sendJson(res, 200, publicSession(readEgmpSession(dshHome)))
     }),
 
+    route('GET', R.analysisHistory, false, async (req, res) => {
+      const url = new URL(String(req?.url ?? '/'), 'http://localhost')
+      const id = (url.searchParams.get('id') ?? '').trim()
+      if (id === '') {
+        sendJson(res, 200, { items: listAnalysisHistory(dshHome) })
+        return
+      }
+      const result = readAnalysisHistory(dshHome, id)
+      if (result === null) {
+        sendJson(res, 404, { error: '这条分析历史不存在或已损坏' })
+        return
+      }
+      sendJson(res, 200, result)
+    }),
+
     route('POST', R.analysisObject, false, async (_req, res, body) => {
       const query = text(body.query, 200)
       if (query === '') {
@@ -814,7 +831,8 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         return
       }
       const result = await analyzeObject(ensured.session, query)
-      sendJson(res, 200, result)
+      const history = saveAnalysisHistory(dshHome, query, result)
+      sendJson(res, 200, { ...result, history })
     }),
     route('GET', R.configToken, false, async (req, res) => {
       // 令牌是凭据：GET 也要求自定义头。跨站既设不了这个头，也读不到响应体，

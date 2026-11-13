@@ -179,6 +179,21 @@ export interface AnalysisStatusView {
   enterActions: AnalysisActionView[]
 }
 
+export interface AnalysisHistoryView {
+  id: string
+  createdAt: string
+  query: string
+  objectCode: string
+  objectName: string
+  statuses: number
+  enabledStatuses: number
+  userActions: number
+  enterActions: number
+  workflows: number
+  baseUrl: string
+  account: string
+}
+
 export interface AnalysisResultView {
   source: { baseUrl: string; account: string }
   object: { id: string; code: string; name: string; lifecycleId: string; enableLifeCycle: boolean }
@@ -239,6 +254,9 @@ export const api = {
   /** 能力目录（工具页的数据源）。返回的 items 形状由 tools.tsx 自己声明。 */
   /** 对象分析：输入对象 id/code，读生命周期、状态、动作。 */
   analyzeObject: (query: string) => call<AnalysisResultView>('analysis/object', post({ query })),
+  analysisHistory: () => call<{ items: AnalysisHistoryView[] }>('analysis/history'),
+  analysisHistoryItem: (id: string) =>
+    call<AnalysisResultView>(`analysis/history?id=${encodeURIComponent(id)}`),
 
   configCapabilities: () =>
     call<{
