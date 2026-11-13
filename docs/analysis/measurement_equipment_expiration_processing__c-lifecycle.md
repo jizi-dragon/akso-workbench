@@ -3,9 +3,13 @@
 > 环境：`https://tonbridge-config.aksoegmp.com`（账号 `lyl`）
 > 对象 ID：`3a24e112-b21b-1678-2a3d-2cf8ebd1f7f3`
 > 生命周期：`计量设备校准到期处理生命周期`（`3a24e112-b21b-65d1-90e7-ed1991c8d7cf`）
-> 分析时间：2026-11-13　只读，未改平台配置
+> 分析时间：2026-11-13（16:10 复核）　只读，未改平台配置
 
 ## 1. 概览
+
+![生命周期总览](measurement_equipment_expiration_processing__c-lifecycle.png)
+
+> drawio 源文件：[measurement_equipment_expiration_processing__c-lifecycle.drawio](measurement_equipment_expiration_processing__c-lifecycle.drawio)
 
 | 项 | 数量 |
 |---|---:|
@@ -55,11 +59,11 @@ behaviorType 16、36 目前未在 `系统常用映射表.md` 中登记，分析�
 
 | 名称 | code | 步骤数 | basicId | configId | isEnable | isAllowTrigger | status | version |
 |---|---|---:|---|---|---|---|---:|---:|
-| 校准到期处理：变更申请 | `calibration_due_process_change_request__c` | 7 | `3a24e5e2-ee1a-0386-9c84-b0fe089d5294` | `37c88a10-9658-407e-ba58-3a24e5ef84d1` | `false` | `false` | 20 | 3 |
+| 校准到期处理：变更申请 | `calibration_due_process_change_request__c` | 7 | `3a24e5e2-ee1a-0386-9c84-b0fe089d5294` | `e812fa6b-95bf-27d7-d624-3a24e6036995` | `false` | `false` | 20 | 4 |
 | 校准到期处理：提交非变更器具 | `calibration_due_process_submit_non_changed_instrument__c` | 4 | `3a24e59b-b365-f8c4-9cec-9112ca90e18f` | `3a24e59b-b367-b7d9-96c4-f7faff808717` | `false` | `false` | 20 | 1 |
 | 计量设备检验到期，创建检验记录 | `metering_equipment_inspection_due_create_inspection_record__c` | 4 | `3a24e4b0-11b9-9f2e-35cb-c20d38dbeba6` | `3a24e4b0-11bb-7cb3-dca8-ee343631669d` | `false` | `false` | 30 | 1 |
 
-`status`/`version` 来自 `Workflow/GetWorkflowBasicPageViewList`；步骤来自 `Workflow/GetWorkflowSteps`。步骤接口只返回节点名称与 `nextStepName`，不返回审批人、条件表达式或动作 configs，因此下表的“说明”是**按节点名称与已知进入动作推断**，已在“证据”列标注。
+`status`/`version` 来自 `Workflow/GetWorkflowBasicPageViewList`；2026-11-13 16:10 复核确认三条仍为 `isEnable=false`，其中「变更申请」已升到 version 4、步骤仍为 7 步；步骤来自 `Workflow/GetWorkflowSteps`。步骤接口只返回节点名称与 `nextStepName`，不返回审批人、条件表达式或动作 configs，因此下表的“说明”是**按节点名称与已知进入动作推断**，已在“证据”列标注。
 
 ### 5.1 校准到期处理：变更申请（7 步）
 
