@@ -11,6 +11,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 
 import { parseAnalysisQueries } from '../shared/analysis-query.ts'
 import {
+  analysisArtifactName,
   analysisFolderName,
   analysisPackageName,
   buildAnalysisDrawio,
@@ -111,9 +112,9 @@ async function buildPackageBlob(result: AnalysisResultView): Promise<{ name: str
   const png = await renderPngBlob(result)
   const files = [
     { name: `${folder}/`, data: new Uint8Array(0) },
-    { name: `${folder}/${folder}.md`, data: encoder.encode(buildAnalysisMarkdown(result, { generatedAt })) },
-    { name: `${folder}/${folder}.drawio`, data: encoder.encode(buildAnalysisDrawio(result, { generatedAt })) },
-    { name: `${folder}/${folder}.png`, data: new Uint8Array(await png.arrayBuffer()) },
+    { name: `${folder}/${analysisArtifactName(result, 'md', generatedAt)}`, data: encoder.encode(buildAnalysisMarkdown(result, { generatedAt })) },
+    { name: `${folder}/${analysisArtifactName(result, 'drawio', generatedAt)}`, data: encoder.encode(buildAnalysisDrawio(result, { generatedAt })) },
+    { name: `${folder}/${analysisArtifactName(result, 'png', generatedAt)}`, data: new Uint8Array(await png.arrayBuffer()) },
   ]
   return {
     name: analysisPackageName(result, generatedAt),

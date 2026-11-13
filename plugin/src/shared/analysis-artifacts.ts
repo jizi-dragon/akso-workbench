@@ -886,7 +886,9 @@ export function analysisArtifactName(
   extension: 'md' | 'drawio' | 'png',
   date: Date = new Date(),
 ): string {
-  return `${analysisFolderName(result, date)}.${extension}`
+  const stamp = date.toISOString().slice(0, 10)
+  const code = result.object.code.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'object'
+  return `${code}-analysis-${stamp}.${extension}`
 }
 
 export function analysisPackageName(
