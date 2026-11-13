@@ -49,19 +49,54 @@
 
 behaviorType 16、36 目前未在 `系统常用映射表.md` 中登记，分析页只能显示「行为 16 / 行为 36」；46 已是「修改相关对象生命周期状态」。
 
-## 5. 工作流
+## 5. 工作流详情
 
-| 名称 | code | 步骤数 | isEnable | isAllowTrigger | 状态 |
-|---|---|---:|---|---|---:|
-| 校准到期处理：变更申请 | `calibration_due_process_change_request__c` | 7 | `false` | `false` | 20 |
-| 校准到期处理：提交非变更器具 | `calibration_due_process_submit_non_changed_instrument__c` | 4 | `false` | `false` | 20 |
-| 计量设备检验到期，创建检验记录 | `metering_equipment_inspection_due_create_inspection_record__c` | 4 | `false` | `false` | 30 |
+三条工作流都属于对象 `measurement_equipment_expiration_processing__c`，但 **全部未启用**，且 `isAllowTrigger=false`。
 
-**三条工作流全部未启用**（`isEnable=false`），且 `isAllowTrigger=false`。这直接导致：
+| 名称 | code | 步骤数 | basicId | configId | isEnable | isAllowTrigger | status | version |
+|---|---|---:|---|---|---|---|---:|---:|
+| 校准到期处理：变更申请 | `calibration_due_process_change_request__c` | 7 | `3a24e5e2-ee1a-0386-9c84-b0fe089d5294` | `37c88a10-9658-407e-ba58-3a24e5ef84d1` | `false` | `false` | 20 | 3 |
+| 校准到期处理：提交非变更器具 | `calibration_due_process_submit_non_changed_instrument__c` | 4 | `3a24e59b-b365-f8c4-9cec-9112ca90e18f` | `3a24e59b-b367-b7d9-96c4-f7faff808717` | `false` | `false` | 20 | 1 |
+| 计量设备检验到期，创建检验记录 | `metering_equipment_inspection_due_create_inspection_record__c` | 4 | `3a24e4b0-11b9-9f2e-35cb-c20d38dbeba6` | `3a24e4b0-11bb-7cb3-dca8-ee343631669d` | `false` | `false` | 30 | 1 |
 
-- 用户动作里的 `behaviorType=7`（发起工作流）没有可启动的目标；
-- 分析器算出的 `triggeredBy` 为空；
-- 生命周期上的按钮即便显示，实际执行也可能失败或被平台拦截。
+`status`/`version` 来自 `Workflow/GetWorkflowBasicPageViewList`；步骤来自 `Workflow/GetWorkflowSteps`。步骤接口只返回节点名称与 `nextStepName`，不返回审批人、条件表达式或动作 configs，因此下表的“说明”是**按节点名称与已知进入动作推断**，已在“证据”列标注。
+
+### 5.1 校准到期处理：变更申请（7 步）
+
+| sort | 步骤类型 | 节点 | 下一步 | 说明 / 证据 |
+|---:|---|---|---|---|
+| 1 | 开始（10） | 开始 | 动作：修改状态“待审核” | 流程入口 |
+| 2 | 动作（90） | 动作：修改状态“待审核” | 任务：审核人审核 | 按名称推断：把当前对象改到「待审核」；动作 configs 未返回 |
+| 33 | 用户任务（30） | 任务：审核人审核 | 判断：审核结果 | 审批任务；审批人未返回 |
+| 94 | 判断（70） | 判断：审核结果 | 通过 → 动作：修改状态“待执行校准”<br>否则 → 动作：修改状态“提交变更数据” | 分支条件未返回；两个目标动作都在 `nextStepList` 中 |
+| 96 | 动作（90） | 动作：修改状态“提交变更数据” | 结束 | 按名称推断：改到「提交变更数据」；configs 未返回 |
+| 185 | 动作（90） | 动作：修改状态“待执行校准” | 结束 | “待执行校准”不在当前对象 5 个状态里，推断改的是关联对象/变更明细状态 |
+| 100306 | 结束（20） | 结束 | — | 流程出口 |
+
+### 5.2 校准到期处理：提交非变更器具（4 步）
+
+| sort | 步骤类型 | 节点 | 下一步 | 说明 / 证据 |
+|---:|---|---|---|---|
+| 1 | 开始（10） | 开始 | 动作：修改相关对象状态“执行校准” | 流程入口 |
+| 2 | 动作（90） | 动作：修改相关对象状态“执行校准” | 动作：修改状态提交变更数据 | 节点名明确写“相关对象”，不是当前对象；目标对象/状态 configs 未返回 |
+| 33 | 动作（90） | 动作：修改状态提交变更数据 | 结束 | 按名称推断：把当前对象改到「提交变更数据」 |
+| 100094 | 结束（20） | 结束 | — | 流程出口 |
+
+### 5.3 计量设备检验到期，创建检验记录（4 步）
+
+| sort | 步骤类型 | 节点 | 下一步 | 说明 / 证据 |
+|---:|---|---|---|---|
+| 1 | 开始（10） | 开始 | 创建校准记录 | 流程入口 |
+| 2 | 动作（90） | 创建校准记录 | 修改状态执行校准 | 与进入动作 behaviorType=36「为变更明细的数据创建校准记录」命名一致；具体 configs 未返回 |
+| 33 | 动作（90） | 修改状态执行校准 | 结束 | “执行校准”不在当前对象状态里，推断改的是校准记录/关联对象；configs 未返回 |
+| 100094 | 结束（20） | 结束 | — | 流程出口 |
+
+### 5.4 触发方式
+
+- 三条工作流 `triggeredBy` 都为空；没有 `behaviorType=7` 的**已启用**进入动作指向它们。
+- 对象下 `EventAction/GetList?objectId=...` 返回空数组，未发现事件动作触发。
+- 三条工作流 `isEnable=false`，因此当前不应被运行；`isAllowTrigger=false` 也说明它们不接收进入动作/事件动作的自动启动。
+- 结论：工作流是“已配置但停用”的状态，无法从现有数据判断设计上应由哪个按钮/事件拉起。
 
 ## 6. 进入条件
 
