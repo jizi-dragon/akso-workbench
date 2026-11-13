@@ -4,6 +4,8 @@ import test from 'node:test'
 
 import {
   analysisArtifactName,
+  analysisFolderName,
+  analysisPackageName,
   buildAnalysisDrawio,
   buildAnalysisMarkdown,
   buildAnalysisSvg,
@@ -301,11 +303,13 @@ test('SVG：总览包含全部状态，未知触发源放右侧而不是省略',
   assert.doesNotMatch(svg, /CAPA & 计划/)
 })
 
-test('文件名：带 code 和日期，去掉不安全字符', () => {
-  const name = analysisArtifactName(fixture(), 'md', fixedDate)
-  assert.equal(name, 'capa_plan__c-analysis-2026-11-12.md')
+test('文件名：带 code 和秒级时间戳，去掉不安全字符', () => {
+  const folder = analysisFolderName(fixture(), fixedDate)
+  assert.match(folder, /^capa_plan__c-analysis-\d{8}-\d{6}$/)
+  assert.equal(analysisArtifactName(fixture(), 'md', fixedDate), `${folder}.md`)
+  assert.equal(analysisArtifactName(fixture(), 'drawio', fixedDate), `${folder}.drawio`)
+  assert.equal(analysisArtifactName(fixture(), 'png', fixedDate), `${folder}.png`)
+  assert.equal(analysisPackageName(fixture(), fixedDate), `${folder}.zip`)
   const drawio = analysisArtifactName({ object: { ...fixture().object, code: 'a/b c' } }, 'drawio', fixedDate)
-  assert.equal(drawio, 'a-b-c-analysis-2026-11-12.drawio')
-  const png = analysisArtifactName(fixture(), 'png', fixedDate)
-  assert.equal(png, 'capa_plan__c-analysis-2026-11-12.png')
+  assert.match(drawio, /^a-b-c-analysis-\d{8}-\d{6}\.drawio$/)
 })

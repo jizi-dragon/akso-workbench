@@ -25,7 +25,7 @@
   "scripts": {
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
-    "test": "node --test test/host.test.ts test/api-guide.test.ts test/config-docs.test.ts test/analysis-query.test.ts test/analysis-artifacts.test.ts",
+    "test": "node --test test/host.test.ts test/api-guide.test.ts test/config-docs.test.ts test/analysis-query.test.ts test/analysis-artifacts.test.ts test/zip-store.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {

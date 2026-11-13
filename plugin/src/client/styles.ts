@@ -568,6 +568,8 @@ export const CSS = `
 .akw-analysis__history-item>em{grid-column:2/4;font-style:normal;font-size:10px;line-height:15px;color:var(--dsw-alias-label-tertiary)}
 .akw-analysis__history-empty,.akw-analysis__history-error{margin:0;font-size:11px;line-height:17px;color:var(--dsw-alias-label-tertiary)}
 .akw-analysis__history-error{color:var(--dsw-alias-state-error-primary)}
+.akw-analysis__package-hint{font-size:10px;line-height:15px;color:var(--dsw-alias-label-tertiary)}
+.akw-analysis__package-error{font-size:10px;line-height:15px;color:var(--dsw-alias-state-error-primary)}
 @media (max-width: 820px){.akw-analysis__history-item{grid-template-columns:1fr}.akw-analysis__history-item>em{grid-column:1}.akw-analysis__history>summary em{display:none}}
 @media (max-width: 820px){.akw-analysis__summary{flex-direction:column}.akw-analysis__stats{width:100%;grid-template-columns:repeat(5,1fr)}.akw-status-grid{grid-template-columns:1fr}.akw-analysis__form{flex-direction:column;align-items:stretch}.akw-analysis__compare-grid{grid-template-columns:1fr}.akw-analysis__compare-heading{flex-direction:column;gap:6px}.akw-analysis__hint{margin-left:0;width:100%}.akw-workflow__summary{align-items:flex-start;flex-direction:column;gap:2px}.akw-workflow__meta{white-space:normal}}
 

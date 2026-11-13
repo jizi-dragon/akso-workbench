@@ -11,11 +11,13 @@ import { useEffect, useState, type FormEvent } from 'react'
 
 import { parseAnalysisQueries } from '../shared/analysis-query.ts'
 import {
-  analysisArtifactName,
+  analysisFolderName,
+  analysisPackageName,
   buildAnalysisDrawio,
   buildAnalysisMarkdown,
   buildAnalysisSvg,
 } from '../shared/analysis-artifacts.ts'
+import { zipStore } from './zip-store.ts'
 import { workflowStepTypeLabel } from '../shared/workflow-labels.ts'
 import { api, type AnalysisActionView, type AnalysisHistoryView, type AnalysisResultView } from './api.ts'
 
@@ -62,14 +64,10 @@ function downloadBlob(fileName: string, blob: Blob): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-function downloadText(fileName: string, text: string, type: string): void {
-  downloadBlob(fileName, new Blob([text], { type }))
-}
-
-function downloadPng(result: AnalysisResultView): Promise<void> {
+function renderPngBlob(result: AnalysisResultView): Promise<Blob> {
   const svg = buildAnalysisSvg(result)
   const svgUrl = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<Blob>((resolve, reject) => {
     const image = new Image()
     image.decoding = 'async'
     image.onload = () => {
@@ -90,8 +88,7 @@ function downloadPng(result: AnalysisResultView): Promise<void> {
             reject(new Error('PNG 生成失败'))
             return
           }
-          downloadBlob(analysisArtifactName(result, 'png'), blob)
-          resolve()
+          resolve(blob)
         }, 'image/png')
       } catch (error) {
         reject(error instanceof Error ? error : new Error(String(error)))
@@ -107,47 +104,48 @@ function downloadPng(result: AnalysisResultView): Promise<void> {
   })
 }
 
+async function buildPackageBlob(result: AnalysisResultView): Promise<{ name: string; blob: Blob }> {
+  const generatedAt = new Date()
+  const folder = analysisFolderName(result, generatedAt)
+  const encoder = new TextEncoder()
+  const png = await renderPngBlob(result)
+  const files = [
+    { name: `${folder}/`, data: new Uint8Array(0) },
+    { name: `${folder}/${folder}.md`, data: encoder.encode(buildAnalysisMarkdown(result, { generatedAt })) },
+    { name: `${folder}/${folder}.drawio`, data: encoder.encode(buildAnalysisDrawio(result, { generatedAt })) },
+    { name: `${folder}/${folder}.png`, data: new Uint8Array(await png.arrayBuffer()) },
+  ]
+  return {
+    name: analysisPackageName(result, generatedAt),
+    blob: new Blob([zipStore(files, generatedAt)], { type: 'application/zip' }),
+  }
+}
+
 function ArtifactButtons({ result }: { result: AnalysisResultView }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handlePackage(): Promise<void> {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const { name, blob } = await buildPackageBlob(result)
+      downloadBlob(name, blob)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="akw-analysis__downloads">
-      <button
-        className="akw-btn akw-btn--sm"
-        type="button"
-        onClick={() => {
-          downloadText(
-            analysisArtifactName(result, 'md'),
-            buildAnalysisMarkdown(result),
-            'text/markdown;charset=utf-8',
-          )
-        }}
-      >
-        下载文档
+      <button className="akw-btn akw-btn--sm" type="button" disabled={busy} onClick={() => void handlePackage()}>
+        {busy ? '打包中…' : '下载分析包（.zip）'}
       </button>
-      <button
-        className="akw-btn akw-btn--sm"
-        type="button"
-        onClick={() => {
-          downloadText(
-            analysisArtifactName(result, 'drawio'),
-            buildAnalysisDrawio(result),
-            'application/vnd.jgraph.mxfile;charset=utf-8',
-          )
-        }}
-      >
-        下载 drawio
-      </button>
-      <button
-        className="akw-btn akw-btn--sm"
-        type="button"
-        title="总览图 PNG，便于直接插入文档"
-        onClick={() => {
-          void downloadPng(result).catch((error: unknown) => {
-            console.error('下载 PNG 失败', error)
-          })
-        }}
-      >
-        下载 PNG
-      </button>
+      <span className="akw-analysis__package-hint">必含 md / drawio / png，解压后是一个秒级时间戳文件夹</span>
+      {error !== '' ? <span className="akw-analysis__package-error">{error}</span> : null}
     </div>
   )
 }

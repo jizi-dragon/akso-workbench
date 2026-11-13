@@ -869,12 +869,29 @@ function shortText(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value
 }
 
+export function analysisFolderName(
+  result: { object: { code: string } },
+  date: Date = new Date(),
+): string {
+  const pad = (value: number, length = 2): string => String(value).padStart(length, '0')
+  const stamp =
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  const code = result.object.code.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'object'
+  return `${code}-analysis-${stamp}`
+}
+
 export function analysisArtifactName(
   result: { object: { code: string } },
   extension: 'md' | 'drawio' | 'png',
   date: Date = new Date(),
 ): string {
-  const stamp = date.toISOString().slice(0, 10)
-  const code = result.object.code.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'object'
-  return `${code}-analysis-${stamp}.${extension}`
+  return `${analysisFolderName(result, date)}.${extension}`
+}
+
+export function analysisPackageName(
+  result: { object: { code: string } },
+  date: Date = new Date(),
+): string {
+  return `${analysisFolderName(result, date)}.zip`
 }
