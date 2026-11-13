@@ -10,6 +10,7 @@
 import type { AnalysisWorkflow, AnalysisWorkflowStep } from '../analysis-workflow.ts'
 import { STICKY_STYLES } from './sticky-notes.ts'
 import { layoutLayered } from './lifecycle-layout.ts'
+import { routeEdges } from './orthogonal-route.ts'
 import { workflowStepTypeLabel } from './workflow-labels.ts'
 
 export interface ArtifactAction {
@@ -437,246 +438,207 @@ function workflowStepLabel(step: AnalysisWorkflowStep, index: number): string {
 function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
   const statuses = [...result.statuses].sort((left, right) => left.sort - right.sort || left.name.localeCompare(right.name))
   const statusById = new Map(statuses.map((status) => [status.id, status]))
-  const edges: Array<{ from: string; to: string; labels: Set<string> }> = []
-  const addEdge = (from: string, to: string, text: string): void => {
-    if (from === to || !statusById.has(from) || !statusById.has(to)) return
-    let found = edges.find((item) => item.from === from && item.to === to)
-    if (found === undefined) {
-      found = { from, to, labels: new Set<string>() }
-      edges.push(found)
-    }
-    found.labels.add(text)
+
+  interface FlowNode {
+    id: string
+    text: string
+    style: string
+    width: number
+    height: number
+    kind: 'status' | 'action' | 'task' | 'decision'
   }
+  interface FlowEdge {
+    id: string
+    from: string
+    to: string
+    label: string
+  }
+  const nodes = new Map<string, FlowNode>()
+  const edges: FlowEdge[] = []
+  const addNode = (node: FlowNode): void => {
+    if (!nodes.has(node.id)) nodes.set(node.id, node)
+  }
+  const addEdge = (id: string, from: string, to: string, label: string): void => {
+    if (from === to || !nodes.has(from) || !nodes.has(to)) return
+    if (edges.some((edge) => edge.from === from && edge.to === to)) return
+    edges.push({ id, from, to, label })
+  }
+  const actionId = (statusId: string, id: string): string => `ac_${statusId}_${id}`
+  const stepId = (workflow: AnalysisWorkflow, id: string): string => `wf_${workflow.basicId}_${id}`
+
+  statuses.forEach((status, index) => {
+    addNode({
+      id: `st_${status.id}`,
+      text: `${index + 1}. ${status.name}\n${status.code}\n用户 ${status.userActions.length} / 进入 ${status.enterActions.length}`,
+      style: `${STICKY_STYLES.lifecycleStatus}align=left;spacingLeft=10;`,
+      width: 300,
+      height: 96,
+      kind: 'status',
+    })
+  })
 
   for (const status of statuses) {
     for (const action of [...status.userActions, ...status.enterActions]) {
-      if (action.targetStatusId !== undefined && action.targetStatusId !== null) {
-        addEdge(status.id, action.targetStatusId, `${action.name}（${action.kind === 'user' ? '用户' : '进入'}动作）`)
+      const id = actionId(status.id, action.id)
+      const behavior = action.behaviorLabels.length > 0 ? ` · ${action.behaviorLabels.join('、')}` : ''
+      addNode({
+        id,
+        text: `${action.name}\n${action.kind === 'user' ? '用户动作' : '进入动作'}${behavior}`,
+        style:
+          action.kind === 'user'
+            ? `${STICKY_STYLES.userAction}align=center;fontSize=10;`
+            : `${STICKY_STYLES.userTask}align=center;fontSize=10;`,
+        width: 240,
+        height: 52,
+        kind: 'action',
+      })
+      addEdge(`se_${status.id}_${action.id}`, `st_${status.id}`, id, action.kind === 'user' ? '点击' : '进入')
+      if (action.targetStatusId !== undefined && action.targetStatusId !== null && statusById.has(action.targetStatusId)) {
+        addEdge(`sa_${status.id}_${action.id}`, id, `st_${action.targetStatusId}`, action.name)
       }
     }
   }
-  const unknown: Array<{ id: string; name: string; targets: Map<string, Set<string>> }> = []
-  for (const workflow of result.workflows ?? []) {
-    const sources = new Set<string>()
-    for (const trigger of workflow.triggeredBy) sources.add(trigger.statusId)
-    for (const binding of workflow.statusBindings) sources.add(binding.statusId)
-    const targets = new Map<string, Set<string>>()
-    for (const step of workflow.steps) {
-      for (const action of step.actions) {
-        if (action.targetStatusId === null || !statusById.has(action.targetStatusId)) continue
-        let labels = targets.get(action.targetStatusId)
-        if (labels === undefined) {
-          labels = new Set<string>()
-          targets.set(action.targetStatusId, labels)
+
+  const workflows = result.workflows ?? []
+  for (const workflow of workflows) {
+    const steps = [...workflow.steps].sort((left, right) => left.sort - right.sort)
+    const actionable = steps.filter((step) => step.stepType === 30 || step.stepType === 70)
+    for (const step of actionable) {
+      addNode({
+        id: stepId(workflow, step.id),
+        text: step.stepType === 70 ? `${step.name}\n判断` : `${step.name}\n工作流任务`,
+        style:
+          step.stepType === 70
+            ? `${STICKY_STYLES.decision}align=center;fontSize=10;`
+            : `${STICKY_STYLES.userTask}align=center;fontSize=10;`,
+        width: step.stepType === 70 ? 200 : 280,
+        height: step.stepType === 70 ? 72 : 64,
+        kind: step.stepType === 70 ? 'decision' : 'task',
+      })
+    }
+    const triggerNodes = workflow.triggeredBy
+      .map((trigger) => actionId(trigger.statusId, trigger.actionId))
+      .filter((id) => nodes.has(id))
+    const first = actionable[0]
+    if (first !== undefined) {
+      for (const status of statuses) {
+        for (const action of [...status.userActions, ...status.enterActions]) {
+          if (!action.workflowIds?.includes(workflow.basicId) && action.workflowId !== workflow.basicId) continue
+          addEdge(`wfstart_${workflow.basicId}_${status.id}_${action.id}`, actionId(status.id, action.id), stepId(workflow, first.id), '启动')
         }
-        labels.add(step.name)
       }
     }
-    if (targets.size === 0) continue
-    if (sources.size === 0) {
-      unknown.push({ id: workflow.basicId, name: workflow.name, targets })
-      continue
-    }
-    for (const source of sources) {
-      for (const [target, labels] of targets) {
-        addEdge(source, target, `${workflow.name} / ${[...labels].join('、')}`)
+    const byId = new Map(steps.map((step) => [step.id, step]))
+    for (const edge of workflow.edges) {
+      const fromStep = byId.get(edge.from)
+      const toStep = byId.get(edge.to)
+      if (fromStep === undefined || toStep === undefined) continue
+      if (fromStep.stepType === 90) continue
+      if (fromStep.stepType === 10 && toStep.stepType === 90) {
+        toStep.actions.forEach((action, actionIndex) => {
+          if (action.targetStatusId === null || !statusById.has(action.targetStatusId)) return
+          triggerNodes.forEach((triggerNode, triggerIndex) => {
+            addEdge(
+              `wfstart_target_${workflow.basicId}_${edge.to}_${actionIndex}_${triggerIndex}`,
+              triggerNode,
+              `st_${action.targetStatusId}`,
+              edge.label || action.behaviorLabel || action.targetStatusName || '状态变更',
+            )
+          })
+        })
+        continue
       }
+      if (fromStep.stepType === 10) continue
+      const fromNode = stepId(workflow, fromStep.id)
+      if (!nodes.has(fromNode)) continue
+      if (toStep.stepType === 90) {
+        toStep.actions.forEach((action, actionIndex) => {
+          if (action.targetStatusId === null || !statusById.has(action.targetStatusId)) return
+          addEdge(
+            `wfedge_${workflow.basicId}_${edge.to}_${actionIndex}`,
+            fromNode,
+            `st_${action.targetStatusId}`,
+            edge.label || action.behaviorLabel || action.targetStatusName || '状态变更',
+          )
+        })
+        continue
+      }
+      if (toStep.stepType === 20) continue
+      const toNode = stepId(workflow, toStep.id)
+      if (nodes.has(toNode)) addEdge(`wfedge_${workflow.basicId}_${fromStep.id}_${toStep.id}`, fromNode, toNode, edge.label)
     }
   }
 
-  const nodeW = 300
-  const nodeH = 104
-  const orderOf = new Map(statuses.map((status, index) => [status.id, index]))
-  const layoutEdges = edges
-    .map((item, index) => ({ id: `se_${index}`, from: item.from, to: item.to, index }))
-    .filter((item) => (orderOf.get(item.from) ?? 0) < (orderOf.get(item.to) ?? 0))
-    .map(({ id, from, to }) => ({ id, from, to }))
-  // 用 status.sort 加一条不可见的“排序链”，避免 dagre 把无连线状态排到最上面，
-  // 也让主链尽量保持竖向；这条链只参与布局，不渲染。
-  for (let index = 0; index + 1 < statuses.length; index += 1) {
-    const from = statuses[index]
-    const to = statuses[index + 1]
-    if (from === undefined || to === undefined) continue
-    layoutEdges.push({ id: `rank_${index}`, from: from.id, to: to.id })
-  }
+  const orderedNodes = [...nodes.values()]
   const layout = layoutLayered(
-    statuses.map((status) => ({ id: status.id, width: nodeW, height: nodeH })),
-    layoutEdges,
+    orderedNodes.map((node) => ({ id: node.id, width: node.width, height: node.height })),
+    edges.map((edge) => ({ id: edge.id, from: edge.from, to: edge.to })),
   )
-  // dagre 只负责纵向分层；同一层里为了避开回边会把主链摆成锯齿。
-  // 这里取“最长前向路径”作为主链，把主链节点对齐到同一列，支线放右列。
-  const forward = edges
-    .filter((item) => (orderOf.get(item.from) ?? 0) < (orderOf.get(item.to) ?? 0))
-    .map((item) => ({ from: item.from, to: item.to }))
-  const distance = new Map<string, number>()
-  const previous = new Map<string, string>()
-  for (const status of statuses) {
-    let best = 1
-    let prev: string | undefined
-    for (const edge of forward) {
-      if (edge.to !== status.id) continue
-      const value = (distance.get(edge.from) ?? 1) + 1
-      if (value > best) {
-        best = value
-        prev = edge.from
-      }
-    }
-    distance.set(status.id, best)
-    if (prev !== undefined) previous.set(status.id, prev)
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  for (const node of layout.nodes.values()) {
+    minX = Math.min(minX, node.x)
+    minY = Math.min(minY, node.y)
   }
-  let tail = statuses[0]?.id
-  let longest = 0
-  for (const status of statuses) {
-    const value = distance.get(status.id) ?? 0
-    if (value > longest) {
-      longest = value
-      tail = status.id
-    }
-  }
-  const main = new Set<string>()
-  for (let cursor = tail; cursor !== undefined; cursor = previous.get(cursor)) {
-    main.add(cursor)
-    if (main.size > statuses.length) break
-  }
-  const mainX = 120
-  const branchX = mainX + 360
+  const offsetX = Number.isFinite(minX) ? 120 - minX : 120
+  const offsetY = Number.isFinite(minY) ? 120 - minY : 120
+  const placed = new Map<string, { x: number; y: number; width: number; height: number }>()
   for (const [id, node] of layout.nodes) {
-    node.x = main.has(id) ? mainX : branchX
-  }
-  const offsetX = 0
-  const offsetY = 120
-  const top = offsetY
-  const panelX = Math.max(820, branchX + 340)
-  const sideTop = 140
-  const cells: string[] = []
-  statuses.forEach((status, index) => {
-    const placed = layout.nodes.get(status.id)
-    if (placed === undefined) return
-    cells.push(
-      cell(
-        `st_${status.id}`,
-        `${index + 1}. ${status.name}\n${status.code}\n用户 ${status.userActions.length} / 进入 ${status.enterActions.length}`,
-        `${STICKY_STYLES.lifecycleStatus}align=left;spacingLeft=10;`,
-        placed.x + offsetX,
-        placed.y + offsetY,
-        nodeW,
-        nodeH,
-      ),
-    )
-  })
-  if (statuses.length === 0) {
-    cells.push(cell('empty', '没有生命周期状态', 'text;html=1;align=center;', 70, 150, 340, 40))
-  }
-  const unknownLines: string[] = ['待确认触发源（未读到源状态，不猜测）']
-  for (const workflow of unknown) {
-    unknownLines.push('', `• ${workflow.name}`)
-    for (const target of workflow.targets.keys()) {
-      unknownLines.push(`  目标：${statusById.get(target)?.name ?? target}`)
-    }
-  }
-  const unknownPanelH = unknown.length > 0 ? 34 + unknownLines.length * 14 : 0
-  if (unknown.length > 0) {
-    cells.push(
-      cell(
-        'unknown_panel',
-        unknownLines.join('\n'),
-        'text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacing=8;fillColor=#fff5f5;strokeColor=#b85450;dashed=1;rounded=1;fontSize=10;',
-        panelX,
-        sideTop,
-        360,
-        unknownPanelH,
-      ),
-    )
+    placed.set(id, { x: node.x + offsetX, y: node.y + offsetY, width: node.width, height: node.height })
   }
 
-  type Side = 'top' | 'bottom' | 'left' | 'right'
-  const center = (id: string): { x: number; y: number } => {
-    const node = layout.nodes.get(id)
-    if (node === undefined) return { x: 0, y: 0 }
-    return { x: node.x + node.width / 2, y: node.y + node.height / 2 }
+  const degree = new Map<string, number>()
+  for (const edge of edges) {
+    degree.set(edge.from, (degree.get(edge.from) ?? 0) + 1)
+    degree.set(edge.to, (degree.get(edge.to) ?? 0) + 1)
   }
-  const sideOf = (from: string, to: string): { out: Side; in: Side } => {
-    const source = center(from)
-    const target = center(to)
-    const dx = target.x - source.x
-    const dy = target.y - source.y
-    if (Math.abs(dy) >= Math.abs(dx)) {
-      return dy >= 0 ? { out: 'bottom', in: 'top' } : { out: 'top', in: 'bottom' }
-    }
-    return dx >= 0 ? { out: 'right', in: 'left' } : { out: 'left', in: 'right' }
+  let isolatedY = 140
+  for (const [id, node] of placed) {
+    if ((degree.get(id) ?? 0) > 0) continue
+    node.x = Math.max(820, (layout.width ?? 0) + 120)
+    node.y = isolatedY
+    isolatedY += node.height + 40
   }
-  const sides = edges.map((item) => sideOf(item.from, item.to))
-  const outGroups = new Map<string, number[]>()
-  const inGroups = new Map<string, number[]>()
-  sides.forEach((side, index) => {
-    const item = edges[index]
-    if (item === undefined) return
-    const outKey = `${item.from}:${side.out}`
-    const inKey = `${item.to}:${side.in}`
-    outGroups.set(outKey, [...(outGroups.get(outKey) ?? []), index])
-    inGroups.set(inKey, [...(inGroups.get(inKey) ?? []), index])
-  })
-  const fraction = (index: number, group: number[] | undefined, vertical: boolean): number => {
-    if (group === undefined || group.length <= 1) return 0.5
-    const sorted = [...group].sort((left, right) => {
-      const a = edges[left]
-      const b = edges[right]
-      if (a === undefined || b === undefined) return 0
-      const ac = center(vertical ? a.to : a.from)
-      const bc = center(vertical ? b.to : b.from)
-      return (vertical ? ac.x - bc.x : ac.y - bc.y) || left - right
-    })
-    const position = sorted.indexOf(index)
-    return (position + 1) / (sorted.length + 1)
+
+  const routes = routeEdges(
+    [...placed].map(([id, box]) => ({ id, x: box.x, y: box.y, width: box.width, height: box.height })),
+    edges.map((item) => ({ id: item.id, from: item.from, to: item.to })),
+  )
+
+  const cells: string[] = []
+  for (const node of orderedNodes) {
+    const box = placed.get(node.id)
+    if (box === undefined) continue
+    cells.push(cell(node.id, node.text, node.style, box.x, box.y, box.width, box.height))
   }
   edges.forEach((item, index) => {
-    const side = sides[index]
-    if (side === undefined) return
-    const labelText = [...item.labels].join('\n')
-    const vertical = side.out === 'top' || side.out === 'bottom'
-    const outFraction = fraction(index, outGroups.get(`${item.from}:${side.out}`), vertical)
-    const inFraction = fraction(index, inGroups.get(`${item.to}:${side.in}`), vertical)
-    const out =
-      side.out === 'bottom'
-        ? `exitX=${outFraction.toFixed(3)};exitY=1;`
-        : side.out === 'top'
-          ? `exitX=${outFraction.toFixed(3)};exitY=0;`
-          : side.out === 'right'
-            ? `exitX=1;exitY=${outFraction.toFixed(3)};`
-            : `exitX=0;exitY=${outFraction.toFixed(3)};`
-    const into =
-      side.in === 'top'
-        ? `entryX=${inFraction.toFixed(3)};entryY=0;`
-        : side.in === 'bottom'
-          ? `entryX=${inFraction.toFixed(3)};entryY=1;`
-          : side.in === 'left'
-            ? `entryX=0;entryY=${inFraction.toFixed(3)};`
-            : `entryX=1;entryY=${inFraction.toFixed(3)};`
-    const points: Array<{ x: number; y: number }> = []
+    const route = routes.get(item.id)
+    if (route === undefined) return
     cells.push(
       edgeWithPoints(
-        `state_edge_${index}`,
-        `st_${item.from}`,
-        `st_${item.to}`,
-        labelText,
-        `${STICKY_STYLES.edge}fontSize=9;labelBackgroundColor=#ffffff;${out}${into}`,
-        points,
+        `flow_edge_${index}`,
+        item.from,
+        item.to,
+        item.label,
+        `${STICKY_STYLES.edge}fontSize=9;labelBackgroundColor=#ffffff;exitX=${route.exitX};exitY=${route.exitY};entryX=${route.entryX};entryY=${route.entryY};`,
+        route.points,
       ),
     )
   })
 
-  const notes: string[] = []
-  if (edges.length === 0) {
-    notes.push('状态直改边：没有读到 behaviorType=9 的本对象状态变更。')
-  } else {
-    notes.push(`状态直改边 ${edges.length} 条：实线来自状态动作或已确认触发源的工作流。`)
+  let maxX = 0
+  let maxY = 0
+  for (const node of placed.values()) {
+    maxX = Math.max(maxX, node.x + node.width)
+    maxY = Math.max(maxY, node.y + node.height)
   }
-  notes.push('图形固定遵循便笺本：状态为 #bdd7ee 矩形，判断为 #f4b183 菱形，开始/结束为 #70ad47 圆形，连线为黑色箭头（docs/analysis/便笺本.xml）。')
-  notes.push('本页列出全部状态；状态按 status.sort 排列。右侧红色框列出触发源未确认的工作流及其目标状态，不猜测源状态；具体步骤见各工作流页。')
-  notes.push('工作流里 behaviorType=46 的动作改的是关联对象，不画在本页。')
-
-  const height = Math.max(760, layout.height + offsetY + 100, sideTop + unknownPanelH + 80)
-  const pageWidth = Math.max(1100, panelX + 420)
+  const pageWidth = Math.max(1100, maxX + 80)
+  const height = Math.max(760, maxY + 150)
+  const notes = [
+    '图形固定遵循便笺本：状态 #bdd7ee 矩形，用户动作 #ed7d31 胶囊，工作流任务 #ed7d31 矩形，判断 #f4b183 菱形，连线黑色箭头。',
+    '状态卡上的“用户/进入”是动作数量；橙色节点是实际动作/任务，绿/蓝/橙边表示流转方向。',
+    '工作流里 behaviorType=46 的动作改的是关联对象，不画在本页；完整步骤见各工作流分页。',
+  ]
   const out: string[] = []
   out.push(`<diagram id="lifecycle" name="生命周期总览">`)
   out.push(`<mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="${pageWidth}" pageHeight="${height}">`)
@@ -686,10 +648,10 @@ function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
   out.push(cell('title', `${result.object.name}（${result.object.code}）生命周期总览`, 'text;html=1;align=left;fontSize=22;fontStyle=1;', 40, 20, 900, 32))
   out.push(cell('meta', `环境：${result.source.baseUrl}\n账号：${result.source.account}\n生成：${generatedAt.toISOString()}\n生命周期：${result.lifecycle?.name ?? '—'}`, 'text;html=1;align=left;fontSize=10;verticalAlign=top;', 40, 54, 900, 56))
   for (const cellXml of cells) out.push(cellXml)
-  let noteY = layout.height + offsetY + 24
+  let noteY = height - 40 - notes.length * 20
   for (const note of notes) {
-    out.push(cell(`note_${noteY}`, note, 'text;html=1;align=left;fontSize=10;fontColor=#666666;', 70, noteY, 860, 22))
-    noteY += 22
+    out.push(cell(`note_${noteY}`, note, 'text;html=1;align=left;fontSize=10;fontColor=#666666;', 60, noteY, pageWidth - 120, 20))
+    noteY += 20
   }
   out.push('</root>')
   out.push('</mxGraphModel>')
