@@ -21,7 +21,7 @@ export function buildAnalysisTool(deps: AnalysisToolDeps) {
   return {
     name: 'akso_workbench_object_analysis',
     description:
-      '分析一个 eGMP 对象的生命周期：按对象 id 或 code 读取启用状态、状态上的用户动作/进入动作、'
+      '分析一个 eGMP 对象的生命周期：按对象 id 或 code 读取字段表、启用状态、状态上的用户动作/进入动作、'
       + '动作的 behaviorType 与目标状态、相关工作流及步骤、进入条件。'
       + '只读，不修改平台；每次调用都会写入 akso-workbench 的对象分析历史（与页面共用同一份历史）。',
     parameters: PARAMETERS,
@@ -47,6 +47,20 @@ export function buildAnalysisTool(deps: AnalysisToolDeps) {
           totals: result.totals,
           enterCondition: result.enterCondition,
           warnings: result.warnings,
+          fields: result.fields.map((field) => ({
+            name: field.name,
+            code: field.code,
+            dataType: field.dataType,
+            dataTypeLabel: field.dataTypeLabel,
+            source: field.sourceLabel,
+            isRequired: field.isRequired,
+            isUnique: field.isUnique,
+            isEnabled: field.isEnabled,
+            referenceObjectCode: field.referenceObjectCode,
+            picklistId: field.picklistId,
+            maxLength: field.maxLength,
+            format: field.format,
+          })),
           statuses: result.statuses.map((status) => ({
             name: status.name,
             code: status.code,

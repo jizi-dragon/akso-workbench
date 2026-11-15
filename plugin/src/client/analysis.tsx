@@ -239,6 +239,70 @@ function WorkflowRow({ workflow }: { workflow: AnalysisResultView['workflows'][n
 }
 
 
+function fieldReference(field: AnalysisResultView['fields'][number]): string {
+  if (field.referenceObjectCode !== null) {
+    return `${field.referenceObjectName ?? field.referenceObjectCode}（${field.referenceObjectCode}）`
+  }
+  if (field.picklistId !== null) {
+    return field.picklistName ?? field.picklistId
+  }
+  return '—'
+}
+
+function FieldTable({ fields }: { fields: AnalysisResultView['fields'] }) {
+  const enabled = fields.filter((field) => field.isEnabled).length
+  const required = fields.filter((field) => field.isRequired).length
+  const custom = fields.filter((field) => field.source === 3).length
+  return (
+    <section className="akw-fields">
+      <div className="akw-fields__head">
+        <h3>字段（{fields.length}）</h3>
+        <p>
+          启用 {enabled} · 停用 {fields.length - enabled} · 必填 {required} · 自定义 {custom}
+        </p>
+      </div>
+      {fields.length === 0 ? (
+        <p className="akw-fields__empty">没有读到字段。</p>
+      ) : (
+        <div className="akw-fields__scroll">
+          <table className="akw-fields__table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>字段名</th>
+                <th>code</th>
+                <th>类型</th>
+                <th>必填</th>
+                <th>唯一</th>
+                <th>来源</th>
+                <th>引用 / 选项集</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              {fields.map((field, index) => (
+                <tr key={field.id}>
+                  <td>{index + 1}</td>
+                  <td>{field.name}</td>
+                  <td>
+                    <code>{field.code}</code>
+                  </td>
+                  <td>{field.dataTypeLabel}</td>
+                  <td>{field.isRequired ? '是' : '—'}</td>
+                  <td>{field.isUnique ? '是' : '—'}</td>
+                  <td>{field.sourceLabel}</td>
+                  <td title={field.referenceObjectId ?? field.picklistId ?? ''}>{fieldReference(field)}</td>
+                  <td>{field.isEnabled ? '启用' : '停用'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function ObjectSummary({ entry }: { entry: AnalysisEntry }) {
   const result = entry.result
   if (result === null) {
@@ -254,6 +318,7 @@ function ObjectSummary({ entry }: { entry: AnalysisEntry }) {
       </summary>
     )
   }
+  const fieldCount = result.fields?.length ?? result.totals.fields ?? 0
   return (
     <summary className="akw-analysis__summary">
       <div className="akw-analysis__object">
@@ -271,6 +336,7 @@ function ObjectSummary({ entry }: { entry: AnalysisEntry }) {
         <div><b>{result.totals.enabledStatuses}</b><span>启用状态</span></div>
         <div><b>{result.totals.userActions}</b><span>用户动作</span></div>
         <div><b>{result.totals.enterActions}</b><span>进入动作</span></div>
+        <div><b>{fieldCount}</b><span>字段</span></div>
         <div><b>{result.workflows.length}</b><span>工作流</span></div>
         <div><b>{result.enterCondition.configured ? result.enterCondition.count : '—'}</b><span>进入条件</span></div>
       </div>
@@ -334,6 +400,8 @@ function ObjectDetail({ result }: { result: AnalysisResultView }) {
           </section>
         ))}
       </div>
+
+      <FieldTable fields={result.fields ?? []} />
     </div>
   )
 }
@@ -372,6 +440,7 @@ function ComparisonCard({ entry }: { entry: AnalysisEntry }) {
           <div><dt>状态</dt><dd>{result.totals.enabledStatuses} / {result.totals.statuses}</dd></div>
           <div><dt>用户动作</dt><dd>{result.totals.userActions}</dd></div>
           <div><dt>进入动作</dt><dd>{result.totals.enterActions}</dd></div>
+          <div><dt>字段</dt><dd>{result.fields?.length ?? result.totals.fields ?? 0}</dd></div>
           <div><dt>工作流</dt><dd>{result.workflows.length}</dd></div>
           <div>
             <dt>进入条件</dt>
@@ -540,7 +609,7 @@ export function ObjectAnalysisTab() {
                 <b>{item.objectName}</b>
                 <code>{item.objectCode}</code>
                 <em>
-                  {item.enabledStatuses} 状态 · {item.userActions + item.enterActions} 动作 · {item.workflows} 工作流
+                  {item.enabledStatuses} 状态 · {item.userActions + item.enterActions} 动作 · {item.fields ?? 0} 字段 · {item.workflows} 工作流
                 </em>
               </button>
             ))}

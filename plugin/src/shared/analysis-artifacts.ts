@@ -8,6 +8,7 @@
  *   状态直改边只来自 behaviorType=9；behaviorType=46 是改关联对象，不能画成本对象边。
  */
 import type { AnalysisWorkflow, AnalysisWorkflowStep } from '../analysis-workflow.ts'
+import type { AnalysisField } from '../analysis-fields.ts'
 import { STICKY_STYLES } from './sticky-notes.ts'
 import { layoutLayered } from './lifecycle-layout.ts'
 import { routeEdges } from './orthogonal-route.ts'
@@ -50,8 +51,9 @@ export interface ArtifactAnalysis {
   }
   lifecycle: { id: string; name: string } | null
   statuses: ArtifactStatus[]
+  fields?: AnalysisField[]
   workflows?: AnalysisWorkflow[]
-  totals: { statuses: number; enabledStatuses: number; userActions: number; enterActions: number }
+  totals: { statuses: number; enabledStatuses: number; userActions: number; enterActions: number; fields?: number }
   enterCondition: { count: number; configured: boolean; readable: boolean }
   warnings: string[]
 }
@@ -286,6 +288,37 @@ function workflowSection(result: ArtifactAnalysis): string[] {
   return lines
 }
 
+function fieldSection(result: ArtifactAnalysis): string[] {
+  const fields = result.fields ?? []
+  const lines: string[] = ['## 字段表', '']
+  if (fields.length === 0) {
+    lines.push('本次分析没有读到字段（旧历史记录可能未包含字段表）。', '')
+    return lines
+  }
+  const enabled = fields.filter((field) => field.isEnabled).length
+  const required = fields.filter((field) => field.isRequired).length
+  const custom = fields.filter((field) => field.source === 3).length
+  lines.push(
+    `共 ${fields.length} 个字段：启用 ${enabled} 个，停用 ${fields.length - enabled} 个；必填 ${required} 个，自定义 ${custom} 个。`,
+    '',
+  )
+  lines.push('| # | 字段名 | code | 类型 | 必填 | 唯一 | 来源 | 引用 / 选项集 | 状态 |')
+  lines.push('| ---: | --- | --- | --- | --- | --- | --- | --- | --- |')
+  fields.forEach((field, index) => {
+    const reference =
+      field.referenceObjectCode !== null
+        ? `→ ${field.referenceObjectName ?? field.referenceObjectCode}（\`${field.referenceObjectCode}\`）`
+        : field.picklistId !== null
+          ? `选项集 \`${field.picklistId}\``
+          : '—'
+    lines.push(
+      `| ${index + 1} | ${mdCell(field.name)} | \`${mdCell(field.code)}\` | ${mdCell(field.dataTypeLabel)} | ${field.isRequired ? '是' : '—'} | ${field.isUnique ? '是' : '—'} | ${mdCell(field.sourceLabel)} | ${mdCell(reference)} | ${field.isEnabled ? '启用' : '停用'} |`,
+    )
+  })
+  lines.push('')
+  return lines
+}
+
 export function buildAnalysisMarkdown(result: ArtifactAnalysis, options: ArtifactOptions = {}): string {
   const generatedAt = options.generatedAt ?? new Date()
   const lines: string[] = []
@@ -308,6 +341,7 @@ export function buildAnalysisMarkdown(result: ArtifactAnalysis, options: Artifac
   lines.push(`| 状态 | ${result.totals.enabledStatuses} 启用 / ${result.totals.statuses} 总数 |`)
   lines.push(`| 用户动作 | ${result.totals.userActions} |`)
   lines.push(`| 进入动作 | ${result.totals.enterActions} |`)
+  lines.push(`| 字段 | ${(result.fields ?? []).length} |`)
   lines.push(`| 工作流 | ${(result.workflows ?? []).length} |`)
   lines.push(
     `| 进入条件 | ${
@@ -371,6 +405,7 @@ export function buildAnalysisMarkdown(result: ArtifactAnalysis, options: Artifac
   lines.push('- 状态顺序按 `status.sort` 排列；生命周期总览页的状态链也按 sort 排列，不是平台声明的迁移顺序。')
   lines.push('- 工作流章节来自 `GetWorkflowSteps` + `GetWorkflowStepWithDetails` 的真实步骤；behaviorType=46 只画成关联对象影响，不画成本对象生命周期边。')
   lines.push('- drawio 文件包含“生命周期总览”页和每条工作流一页，建议用 diagrams.net / drawio 打开。', '')
+  lines.push(...fieldSection(result))
   return lines.join('\n')
 }
 
@@ -646,7 +681,7 @@ function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
   out.push('<mxCell id="0"/>')
   out.push('<mxCell id="1" parent="0"/>')
   out.push(cell('title', `${result.object.name}（${result.object.code}）生命周期总览`, 'text;html=1;align=left;fontSize=22;fontStyle=1;', 40, 20, 900, 32))
-  out.push(cell('meta', `环境：${result.source.baseUrl}\n账号：${result.source.account}\n生成：${generatedAt.toISOString()}\n生命周期：${result.lifecycle?.name ?? '—'}`, 'text;html=1;align=left;fontSize=10;verticalAlign=top;', 40, 54, 900, 56))
+  out.push(cell('meta', `环境：${result.source.baseUrl}\n账号：${result.source.account}\n生成：${generatedAt.toISOString()}\n生命周期：${result.lifecycle?.name ?? '—'}\n字段：${(result.fields ?? []).length} 个`, 'text;html=1;align=left;fontSize=10;verticalAlign=top;', 40, 54, 900, 68))
   for (const cellXml of cells) out.push(cellXml)
   let noteY = height - 40 - notes.length * 20
   for (const note of notes) {
@@ -819,7 +854,7 @@ export function buildAnalysisSvg(result: ArtifactAnalysis, options: ArtifactOpti
   out.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`)
   out.push(`<text x="${left}" y="40" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="24" font-weight="700" fill="#1f2937">${escapeXml(result.object.name)}（${escapeXml(result.object.code)}）生命周期总览</text>`)
   out.push(`<text x="${left}" y="64" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="12" fill="#64748b">环境：${escapeXml(result.source.baseUrl)}    账号：${escapeXml(result.source.account)}    生成：${escapeXml(generatedAt.toISOString())}</text>`)
-  out.push(`<text x="${left}" y="84" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="12" fill="#64748b">生命周期：${escapeXml(result.lifecycle?.name ?? '—')}    状态 ${statuses.length} 个    工作流 ${(result.workflows ?? []).length} 条</text>`)
+  out.push(`<text x="${left}" y="84" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="12" fill="#64748b">生命周期：${escapeXml(result.lifecycle?.name ?? '—')}    状态 ${statuses.length} 个    字段 ${(result.fields ?? []).length} 个    工作流 ${(result.workflows ?? []).length} 条</text>`)
 
   statuses.forEach((status, index) => {
     const y = top + index * statusGap

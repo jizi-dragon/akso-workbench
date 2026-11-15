@@ -24,6 +24,7 @@ export interface AnalysisHistoryItem {
   enabledStatuses: number
   userActions: number
   enterActions: number
+  fields: number
   workflows: number
   baseUrl: string
   account: string
@@ -52,6 +53,7 @@ function summary(entry: StoredEntry): AnalysisHistoryItem {
     enabledStatuses: entry.enabledStatuses,
     userActions: entry.userActions,
     enterActions: entry.enterActions,
+    fields: entry.fields,
     workflows: entry.workflows,
     baseUrl: entry.baseUrl,
     account: entry.account,
@@ -74,6 +76,7 @@ export function saveAnalysisHistory(dshHome: string, query: string, result: Anal
     enabledStatuses: result.totals.enabledStatuses,
     userActions: result.totals.userActions,
     enterActions: result.totals.enterActions,
+    fields: result.totals.fields,
     workflows: result.workflows?.length ?? 0,
     baseUrl: result.source.baseUrl,
     account: result.source.account,

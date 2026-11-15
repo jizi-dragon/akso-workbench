@@ -509,13 +509,24 @@ export const CSS = `
 .akw-analysis__compare-card .akw-analysis__downloads{margin-top:auto;padding-top:2px}
 .akw-analysis__meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;line-height:17px;color:var(--dsw-alias-label-tertiary)}
 .akw-analysis__meta code{font-size:11px;color:var(--dsw-alias-state-business-primary)}
-.akw-analysis__stats{display:grid;grid-template-columns:repeat(5,auto);gap:8px;flex:none}
+.akw-analysis__stats{display:grid;grid-template-columns:repeat(6,auto);gap:8px;flex:none}
 .akw-analysis__stats div{display:flex;flex-direction:column;align-items:center;gap:1px;min-width:58px;padding:6px 9px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:var(--dsw-alias-bg-layer-2)}
 .akw-analysis__stats b{font-size:16px;line-height:20px;font-variant-numeric:tabular-nums}
 .akw-analysis__stats span{font-size:10px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
 .akw-analysis__notice{padding:8px 11px;border:1px dashed var(--dsw-alias-state-warning-primary);border-radius:10px;background:color-mix(in srgb,var(--dsw-alias-state-warning-primary) 7%,transparent);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
 .akw-analysis__warnings{margin:0;padding:8px 11px 8px 28px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:17px}
 .akw-status-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:10px}
+.akw-fields{display:flex;flex-direction:column;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--dsw-alias-border-l2)}
+.akw-fields__head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.akw-fields__head h3{margin:0;font-size:13px;line-height:18px}
+.akw-fields__head p{margin:0;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:15px}
+.akw-fields__empty{margin:0;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:17px}
+.akw-fields__scroll{overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:11px}
+.akw-fields__table{width:100%;border-collapse:collapse;font-size:10px;line-height:15px;white-space:nowrap}
+.akw-fields__table th{position:sticky;top:0;z-index:1;padding:6px 8px;border-bottom:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-weight:600;text-align:left}
+.akw-fields__table td{padding:5px 8px;border-bottom:1px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-secondary);vertical-align:top}
+.akw-fields__table tr:last-child td{border-bottom:0}
+.akw-fields__table code{font-size:10px;color:var(--dsw-alias-state-business-primary)}
 .akw-status{display:flex;flex-direction:column;gap:8px;padding:11px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:13px;background:var(--dsw-alias-bg-layer-1);min-width:0}
 .akw-status__head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .akw-status__head div{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -571,6 +582,6 @@ export const CSS = `
 .akw-analysis__package-hint{font-size:10px;line-height:15px;color:var(--dsw-alias-label-tertiary)}
 .akw-analysis__package-error{font-size:10px;line-height:15px;color:var(--dsw-alias-state-error-primary)}
 @media (max-width: 820px){.akw-analysis__history-item{grid-template-columns:1fr}.akw-analysis__history-item>em{grid-column:1}.akw-analysis__history>summary em{display:none}}
-@media (max-width: 820px){.akw-analysis__summary{flex-direction:column}.akw-analysis__stats{width:100%;grid-template-columns:repeat(5,1fr)}.akw-status-grid{grid-template-columns:1fr}.akw-analysis__form{flex-direction:column;align-items:stretch}.akw-analysis__compare-grid{grid-template-columns:1fr}.akw-analysis__compare-heading{flex-direction:column;gap:6px}.akw-analysis__hint{margin-left:0;width:100%}.akw-workflow__summary{align-items:flex-start;flex-direction:column;gap:2px}.akw-workflow__meta{white-space:normal}}
+@media (max-width: 820px){.akw-analysis__summary{flex-direction:column}.akw-analysis__stats{width:100%;grid-template-columns:repeat(6,1fr)}.akw-status-grid{grid-template-columns:1fr}.akw-analysis__form{flex-direction:column;align-items:stretch}.akw-analysis__compare-grid{grid-template-columns:1fr}.akw-analysis__compare-heading{flex-direction:column;gap:6px}.akw-analysis__hint{margin-left:0;width:100%}.akw-workflow__summary{align-items:flex-start;flex-direction:column;gap:2px}.akw-workflow__meta{white-space:normal}}
 
 `

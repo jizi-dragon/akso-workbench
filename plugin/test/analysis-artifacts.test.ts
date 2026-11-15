@@ -12,6 +12,7 @@ import {
   type ArtifactAnalysis,
 } from '../src/shared/analysis-artifacts.ts'
 import type { AnalysisWorkflow } from '../src/analysis-workflow.ts'
+import type { AnalysisField } from '../src/analysis-fields.ts'
 
 const action = (overrides: Partial<ArtifactAnalysis['statuses'][number]['userActions'][number]>) => ({
   id: 'a1',
@@ -312,4 +313,62 @@ test('文件夹用秒级时间戳，报告文件名保持日期命名', () => {
   assert.equal(analysisPackageName(fixture(), fixedDate), `${folder}.zip`)
   const drawio = analysisArtifactName({ object: { ...fixture().object, code: 'a/b c' } }, 'drawio', fixedDate)
   assert.equal(drawio, 'a-b-c-analysis-2026-11-12.drawio')
+})
+
+test('字段表：报告末尾输出字段、引用/选项集与启用状态', () => {
+  const result = fixture()
+  const field = (overrides: Partial<AnalysisField>): AnalysisField => ({
+    id: 'f1',
+    name: '负责人',
+    code: 'capa_director__c',
+    dataType: 15,
+    dataTypeLabel: '对象',
+    source: 3,
+    sourceLabel: '自定义',
+    status: 1,
+    isEnabled: true,
+    isRequired: true,
+    isUnique: false,
+    isDeleted: false,
+    sort: 1,
+    maxLength: null,
+    format: '',
+    helpContent: '',
+    picklistId: null,
+    picklistName: null,
+    referenceObjectId: 'u1',
+    referenceObjectCode: 'plat_org_user__ak',
+    referenceObjectName: '用户',
+    ...overrides,
+  })
+  result.fields = [
+    field({}),
+    field({
+      id: 'f2',
+      name: '来源',
+      code: 'source__c',
+      dataType: 4,
+      dataTypeLabel: '单选',
+      isRequired: false,
+      sort: 2,
+      referenceObjectId: null,
+      referenceObjectCode: null,
+      referenceObjectName: null,
+      picklistId: 'pl-1',
+    }),
+    field({ id: 'f3', name: '停用字段', code: 'off__c', status: 2, isEnabled: false, sort: 3 }),
+  ]
+  const md = buildAnalysisMarkdown(result, { generatedAt: fixedDate })
+  assert.match(md, /## 字段表/)
+  assert.match(md, /共 3 个字段：启用 2 个，停用 1 个/)
+  assert.match(md, /capa_director__c/)
+  assert.match(md, /用户（`plat_org_user__ak`）/)
+  assert.match(md, /选项集 `pl-1`/)
+  assert.match(md, /停用字段/)
+  assert.ok(md.lastIndexOf('## 字段表') > md.lastIndexOf('## 生成说明'))
+
+  const drawio = buildAnalysisDrawio(result, { generatedAt: fixedDate })
+  assert.match(drawio, /字段：3 个/)
+  const svg = buildAnalysisSvg(result, { generatedAt: fixedDate })
+  assert.match(svg, /字段 3 个/)
 })

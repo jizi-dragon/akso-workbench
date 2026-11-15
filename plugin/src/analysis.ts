@@ -13,6 +13,7 @@
 import { loadActionMap } from './config/action-map.ts'
 import { call, EgmpError, type EgmpSession } from './config/session.ts'
 import { readWorkflowAnalysis, type AnalysisWorkflow } from './analysis-workflow.ts'
+import { readFields, type AnalysisField } from './analysis-fields.ts'
 
 export interface AnalysisAction {
   id: string
@@ -58,6 +59,8 @@ export interface AnalysisResult {
     name: string
   } | null
   statuses: AnalysisStatus[]
+  /** 对象字段表：独立于生命周期读取；读不到时只告警，不影响状态/工作流分析。 */
+  fields: AnalysisField[]
   /** 状态动作直接引用到的已发布/草稿工作流；按 workflowBasicId 展开。 */
   workflows: AnalysisWorkflow[]
   totals: {
@@ -65,6 +68,7 @@ export interface AnalysisResult {
     enabledStatuses: number
     userActions: number
     enterActions: number
+    fields: number
   }
   enterCondition: {
     count: number
@@ -270,10 +274,18 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
     },
     lifecycle: null,
     statuses: [],
+    fields: [],
     workflows: [],
-    totals: { statuses: 0, enabledStatuses: 0, userActions: 0, enterActions: 0 },
+    totals: { statuses: 0, enabledStatuses: 0, userActions: 0, enterActions: 0, fields: 0 },
     enterCondition: { count: 0, configured: false, readable: true },
     warnings,
+  }
+
+  try {
+    result.fields = await readFields(session, result.object.code)
+    result.totals.fields = result.fields.length
+  } catch (error) {
+    warnings.push(`字段读取失败：${error instanceof Error ? error.message : String(error)}`)
   }
 
   const lifecycleName = lifecycleId === '' ? '' : await readLifecycleName(session, code)

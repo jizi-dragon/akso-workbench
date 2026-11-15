@@ -8,6 +8,7 @@
  *   因此这里不需要"本地猜一个结果"，数据一致性由 host 的快照保证。
  */
 import type { AnalysisWorkflow } from '../analysis-workflow.ts'
+import type { AnalysisField } from '../analysis-fields.ts'
 
 export interface CloudAccount {
   id: string
@@ -189,6 +190,7 @@ export interface AnalysisHistoryView {
   enabledStatuses: number
   userActions: number
   enterActions: number
+  fields: number
   workflows: number
   baseUrl: string
   account: string
@@ -199,8 +201,15 @@ export interface AnalysisResultView {
   object: { id: string; code: string; name: string; lifecycleId: string; enableLifeCycle: boolean }
   lifecycle: { id: string; name: string } | null
   statuses: AnalysisStatusView[]
+  fields: AnalysisField[]
   workflows: AnalysisWorkflow[]
-  totals: { statuses: number; enabledStatuses: number; userActions: number; enterActions: number }
+  totals: {
+    statuses: number
+    enabledStatuses: number
+    userActions: number
+    enterActions: number
+    fields: number
+  }
   enterCondition: { count: number; configured: boolean; readable: boolean }
   warnings: string[]
 }
