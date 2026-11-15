@@ -410,7 +410,7 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
 
   const userBehaviors = await readUserActionBehaviors(session, result.object.id)
   const enabledStatuses = statuses.filter((row) => row.isEnabled !== false)
-  for (const row of enabledStatuses) {
+  for (const row of statuses) {
     const statusId = text(row.id)
     const [userActions, enterActions] = await Promise.all([
       readAction(session, statusId, 'user', userBehaviors).catch((error: unknown) => {
@@ -427,7 +427,7 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
       name: text(row.name) || text(row.code),
       code: text(row.code),
       sort: number(row.sort),
-      isEnabled: true,
+      isEnabled: row.isEnabled !== false,
       userActions,
       enterActions,
     })

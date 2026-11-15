@@ -304,6 +304,17 @@ test('SVG：总览包含全部状态，未知触发源放右侧而不是省略',
   assert.doesNotMatch(svg, /CAPA & 计划/)
 })
 
+test('停用状态：drawio 与 SVG 仍列出，并明确标启用：否', () => {
+  const withDisabled = fixture()
+  withDisabled.statuses[1]!.isEnabled = false
+  const drawio = buildAnalysisDrawio(withDisabled, { generatedAt: fixedDate })
+  const svg = buildAnalysisSvg(withDisabled, { generatedAt: fixedDate })
+  assert.match(drawio, /CAPA申请审核/)
+  assert.match(drawio, /启用：否/)
+  assert.match(svg, /CAPA申请审核/)
+  assert.match(svg, /启用：否/)
+})
+
 test('文件夹用秒级时间戳，报告文件名保持日期命名', () => {
   const folder = analysisFolderName(fixture(), fixedDate)
   assert.match(folder, /^CAPA-计划-\d{8}-\d{6}$/)

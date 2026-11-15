@@ -514,7 +514,7 @@ function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
   statuses.forEach((status, index) => {
     addNode({
       id: `st_${status.id}`,
-      text: `${index + 1}. ${status.name}\n${status.code}\n用户 ${status.userActions.length} / 进入 ${status.enterActions.length}`,
+      text: `${index + 1}. ${status.name}\n${status.code}\n用户 ${status.userActions.length} / 进入 ${status.enterActions.length}\n启用：${status.isEnabled ? '是' : '否'}`,
       style: `${STICKY_STYLES.lifecycleStatus}align=left;spacingLeft=10;`,
       width: 300,
       height: 96,
