@@ -66,6 +66,7 @@ let state: State = initial
 const listeners = new Set<() => void>()
 let refreshSeq = 0
 let flashTimer: ReturnType<typeof setTimeout> | null = null
+let syncInflight: Promise<void> | null = null
 
 export function getState(): State {
   return state
@@ -140,17 +141,27 @@ export async function refresh(): Promise<void> {
   }
 }
 
-export async function syncNow(): Promise<void> {
-  emit({ busy: 'sync' })
-  try {
-    const next = await api.sync()
-    emit(fromServer(next))
-    if (next.syncError !== null) flash(next.syncError)
-  } catch (error) {
-    flash(t('page.flash.failed', { message: message(error) }))
-  } finally {
-    emit({ busy: null })
-  }
+export function syncNow(): Promise<void> {
+  // 手动按钮、60s 定时器和 visibilitychange 可能同时触发；共用同一次请求，
+  // 免得同一秒把云端打三遍、后到的旧响应又覆盖新快照。
+  if (syncInflight !== null) return syncInflight
+  const run = (async (): Promise<void> => {
+    emit({ busy: 'sync' })
+    try {
+      const next = await api.sync()
+      emit(fromServer(next))
+      if (next.syncError !== null) flash(next.syncError)
+    } catch (error) {
+      flash(t('page.flash.failed', { message: message(error) }))
+    } finally {
+      emit({ busy: null })
+    }
+  })()
+  syncInflight = run
+  void run.finally(() => {
+    if (syncInflight === run) syncInflight = null
+  })
+  return run
 }
 
 /** 邮箱密码登录（备用路径；主路径是设备流）。 */

@@ -265,6 +265,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   /** 唯一的一份快照 —— 所有座位读它，写操作整体替换它。 */
   let snapshot: cloud.CloudSnapshot | null = null
   let syncedAt: number | null = null
+  /**
+   * 账号中心每次挂载都会读 state；如果快照永远不失效，页面切走再回来会一直
+   * 拿着几十分钟前的缓存。30s 内复用，超过就顺手回源一次；回源失败仍给旧快照
+   * （stale），页面还能用。
+   */
+  const STATE_FRESH_MS = 30_000
 
   /** 最近一次「工具想写但账号条是空的」的时间；界面按它弹一次选账号面板。 */
   let needsAccountAt: number | null = null
@@ -584,7 +590,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 200, payload(null))
         return
       }
-      if (snapshot !== null) {
+      if (snapshot !== null && syncedAt !== null && Date.now() - syncedAt < STATE_FRESH_MS) {
         sendJson(res, 200, payload(session))
         return
       }
@@ -595,6 +601,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         if (error instanceof cloud.CloudError && error.status === 401) {
           clearSession(dshHome)
           sendJson(res, 401, { error: '登录已失效，请重新登录' })
+          return
+        }
+        if (snapshot !== null) {
+          const reason = error instanceof Error ? error.message : String(error)
+          logger.warn(`[state] 缓存过期后回源失败，返回旧快照：${reason}`)
+          sendJson(res, 200, payload(session, { stale: true, syncError: reason }))
           return
         }
         handleError(res, error)

@@ -884,10 +884,26 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
             <>
               <span
                 className="akw-sync"
-                title={state.syncedAt === null ? '' : new Date(state.syncedAt).toLocaleString('zh-CN')}
+                title={
+                  state.syncError ??
+                  (state.syncedAt === null ? '' : new Date(state.syncedAt).toLocaleString('zh-CN'))
+                }
               >
-                {state.syncedAt === null ? '尚未同步' : `同步于 ${fmtRelative(state.syncedAt, now)}`}
+                {state.syncedAt === null
+                  ? '尚未同步'
+                  : state.stale
+                    ? `缓存于 ${fmtRelative(state.syncedAt, now)}`
+                    : `同步于 ${fmtRelative(state.syncedAt, now)}`}
               </span>
+              <button
+                type="button"
+                className="akw-btn akw-btn--sm"
+                disabled={state.busy === 'sync'}
+                onClick={() => void syncNow()}
+                title="立即从云端同步账号库"
+              >
+                {state.busy === 'sync' ? '同步中…' : '同步'}
+              </button>
               <div style={{ position: 'relative' }}>
                 <button
                   type="button"
