@@ -176,8 +176,11 @@ function workflowStepEffect(step: AnalysisResultView['workflows'][number]['steps
   if (step.actions.length > 0) {
     return step.actions
       .map((action) => {
-        if (action.targetStatusId !== null) return `${action.behaviorLabel} → 本对象 ${action.targetStatusName ?? action.targetStatusId}`
-        if (action.relatedObjectId !== null) return `${action.behaviorLabel} → 关联对象 ${action.relatedStatusId ?? ''}`
+        if (action.targetStatusId !== null) return `${action.behaviorLabel} → 本对象状态「${action.targetStatusName ?? action.targetStatusId}」`
+        if (action.relatedObjectId !== null) {
+          const object = action.relatedObjectName ?? action.relatedObjectCode ?? action.relatedObjectId
+          return `${action.behaviorLabel} → 【${object}】状态「${action.relatedStatusName ?? action.relatedStatusId ?? '未读'}」`
+        }
         if (action.workflowId !== null) return `${action.behaviorLabel} → 再启工作流`
         return action.behaviorLabel
       })

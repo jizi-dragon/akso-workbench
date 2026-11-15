@@ -306,7 +306,7 @@ test('SVG：总览包含全部状态，未知触发源放右侧而不是省略',
 
 test('文件夹用秒级时间戳，报告文件名保持日期命名', () => {
   const folder = analysisFolderName(fixture(), fixedDate)
-  assert.match(folder, /^capa_plan__c-analysis-\d{8}-\d{6}$/)
+  assert.match(folder, /^CAPA-计划-\d{8}-\d{6}$/)
   assert.equal(analysisArtifactName(fixture(), 'md', fixedDate), 'capa_plan__c-analysis-2026-11-12.md')
   assert.equal(analysisArtifactName(fixture(), 'drawio', fixedDate), 'capa_plan__c-analysis-2026-11-12.drawio')
   assert.equal(analysisArtifactName(fixture(), 'png', fixedDate), 'capa_plan__c-analysis-2026-11-12.png')

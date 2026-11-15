@@ -17,7 +17,10 @@ export interface WorkflowActionEffect {
   targetStatusId: string | null
   targetStatusName: string | null
   relatedObjectId: string | null
+  relatedObjectCode: string | null
+  relatedObjectName: string | null
   relatedStatusId: string | null
+  relatedStatusName: string | null
   workflowId: string | null
   description: string
 }
@@ -233,7 +236,10 @@ function actionEffects(
         targetStatusId,
         targetStatusName: targetStatusId === null ? null : statusNames.get(targetStatusId) ?? null,
         relatedObjectId: relatedObjectId === '' ? null : relatedObjectId,
+        relatedObjectCode: null,
+        relatedObjectName: null,
         relatedStatusId,
+        relatedStatusName: null,
         workflowId: text(value.workflowId) || null,
         description: text(action.description) || text(step.name),
       })

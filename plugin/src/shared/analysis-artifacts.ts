@@ -27,6 +27,12 @@ export interface ArtifactAction {
   workflowName: string | null
   /** behaviorType=9 且改当前对象时的目标状态。 */
   targetStatusId?: string | null
+  targetStatusName?: string | null
+  relatedObjectId?: string | null
+  relatedObjectCode?: string | null
+  relatedObjectName?: string | null
+  relatedStatusId?: string | null
+  relatedStatusName?: string | null
   configCount: number
 }
 
@@ -82,7 +88,11 @@ function actionEffect(action: ArtifactAction): string {
   if (action.behaviorLabels.length > 0) bits.push(...action.behaviorLabels)
   else if (action.behaviorTypes.length > 0) bits.push(...action.behaviorTypes.map((item) => `行为 ${item}`))
   if (action.targetStatusId !== undefined && action.targetStatusId !== null) {
-    bits.push(`目标状态 ${action.targetStatusId}`)
+    bits.push(`修改本对象状态为「${action.targetStatusName ?? action.targetStatusId}」`)
+  }
+  if (action.relatedObjectId !== undefined && action.relatedObjectId !== null) {
+    const object = action.relatedObjectName ?? action.relatedObjectCode ?? action.relatedObjectId
+    bits.push(`修改【${object}】生命周期状态为「${action.relatedStatusName ?? action.relatedStatusId ?? '未读'}」`)
   }
   if (action.workflowName !== null) bits.push(`工作流「${action.workflowName}」`)
   else if (action.workflowId !== null) bits.push(`工作流 ${action.workflowId}`)
@@ -194,7 +204,7 @@ function stepConfigText(step: AnalysisWorkflowStep): string {
       action.targetStatusId !== null
         ? `本对象 → ${action.targetStatusName ?? action.targetStatusId}`
         : action.relatedObjectId !== null
-          ? `关联对象 ${action.relatedObjectId} → ${action.relatedStatusId ?? '未读状态'}`
+          ? `修改【${action.relatedObjectName ?? action.relatedObjectCode ?? action.relatedObjectId}】状态为「${action.relatedStatusName ?? action.relatedStatusId ?? '未读状态'}」`
           : action.workflowId !== null
             ? `再启工作流 ${action.workflowId}`
             : ''
@@ -267,7 +277,7 @@ function workflowSection(result: ArtifactAnalysis): string[] {
     const externalChanges = workflow.steps.flatMap((step) =>
       step.actions
         .filter((action) => action.relatedObjectId !== null)
-        .map((action) => `「${step.name}」改关联对象 \`${action.relatedObjectId}\` 的状态 \`${action.relatedStatusId ?? '未读'}\``),
+        .map((action) => `「${step.name}」修改【${action.relatedObjectName ?? action.relatedObjectCode ?? action.relatedObjectId}】生命周期状态为「${action.relatedStatusName ?? action.relatedStatusId ?? '未读'}」`),
     )
     lines.push('**对生命周期的影响**', '')
     if (currentStatusChanges.length === 0) {
@@ -876,15 +886,21 @@ export function buildAnalysisSvg(result: ArtifactAnalysis, options: ArtifactOpti
     })
   }
 
-  for (const item of known) {
+  const labelledTargets = new Set<string>()
+  for (const [edgeIndex, item] of known.entries()) {
+    if (item.from === item.to) continue
     const fromY = (yOf.get(item.from) ?? top) + statusH / 2
     const toY = (yOf.get(item.to) ?? top) + statusH / 2
     const right = left + statusW
-    // 只从右侧绕出再回到右侧：不穿过状态列，避免线压在状态文字上。
-    out.push(`<path d="M${right} ${fromY} C${right + 72} ${fromY}, ${right + 72} ${toY}, ${right} ${toY}" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>`)
-    // 侧栏已给出工作流名，这里只保留步骤名，避免标签伸进右侧清单。
-    const edgeLabels = [...item.labels].map((label) => label.split(' / ').slice(1).join(' / ') || label)
-    out.push(`<text x="${right + 14}" y="${(fromY + toY) / 2 + 3}" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="9" fill="#000000" stroke="#ffffff" stroke-width="3" paint-order="stroke">${escapeXml(shortText(edgeLabels.join(' / '), 24))}</text>`)
+    // 每条边走独立的车道，避免多条从同一状态出发的曲线完全重叠。
+    const lane = right + 24 + (edgeIndex % 8) * 14
+    out.push(`<path d="M${right} ${fromY} C${lane} ${fromY}, ${lane} ${toY}, ${right} ${toY}" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>`)
+    // 图只标目标状态；完整“工作流 / 动作”在 drawio 分页和右侧清单里。
+    if (!labelledTargets.has(item.to)) {
+      labelledTargets.add(item.to)
+      const targetName = statusById.get(item.to)?.name ?? item.to
+      out.push(`<text x="${right + 12}" y="${toY - 6}" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="9" fill="#000000" stroke="#ffffff" stroke-width="3" paint-order="stroke">${escapeXml(shortText(`→ ${targetName}`, 18))}</text>`)
+    }
   }
 
   const noteY = Math.max(top + statuses.length * statusGap + 34, sideTop + panelH + 30)
@@ -905,15 +921,16 @@ function shortText(value: string, max: number): string {
 }
 
 export function analysisFolderName(
-  result: { object: { code: string } },
+  result: { object: { name?: string; code: string } },
   date: Date = new Date(),
 ): string {
   const pad = (value: number, length = 2): string => String(value).padStart(length, '0')
   const stamp =
     `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
     `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
-  const code = result.object.code.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'object'
-  return `${code}-analysis-${stamp}`
+  const raw = (result.object.name ?? '').trim() || result.object.code
+  const name = raw.replace(/[\\/:*?"<>|&\s]+/g, '-').replace(/^-+|-+$/g, '') || 'object'
+  return `${name}-${stamp}`
 }
 
 export function analysisArtifactName(
@@ -921,13 +938,14 @@ export function analysisArtifactName(
   extension: 'md' | 'drawio' | 'png',
   date: Date = new Date(),
 ): string {
-  const stamp = date.toISOString().slice(0, 10)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  const stamp = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
   const code = result.object.code.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'object'
   return `${code}-analysis-${stamp}.${extension}`
 }
 
 export function analysisPackageName(
-  result: { object: { code: string } },
+  result: { object: { name?: string; code: string } },
   date: Date = new Date(),
 ): string {
   return `${analysisFolderName(result, date)}.zip`

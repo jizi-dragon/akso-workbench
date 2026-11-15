@@ -10,7 +10,7 @@
  *
  * 所有接口都是已实测的只读接口；未取到的字段宁可留空，不猜。
  */
-import { loadActionMap } from './config/action-map.ts'
+import { actionGroupsFor, loadActionMap } from './config/action-map.ts'
 import { call, EgmpError, type EgmpSession } from './config/session.ts'
 import { readWorkflowAnalysis, type AnalysisWorkflow } from './analysis-workflow.ts'
 import { readFields, type AnalysisField } from './analysis-fields.ts'
@@ -28,6 +28,13 @@ export interface AnalysisAction {
   workflowName: string | null
   /** behaviorType=9 且改的是当前对象时，目标状态 id。 */
   targetStatusId: string | null
+  targetStatusName: string | null
+  /** behaviorType=46 时，改的是哪个关联对象的哪个状态。 */
+  relatedObjectId: string | null
+  relatedObjectCode: string | null
+  relatedObjectName: string | null
+  relatedStatusId: string | null
+  relatedStatusName: string | null
   configCount: number
 }
 
@@ -224,20 +231,30 @@ async function readAction(
     }
     const workflowIds: string[] = []
     let targetStatusId: string | null = null
+    let relatedObjectId: string | null = null
+    let relatedStatusId: string | null = null
     for (const config of configs) {
       const value = record(config.behaviorValue)
       const workflowId = text(value.workflowId)
       if (workflowId !== '' && !workflowIds.includes(workflowId)) workflowIds.push(workflowId)
-      if (number(config.behaviorType) === 9 && text(value.relatedObjectId) === '') {
-        const statusId = text(value.statusId) || text(value.targetStatusId)
-        if (statusId !== '' && targetStatusId === null) targetStatusId = statusId
+      const statusId = text(value.statusId) || text(value.targetStatusId)
+      const related = text(value.relatedObjectId)
+      if (related !== '') {
+        if (relatedObjectId === null) relatedObjectId = related
+        if (statusId !== '' && relatedStatusId === null) relatedStatusId = statusId
+      } else if (number(config.behaviorType) === 9 && statusId !== '' && targetStatusId === null) {
+        targetStatusId = statusId
       }
     }
+    const rawName = text(detail.name) || text(row.name)
+    const description = text(detail.description) || text(row.description)
+    // 进入动作在平台没有独立名称字段；它的“名称”就是描述。
+    const name = rawName || (kind === 'enter' ? description : '') || '（未命名）'
     actions.push({
       id: text(detail.id) || text(row.id),
       code: text(detail.code) || text(row.code),
-      name: text(detail.name) || text(row.name) || '（未命名）',
-      description: text(detail.description) || text(row.description),
+      name,
+      description: description === name ? '' : description,
       kind,
       behaviorTypes,
       behaviorLabels: [],
@@ -245,10 +262,72 @@ async function readAction(
       workflowIds,
       workflowName: null,
       targetStatusId,
+      targetStatusName: null,
+      relatedObjectId,
+      relatedObjectCode: null,
+      relatedObjectName: null,
+      relatedStatusId,
+      relatedStatusName: null,
       configCount: configs.length,
     })
   }
   return actions
+}
+
+function resolveActionNames(
+  action: AnalysisAction,
+  objects: Map<string, { code: string; name: string }>,
+  statuses: Map<string, string>,
+): void {
+  if (action.targetStatusId !== null) {
+    action.targetStatusName = statuses.get(action.targetStatusId) ?? null
+  }
+  if (action.relatedObjectId !== null) {
+    const object = objects.get(action.relatedObjectId)
+    action.relatedObjectCode = object?.code ?? null
+    action.relatedObjectName = object?.name ?? null
+  }
+  if (action.relatedStatusId !== null) {
+    action.relatedStatusName = statuses.get(action.relatedStatusId) ?? null
+  }
+}
+
+function resolveWorkflowNames(
+  workflows: AnalysisWorkflow[],
+  objects: Map<string, { code: string; name: string }>,
+  statuses: Map<string, string>,
+): void {
+  for (const workflow of workflows) {
+    for (const step of workflow.steps) {
+      for (const action of step.actions) {
+        if (action.targetStatusId !== null) {
+          action.targetStatusName = statuses.get(action.targetStatusId) ?? action.targetStatusName
+        }
+        if (action.relatedObjectId !== null) {
+          const object = objects.get(action.relatedObjectId)
+          action.relatedObjectCode = object?.code ?? null
+          action.relatedObjectName = object?.name ?? null
+        }
+        if (action.relatedStatusId !== null) {
+          action.relatedStatusName = statuses.get(action.relatedStatusId) ?? null
+        }
+      }
+    }
+  }
+}
+
+async function readObjectIndex(session: EgmpSession): Promise<Map<string, { code: string; name: string }>> {
+  const index = new Map<string, { code: string; name: string }>()
+  try {
+    const response = await call(session, 'GET', '/api/platform/BasicObject/AllObjectWithType')
+    for (const row of rowsOf(response)) {
+      const id = text(row.id)
+      if (id !== '') index.set(id, { code: text(row.code), name: text(row.name) })
+    }
+  } catch {
+    // 关联对象名称读不到时保留 id；不阻断主分析。
+  }
+  return index
 }
 
 export async function analyzeObject(session: EgmpSession, rawQuery: string): Promise<AnalysisResult> {
@@ -298,6 +377,12 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
 
   const statusResponse = await call(session, 'GET', '/api/config/lifecycle/Status/GetList')
   const allStatuses = rowsOf(statusResponse)
+  const statusNames = new Map<string, string>()
+  for (const row of allStatuses) {
+    const id = text(row.id)
+    if (id !== '') statusNames.set(id, text(row.name) || text(row.code))
+  }
+  const objectIndex = await readObjectIndex(session)
   const statuses = allStatuses
     .filter((row) => text(row.lifecycleId) === lifecycleId)
     .sort((a, b) => number(a.sort) - number(b.sort))
@@ -315,7 +400,8 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
   }
 
   const behaviorMap = new Map<number, string>()
-  for (const group of loadActionMap().groups) {
+  // 只取 workflow/lifecycle（或通用）域，避免菜单的 3=母菜单覆盖行为 3。
+  for (const group of actionGroupsFor(loadActionMap(), 'workflow')) {
     for (const row of group.rows) {
       const value = Number(row.value)
       if (Number.isFinite(value) && value > 0) behaviorMap.set(value, row.label)
@@ -347,9 +433,16 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
     })
   }
 
+  for (const status of result.statuses) {
+    for (const action of [...status.userActions, ...status.enterActions]) {
+      resolveActionNames(action, objectIndex, statusNames)
+    }
+  }
+
   try {
     const workflowAnalysis = await readWorkflowAnalysis(session, result.statuses, behaviorMap, result.object.id)
     result.workflows = workflowAnalysis.workflows
+    resolveWorkflowNames(result.workflows, objectIndex, statusNames)
     for (const status of result.statuses) {
       for (const action of [...status.userActions, ...status.enterActions]) {
         if (action.workflowId !== null) {
