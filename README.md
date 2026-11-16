@@ -23,7 +23,7 @@ akso-workbench 的**服务层**（DSH 插件侧的域能力）。不是重写整
 | `src/egmp/client.ts`（登录 / 信封 / 分页 / token 缓存） | ✅ | `test/client.test.ts` **7/7** |
 | `src/egmp/*`（kernel / queries / replay） | ⏳ | — |
 | 计划文件 + apply（写对象） | ✅ | `plugin/test/host.test.ts`（审批门 / 目标绑定 / 回读） |
-| DSH 工具注册（`withToolUid` + `ctx.tools`） | ✅ | 三个工具：账号快照 / 配置计划 / 配置执行 |
+| DSH 工具注册（`withToolUid` + `ctx.tools`） | ✅ | 四个工具：账号快照 / 配置计划 / 配置执行 / 对象分析（时序见 `docs/knowledge/agent调用时序.md`） |
 
 ## 跑
 
@@ -102,6 +102,8 @@ npm run typecheck
   `{ section?: all|accounts|sites|boxes, query?, limit?, refresh? }`，返回与界面**同一份快照**的
   accounts/sites/boxes 摘要（`username / tabName / site / box / note / status / hasPassword / connected` 等，
   另带 `connectedAccountId`），**不含口令、不含令牌**；未登录时返回 `loggedIn:false` + 登录提示，让模型知道该请人去登录。
+- **一次调用的完整时序**：工具外壳与 `_uid`、账号门与换票、四个工具各自做了什么、审批窗如何轮询、
+  引擎如何复验与回读，见 `docs/knowledge/agent调用时序.md`（附渲染好的 PNG）。
 - **四个页面**：并行账号 / 添加账号 / 站点管理 / 盒子管理（与 akso-pass 的 tab 一致）；**只增不删**。
 - **一致性怎么保证**（用户的核心目的）：读侧只认 akso-cloud 的 `/api/ui/state` ——
   它在**一次响应**里给出 accounts + sites + boxes + revision（服务端自己重试到一致）。
