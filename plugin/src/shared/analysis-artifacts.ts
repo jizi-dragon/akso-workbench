@@ -757,7 +757,7 @@ function workflowPage(workflow: AnalysisWorkflow, index: number): string {
   for (const cellXml of cells) out.push(cellXml)
   let noteY = top + steps.length * gap + 24
   const notes = [
-    '图形固定遵循便笺本：橙色矩形 = 任务/动作，绿色圆形 = 开始/结束，橙色菱形 = 判断，黑色箭头 = 流转（docs/analysis/便笺本.xml）。',
+    '图形固定遵循便笺本：橙色矩形 = 任务/动作，绿色圆形 = 开始/结束，橙色菱形 = 判断，黑色箭头 = 流转（docs/reference/便笺本.xml）。',
     '动作节点里的“本对象 → 状态”才是本对象生命周期变更；“关联对象”不是本对象的状态边。',
   ]
   for (const note of notes) {

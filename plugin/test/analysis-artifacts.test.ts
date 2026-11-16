@@ -276,7 +276,7 @@ test('drawio：是 mxfile XML，含生命周期页和工作流页，且转义 XM
 })
 
 test('便笺本：固定源文件存在，drawio 只用便笺本的形状与颜色', () => {
-  const library = readFileSync(new URL('../../docs/analysis/便笺本.xml', import.meta.url), 'utf8')
+  const library = readFileSync(new URL('../../docs/reference/便笺本.xml', import.meta.url), 'utf8')
   for (const name of ['用户动作', '用户任务', '通知', '生命周期状态', '判断', '工作流', '泳道图']) {
     assert.ok(library.includes(name), `便笺本缺少模块：${name}`)
   }

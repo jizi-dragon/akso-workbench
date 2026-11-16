@@ -1,7 +1,7 @@
 /**
  * 生命周期 / 工作流 drawio 的固定图形库。
  *
- * 唯一来源：`docs/analysis/便笺本.xml`（用户提供的便笺本，禁止另起配色）。
+ * 唯一来源：`docs/reference/便笺本.xml`（用户提供的便笺本，禁止另起配色）。
  * 生成器只允许从这里取模块样式；新增图形先补便笺本，再补这里。
  *
  * 颜色与形状对应：
@@ -13,7 +13,7 @@
  *   工作流（开始/结束） #70ad47 圆形
  *   泳道图        透明大框
  */
-export const STICKY_NOTE_LIBRARY = 'docs/analysis/便笺本.xml'
+export const STICKY_NOTE_LIBRARY = 'docs/reference/便笺本.xml'
 
 export const STICKY_STYLES = {
   lifecycleStatus:

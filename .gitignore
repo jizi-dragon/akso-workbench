@@ -5,3 +5,6 @@ _pack/
 # DSH 插件包的构建产物与依赖（lib/ 由 npm run build 生成）
 plugin/lib/
 plugin/node_modules/
+
+# 对象分析产物：本机生成、只做交付，不入库（图形源与码表在 docs/reference/）
+docs/analysis/
