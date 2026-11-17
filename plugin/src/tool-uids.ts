@@ -28,9 +28,40 @@ export interface ToolDefinitionLike {
   [key: string]: unknown
 }
 
-interface ToolLog {
+export interface ToolLog {
   info?: (message: string) => void
   warn?: (message: string) => void
+  /**
+   * 结构化事件：写进本机 journal（页面可下载），与 info/warn 的宿主日志并行。
+   * 两者都要有 —— 宿主日志给开发看，journal 给「用户不在场时」复盘。
+   */
+  event?: (kind: string, data: Record<string, unknown>) => void
+}
+
+/** 参数摘要：超长字符串（比如整份蓝图）只记长度，避免把日志写爆。 */
+function summarizeArgs(args: readonly unknown[]): Record<string, unknown> {
+  const first = args[0]
+  if (first === null || typeof first !== 'object' || Array.isArray(first)) return { value: first }
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(first as Record<string, unknown>)) {
+    out[key] = typeof value === 'string' && value.length > 400 ? `[${value.length} chars]` : value
+  }
+  return out
+}
+
+/** 结果摘要：只留排查要看的字段与各数组长度，不把整份分析结果抄进日志。 */
+function summarizeResult(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return { type: typeof value }
+  const record = value as Record<string, unknown>
+  const summary: Record<string, unknown> = {}
+  for (const key of ['ok', 'status', 'error', 'revision', 'syncedAt', 'counts', 'totals', 'planId', 'historyId']) {
+    if (record[key] !== undefined) summary[key] = record[key]
+  }
+  for (const key of ['accounts', 'sites', 'boxes', 'fields', 'statuses', 'workflows', 'warnings', 'results', 'steps']) {
+    const item = record[key]
+    if (Array.isArray(item)) summary[`${key}Count`] = item.length
+  }
+  return summary
 }
 
 function tagResult(value: unknown, uid: string): unknown {
@@ -56,14 +87,19 @@ export function withToolUid<T extends ToolDefinitionLike>(definition: T, log?: T
   const execute = async (...args: never[]): Promise<unknown> => {
     const startedAt = Date.now()
     log?.info?.(`[${uid}] invoke ${definition.name}`)
+    log?.event?.('tool.invoke', { tool: definition.name, uid, args: summarizeArgs(args) })
     try {
       const value = await original(...args)
       const ok = !(value !== null && typeof value === 'object' && (value as { ok?: unknown }).ok === false)
-      log?.info?.(`[${uid}] done ${definition.name} ${Date.now() - startedAt}ms ok=${ok}`)
+      const elapsed = Date.now() - startedAt
+      log?.info?.(`[${uid}] done ${definition.name} ${elapsed}ms ok=${ok}`)
+      log?.event?.('tool.done', { tool: definition.name, uid, ms: elapsed, ok, result: summarizeResult(value) })
       return tagResult(value, uid)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      log?.warn?.(`[${uid}] failed ${definition.name} ${Date.now() - startedAt}ms: ${message}`)
+      const elapsed = Date.now() - startedAt
+      log?.warn?.(`[${uid}] failed ${definition.name} ${elapsed}ms: ${message}`)
+      log?.event?.('tool.fail', { tool: definition.name, uid, ms: elapsed, error: message })
       throw error
     }
   }

@@ -14,6 +14,7 @@ import { AccountStrip } from './strip.tsx'
 import { AccountsPage } from './page.tsx'
 import { CSS } from './styles.ts'
 import { dictionaries, NS, setTranslator } from './i18n.ts'
+import { track } from './api.ts'
 
 export const inject = ['slots', 'locale', 'layout']
 
@@ -56,12 +57,53 @@ function injectStyles(): void {
 
 type Translate = ((key: string, vars?: Record<string, string | number>) => string) | undefined
 
+/**
+ * 页面侧未捕获错误的兜底上报。
+ *
+ * 为什么挂 window：插件里没接住的 Promise / 渲染异常只会停在浏览器控制台，
+ * 用户看不到、我们也拿不到；写进 journal 后，用户下载日志就能带回来。
+ * 只记消息与栈的前几行，**不记页面内容**。HMR 会重复 apply，用 window 上的标记去重。
+ */
+function installErrorHooks(): void {
+  const flags = window as unknown as { __aksoWorkbenchErrorHooks?: boolean }
+  if (flags.__aksoWorkbenchErrorHooks === true) return
+  flags.__aksoWorkbenchErrorHooks = true
+
+  const stackOf = (value: unknown): string | undefined => {
+    if (value instanceof Error && typeof value.stack === 'string') {
+      return value.stack.split('\n').slice(0, 6).join('\n').slice(0, 1200)
+    }
+    return undefined
+  }
+
+  window.addEventListener('error', (event) => {
+    track('ui.error', {
+      source: 'error',
+      message: event.message === '' ? 'window.onerror' : event.message,
+      file: event.filename,
+      line: event.lineno,
+      column: event.colno,
+      stack: stackOf(event.error),
+    })
+  })
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason: unknown = event.reason
+    track('ui.error', {
+      source: 'unhandledrejection',
+      message: reason instanceof Error ? reason.message : String(reason).slice(0, 600),
+      stack: stackOf(reason),
+    })
+  })
+}
+
 export function apply(ctx: any): void {
   try {
     ctx.effect(() => ctx.locale.register(NS, dictionaries), 'akso-workbench: dictionaries')
     const bound = ctx.locale.bind(NS) as (key: string, vars?: Record<string, string | number>) => string
     setTranslator((key, vars) => bound(key, vars))
     injectStyles()
+    installErrorHooks()
 
     ctx.slots.inject('sidebar.panellist', () =>
       ctx.slots.register(

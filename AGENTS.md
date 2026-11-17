@@ -19,18 +19,25 @@
   避免历史日志对错工具。
 - **验证**：`plugin/test/host.test.ts` 断言四个注册工具的 UID 齐全、唯一、格式正确，
   且未登记工具会被拒绝；加工具时必须同步更新该断言。
-- **调用链文档**：四个工具一次调用的完整链路（账号门 / 审批窗 / 引擎复验 / 分析读取）见
-  `docs/knowledge/agent调用时序.md`；改工具、改审批判定、改会话来源时**同一提交里改图**，
-  并按该文档 §11 重渲染 `docs/knowledge/diagrams/agent-flows/` 的 PNG。
+- **调用链文档**：四个工具一次调用的完整链路（账号门 / 审批窗 / 引擎复验 / 分析读取 / 运行日志）见
+  `docs/knowledge/agent调用时序.md`；改工具、改审批判定、改会话来源、改 journal 事件时**同一提交里改图**，
+  并按该文档 §12 重渲染 `docs/knowledge/diagrams/agent-flows/` 的 PNG。
 
 ## 日志与审计
 
-- **三类记录分开写，不要混在一起**：
+- **四类记录分开写，不要混在一起**：
   - 写入审计 `config-audit/<YYYY-MM>.jsonl`：每步一条，含 `planId/env/baseUrl/accountId/capabilityId/status/traceId/durationMs`；**不记 params**（敏感内容不进日志）。
   - 审批决策 `config-audit/approvals-<YYYY-MM>.jsonl`：含 `at/planId/env/baseUrl/accountId/hash/verdict/note`；拒批、补充、超时、中断都要留痕，不能只记"写了什么"。
   - HTTP access：`[http] METHOD PATH -> STATUS Nms`，一条请求一行；2xx/4xx 走 info，5xx 走 warn。围栏挡掉的 403 也要有。
+  - 运行日志 `$DSH_HOME/akso-workbench/journal/<YYYY-MM-DD>.jsonl`（见下）：给**用户下载回来**用的使用记录，与上面三类不重复写。
+- **运行日志（journal）**：`plugin/src/journal.ts` 写盘，页面「运行日志」页读概览并下载 7/30 天（`journal/summary|download|log` 三条路由）。
+  - 内容：`tool.invoke/done/fail`、`http`、`cloud.*`、`egmp.*`、`approval.*`、`plan.created`、`apply.run`、`analysis.run`、`error.*`、`client.*`、`ui.*`、`app.start`。
+  - 保留 30 天；单文件 4 MB 换 `.2…`（每天最多 5 个）；总量 96 MB；单次导出 12 MB（从最旧丢并在 meta 标 `truncated/dropped`）。
+  - **写盘前统一打码**（`redactValue`：敏感 key → `[redacted]`，JWT/Bearer → 占位符）。新增事件只传摘要：不传 token、口令、请求体原文、完整账号表；工具参数只记形状（`summarizeArgs`）。
+  - 浏览器侧 `track()` 只允许 `client.*` / `ui.*` 前缀；未捕获的 `window.onerror` / `unhandledrejection` 记 `ui.error`（消息 + 栈前 6 行）。
 - **工具日志**：`[UID] invoke/done/failed`；`done` 要带耗时与 `ok=<bool>`（业务失败但没抛异常时 `ok=false`），不能把 `denied`/`needs-account` 记成成功。
 - **不许静默吞异常**：浏览器打开失败、审批窗轮询失败、审计读取失败，至少落一条 warn/debug。
+  **唯一例外是 journal 本身**：日志写不进去不能影响工具与页面（`journal.record` 内部吞错），这是有意的，改它之前先想清楚会不会把请求打挂。
 - **写日志的铁律**：不记 token、口令、请求体原文；审计记录"谁在什么环境对哪一版计划做了什么"，内容细节用 `planId` 回查计划文件。
 
 ## 其他既有约束

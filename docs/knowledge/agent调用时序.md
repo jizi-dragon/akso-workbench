@@ -330,7 +330,69 @@ sequenceDiagram
 查询参数是对象 id（UUID）或 code（如 `homework2__c`）；返回里的 `source` 带上本次实际用的
 `baseUrl` 与 `account`，报告/流程图必须把它写进去，避免和环境判断混在一起。
 
-## 7. 出错时怎么对号
+## 7. 运行日志：一次调用留了什么、怎么带走
+
+DSH 的宿主日志（`ctx.logger`）只在开发机控制台里，**用户拿不到**，所以「别的同事用出问题」时
+我们手里什么都没有。运行日志（journal）补的就是这一段：host 把工具调用、HTTP、业务动作与页面异常
+写成 JSONL，页面上给一个「下载日志」按钮，用户把文件发回来即可复盘。它**不替代**审计与审批记录
+（那两类仍是写入口径），只是给支持用的使用轨迹。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant M as 模型 / 页面
+    participant H as host（journal）
+    participant D as 本机磁盘 journal/*.jsonl
+    participant U as 用户（运行日志页）
+
+    Note over M,H: ① 所有调用都留痕（写盘失败不影响响应）
+    M->>H: 工具 execute（tool.invoke / tool.done / tool.fail）<br/>或任意 HTTP 请求（http 事件）
+    H->>H: redactValue()：敏感 key → [redacted]<br/>JWT / Bearer → 占位符
+    H->>D: appendFileSync(YYYY-MM-DD.jsonl)<br/>超 4 MB 换 .2；30 天 / 96 MB 封顶
+
+    Note over U,H: ② 用户出问题时打开「运行日志」
+    U->>H: GET journal/summary
+    H-->>U: 事件数 / 体积 / 最早最新 / 日志目录
+    U->>H: GET journal/download?days=7（或 30）
+    H->>D: readJournalRecords(dir, days)
+    H->>H: 首行 journal.meta（环境 + 版本）<br/>超 12 MB 从最旧丢，标 truncated
+    H-->>U: application/x-ndjson 附件<br/>X-Journal-Events / X-Journal-Truncated
+    U->>M: 用户把下载的文件发给支持同学（手动）
+
+    Note over M,H: ③ 页面异常也带回
+    M->>H: POST journal/log（只收 client.* / ui.*）
+    H->>D: 同上：消息 + 栈前 6 行，不记页面内容
+
+    Note over H,D: ④ 排查：按 UID / planId / historyId / 时间 grep
+```
+
+**记哪些事件**（`kind` 字段）：
+
+| 事件 | 何时 | 关键字段 |
+|---|---|---|
+| `tool.invoke` / `tool.done` / `tool.fail` | 每次工具调用 | `tool`、`uid`、`ms`、`ok`、参数与结果的摘要 |
+| `http` | 每条本机 API 请求 | `method`、`path`、`status`、`ms` |
+| `cloud.login` / `cloud.logout` / `cloud.sync` / `cloud.device.*` | 云端账号动作 | `email`（打码）、`revision`、`ok` |
+| `egmp.token.mint` / `egmp.needs-account` / `egmp.logout` | 换票与账号门 | `accountId`、`baseUrl`、`refreshed` |
+| `approval.wait` / `decide` / `timeout` / `cancelled` / `busy` | 审批窗 | `planId`、`verdict`、`waitedMs` |
+| `plan.created` / `apply.run` | 计划与执行 | `planId`、`status`、`steps`、`failed`、`verified` |
+| `analysis.run` | 对象分析（工具与页面共用） | `query`、`object`、`baseUrl`、`fields`、`warnings`、`ms` |
+| `error.api` / `error.tools` | 路由与工具抛错 | `message`、`code`、`traceId`、`path` |
+| `client.*` / `ui.*` | 页面请求与操作、`ui.error` | `path`、`message`、`stack`（前 6 行） |
+| `app.start` | host 装载插件 | `plugin`、`node`、`platform`、`routes`、`dshHome` |
+
+**边界**：保留 30 天；单文件 4 MB、每天最多 5 个；总量 96 MB；单次导出 12 MB（超出从最旧丢）。
+写盘前统一打码：敏感 key（password/token/secret/authorization…）→ `[redacted]`，JWT/Bearer → 占位符；
+**不写请求体原文**。日志写不进去会在 `journal.record` 内部吞掉——宁可少一条，也不能让工具调用失败。
+
+**怎么读**：下载文件是 NDJSON，第一行 `kind: "journal.meta"`（format/version/days/events/插件版本/DSH_HOME/Node/系统），
+其余每行一条记录，按 `ts` 升序。常用查法：`grep '"kind":"tool.invoke"'` 看模型调了什么；
+`grep '"planId":"pln_'` 追一张计划的审批与执行；`grep '"historyId"'` 找某次分析的产物；先看 `ui.error` 再看时间相邻的 `http`。
+
+页面路径：一级导航 **运行日志** → 概览（事件数/体积/时间范围/目录）→「下载 7 天」「下载 30 天」，
+另可「复制日志目录」直接到资源管理器里翻原始文件。
+
+## 8. 出错时怎么对号
 
 | 返回 / 错误 | 什么时候出现 | 平台是否被写过 | 下一步 |
 |---|---|---|---|
@@ -357,7 +419,7 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
 默认 403（`AKSO_WORKBENCH_ALLOW_DIRECT_WRITE=1` 仅本机调试），`POST .../config/apply` 同理；
 只读但用 POST 的查询（`readonly: true`）放行。
 
-## 8. 排查一次调用
+## 9. 排查一次调用
 
 按这个顺序，通常三步内能定位：
 
@@ -375,7 +437,7 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
 审批窗不出现时：先看 host 是否在跑（`configApprovalPending` 每 2 秒轮询，失败只打 `console.debug`），
 再看 `state.needsAccount` 是否把界面引到选账号面板了——没有账号时计划根本不会生成，也就没有审批。
 
-## 9. 与代码的对应
+## 10. 与代码的对应
 
 | 文件 | 职责 |
 |---|---|
@@ -389,19 +451,22 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
 | `plugin/src/analysis.ts` | 对象/状态/动作/工作流的只读读取 |
 | `plugin/src/analysis-history.ts` | 分析历史（最多 50 条） |
 | `plugin/src/client/strip.tsx` | 审批窗：2 秒轮询、同意/拒绝/补充 |
+| `plugin/src/journal.ts` | 运行日志：打码、切天、轮转、保留期、导出 |
+| `plugin/src/client/logs.tsx` | 页面「运行日志」：概览 + 下载 7/30 天 |
 | `plugin/src/cloud.ts` | akso-cloud HTTP（`/api/ui/state`、`/api/accounts/:id/egmp-token` 等） |
 | `plugin/src/credentials.ts` | 凭据来源：云端代登录，口令不出云端 |
 
-## 10. 什么时候要改这篇
+## 11. 什么时候要改这篇
 
 - 新增/改名/删除工具：先登记 UID（`plugin/src/tool-uids.ts`），再补一张图和 §1 的表。
-- 改审批判定（新增 verdict、改超时、改「一次只挂一条」）：改 5.1 与 §7。
+- 改审批判定（新增 verdict、改超时、改「一次只挂一条」）：改 5.1 与 §8。
 - 改会话来源（不再只认账号条、换票端点变化）：改 §2。
 - 新增会写平台的路径（新工具、新 HTTP 直调口）：补图，并确认它过 `applyPlan` 的同一道门。
-- 新增落盘文件：补 §8。
-- 改完图重渲染 §11 的 PNG，否则图片会和 Mermaid 源码对不上。
+- 新增落盘文件：补 §9。
+- 新增/改运行日志事件（`recordEvent`、`track`、新路由）：改 §7 的事件表与图 8，并同步 `docs/knowledge/日志与排查.md`。
+- 改完图重渲染 §12 的 PNG，否则图片会和 Mermaid 源码对不上。
 
-## 11. 渲染版（PNG）
+## 12. 渲染版（PNG）
 
 **Mermaid 源码是唯一事实来源**；PNG 只是渲染快照，给不方便渲染 Mermaid 的场合（邮件、PPT、聊天）
 用。改图先改上面的代码块，再重渲染，不要把 PNG 当成源文件手改。
@@ -415,8 +480,9 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
 | 5 `akso_workbench_config_apply`：审批 | [fig-5.png](diagrams/agent-flows/fig-5.png) |
 | 6 `akso_workbench_config_apply`：引擎执行 | [fig-6.png](diagrams/agent-flows/fig-6.png) |
 | 7 `akso_workbench_object_analysis`：只读分析 | [fig-7.png](diagrams/agent-flows/fig-7.png) |
+| 8 运行日志：留痕 → 概览 → 下载 | [fig-8.png](diagrams/agent-flows/fig-8.png) |
 
-重渲染（仓库根目录，需要本机有 Chrome；`mmdc` 会把每个 Mermaid 块输出成 `fig-1`…`fig-7`）：
+重渲染（仓库根目录，需要本机有 Chrome；`mmdc` 会把每个 Mermaid 块输出成 `fig-1`…`fig-8`）：
 
 ```powershell
 npx -y @mermaid-js/mermaid-cli -i docs/knowledge/agent调用时序.md -o docs/knowledge/diagrams/agent-flows/fig.png

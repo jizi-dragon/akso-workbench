@@ -31,6 +31,7 @@ import {
 } from './state.ts'
 import { ConfigToolsTab } from './tools.tsx'
 import { ObjectAnalysisTab } from './analysis.tsx'
+import { LogsTab } from './logs.tsx'
 
 type Tab = 'accounts' | 'pool' | 'add' | 'sites' | 'boxes'
 
@@ -769,7 +770,7 @@ function BoxesTab({ tr }: { tr: (key: string, vars?: Record<string, string | num
 
 /* ────────────────────────────── 页面 ────────────────────────────── */
 
-type Section = 'accounts' | 'tools' | 'runs' | 'analysis'
+type Section = 'accounts' | 'tools' | 'runs' | 'analysis' | 'logs'
 
 const modNavIcon = {
   accounts: (
@@ -799,14 +800,21 @@ const modNavIcon = {
       <path d="M5.7 7.4l4.4-2.4M5.7 8.6l4.4 2.4" />
     </svg>
   ),
+  logs: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3.1" y="2.3" width="9.8" height="11.4" rx="1.6" />
+      <path d="M5.6 5.5h4.8M5.6 8h4.8M5.6 10.5h2.9" />
+    </svg>
+  ),
 }
 
-/** 一级模块的顺序：连上账号 → 配好对象 → 回看结果 → 分析对象。 */
+/** 一级模块的顺序：连上账号 → 配好对象 → 回看结果 → 分析对象 → 出问题时带走日志。 */
 const MODULES: Array<{ key: Section; label: string }> = [
   { key: 'accounts', label: '账号中心' },
   { key: 'tools', label: '配置工具' },
   { key: 'runs', label: '运行报告' },
   { key: 'analysis', label: '对象分析' },
+  { key: 'logs', label: '运行日志' },
 ]
 
 /**
@@ -1058,6 +1066,12 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
       {section === 'analysis' ? (
         <div className="akw-body">
           <ObjectAnalysisTab />
+        </div>
+      ) : null}
+
+      {section === 'logs' ? (
+        <div className="akw-body">
+          <LogsTab />
         </div>
       ) : null}
     </div>

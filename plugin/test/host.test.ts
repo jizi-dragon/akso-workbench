@@ -148,6 +148,29 @@ async function call(
   return { status: response.statusCode, json: JSON.parse(text === '' ? '{}' : text) as Record<string, unknown>, raw: text }
 }
 
+/** 下载类响应不是 JSON：只取原文与响应头，别在这里 JSON.parse。 */
+async function callRaw(
+  routes: Map<string, Captured['handler']>,
+  path: string,
+  method: string,
+  body?: unknown,
+  remote?: string,
+  headers?: Record<string, string>,
+) {
+  const [routePath] = path.split('?')
+  const handler = routes.get(routePath ?? path)
+  assert.ok(handler, `路由未注册：${routePath ?? path}`)
+  const response = makeRes()
+  const done = new Promise<void>((resolve) => {
+    response.notify = resolve
+  })
+  const request = makeReq(method, body, remote, headers) as EventEmitter & { url?: string }
+  request.url = path
+  handler(request, response)
+  await done
+  return { status: response.statusCode, headers: response.headers, text: response.body }
+}
+
 const freshHome = () => mkdtempSync(join(tmpdir(), 'akso-wb-'))
 
 async function loginWith(routes: Map<string, Captured['handler']>) {
@@ -1647,4 +1670,81 @@ test('日志：写入审计带目标账号，审批决策单独留痕，HTTP 请
   } finally {
     await egmp.close()
   }
+})
+
+/* ───────────────────────────── 运行日志（journal） ───────────────────────────── */
+
+test('运行日志：挂载即记 app.start，概览与目录都落在 dshHome 下', async () => {
+  const home = freshHome()
+  const { routes } = mount(home)
+  await call(routes, ROUTES.state, 'GET')
+  const res = await call(routes, ROUTES.journalSummary, 'GET')
+  assert.equal(res.status, 200)
+  const summary = res.json['summary'] as {
+    dir: string
+    events: number
+    retentionDays: number
+    files: Array<{ name: string; events: number }>
+  }
+  assert.equal(summary.dir, join(home, 'akso-workbench', 'journal'))
+  assert.equal(summary.retentionDays, 30)
+  assert.ok(summary.events >= 2, `至少应有 app.start 与一次 http：${JSON.stringify(summary)}`)
+  assert.ok(summary.files.some((file) => file.events >= 2))
+})
+
+test('运行日志：下载是 NDJSON，首行是 meta，天数被夹在 1–30', async () => {
+  const home = freshHome()
+  const { routes } = mount(home)
+  await call(routes, ROUTES.state, 'GET')
+
+  const res = await callRaw(routes, `${ROUTES.journalDownload}?days=999`, 'GET')
+  assert.equal(res.status, 200)
+  assert.match(res.headers['Content-Type'] ?? '', /application\/x-ndjson/)
+  assert.match(res.headers['Content-Disposition'] ?? '', /attachment; filename="akso-workbench-journal-/)
+  const lines = res.text.trimEnd().split('\n')
+  const before = (res.headers['X-Journal-Events'] ?? '').trim()
+  const header = JSON.parse(lines[0] ?? '') as Record<string, unknown>
+  assert.equal(header['kind'], 'journal.meta')
+  assert.equal(header['format'], 'akso-workbench-journal')
+  assert.equal(header['days'], 30, '999 应被夹到 30')
+  assert.equal(header['app'], 'akso-workbench')
+  assert.equal(header['dshHome'], home)
+  assert.equal(String(header['events']), before)
+  assert.equal(lines.length - 1, Number(before), 'meta 之外的行数 = 事件数')
+  assert.equal((res.headers['X-Journal-Truncated'] ?? '').trim(), '0')
+})
+
+test('运行日志：浏览器侧只收 client.* / ui.*，口令等敏感字段在下载文件里已被打码', async () => {
+  const home = freshHome()
+  const { routes } = mount(home)
+
+  const accepted = await call(routes, ROUTES.journalLog, 'POST', {
+    kind: 'ui.logs.open',
+    data: { password: 'hunter2-secret', note: '正常字段', token: 'abc' },
+  })
+  assert.equal(accepted.status, 200)
+
+  for (const kind of ['tool.invoke', 'http', 'client', 'client.', '../ui.evil']) {
+    const rejected = await call(routes, ROUTES.journalLog, 'POST', { kind })
+    assert.equal(rejected.status, 400, `不该接受 kind=${kind}`)
+  }
+
+  const res = await callRaw(routes, `${ROUTES.journalDownload}?days=7`, 'GET')
+  assert.equal(res.text.includes('hunter2-secret'), false, '下载文件里不能出现口令')
+  assert.equal(res.text.includes('"token":"abc"'), false, '下载文件里不能出现令牌')
+  assert.ok(res.text.includes('"kind":"ui.logs.open"'))
+  assert.ok(res.text.includes('正常字段'))
+})
+
+test('运行日志：未捕获的页面错误可以作为 ui.error 上报（服务端不校验消息内容）', async () => {
+  const home = freshHome()
+  const { routes } = mount(home)
+  const res = await call(routes, ROUTES.journalLog, 'POST', {
+    kind: 'ui.error',
+    data: { source: 'unhandledrejection', message: 'boom', stack: 'Error: boom\n    at <anonymous>' },
+  })
+  assert.equal(res.status, 200)
+  const download = await callRaw(routes, `${ROUTES.journalDownload}?days=1`, 'GET')
+  assert.ok(download.text.includes('"kind":"ui.error"'))
+  assert.ok(download.text.includes('boom'))
 })

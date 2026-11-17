@@ -122,17 +122,44 @@ function url(path: string): string {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url(path), {
-    cache: 'no-store',
-    ...init,
-    headers: { 'Content-Type': 'application/json', [CLIENT_HEADER]: '1', ...(init?.headers ?? {}) },
-  })
-  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>
-  if (!response.ok) {
-    const message = typeof payload.error === 'string' ? payload.error : `HTTP ${response.status}`
-    throw new Error(message)
+  try {
+    const response = await fetch(url(path), {
+      cache: 'no-store',
+      ...init,
+      headers: { 'Content-Type': 'application/json', [CLIENT_HEADER]: '1', ...(init?.headers ?? {}) },
+    })
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>
+    if (!response.ok) {
+      const message = typeof payload.error === 'string' ? payload.error : `HTTP ${response.status}`
+      throw new Error(message)
+    }
+    // 写操作成功也留一条：'用户点了什么'的粒度就在 API 这一层
+    if (init?.method === 'POST' && path !== 'journal/log') track('client.api', { path })
+    return payload as T
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    track('client.api.error', { path, message })
+    throw error
   }
-  return payload as T
+}
+
+/**
+ * 浏览器事件上报（运行日志）：**不等待、不抛错** —— 日志写不进去也不能影响用户操作。
+ * 只收 `client.*` / `ui.*` 前缀（host 侧同样校验），避免变成任意写口。
+ */
+export type JournalKind = `client.${string}` | `ui.${string}`
+
+export function track(kind: JournalKind, data: Record<string, unknown> = {}): void {
+  try {
+    void fetch(url('journal/log'), {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', [CLIENT_HEADER]: '1' },
+      body: JSON.stringify({ kind, data }),
+    }).catch(() => {})
+  } catch {
+    // 网络不可用/页面正在卸载：忽略
+  }
 }
 
 const post = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(body) })
@@ -213,6 +240,54 @@ export interface AnalysisResultView {
   enterCondition: { count: number; configured: boolean; readable: boolean }
   warnings: string[]
 }
+/* ── 运行日志：页面「运行日志」页的数据源 ── */
+
+export interface JournalFileView {
+  name: string
+  day: string
+  seq: number
+  bytes: number
+  events: number
+}
+
+export interface JournalSummaryView {
+  dir: string
+  retentionDays: number
+  events: number
+  bytes: number
+  files: JournalFileView[]
+  oldest: string | null
+  newest: string | null
+}
+
+export interface JournalDownloadView {
+  blob: Blob
+  fileName: string
+  events: number
+  truncated: boolean
+}
+
+/**
+ * 下载运行日志：走 `fetch` 而不是 `call()`（响应是文件，不是 JSON）。
+ * 文件名从 `Content-Disposition` 取；服务端不给就退回一个带天数的默认名。
+ */
+export async function downloadJournal(days: number): Promise<JournalDownloadView> {
+  const response = await fetch(url(`journal/download?days=${days}`), { cache: 'no-store' })
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>
+    throw new Error(typeof payload.error === 'string' ? payload.error : `HTTP ${response.status}`)
+  }
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const matched = /filename="([^"]+)"/.exec(disposition)
+  return {
+    blob,
+    fileName: matched?.[1] ?? `akso-workbench-journal-${days}d.jsonl`,
+    events: Number(response.headers.get('X-Journal-Events') ?? '0') || 0,
+    truncated: response.headers.get('X-Journal-Truncated') === '1',
+  }
+}
+
 export const api = {
   state: () => call<ServerState>('state'),
 
@@ -299,4 +374,7 @@ export const api = {
         }>
       }
     }>('config/capabilities'),
+
+  /** 运行日志概览：事件数、体积、时间范围与文件列表。 */
+  journalSummary: () => call<{ ok: boolean; summary: JournalSummaryView }>('journal/summary'),
 }

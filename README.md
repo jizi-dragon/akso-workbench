@@ -24,6 +24,7 @@ akso-workbench 的**服务层**（DSH 插件侧的域能力）。不是重写整
 | `src/egmp/*`（kernel / queries / replay） | ⏳ | — |
 | 计划文件 + apply（写对象） | ✅ | `plugin/test/host.test.ts`（审批门 / 目标绑定 / 回读） |
 | DSH 工具注册（`withToolUid` + `ctx.tools`） | ✅ | 四个工具：账号快照 / 配置计划 / 配置执行 / 对象分析（时序见 `docs/knowledge/agent调用时序.md`） |
+| 运行日志（`src/journal.ts` + 页面「运行日志」） | ✅ | `test/journal.test.ts` **12/12**；"下载 7/30 天"带回用户现场 |
 
 ## 跑
 
@@ -104,7 +105,12 @@ npm run typecheck
   另带 `connectedAccountId`），**不含口令、不含令牌**；未登录时返回 `loggedIn:false` + 登录提示，让模型知道该请人去登录。
 - **一次调用的完整时序**：工具外壳与 `_uid`、账号门与换票、四个工具各自做了什么、审批窗如何轮询、
   引擎如何复验与回读，见 `docs/knowledge/agent调用时序.md`（附渲染好的 PNG）。
-- **四个页面**：并行账号 / 添加账号 / 站点管理 / 盒子管理（与 akso-pass 的 tab 一致）；**只增不删**。
+- **五个页面**：并行账号 / 添加账号 / 站点管理 / 盒子管理 / 运行日志（与 akso-pass 的 tab 一致）；账号与站点**只增不删**。
+- **出问题：先让用户下载运行日志**。页面「运行日志」显示日志目录、事件数与起止时间，
+  一键下载 7 天或 30 天的 JSONL（`$DSH_HOME/akso-workbench/journal/`）。日志里没有口令与令牌，
+  账号打码成 `q***@example.com`；里面是工具调用（参数摘要 + 耗时 + ok）、HTTP 状态、云端/换票、
+  审批等待与决定、计划创建与逐步执行、对象分析、以及浏览器侧的 `client.*` / `ui.error`。
+  排查顺序见 `docs/knowledge/日志与排查.md`。
 - **一致性怎么保证**（用户的核心目的）：读侧只认 akso-cloud 的 `/api/ui/state` ——
   它在**一次响应**里给出 accounts + sites + boxes + revision（服务端自己重试到一致）。
   host 把这份快照缓存在**一个变量**里；任何写操作都走「云端写入 → 重新拉一次 → 返回整份新快照」，
@@ -130,10 +136,12 @@ plugin/
   src/cloud.ts          # akso-cloud 客户端（login / me / ui:state / 六种写操作）
   src/store.ts          # 本机持久化：cloud.json（令牌 0600）+ prefs.json（当前账号）
   src/tool.ts           # 给 agent 的只读工具（手写 ToolDefinition，零运行时依赖）
-  src/index.ts          # node 半边：15 条路由 + 唯一一份快照 + 工具注册（loopback 围栏）
-  src/client/           # page.tsx（登录门 + 四个 tab）/ strip.tsx / state.ts / api.ts / i18n.ts / styles.ts
+  src/journal.ts        # 运行日志：JSONL 落盘 + 打码 + 30 天保留 + 导出
+  src/index.ts          # node 半边：30 条路由 + 唯一一份快照 + 工具注册（loopback 围栏）
+  src/client/           # page.tsx（登录门 + 五个模块）/ strip.tsx / state.ts / api.ts / i18n.ts / styles.ts / logs.tsx
   test/fake-cloud.mjs   # 假 akso-cloud（真 HTTP + 真 revision），单测用
-  test/host.test.ts     # 12 条 host 判据
+  test/host.test.ts     # 55 条 host 判据
+  test/journal.test.ts  # 12 条日志判据（打码 / 切天 / 轮转 / 保留期 / 导出）
   lib/                  # 构建产物（index.js / client.js），不入库
 ```
 
@@ -143,7 +151,7 @@ plugin/
 cd D:\ai_assistant\Akso-AI\akso-workbench\plugin
 npm install
 npm run build          # → lib/index.js + lib/client.js
-npm test               # host 半边 18 条判据
+npm test               # 8 个测试文件：host 55 条 + journal 12 条 + 文档/分析等
 ```
 
 `npm test` 跑的是 `test/host.test.ts` + `test/fake-cloud.mjs`（假云端带**真设备流**）：不 mock 业务函数，起一个**真 HTTP** 的假云端，

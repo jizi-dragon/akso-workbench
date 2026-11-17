@@ -79,12 +79,30 @@ export interface ApprovalGate {
 
 const DEFAULT_TIMEOUT_MS = 8 * 60 * 1000
 
-export function createApprovalGate(): ApprovalGate {
+export type ApprovalEventKind = 'wait' | 'decide' | 'timeout' | 'cancelled' | 'busy'
+
+export interface ApprovalGateOptions {
+  /**
+   * 审批门的事件回调（落运行日志用）：等待挂起、人点了什么、超时、取消、并发 busy。
+   * 回调抛错不影响审批本身 —— 日志坏了不能把人卡在弹窗前。
+   */
+  onEvent?: (kind: ApprovalEventKind, data: Record<string, unknown>) => void
+}
+
+export function createApprovalGate(options: ApprovalGateOptions = {}): ApprovalGate {
   let pending: PendingApproval | null = null
   let settle: ((decision: ApprovalDecision) => void) | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
   let abortSignal: { removeEventListener?: (type: string, listener: () => void) => void } | null = null
   let abortListener: (() => void) | null = null
+
+  function emit(kind: ApprovalEventKind, data: Record<string, unknown>): void {
+    try {
+      options.onEvent?.(kind, data)
+    } catch {
+      // 日志失败不影响审批
+    }
+  }
 
   function cleanup(): void {
     if (timer !== null) clearTimeout(timer)
@@ -106,7 +124,10 @@ export function createApprovalGate(): ApprovalGate {
 
   return {
     request(report, options = {}) {
-      if (pending !== null) return Promise.resolve({ id: pending.id, verdict: 'busy' })
+      if (pending !== null) {
+        emit('busy', { id: pending.id, planId: pending.planId })
+        return Promise.resolve({ id: pending.id, verdict: 'busy' })
+      }
       const id = `apr_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
       const createdAt = Date.now()
       const timeoutMs = Math.max(1000, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
@@ -114,7 +135,18 @@ export function createApprovalGate(): ApprovalGate {
       const promise = new Promise<ApprovalDecision>((resolve) => {
         settle = resolve
       })
-      timer = setTimeout(() => finish({ id, verdict: 'timeout' }), timeoutMs)
+      emit('wait', {
+        id,
+        planId: report.planId,
+        timeoutMs,
+        steps: report.steps.length,
+        writes: report.steps.filter((step) => step.action !== 'skip').length,
+        summary: report.summary,
+      })
+      timer = setTimeout(() => {
+        emit('timeout', { id, planId: report.planId, waitedMs: Date.now() - createdAt })
+        finish({ id, verdict: 'timeout' })
+      }, timeoutMs)
       ;(timer as unknown as { unref?: () => void }).unref?.()
 
       const signal = options.signal as
@@ -122,7 +154,10 @@ export function createApprovalGate(): ApprovalGate {
         | undefined
       if (signal !== undefined && typeof signal.addEventListener === 'function') {
         abortSignal = signal
-        abortListener = () => finish({ id, verdict: 'cancelled' })
+        abortListener = () => {
+          emit('cancelled', { id, planId: report.planId, waitedMs: Date.now() - createdAt })
+          finish({ id, verdict: 'cancelled' })
+        }
         if (signal.aborted === true) {
           abortListener()
         } else {
@@ -141,6 +176,13 @@ export function createApprovalGate(): ApprovalGate {
         verdict,
         ...(typeof note === 'string' && note !== '' ? { note } : {}),
       }
+      emit('decide', {
+        id,
+        planId: pending.planId,
+        verdict,
+        waitedMs: Date.now() - pending.createdAt,
+        note: typeof note === 'string' && note !== '' ? note : undefined,
+      })
       finish(decision)
       return decision
     },

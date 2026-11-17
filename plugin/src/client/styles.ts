@@ -583,5 +583,29 @@ export const CSS = `
 .akw-analysis__package-error{font-size:10px;line-height:15px;color:var(--dsw-alias-state-error-primary)}
 @media (max-width: 820px){.akw-analysis__history-item{grid-template-columns:1fr}.akw-analysis__history-item>em{grid-column:1}.akw-analysis__history>summary em{display:none}}
 @media (max-width: 820px){.akw-analysis__summary{flex-direction:column}.akw-analysis__stats{width:100%;grid-template-columns:repeat(6,1fr)}.akw-status-grid{grid-template-columns:1fr}.akw-analysis__form{flex-direction:column;align-items:stretch}.akw-analysis__compare-grid{grid-template-columns:1fr}.akw-analysis__compare-heading{flex-direction:column;gap:6px}.akw-analysis__hint{margin-left:0;width:100%}.akw-workflow__summary{align-items:flex-start;flex-direction:column;gap:2px}.akw-workflow__meta{white-space:normal}}
+/* 运行日志：概览 + 两条下载通道 + 「日志里有什么」。复用 .akw-stat/.akw-notice/.akw-empty。 */
+.akw-logs{display:flex;flex-direction:column;gap:14px;padding:18px 20px;max-width:980px}
+.akw-logs__head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px 18px;flex-wrap:wrap}
+.akw-logs__head h2{margin:0;font-size:16px;line-height:22px;font-weight:600}
+.akw-logs__head p{margin:5px 0 0;max-width:640px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.akw-logs__actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.akw-logs__stats{display:flex;flex-wrap:wrap;gap:8px}
+.akw-logs__meta{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px 22px;margin:0;padding:11px 14px;border:1px solid var(--dsw-alias-border-l3);border-radius:13px;background:var(--dsw-alias-bg-layer-1)}
+.akw-logs__meta dt{font-size:10px;line-height:14px;color:var(--dsw-alias-label-caption)}
+.akw-logs__meta dd{margin:3px 0 0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;white-space:nowrap}
+.akw-logs__meta dd code{display:block;font-size:10px;line-height:15px;color:var(--dsw-alias-label-tertiary);white-space:normal;word-break:break-all}
+.akw-logs__downloads{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:10px}
+.akw-logs__download{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l3);border-radius:14px;background:var(--dsw-alias-bg-layer-1)}
+.akw-logs__download>div{display:flex;flex-direction:column;gap:3px;min-width:0}
+.akw-logs__download b{font-size:13px;line-height:18px;font-weight:600}
+.akw-logs__download span{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.akw-logs__download .akw-btn{flex:none}
+.akw-logs__kinds{padding:13px 15px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-layer-2)}
+.akw-logs__kinds h3{margin:0 0 6px;font-size:13px;line-height:18px;font-weight:600}
+.akw-logs__kinds ul{display:flex;flex-direction:column;gap:3px;margin:0;padding-left:18px}
+.akw-logs__kinds li{font-size:11px;line-height:17px;color:var(--dsw-alias-label-secondary)}
+.akw-logs__kinds code{font-size:10px;color:var(--dsw-alias-state-business-primary);word-break:break-all}
+.akw-logs__hint{margin:8px 0 0;font-size:10px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+@media (max-width: 720px){.akw-logs{padding:14px 14px 20px}.akw-logs__meta{grid-template-columns:1fr}.akw-logs__downloads{grid-template-columns:1fr}.akw-logs__actions{width:100%}}
 
 `

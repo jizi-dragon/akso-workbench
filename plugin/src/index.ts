@@ -36,6 +36,7 @@ import { buildConfigApplyTool, buildConfigPlanTool } from './config/tools.ts'
 import { analyzeObject } from './analysis.ts'
 import { buildAnalysisTool } from './analysis-tool.ts'
 import { listAnalysisHistory, readAnalysisHistory, saveAnalysisHistory } from './analysis-history.ts'
+import { createJournal, errorText, maskEmail } from './journal.ts'
 
 export const name = 'akso-workbench'
 export const inject = ['webServer']
@@ -135,6 +136,10 @@ export const ROUTES = {
   configPlanGet: '/api/akso-workbench/config/plan-status',
   configApply: '/api/akso-workbench/config/apply',
   configAudit: '/api/akso-workbench/config/audit',
+  /** 运行日志：概览、下载（用户发回来排查）、浏览器事件上报。 */
+  journalSummary: '/api/akso-workbench/journal/summary',
+  journalDownload: '/api/akso-workbench/journal/download',
+  journalLog: '/api/akso-workbench/journal/log',
 } as const
 
 /* ────────────────────────────── HTTP 小工具 ────────────────────────────── */
@@ -186,7 +191,25 @@ interface AccessMeta {
   path: string
   startedAt: number
   logger: { info: (message: string) => void; warn: (error: unknown) => void }
+  /** 结构化访问事件（落 journal）；由路由骨架注入，sendJson/sendBody 统一调用。 */
+  onAccess?: (status: number, ms: number) => void
   logged?: boolean
+}
+
+/** 访问日志只结算一次：无论响应走 sendJson 还是 sendBody，都从这里出去。 */
+function logAccess(res: any, status: number): void {
+  const meta = (res as { __akwAccess?: AccessMeta }).__akwAccess
+  if (meta === undefined || meta.logged === true) return
+  meta.logged = true
+  const ms = Date.now() - meta.startedAt
+  const line = `[http] ${meta.method} ${meta.path} -> ${status} ${ms}ms`
+  if (status >= 500) meta.logger.warn(line)
+  else meta.logger.info(line)
+  try {
+    meta.onAccess?.(status, ms)
+  } catch {
+    // 日志失败不影响响应
+  }
 }
 
 function sendJson(res: any, status: number, payload: unknown): void {
@@ -195,14 +218,20 @@ function sendJson(res: any, status: number, payload: unknown): void {
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
   res.setHeader('Cache-Control', 'no-store')
   res.end(body)
-  // 访问日志：每条请求一行（含被围栏挡掉的 403），5xx 走 warn，其余走 info
-  const meta = (res as { __akwAccess?: AccessMeta }).__akwAccess
-  if (meta !== undefined && meta.logged !== true) {
-    meta.logged = true
-    const line = `[http] ${meta.method} ${meta.path} -> ${status} ${Date.now() - meta.startedAt}ms`
-    if (status >= 500) meta.logger.warn(line)
-    else meta.logger.info(line)
+  logAccess(res, status)
+}
+
+/** 非 JSON 响应（下载日志）：同样走一条访问日志，别让下载在日志里消失。 */
+function sendBody(res: any, status: number, contentType: string, body: string | Buffer, fileName?: string): void {
+  res.statusCode = status
+  res.setHeader('Content-Type', contentType)
+  res.setHeader('Cache-Control', 'no-store')
+  if (fileName !== undefined) {
+    // 文件名只放 ASCII：避免不同浏览器对非 ASCII filename 的处理差异
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName.replace(/[^A-Za-z0-9._-]/g, '_')}"`)
   }
+  res.end(body)
+  logAccess(res, status)
 }
 
 function readBody(req: any): Promise<Record<string, unknown>> {
@@ -254,6 +283,15 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     info: (message: string) => (ctx.logger as { info?: (m: string) => void } | undefined)?.info?.(message),
   }
 
+  /**
+   * 本机运行日志（JSONL）：宿主 logger 用户看不到，这里落盘后由页面一键下载。
+   * 写入失败只在内部吞掉（journal.ts 负责），绝不影响工具/接口。
+   */
+  const journal = createJournal(dshHome)
+  const recordEvent = (kind: string, data: Record<string, unknown> = {}): void => {
+    journal.record(kind, data)
+  }
+
   // 验证/CI 里不希望真的弹一个浏览器窗口时，用 env 关掉（host 仍会返回链接）
   const openBrowser = process.env.AKSO_WORKBENCH_NO_OPEN === '1'
     ? () => {}
@@ -276,7 +314,9 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   let needsAccountAt: number | null = null
 
   /** 对话审批窗与 host 之间的那根线：工具挂起等，浏览器弹窗回复。 */
-  const approvals = createApprovalGate()
+  const approvals = createApprovalGate({
+    onEvent: (kind, data) => recordEvent(`approval.${kind}`, data),
+  })
 
   /**
    * 是否要求人工审批：环境变量 > 页面开关 > 默认（**要求**）。
@@ -381,15 +421,37 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
 
   /** 页面和 agent 工具共用的唯一分析入口：都走这里，都会写同一条历史。 */
   async function runObjectAnalysis(raw: string): Promise<ObjectAnalysisRun> {
+    const startedAt = Date.now()
     const query = raw.trim()
     if (query === '') return { ok: false, status: 400, error: '请输入对象 id 或 code' }
     const ensured = await ensureEgmpSession()
     if (ensured.session === null) {
+      recordEvent('analysis.run', { query, ok: false, error: ensured.reason ?? '还没有连接 eGMP 账号', ms: Date.now() - startedAt })
       return { ok: false, status: 409, error: ensured.reason ?? '还没有连接 eGMP 账号' }
     }
-    const result = await analyzeObject(ensured.session, query)
-    const history = saveAnalysisHistory(dshHome, query, result)
-    return { ok: true, result, history }
+    try {
+      const result = await analyzeObject(ensured.session, query)
+      const history = saveAnalysisHistory(dshHome, query, result)
+      recordEvent('analysis.run', {
+        query,
+        ok: true,
+        historyId: history.id,
+        object: result.object.code,
+        objectName: result.object.name,
+        baseUrl: result.source.baseUrl,
+        account: result.source.account,
+        refreshed: ensured.refreshed,
+        fields: result.fields.length,
+        statuses: result.statuses.length,
+        workflows: result.workflows.length,
+        warnings: result.warnings.length,
+        ms: Date.now() - startedAt,
+      })
+      return { ok: true, result, history }
+    } catch (error) {
+      recordEvent('analysis.run', { query, ok: false, error: errorText(error), ms: Date.now() - startedAt })
+      throw error
+    }
   }
 
   function ensureEgmpSession(): Promise<{ session: EgmpSession | null; refreshed: boolean; reason: string | null }> {
@@ -491,12 +553,14 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   function handleError(res: any, error: unknown): void {
     if (error instanceof EgmpError) {
       logger.warn(`[egmp] ${error.message}（code=${error.code ?? '-'} traceId=${error.traceId ?? '-'} path=${error.path ?? '-'}）`)
+      recordEvent('error.api', { status: 502, kind: 'egmp', message: error.message, code: error.code ?? null, traceId: error.traceId ?? null, path: error.path ?? null })
       sendJson(res, 502, { error: error.message, code: error.code, traceId: error.traceId, path: error.path })
       return
     }
     if (error instanceof cloud.CloudError) {
       if (error.status === 401) {
         logger.info('[cloud] 登录已失效，已清会话')
+        recordEvent('error.api', { status: 401, kind: 'cloud-auth', message: error.message, path: error.path ?? null })
         clearSession(dshHome)
         snapshot = null
         syncedAt = null
@@ -504,10 +568,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         return
       }
       logger.warn(`[cloud] ${error.message}（status=${error.status} path=${error.path ?? '-'}）`)
+      recordEvent('error.api', { status: 502, kind: 'cloud', message: error.message, cloudStatus: error.status, path: error.path ?? null })
       sendJson(res, 502, { error: error.message, cloudStatus: error.status, path: error.path })
       return
     }
     logger.warn(error)
+    recordEvent('error.api', { status: 500, kind: 'internal', message: errorText(error) })
     sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) })
   }
 
@@ -527,6 +593,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
           path,
           startedAt: Date.now(),
           logger,
+          onAccess: (status, ms) => recordEvent('http', { method: String(req.method ?? method), path, status, ms }),
         }
         // 围栏①：本机地址 / 同源 / 跨站标记 / 写请求的自定义头
         const fenced = requestFence(req, method)
@@ -628,6 +695,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       } catch (error) {
         // 登录失败不是"会话失效"：401/400 直接回可读原因，别让上层清会话
         if (error instanceof cloud.CloudError && (error.status === 400 || error.status === 401)) {
+          recordEvent('cloud.login.failed', { email: maskEmail(email), status: error.status, message: error.message })
           sendJson(res, 400, { error: error.message })
           return
         }
@@ -648,10 +716,17 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         logger.warn(error)
         syncError = error instanceof Error ? error.message : String(error)
       }
+      recordEvent('cloud.login', {
+        email: maskEmail(session.user.email || email),
+        baseUrl: target,
+        accounts: snapshot?.counts.accounts ?? 0,
+        syncError,
+      })
       sendJson(res, 200, payload(readSession(dshHome), { stale: snapshot === null, syncError }))
     }),
 
     route('POST', R.logout, false, async (_req, res) => {
+      recordEvent('cloud.logout')
       clearSession(dshHome)
       snapshot = null
       syncedAt = null
@@ -663,6 +738,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     route('POST', R.deviceStart, false, async (_req, res) => {
       const started = await cloud.deviceStart(baseUrl, 'akso-workbench · DSH')
       pendingDevice = { deviceCode: started.deviceCode, startedAt: Date.now(), expiresIn: started.expiresIn }
+      recordEvent('cloud.device.start', { baseUrl, userCode: started.userCode, expiresIn: started.expiresIn })
       // 直接唤起系统默认浏览器；打不开也没关系，界面上有链接和码
       openBrowser(started.verificationUrl)
       sendJson(res, 200, {
@@ -704,6 +780,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         logger.warn(error)
         syncError = error instanceof Error ? error.message : String(error)
       }
+      recordEvent('cloud.device.approved', { email: maskEmail(polled.user.email), baseUrl, syncError })
       sendJson(res, 200, {
         status: 'approved',
         state: payload(readSession(dshHome), { stale: snapshot === null, syncError }),
@@ -714,10 +791,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       const session = readSession(dshHome)!
       try {
         await sync(session)
+        recordEvent('cloud.sync', { ok: true, revision: snapshot?.revision ?? null })
         sendJson(res, 200, payload(session))
       } catch (error) {
         if (error instanceof cloud.CloudError && error.status !== 401) {
           // 保留旧快照：界面继续显示上一份，只标「这次没同步上」
+          recordEvent('cloud.sync', { ok: false, error: error.message, cloudStatus: error.status })
           sendJson(res, 200, payload(session, { stale: true, syncError: error.message }))
           return
         }
@@ -742,6 +821,13 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         note: text(body.note) || undefined,
         box: text(body.box) || undefined,
       })
+      recordEvent('account.create', {
+        siteId,
+        username,
+        tabName: text(body.tabName) || null,
+        note: text(body.note) || null,
+        box: text(body.box) || null,
+      })
       sendJson(res, 200, await afterWrite(session))
     }),
 
@@ -759,6 +845,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       }
       // 保留页面开关（requireApproval），只改当前账号
       writePrefs(dshHome, { ...readPrefs(dshHome), currentAccountId: id === '' ? null : id })
+      recordEvent('account.select', { accountId: id === '' ? null : id })
       // 换账号 / 断开连接都清掉"需要账号"的提示：下一次写入会重新判断
       needsAccountAt = null
       sendJson(res, 200, payload(session))
@@ -786,6 +873,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         ? [...new Set([...current, id])]
         : current.filter((item) => item !== id)
       writePool(dshHome, { accountIds: next })
+      recordEvent('pool.toggle', { accountId: id, inPool, poolCount: next.length })
       sendJson(res, 200, payload(session))
     }),
 
@@ -802,6 +890,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         note: text(body.note) || undefined,
         createBox: body.createBox !== false,
       })
+      recordEvent('site.create', { name: text(body.name) || null, baseUrl: siteUrl, createBox: body.createBox !== false })
       sendJson(res, 200, await afterWrite(session))
     }),
 
@@ -814,6 +903,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         return
       }
       await cloud.renameBox(cloud.normalizeBase(session.baseUrl), session.token, source, target)
+      recordEvent('box.rename', { source, target })
       sendJson(res, 200, await afterWrite(session))
     }),
 
@@ -826,6 +916,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         return
       }
       await cloud.bindBoxSite(cloud.normalizeBase(session.baseUrl), session.token, boxName, siteId)
+      recordEvent('box.bind', { box: boxName, siteId })
       sendJson(res, 200, await afterWrite(session))
     }),
 
@@ -868,11 +959,15 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       }
       // 账号条只是个显示器：过期了在这里顺手换一张新票，用户不用点任何按钮
       const ensured = await ensureEgmpSession()
+      if (ensured.refreshed) {
+        recordEvent('egmp.token.mint', { account: ensured.session?.account ?? null, baseUrl: ensured.session?.baseUrl ?? null })
+      }
       // `token` 恒为 null：令牌本体只留在 host 的 egmp-session.json，页面不需要也拿不到明文
       sendJson(res, 200, { ...tokenView(ensured.session), token: null, refreshed: ensured.refreshed, reason: ensured.reason })
     }),
 
     route('POST', R.configLogout, false, async (_req, res) => {
+      recordEvent('egmp.logout')
       clearEgmpSession(dshHome)
       sendJson(res, 200, { ok: true, loggedIn: false })
     }),
@@ -886,6 +981,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       }
       const prefs = readPrefs(dshHome)
       writePrefs(dshHome, { ...prefs, requireApproval: value })
+      recordEvent('config.prefs', { requireApproval: value, env: approvalEnvOverride() })
       sendJson(res, 200, { ok: true, saved: value, requireApproval: requireApproval(), env: approvalEnvOverride() })
     }),
 
@@ -979,11 +1075,13 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         ? (await openWriteSession()).session
         : (await ensureEgmpSession()).session
       if (session === null) {
+        if (writePath) recordEvent('egmp.needs-account', { source: 'config.invoke', capabilityId })
         sendJson(res, writePath ? 409 : 401, { error: '还没有登录 eGMP：账号条里连一个账号就能自动换票' })
         return
       }
       const params = body.params !== null && typeof body.params === 'object' ? (body.params as Record<string, unknown>) : {}
       const json = await invokeCapability(session, capabilityId, params)
+      recordEvent('config.invoke', { capabilityId, method: capability.method, write: writePath })
       sendJson(res, 200, { ok: true, response: json })
     }),
 
@@ -993,10 +1091,19 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       // 这里提前拦住，并让界面弹出选账号面板。
       const opened = await openWriteSession()
       if (opened.session === null) {
+        recordEvent('egmp.needs-account', { source: 'config.plan', reason: opened.reason })
         sendJson(res, 409, { error: opened.reason, code: 'NEEDS_ACCOUNT' })
         return
       }
       const plan = await planBlueprint(opened.session, body.blueprint as never, dshHome)
+      recordEvent('plan.created', {
+        planId: plan.planId,
+        steps: plan.steps.length,
+        writes: plan.steps.filter((step) => step.action !== 'skip').length,
+        account: plan.target?.account ?? null,
+        baseUrl: plan.target?.baseUrl ?? null,
+        status: plan.status,
+      })
       sendJson(res, 200, { ok: true, plan })
     }),
 
@@ -1018,6 +1125,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       }
       const opened = await openWriteSession()
       if (opened.session === null) {
+        recordEvent('egmp.needs-account', { source: 'config.apply', reason: opened.reason })
         sendJson(res, 409, { error: opened.reason, code: 'NEEDS_ACCOUNT' })
         return
       }
@@ -1027,6 +1135,14 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         return
       }
       const plan = await applyPlan(opened.session, planId, dshHome, { requireApproval: requireApproval() })
+      recordEvent('apply.run', {
+        planId,
+        status: plan.status,
+        ok: plan.status === 'applied',
+        steps: plan.steps.length,
+        failed: plan.results.filter((item) => item.status === 'failed').length,
+        verified: plan.results.filter((item) => item.status === 'verified').length,
+      })
       sendJson(res, 200, { ok: plan.status === 'applied', plan })
     }),
 
@@ -1034,6 +1150,41 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       const url = new URL(String(req.url ?? '/'), 'http://127.0.0.1')
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50))
       sendJson(res, 200, { records: readAudit(dshHome, limit, (error) => logger.warn(`[audit] 读取失败：${error instanceof Error ? error.message : String(error)}`)) })
+    }),
+
+    /* ───────────── 运行日志：概览 → 下载（发回给我们排查）→ 浏览器事件上报 ───────────── */
+    route('GET', R.journalSummary, false, async (_req, res) => {
+      sendJson(res, 200, { ok: true, summary: journal.summary() })
+    }),
+
+    route('GET', R.journalDownload, false, async (req, res) => {
+      const url = new URL(String(req.url ?? '/'), 'http://127.0.0.1')
+      const raw = Number(url.searchParams.get('days') ?? 7)
+      const days = Number.isFinite(raw) && raw >= 1 ? Math.min(30, Math.floor(raw)) : 7
+      const exported = journal.export(days, {
+        app: 'akso-workbench',
+        dshHome,
+        node: process.version,
+        platform: process.platform,
+      })
+      recordEvent('journal.download', { days, events: exported.events, bytes: exported.bytes, truncated: exported.truncated })
+      res.setHeader('X-Journal-Events', String(exported.events))
+      res.setHeader('X-Journal-Truncated', exported.truncated ? '1' : '0')
+      sendBody(res, 200, 'application/x-ndjson; charset=utf-8', exported.text, exported.fileName)
+    }),
+
+    /** 浏览器侧错误（渲染崩了、脚本异常）由页面主动上报；只收 client.* / ui.* 前缀，避免变成任意写口。 */
+    route('POST', R.journalLog, false, async (_req, res, body) => {
+      const kind = text(body.kind, 60)
+      if (!/^(client|ui)\.[a-z0-9._-]+$/i.test(kind)) {
+        sendJson(res, 400, { error: 'kind 只接受 client.* / ui.*' })
+        return
+      }
+      const data = body.data !== null && typeof body.data === 'object' && !Array.isArray(body.data)
+        ? (body.data as Record<string, unknown>)
+        : {}
+      recordEvent(kind, data)
+      sendJson(res, 200, { ok: true })
     }),
   ]
 
@@ -1050,6 +1201,11 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
      页面开关 / 环境变量只决定要不要弹窗，关掉审批等于调试模式（默认不关）。 */
 
   /* ── 给 agent 的只读工具：让它能读到与界面同一份快照 ── */
+  const toolLog = {
+    info: logger.info,
+    warn: logger.warn,
+    event: (kind: string, data: Record<string, unknown>) => recordEvent(kind, data),
+  }
   try {
     // `tools` 是可选服务：没有它（例如极简宿主）时只少一个工具，不该让插件装不上
     const registry = (typeof ctx.get === 'function' ? ctx.get('tools', false) : undefined) ?? ctx.tools
@@ -1078,7 +1234,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
           if (session !== null) await sync(session)
         },
         loginHint: '还没有登录 akso-cloud：请打开 DeepSeek Harness 左栏的 akso-workbench，用「在浏览器中登录」完成一次授权。',
-      }), logger)
+      }), toolLog)
       ctx.effect(() => registry.register(definition), 'akso-workbench: snapshot tool')
 
       const configDeps = {
@@ -1087,8 +1243,8 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         approvals,
         requireApproval,
       }
-      const planTool = withToolUid(buildConfigPlanTool(configDeps), logger)
-      const applyTool = withToolUid(buildConfigApplyTool(configDeps), logger)
+      const planTool = withToolUid(buildConfigPlanTool(configDeps), toolLog)
+      const applyTool = withToolUid(buildConfigApplyTool(configDeps), toolLog)
       ctx.effect(() => registry.register(planTool), 'akso-workbench: config plan tool')
       ctx.effect(() => registry.register(applyTool), 'akso-workbench: config apply tool')
       const analysisTool = withToolUid(buildAnalysisTool({
@@ -1097,7 +1253,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
           if (!out.ok) return { ok: false, error: out.error }
           return { ok: true, result: out.result, historyId: out.history.id }
         },
-      }), logger)
+      }), toolLog)
       ctx.effect(() => registry.register(analysisTool), 'akso-workbench: object analysis tool')
     } else {
       logger.warn('akso-workbench: 没有 tools 服务，agent 读不到快照（界面仍可用）')
@@ -1105,5 +1261,15 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   } catch (error) {
     // 工具注册失败不能带崩插件（shell 起不来比少一个工具严重得多）
     logger.warn(error)
+    recordEvent('error.tools', { message: errorText(error) })
   }
+
+  // 进程/插件装起来的标记：日志里第一条通常是它，用户发回日志时能确认「确实启动过」
+  recordEvent('app.start', {
+    plugin: name,
+    node: process.version,
+    platform: process.platform,
+    routes: routes.length,
+    dshHome,
+  })
 }
