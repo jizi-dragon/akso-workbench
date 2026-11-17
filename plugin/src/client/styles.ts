@@ -355,12 +355,6 @@ export const CSS = `
 .akw-api__checks b{font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary)}
 .akw-api__checks ul{margin:0;padding-left:17px;display:flex;flex-direction:column;gap:2px}
 .akw-api__source{margin:2px 0 0;font-size:10.5px;line-height:1.5;color:var(--dsw-alias-label-caption)}
-.akw-api__actions{display:flex;flex-direction:column;gap:12px}
-.akw-api__actionGroup{display:flex;flex-direction:column;gap:2px}
-.akw-api__actionHead{display:flex;align-items:baseline;gap:8px;margin-bottom:3px}
-.akw-api__actionHead b{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}
-.akw-api__actionHead em{font-style:normal;font-size:10.5px;color:var(--dsw-alias-label-caption)}
-.akw-api__actionEmpty{color:var(--dsw-alias-label-caption);font-size:11px;line-height:1.6}
 .akw-api__code{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden;background:var(--dsw-alias-bg-layer-1)}
 .akw-api__codehead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px 4px 10px;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:10.5px;line-height:16px;color:var(--dsw-alias-label-caption)}
 .akw-api__copy{padding:2px 8px;border:1px solid var(--dsw-alias-border-l3);border-radius:7px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-secondary);font:inherit;font-size:10.5px;line-height:15px;cursor:pointer;transition:border-color .14s ease,color .14s ease}

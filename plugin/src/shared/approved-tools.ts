@@ -19,7 +19,7 @@
  * 本名单 42 → 43；当时只剩 `menu.sort` 未验证（全量替换且无读整棵树的接口，误操作会把子菜单移出层级）。
  * 同一天新增 `layout.stable.ids`（GetStableComponentIds）并实测通过：临时 id → 稳定 id，
  * 目录 44 → 45、本名单 43 → 44。工作流建流程与布局落地的实测记录见
- * `docs/CAPABILITY-VERIFICATION-2026-11-09.md`。
+ * `docs/archive/CAPABILITY-VERIFICATION-2026-11-09.md`。
  * 2026-11-09 夜新增 3 条生命周期动作能力（`lifecycle.useraction.list`、`lifecycle.enteraction.create`、
  * `lifecycle.enteraction.list`，当时仅抓包确认，未进本名单），并按用户要求删除 `menu.sort`。
  * 2026-11-11 在 standard-val 上真调通过三条能力，用户核对输入/输出后确认；三条均已进本名单。

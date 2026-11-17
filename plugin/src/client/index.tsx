@@ -55,10 +55,7 @@ function injectStyles(): void {
   document.head.appendChild(tag)
 }
 
-type Translate = ((key: string, vars?: Record<string, string | number>) => string) | undefined
-
-/**
- * 页面侧未捕获错误的兜底上报。
+/** 页面侧未捕获错误的兜底上报。
  *
  * 为什么挂 window：插件里没接住的 Promise / 渲染异常只会停在浏览器控制台，
  * 用户看不到、我们也拿不到；写进 journal 后，用户下载日志就能带回来。

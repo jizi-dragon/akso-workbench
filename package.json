@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "akso-workbench 的服务层（DSH 插件侧的域能力）；只保留 eGMP 域逻辑，不要 agent 循环/沙箱/技能/MCP/UI",
+  "description": "akso-workbench 仓库根：capture 接口监听工具 + 插件工作区的统一校验脚本（eGMP 域逻辑在 plugin/）",
   "engines": { "node": ">=24" },
   "scripts": {
-    "test": "node --test \"test/**/*.test.ts\" \"capture/test/**/*.test.ts\"",
+    "test": "node --test \"capture/test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "typecheck:plugin": "npm --prefix plugin run typecheck",
     "check": "npm run typecheck && npm test && npm run typecheck:plugin && npm --prefix plugin test && npm --prefix plugin run build"

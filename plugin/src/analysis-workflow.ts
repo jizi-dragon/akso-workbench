@@ -8,7 +8,6 @@
  *   - GET  /api/platform/Workflow/GetWorkflowStepWithDetails
  */
 import { call, type EgmpSession } from './config/session.ts'
-import { workflowStepTypeLabel } from './shared/workflow-labels.ts'
 
 export interface WorkflowActionEffect {
   behaviorType: number

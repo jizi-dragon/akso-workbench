@@ -1,5 +1,8 @@
 # 生命周期三能力实测记录（2026-11-11）
 
+> **历史记录**：这是 2026-11-11 当天的实测证据，不代表当前能力目录状态。现行规范见
+> `docs/knowledge/`；能力清单以 `plugin/src/config/capabilities.ts` 为准。
+
 > 范围：`lifecycle.useraction.list`、`lifecycle.enteraction.list`、`lifecycle.enteraction.create`。
 > 环境：standard-val（`https://standard-val.aksoegmp.com`），账号 `liyulong`。
 > 令牌：仍走 akso-cloud 代登录（`POST /api/accounts/:id/egmp-token`），本机不落明文口令。

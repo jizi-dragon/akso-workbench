@@ -58,24 +58,11 @@ interface Recipe {
   expected?: string
 }
 
-interface ActionGroup {
-  name: string
-  scope: string[]
-  rows: Array<{ value: string; label: string; note?: string }>
-}
-
 interface RecipeGuideInfo {
   path: string | null
   updatedAt: string | null
   warnings: string[]
   coverage: { total: number; documented: number; recipes: number }
-}
-
-interface ActionMapInfo {
-  path: string | null
-  updatedAt: string | null
-  warnings: string[]
-  groups: ActionGroup[]
 }
 
 interface Capability {
@@ -293,53 +280,10 @@ function RecipeList({ recipes }: { recipes: Recipe[] }) {
   )
 }
 
-/** 系统常用映射表：按作用域分组的小表。 */
-function ActionMapTable({ groups }: { groups: ActionGroup[] }) {
-  return (
-    <div className="akw-api__actions">
-      {groups.map((group) => (
-        <div key={group.name} className="akw-api__actionGroup">
-          <div className="akw-api__actionHead">
-            <b>{group.name}</b>
-            {group.scope.length > 0 ? <em>{group.scope.join(' / ')}</em> : null}
-          </div>
-          <table className="akw-api__params">
-            <thead>
-              <tr>
-                <th>值</th>
-                <th>含义</th>
-                <th>备注</th>
-              </tr>
-            </thead>
-            <tbody>
-              {group.rows.length === 0 ? (
-                <tr>
-                  <td colSpan={3} className="akw-api__actionEmpty">
-                    待补：这组映射还没登记值，先在「系统常用映射表.md」里补表再刷新。
-                  </td>
-                </tr>
-              ) : (
-                group.rows.map((row) => (
-                  <tr key={`${group.name}-${row.value}`}>
-                    <td className="is-mono">{row.value}</td>
-                    <td>{row.label}</td>
-                    <td>{row.note ?? '—'}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function CapabilityDialog({ item, guide, recipesGuide, actionMap, onClose }: {
+function CapabilityDialog({ item, guide, recipesGuide, onClose }: {
   item: Capability
   guide: GuideInfo | null
   recipesGuide: RecipeGuideInfo | null
-  actionMap: ActionMapInfo | null
   onClose: () => void
 }) {
   const closeRef = useRef<HTMLButtonElement>(null)
@@ -349,10 +293,6 @@ function CapabilityDialog({ item, guide, recipesGuide, actionMap, onClose }: {
   const verified = isVerified(item)
   const oneCase = caseOf(item)
   const recipes = item.recipes ?? []
-  // 只显示与当前接口域相关的几组动作映射。
-  const actionGroups = (actionMap?.groups ?? []).filter((group) =>
-    group.scope.length === 0 || group.scope.includes('通用') || group.scope.includes(item.domain),
-  )
 
   useEffect(() => {
     const restore = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -533,7 +473,6 @@ export function ConfigToolsTab() {
   const [groups, setGroups] = useState<Group[]>([])
   const [guide, setGuide] = useState<GuideInfo | null>(null)
   const [recipesGuide, setRecipesGuide] = useState<RecipeGuideInfo | null>(null)
-  const [actionMap, setActionMap] = useState<ActionMapInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [sectionId, setSectionId] = useState<SectionId>('model')
@@ -553,7 +492,6 @@ export function ConfigToolsTab() {
         setGroups((payload.groups ?? []) as unknown as Group[])
         setGuide(payload.guide ?? null)
         setRecipesGuide(payload.recipesGuide ?? null)
-        setActionMap(payload.actionMap ?? null)
         setRequireApproval(payload.requireApproval)
         setApprovalEnv(payload.approvalEnv ?? null)
       } catch (e) {
@@ -712,7 +650,6 @@ export function ConfigToolsTab() {
           item={detail}
           guide={guide}
           recipesGuide={recipesGuide}
-          actionMap={actionMap}
           onClose={() => setDetailId('')}
         />
       ) : null}

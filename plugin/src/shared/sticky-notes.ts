@@ -13,8 +13,6 @@
  *   工作流（开始/结束） #70ad47 圆形
  *   泳道图        透明大框
  */
-export const STICKY_NOTE_LIBRARY = 'docs/reference/便笺本.xml'
-
 export const STICKY_STYLES = {
   lifecycleStatus:
     'rounded=0;whiteSpace=wrap;html=1;fillColor=#bdd7ee;strokeColor=#939393;',

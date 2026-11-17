@@ -374,7 +374,7 @@ export const api = {
         warnings: string[]
         coverage: { total: number; documented: number; recipes: number }
       }
-      /** 「系统常用映射表.md」：按作用域分组，界面按当前接口域过滤。 */
+      /** 「系统常用映射表.md」：按作用域分组。页面暂不渲染，保留给排查与后续扩展。 */
       actionMap?: {
         path: string | null
         updatedAt: string | null

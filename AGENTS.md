@@ -51,7 +51,23 @@
   计划绑定 `target{baseUrl,accountId}`，apply 前比对，不一致直接 `TARGET_CHANGED`。
 - 口令不离开 akso-cloud；host 只拿「账号 id」换 eGMP 令牌，日志/响应里不得出现 token 原文。
   本机不再接受明文口令（`session.login` / `POST config/login` / `auth.login` 能力都已删除）。
-- 改完跑：`npm run typecheck:plugin`、`npm --prefix plugin test`、`npm --prefix plugin run build`。
+- 改完跑：`npm run check`（根 typecheck + capture 测试 + 插件 typecheck / 测试 / 构建）。只改插件时可跑
+  `npm run typecheck:plugin`、`npm --prefix plugin test`、`npm --prefix plugin run build`。
+
+## 结构边界（2026-11-17 清理后）
+
+- **`plugin/` 是产品本体**：host 半边（路由 / 工具 / 审批 / 会话 / 日志）+ 浏览器半边（五个模块）。
+  根目录不再放平台客户端；Python 移植版 `src/egmp/client.ts` 与 `test/client.test.ts` 已移除，
+  eGMP 的域逻辑只在 `plugin/src/` 里维护，不要把旧客户端搬回来。
+- **`capture/` 是接口监听体系，必须保留**：`capture/bin/` + `capture/src/` + `capture/test/` 与
+  `docs/knowledge/API-DISCOVERY.md` 是一个整体（只连回环地址）。它不参与插件运行时，但删掉/改坏就
+  没法再用真实流量扩展能力目录；根 `package.json` 的 `test` 与 `tsconfig.json` 的 `include` 都覆盖它。
+- **文档分层**：`docs/knowledge/` 放现行规范与手册，`docs/reference/` 放外部资料与只读样本，
+  `docs/archive/` 放带日期的历史台账（只证明当时测过），`docs/analysis/` 是 gitignored 的本机产物。
+  新增文档前先看 `docs/README.md` 的索引与维护约定。
+- **清理死代码的判据**：无入链的文件、无引用的导出/组件/CSS 类，先用 `tsc --noUnusedLocals
+  --noUnusedParameters` + 引用计数双确认再删；删完跑 `npm run check`。历史证据不要直接删，
+  移到 `docs/archive/` 并加「历史记录」抬头。
 - **对象分析产物不入库**：`docs/analysis/` 已进 `.gitignore`，产物是交付件、不是源码；生成后留在本机，
   不要 `git add`。便笺本、`lifecycle-action-types.md`、`homework2__c-lifecycle.md` 是**源码**，放在
   `docs/reference/`，必须入库（改路径要同步 `plugin/src/shared/sticky-notes.ts` 与测试）。
@@ -122,8 +138,9 @@
   同一接口可多块；`>` 是方案简介；`**步骤**` 有序列表，每条开头用反引号写接口 id（如 `layout.detail`）；
   `**校验**` 列表；`**示例**` 一个 json 代码块；`**预期**` 散文。文档里没登记方案的接口，卡片上就不出
   「标准配置用法」这一栏——所以"还没标准方案"本身就是一种合法状态，不用凑。
-- **动作映射格式**：`## 分组名` + 一行 `作用域：workflow / lifecycle / menu`（决定在哪些卡片里显示，写
-  「通用」则所有卡片都显示）+ `| 值 | 含义 | 备注 |` 表。新动作码先在这份文档登记，再改代码。
+- **动作映射格式**：`## 分组名` + 一行 `作用域：workflow / lifecycle / menu`（用来描述这组码表适用哪些接口域，
+  写「通用」表示不分域）+ `| 值 | 含义 | 备注 |` 表。新动作码先在这份文档登记，再改代码。当前页面不渲染
+  这张映射表，但 `config/capabilities` 仍返回它，`api-guide.mjs --check` 也会校验格式与空组。
 - **校验**：`node plugin/scripts/api-guide.mjs --check` 连三份文档一起校验（缺章节 / 多余 id / 解析告警 /
   方案 id 不在目录，有问题 exit 1）；`--seed` 补基础指南骨架；`--list` 看登记状态。
   `plugin/test/api-guide.test.ts` 与 `plugin/test/config-docs.test.ts` 会断言真文档零告警、目录全覆盖、

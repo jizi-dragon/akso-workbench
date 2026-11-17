@@ -1,5 +1,8 @@
 # 配置能力实测台账（2026-11-09）
 
+> **历史记录**：这是 2026-11-09 当天的实测证据，不代表当前能力目录状态。现行规范见
+> `docs/knowledge/`；能力清单以 `plugin/src/config/capabilities.ts` 为准。
+
 > 目的：把 `plugin/src/config/capabilities.ts` 里的能力逐条真调一遍，确认「接口有效 + 示例有效」，
 > 通过的把卡片标签从「过期」扭成「已验证」（名单在 `plugin/src/shared/approved-tools.ts`）。
 > 每条都记录：**输入（实际发的请求）→ 输出（实际收到的响应）→ 你的系统上发生了什么变化**。

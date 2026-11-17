@@ -43,11 +43,6 @@ function useStore() {
   return useSyncExternalStore(subscribe, getState, getState)
 }
 
-function fmtTime(ms: number | null): string {
-  if (ms === null) return '—'
-  return new Date(ms).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
-
 /** 每 30s 触发一次重渲染：让「同步于 N 分钟前」这类相对时间自己走。 */
 function useNow(intervalMs = 30000): number {
   const [now, setNow] = useState(() => Date.now())
@@ -210,16 +205,10 @@ function LoginGate({ tr, embedded = false }: { tr: (key: string, vars?: Record<s
 
 /* ────────────────────────────── 并行账号 ────────────────────────────── */
 
-function AccountsTab({ tr, query }: { tr: (key: string, vars?: Record<string, string | number>) => string; query: string }) {
+function AccountsTab({ tr }: { tr: (key: string, vars?: Record<string, string | number>) => string }) {
   const state = useStore()
   /** 盒子的选中值：`null` = 全部。盒子名本身用 `''` 表示"没分盒子"，两者要能区分开。 */
   const [box, setBox] = useState<string | null>(null)
-
-  const q = query.trim().toLowerCase()
-  const matched = q === ''
-    ? state.accounts
-    : state.accounts.filter((account) => [account.tabName, account.username, account.siteName, account.siteHost, account.note, account.box]
-      .some((field) => String(field ?? '').toLowerCase().includes(q)))
 
   /**
    * 卡片上显示的「盒子」是**回落过的**：账号自己没填就显示默认盒。
@@ -229,9 +218,9 @@ function AccountsTab({ tr, query }: { tr: (key: string, vars?: Record<string, st
   const boxOf = (account: (typeof state.accounts)[number]): string =>
     (account.box.trim() !== '' ? account.box : state.defaultBox).trim()
 
-  /** 只统计**当前查询命中**的那批：数字必须和列表对得上，不能拿全量去标。 */
+  /** 每个盒子各有多少账号：数字必须和列表对得上，不能拿别的口径去标。 */
   const buckets: Array<{ name: string; count: number }> = []
-  for (const account of matched) {
+  for (const account of state.accounts) {
     const name = boxOf(account)
     const hit = buckets.find((item) => item.name === name)
     if (hit === undefined) buckets.push({ name, count: 1 })
@@ -241,7 +230,7 @@ function AccountsTab({ tr, query }: { tr: (key: string, vars?: Record<string, st
 
   /** 选中的盒子在快照里没了（账号删了 / 盒子改名），退回「全部」，不留一个筛不出东西的死选中。 */
   const active = box !== null && buckets.some((item) => item.name === box) ? box : null
-  const visible = active === null ? matched : matched.filter((account) => boxOf(account) === active)
+  const visible = active === null ? state.accounts : state.accounts.filter((account) => boxOf(account) === active)
   const emptyAll = state.accounts.length === 0
 
   return (
@@ -256,7 +245,7 @@ function AccountsTab({ tr, query }: { tr: (key: string, vars?: Record<string, st
             onClick={() => setBox(null)}
           >
             {tr('page.filter.all')}
-            <i>{matched.length}</i>
+            <i>{state.accounts.length}</i>
           </button>
           {buckets.map((item) => (
             <button
@@ -278,10 +267,10 @@ function AccountsTab({ tr, query }: { tr: (key: string, vars?: Record<string, st
         <div className="akw-empty">
           <span className="akw-empty__icon" aria-hidden="true">◍</span>
           <span className="akw-empty__title">
-            {emptyAll ? tr('page.empty.title') : active === null ? tr('page.filtered.title') : tr('page.filter.empty.title')}
+            {emptyAll ? tr('page.empty.title') : tr('page.filter.empty.title')}
           </span>
           <span className="akw-empty__desc">
-            {emptyAll ? tr('page.empty.desc') : active === null ? tr('page.filtered.desc') : tr('page.filter.empty.desc')}
+            {emptyAll ? tr('page.empty.desc') : tr('page.filter.empty.desc')}
           </span>
         </div>
       ) : (
@@ -834,7 +823,6 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
   const state = useStore()
   const [section, setSection] = useState<Section>('accounts')
   const [tab, setTab] = useState<Tab>('accounts')
-  const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const now = useNow(30000)
   const loggedInRef = useRef(state.loggedIn)
@@ -1039,7 +1027,7 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
                 </div>
               ) : null}
 
-              {state.status === 'ready' && tab === 'accounts' ? <AccountsTab tr={tr} query={query} /> : null}
+              {state.status === 'ready' && tab === 'accounts' ? <AccountsTab tr={tr} /> : null}
               {state.status === 'ready' && tab === 'pool' ? <PoolTab tr={tr} onAdd={() => setTab('add')} /> : null}
               {state.status === 'ready' && tab === 'add' ? <AddAccountTab tr={tr} /> : null}
               {state.status === 'ready' && tab === 'sites' ? <SitesTab tr={tr} /> : null}

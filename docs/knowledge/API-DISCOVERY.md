@@ -42,7 +42,7 @@ node capture/bin/akw-capture.mjs promote 5
 | 稳定性 | 至少两次调用形状一致；平台生成值（FullPath、traceId）不能当入参 |
 
 只有「输入 → 输出 → 系统变化」三件都写清楚，才把它加进
-`plugin/src/config/capabilities.ts`，并在 `docs/CAPABILITY-VERIFICATION-2026-11-09.md`
+`plugin/src/config/capabilities.ts`，并在 `docs/archive/CAPABILITY-VERIFICATION-2026-11-09.md`
 补一条台账（或新建一份台账）。
 
 ## 4. 常见坑
