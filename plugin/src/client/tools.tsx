@@ -21,8 +21,9 @@
  * 这里**不显示登录态**：eGMP 令牌由底部账号条自动取（akso-cloud 里的账号口令）、
  * 过期自动续，本页只负责把接口讲清楚。
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { api } from './api.ts'
+import { useMediaQuery, usePersisted } from './view.tsx'
 import { APPROVED_TOOL_IDS } from '../shared/approved-tools.ts'
 
 interface Param {
@@ -280,13 +281,20 @@ function RecipeList({ recipes }: { recipes: Recipe[] }) {
   )
 }
 
-function CapabilityDialog({ item, guide, recipesGuide, onClose }: {
+/**
+ * 接口详情。两种落点共用一套内容：
+ * - `dialog`：窄屏 / 尚未分栏时浮层看一个接口，Esc 关闭；
+ * - `pane`：宽屏时停靠在右侧，列表还能继续翻、继续点，不必关窗再开。
+ */
+function CapabilityDetail({ item, guide, recipesGuide, variant, onClose }: {
   item: Capability
   guide: GuideInfo | null
   recipesGuide: RecipeGuideInfo | null
+  variant: 'dialog' | 'pane'
   onClose: () => void
 }) {
   const closeRef = useRef<HTMLButtonElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
   const kind = kindOf(item)
@@ -295,6 +303,7 @@ function CapabilityDialog({ item, guide, recipesGuide, onClose }: {
   const recipes = item.recipes ?? []
 
   useEffect(() => {
+    if (variant !== 'dialog') return
     const restore = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeRef.current?.focus()
     const onKey = (event: KeyboardEvent): void => {
@@ -308,7 +317,127 @@ function CapabilityDialog({ item, guide, recipesGuide, onClose }: {
       document.removeEventListener('keydown', onKey)
       restore?.focus()
     }
-  }, [])
+  }, [variant])
+
+  /** 一次把正文里的折叠全部翻到同一面；不改变各项自己的内容。 */
+  function setFolds(open: boolean): void {
+    const body = bodyRef.current
+    if (body === null) return
+    body.querySelectorAll<HTMLDetailsElement>('details').forEach((node) => {
+      node.open = open
+    })
+  }
+
+  const card = (
+    <div
+      className={`akw-api__card${variant === 'pane' ? ' akw-api__card--pane' : ''}`}
+      role={variant === 'dialog' ? 'dialog' : 'region'}
+      aria-modal={variant === 'dialog' ? true : undefined}
+      aria-label={`${item.title} 接口详情`}
+    >
+      <header className="akw-api__head">
+        <div className="akw-api__headMain">
+          <b>{item.title}</b>
+          <code className="akw-api__id">{item.id}</code>
+        </div>
+        <button ref={closeRef} type="button" className="akw-api__close" aria-label="关闭详情" onClick={onClose}>
+          ✕
+        </button>
+      </header>
+
+      <div className="akw-api__endpoint">
+        <b className={`is-kind-${kind}`}>{item.method}</b>
+        <span>{item.path}</span>
+      </div>
+
+      <div className="akw-api__flags">
+        <span className={`akw-cfg__tag ${verified ? 'is-ok' : 'is-danger'}`}>{verified ? '已验证' : '过期'}</span>
+        <span className="akw-cfg__tag">风险 {RISK_LABEL[item.risk]}</span>
+        {item.irreversible === true ? <span className="akw-cfg__tag is-danger">不可逆</span> : null}
+        {item.documented === false ? <span className="akw-cfg__tag">文案回落到目录</span> : null}
+      </div>
+
+      <div className="akw-api__tools">
+        <button type="button" className="akw-btn akw-btn--sm akw-btn--ghost" onClick={() => setFolds(true)}>
+          展开全部
+        </button>
+        <button type="button" className="akw-btn akw-btn--sm akw-btn--ghost" onClick={() => setFolds(false)}>
+          收起全部
+        </button>
+      </div>
+
+      <div className="akw-api__body" ref={bodyRef}>
+        <p className="akw-api__intro">{item.description}</p>
+
+        <details className="akw-api__fold" open>
+          <summary>
+            <span>参数介绍</span>
+            <i>{item.params.length}</i>
+          </summary>
+          <div className="akw-api__foldBody">
+            <ParamsTable params={item.params} />
+          </div>
+        </details>
+
+        <details className="akw-api__fold">
+          <summary>
+            <span>案例介绍</span>
+            <i>1</i>
+          </summary>
+          <div className="akw-api__foldBody">
+            <CaseBlock item={oneCase} />
+          </div>
+        </details>
+
+        {recipes.length > 0 ? (
+          <details className="akw-api__fold">
+            <summary>
+              <span>标准配置用法</span>
+              <i>{recipes.length}</i>
+            </summary>
+            <div className="akw-api__foldBody">
+              <RecipeList recipes={recipes} />
+              {recipesGuide !== null && recipesGuide.path !== null ? (
+                <p className="akw-api__source">
+                  方案来自 <code>{recipesGuide.path}</code>
+                  {recipesGuide.updatedAt === null ? null : `（${formatTime(recipesGuide.updatedAt)} 更新）`}
+                </p>
+              ) : null}
+            </div>
+          </details>
+        ) : null}
+
+        <details className="akw-api__fold">
+          <summary>
+            <span>输出结果</span>
+            <i>{item.returns !== undefined ? '有' : '—'}</i>
+          </summary>
+          <div className="akw-api__foldBody">
+            <p className="akw-api__ret">
+              {item.returns !== undefined ? item.returns : '目录里没有记录返回结构；以实际调用结果为准。'}
+            </p>
+            {item.notes !== undefined && item.notes.length > 0 ? (
+              <ul className="akw-api__notes">
+                {item.notes.map((note) => <li key={note}>{note}</li>)}
+              </ul>
+            ) : null}
+          </div>
+        </details>
+      </div>
+
+      <footer className="akw-api__foot">
+        <span>
+          {guide === null || guide.path === null
+            ? '文案来自接口目录'
+            : `文案来自 ${guide.path}${guide.updatedAt === null ? '' : ` · ${formatTime(guide.updatedAt)} 更新`}`
+          }
+        </span>
+        <span className="akw-api__footHint">改文档后刷新页面即可生效，无需重新构建。</span>
+      </footer>
+    </div>
+  )
+
+  if (variant === 'pane') return <aside className="akw-cfg__pane" aria-label="接口详情">{card}</aside>
 
   return (
     <div
@@ -319,103 +448,7 @@ function CapabilityDialog({ item, guide, recipesGuide, onClose }: {
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <div
-        className="akw-api__card"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`${item.title} 接口详情`}
-      >
-        <header className="akw-api__head">
-          <div className="akw-api__headMain">
-            <b>{item.title}</b>
-            <code className="akw-api__id">{item.id}</code>
-          </div>
-          <button ref={closeRef} type="button" className="akw-api__close" aria-label="关闭" onClick={onClose}>
-            ✕
-          </button>
-        </header>
-
-        <div className="akw-api__endpoint">
-          <b className={`is-kind-${kind}`}>{item.method}</b>
-          <span>{item.path}</span>
-        </div>
-
-        <div className="akw-api__flags">
-          <span className={`akw-cfg__tag ${verified ? 'is-ok' : 'is-danger'}`}>{verified ? '已验证' : '过期'}</span>
-          <span className="akw-cfg__tag">风险 {RISK_LABEL[item.risk]}</span>
-          {item.irreversible === true ? <span className="akw-cfg__tag is-danger">不可逆</span> : null}
-          {item.documented === false ? <span className="akw-cfg__tag">文案回落到目录</span> : null}
-        </div>
-
-        <div className="akw-api__body">
-          <p className="akw-api__intro">{item.description}</p>
-
-          <details className="akw-api__fold" open>
-            <summary>
-              <span>参数介绍</span>
-              <i>{item.params.length}</i>
-            </summary>
-            <div className="akw-api__foldBody">
-              <ParamsTable params={item.params} />
-            </div>
-          </details>
-
-          <details className="akw-api__fold">
-            <summary>
-              <span>案例介绍</span>
-              <i>1</i>
-            </summary>
-            <div className="akw-api__foldBody">
-              <CaseBlock item={oneCase} />
-            </div>
-          </details>
-
-          {recipes.length > 0 ? (
-            <details className="akw-api__fold">
-              <summary>
-                <span>标准配置用法</span>
-                <i>{recipes.length}</i>
-              </summary>
-              <div className="akw-api__foldBody">
-                <RecipeList recipes={recipes} />
-                {recipesGuide !== null && recipesGuide.path !== null ? (
-                  <p className="akw-api__source">
-                    方案来自 <code>{recipesGuide.path}</code>
-                    {recipesGuide.updatedAt === null ? null : `（${formatTime(recipesGuide.updatedAt)} 更新）`}
-                  </p>
-                ) : null}
-              </div>
-            </details>
-          ) : null}
-
-          <details className="akw-api__fold">
-            <summary>
-              <span>输出结果</span>
-              <i>{item.returns !== undefined ? '有' : '—'}</i>
-            </summary>
-            <div className="akw-api__foldBody">
-              <p className="akw-api__ret">
-                {item.returns !== undefined ? item.returns : '目录里没有记录返回结构；以实际调用结果为准。'}
-              </p>
-              {item.notes !== undefined && item.notes.length > 0 ? (
-                <ul className="akw-api__notes">
-                  {item.notes.map((note) => <li key={note}>{note}</li>)}
-                </ul>
-              ) : null}
-            </div>
-          </details>
-        </div>
-
-        <footer className="akw-api__foot">
-          <span>
-            {guide === null || guide.path === null
-              ? '文案来自接口目录'
-              : `文案来自 ${guide.path}${guide.updatedAt === null ? '' : ` · ${formatTime(guide.updatedAt)} 更新`}`
-            }
-          </span>
-          <span className="akw-api__footHint">改文档后刷新页面即可生效，无需重新构建。</span>
-        </footer>
-      </div>
+      {card}
     </div>
   )
 }
@@ -482,6 +515,14 @@ export function ConfigToolsTab() {
   const [requireApproval, setRequireApproval] = useState<boolean | null>(null)
   const [approvalEnv, setApprovalEnv] = useState<string | null>(null)
   const [savingApproval, setSavingApproval] = useState(false)
+  /** 宽屏时详情停靠在右侧：列表还能继续翻、继续点，不必关窗再开。 */
+  const wide = useMediaQuery('(min-width: 1120px)')
+  const [paneWidth, setPaneWidth] = usePersisted('cfg.paneWidth', 420)
+  const [liveWidth, setLiveWidth] = useState<number | null>(null)
+  /** 拖动过程只走内存，松手才落盘：避免每一帧都写 localStorage。 */
+  const paneWidthNow = liveWidth ?? paneWidth
+  const splitRef = useRef<HTMLDivElement>(null)
+  const [dragging, setDragging] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -557,6 +598,33 @@ export function ConfigToolsTab() {
     }
   }
 
+  /** 拖分隔条调详情宽度：只在松开时落盘，拖动过程不写 localStorage。 */
+  function startResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    const split = splitRef.current
+    if (split === null) return
+    event.preventDefault()
+    const rect = split.getBoundingClientRect()
+    let width = paneWidthNow
+    setDragging(true)
+    const move = (moveEvent: PointerEvent): void => {
+      width = Math.min(640, Math.max(320, Math.round(rect.right - moveEvent.clientX)))
+      setLiveWidth(width)
+    }
+    const stop = (): void => {
+      setDragging(false)
+      setLiveWidth(null)
+      setPaneWidth(width)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', stop)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', stop)
+  }
+
+  function resizeBy(delta: number): void {
+    setPaneWidth(Math.min(640, Math.max(320, paneWidth + delta)))
+  }
+
   return (
     <div className="akw-cfg">
       <nav className="akw-cfg__tabs" aria-label="配置工具分区">
@@ -578,7 +646,12 @@ export function ConfigToolsTab() {
         })}
       </nav>
 
-      <div className="akw-cfg__main">
+      <div
+        ref={splitRef}
+        className={`akw-cfg__split${detail !== null && wide ? ' has-detail' : ''}${dragging ? ' is-dragging' : ''}`}
+        style={detail !== null && wide ? ({ '--akw-pane-w': `${paneWidthNow}px` } as CSSProperties) : undefined}
+      >
+        <div className="akw-cfg__main">
         <div className="akw-cfg__lede">
           <p>{section.hint}</p>
           <div className="akw-cfg__stats">
@@ -643,10 +716,45 @@ export function ConfigToolsTab() {
             note="检查 plugin/src/config/capabilities.ts 是否漏了域映射。"
           />
         ) : null}
+        </div>
+
+        {detail !== null && wide ? (
+          <>
+            <div
+              className="akw-cfg__resizer"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="调整详情宽度"
+              aria-valuemin={320}
+              aria-valuemax={640}
+              aria-valuenow={paneWidthNow}
+              tabIndex={0}
+              onPointerDown={startResize}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowLeft') {
+                  event.preventDefault()
+                  resizeBy(16)
+                }
+                if (event.key === 'ArrowRight') {
+                  event.preventDefault()
+                  resizeBy(-16)
+                }
+              }}
+            />
+            <CapabilityDetail
+              variant="pane"
+              item={detail}
+              guide={guide}
+              recipesGuide={recipesGuide}
+              onClose={() => setDetailId('')}
+            />
+          </>
+        ) : null}
       </div>
 
-      {detail !== null ? (
-        <CapabilityDialog
+      {detail !== null && !wide ? (
+        <CapabilityDetail
+          variant="dialog"
           item={detail}
           guide={guide}
           recipesGuide={recipesGuide}

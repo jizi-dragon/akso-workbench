@@ -32,6 +32,7 @@ import {
 import { ConfigToolsTab } from './tools.tsx'
 import { ObjectAnalysisTab } from './analysis.tsx'
 import { LogsTab } from './logs.tsx'
+import { ScrollBody, useFoldSet } from './view.tsx'
 
 type Tab = 'accounts' | 'pool' | 'add' | 'sites' | 'boxes'
 
@@ -209,6 +210,8 @@ function AccountsTab({ tr }: { tr: (key: string, vars?: Record<string, string | 
   const state = useStore()
   /** 盒子的选中值：`null` = 全部。盒子名本身用 `''` 表示"没分盒子"，两者要能区分开。 */
   const [box, setBox] = useState<string | null>(null)
+  /** 每张卡片的「详情」展开态：账号多时默认只露关键字段，展开后看全站点/地址/状态/备注。 */
+  const folds = useFoldSet('accounts')
 
   /**
    * 卡片上显示的「盒子」是**回落过的**：账号自己没填就显示默认盒。
@@ -281,8 +284,9 @@ function AccountsTab({ tr }: { tr: (key: string, vars?: Record<string, string | 
             const inPool = state.poolAccountIds.includes(account.id)
             const title = account.tabName.trim() !== '' ? account.tabName : account.username
             const site = account.siteName !== '' ? account.siteName : account.siteHost
+            const open = folds.isOpen(account.id)
             return (
-              <li key={account.id} className={`akw-card${isConnected ? ' is-connected' : ''}`}>
+              <li key={account.id} className={`akw-card${isConnected ? ' is-connected' : ''}${open ? ' is-open' : ''}`}>
                 <div className="akw-card__head">
                   <span className="akw-avatar" aria-hidden="true">{title.slice(0, 1).toUpperCase()}</span>
                   <div className="akw-card__id">
@@ -301,7 +305,31 @@ function AccountsTab({ tr }: { tr: (key: string, vars?: Record<string, string | 
                     <dd title={account.box}>{account.box || state.defaultBox || '—'}</dd>
                   </div>
                 </dl>
-                {account.note !== '' ? <p className="akw-card__note">{account.note}</p> : null}
+                {open ? (
+                  <dl className="akw-facts akw-facts--wide">
+                    <div>
+                      <dt>{tr('page.card.site')}</dt>
+                      <dd>{site || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt>{tr('page.card.baseUrl')}</dt>
+                      <dd><code className="akw-mono">{account.baseUrl || '—'}</code></dd>
+                    </div>
+                    <div>
+                      <dt>{tr('page.card.status')}</dt>
+                      <dd>{account.status || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt>{tr('page.card.pool')}</dt>
+                      <dd>{inPool ? tr('pool.mark.in') : tr('pool.mark.out')}</dd>
+                    </div>
+                  </dl>
+                ) : null}
+                {account.note === '' ? null : open ? (
+                  <p className="akw-card__note is-full">{account.note}</p>
+                ) : (
+                  <p className="akw-card__note">{account.note}</p>
+                )}
                 <div className="akw-card__foot">
                   <span
                     className={`akw-pool-dot${inPool ? ' is-on' : ''}`}
@@ -310,6 +338,14 @@ function AccountsTab({ tr }: { tr: (key: string, vars?: Record<string, string | 
                     title={inPool ? tr('pool.mark.in') : tr('pool.mark.out')}
                   />
                   <div className="akw-card__actions">
+                    <button
+                      type="button"
+                      className="akw-btn akw-btn--sm akw-btn--ghost"
+                      aria-expanded={open}
+                      onClick={() => folds.setOpen(account.id, !open)}
+                    >
+                      {open ? tr('page.action.collapse') : tr('page.action.detail')}
+                    </button>
                     {isConnected ? (
                       <span className="akw-card__hint">{tr('page.tag.connectedHint')}</span>
                     ) : (
@@ -998,7 +1034,7 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
               ))}
             </nav>
 
-            <div className="akw-body">
+            <ScrollBody id="accounts">
               {state.stale && state.syncError !== null ? (
                 <div className="akw-notice akw-notice--err" role="alert">
                   <span className="akw-notice__grow">{tr('cloud.status.stale', { message: state.syncError })}</span>
@@ -1032,7 +1068,7 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
               {state.status === 'ready' && tab === 'add' ? <AddAccountTab tr={tr} /> : null}
               {state.status === 'ready' && tab === 'sites' ? <SitesTab tr={tr} /> : null}
               {state.status === 'ready' && tab === 'boxes' ? <BoxesTab tr={tr} /> : null}
-            </div>
+            </ScrollBody>
           </>
         ) : (
           <LoginGate tr={tr} embedded />
@@ -1040,27 +1076,27 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
       ) : null}
 
       {section === 'tools' ? (
-        <div className="akw-body">
+        <ScrollBody id="tools">
           <ConfigToolsTab />
-        </div>
+        </ScrollBody>
       ) : null}
 
       {section === 'runs' ? (
-        <div className="akw-body">
+        <ScrollBody id="runs">
           <PendingModule title="运行报告" note="入口先留着，内容还没接入。" />
-        </div>
+        </ScrollBody>
       ) : null}
 
       {section === 'analysis' ? (
-        <div className="akw-body">
+        <ScrollBody id="analysis">
           <ObjectAnalysisTab />
-        </div>
+        </ScrollBody>
       ) : null}
 
       {section === 'logs' ? (
-        <div className="akw-body">
+        <ScrollBody id="logs">
           <LogsTab />
-        </div>
+        </ScrollBody>
       ) : null}
     </div>
   )

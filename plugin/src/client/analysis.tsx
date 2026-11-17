@@ -21,6 +21,7 @@ import {
 import { zipStore } from './zip-store.ts'
 import { workflowStepTypeLabel } from '../shared/workflow-labels.ts'
 import { api, type AnalysisActionView, type AnalysisHistoryView, type AnalysisResultView } from './api.ts'
+import { useFoldSet } from './view.tsx'
 
 interface AnalysisEntry {
   query: string
@@ -256,18 +257,32 @@ function FieldTable({ fields }: { fields: AnalysisResultView['fields'] }) {
   const enabled = fields.filter((field) => field.isEnabled).length
   const required = fields.filter((field) => field.isRequired).length
   const custom = fields.filter((field) => field.source === 3).length
+  /** 字段多的时候先给一个可读高度，需要横向核对时再整表展开。 */
+  const [expanded, setExpanded] = useState(false)
   return (
     <section className="akw-fields">
       <div className="akw-fields__head">
         <h3>字段（{fields.length}）</h3>
-        <p>
-          启用 {enabled} · 停用 {fields.length - enabled} · 必填 {required} · 自定义 {custom}
-        </p>
+        <div className="akw-fields__headRight">
+          <p>
+            启用 {enabled} · 停用 {fields.length - enabled} · 必填 {required} · 自定义 {custom}
+          </p>
+          {fields.length === 0 ? null : (
+            <button
+              type="button"
+              className="akw-btn akw-btn--sm akw-btn--ghost"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? '收起字段表' : '展开全部'}
+            </button>
+          )}
+        </div>
       </div>
       {fields.length === 0 ? (
         <p className="akw-fields__empty">没有读到字段。</p>
       ) : (
-        <div className="akw-fields__scroll">
+        <div className={`akw-fields__scroll${expanded ? ' is-expanded' : ''}`}>
           <table className="akw-fields__table">
             <thead>
               <tr>
@@ -409,9 +424,16 @@ function ObjectDetail({ result }: { result: AnalysisResultView }) {
   )
 }
 
-function ObjectCard({ entry, open }: { entry: AnalysisEntry; open: boolean }) {
+function ObjectCard({ entry, open, onToggle }: { entry: AnalysisEntry; open: boolean; onToggle: (value: boolean) => void }) {
   return (
-    <details className="akw-analysis__object-card" open={open}>
+    <details
+      className="akw-analysis__object-card"
+      open={open}
+      onToggle={(event) => {
+        const next = event.currentTarget.open
+        if (next !== open) onToggle(next)
+      }}
+    >
       <ObjectSummary entry={entry} />
       {entry.result === null ? (
         <div className="akw-analysis__detail">
@@ -471,6 +493,9 @@ export function ObjectAnalysisTab() {
   const [history, setHistory] = useState<AnalysisHistoryView[]>([])
   const [historyDir, setHistoryDir] = useState('')
   const [historyError, setHistoryError] = useState('')
+  /** 对象卡的展开态：持久化，刷新或切模块回来仍是上次看到的层级。 */
+  const folds = useFoldSet('analysis')
+  const [notice, setNotice] = useState('')
 
   async function refreshHistory(): Promise<void> {
     try {
@@ -511,18 +536,36 @@ export function ObjectAnalysisTab() {
     try {
       const detail = await api.analysisHistoryItem(item.id)
       const query = detail.query === '' ? item.query : detail.query
-      if (detail.status === 'failed' || detail.result === undefined) {
-        setEntries([{ query, result: null, error: detail.error ?? '这次分析没有成功' }])
-      } else {
-        setEntries([{ query, result: detail.result, error: '' }])
-      }
+      const entry: AnalysisEntry =
+        detail.status === 'failed' || detail.result === undefined
+          ? { query, result: null, error: detail.error ?? '这次分析没有成功' }
+          : { query, result: detail.result, error: '' }
+      // 并入而不是替换：手头正在看的这份不会被一次历史点击挤掉，多份可同屏对照。
+      setEntries((prev) => [entry, ...prev.filter((current) => current.query !== query)].slice(0, 8))
+      folds.setOpen(query, true)
       setQuery(query)
       setInputError('')
+      setNotice(`已并入历史记录「${query}」；“清空本次”可以只留这一份。`)
     } catch (error) {
       setHistoryError(error instanceof Error ? error.message : String(error))
     } finally {
       setLoading(false)
     }
+  }
+
+  function expandAll(): void {
+    folds.setAll(entries.map((entry) => entry.query), true)
+    setNotice('')
+  }
+
+  function collapseAll(): void {
+    folds.setAll(entries.map((entry) => entry.query), false)
+    setNotice('')
+  }
+
+  function clearEntries(): void {
+    setEntries([])
+    setNotice('')
   }
 
   async function run(value: string) {
@@ -536,6 +579,7 @@ export function ObjectAnalysisTab() {
 
     setLoading(true)
     setInputError('')
+    setNotice('')
     try {
       const next = await Promise.all(
         parsed.queries.map(async (item): Promise<AnalysisEntry> => {
@@ -612,7 +656,7 @@ export function ObjectAnalysisTab() {
       <details className="akw-analysis__history" open={history.length > 0}>
         <summary>
           历史分析 <span>{history.length}</span>
-          <em>点一条即可打开当时的分析结果或失败原因，不用重新请求</em>
+          <em>点一条即并入下方的本次结果，不替换当前内容</em>
         </summary>
         <div className="akw-analysis__history-meta">
           <code title={historyDir}>{historyDir === '' ? '历史目录：加载中…' : `历史目录：${historyDir}`}</code>
@@ -669,6 +713,27 @@ export function ObjectAnalysisTab() {
         </div>
       ) : (
         <>
+          <div className="akw-analysis__toolbar">
+            <span className="akw-analysis__toolbarCount">
+              本次 {entries.length} 个对象 · {successCount} 成功
+            </span>
+            <div className="akw-analysis__toolbarActions">
+              <button type="button" className="akw-btn akw-btn--sm akw-btn--ghost" onClick={expandAll}>
+                展开全部
+              </button>
+              <button type="button" className="akw-btn akw-btn--sm akw-btn--ghost" onClick={collapseAll}>
+                收起全部
+              </button>
+              <button type="button" className="akw-btn akw-btn--sm akw-btn--ghost" onClick={clearEntries}>
+                清空本次
+              </button>
+            </div>
+          </div>
+          {notice !== '' ? (
+            <p className="akw-analysis__hint is-notice" role="status">
+              {notice}
+            </p>
+          ) : null}
           {entries.length > 1 ? (
             <section className="akw-analysis__compare">
               <div className="akw-analysis__compare-heading">
@@ -690,7 +755,12 @@ export function ObjectAnalysisTab() {
 
           <div className={`akw-analysis__objects${single ? ' is-single' : ''}`}>
             {entries.map((entry) => (
-              <ObjectCard key={entry.query} entry={entry} open={single} />
+              <ObjectCard
+                key={entry.query}
+                entry={entry}
+                open={folds.isOpen(entry.query, single)}
+                onToggle={(value) => folds.setOpen(entry.query, value)}
+              />
             ))}
           </div>
         </>

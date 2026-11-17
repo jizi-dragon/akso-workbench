@@ -606,5 +606,38 @@ export const CSS = `
 .akw-logs__kinds code{font-size:10px;color:var(--dsw-alias-state-business-primary);word-break:break-all}
 .akw-logs__hint{margin:8px 0 0;font-size:10px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 @media (max-width: 720px){.akw-logs{padding:14px 14px 20px}.akw-logs__meta{grid-template-columns:1fr}.akw-logs__downloads{grid-template-columns:1fr}.akw-logs__actions{width:100%}}
+/* 查看逻辑：卡片展开、宽屏详情分栏、字段表折叠、多对象工具条。全部复用现有 token。 */
+.akw-card.is-open .akw-card__head b,.akw-card.is-open .akw-card__head span{white-space:normal;overflow:visible;text-overflow:clip}
+.akw-card__note.is-full{white-space:normal;overflow:visible;text-overflow:clip;color:var(--dsw-alias-label-secondary)}
+.akw-facts--wide{grid-template-columns:minmax(0,1fr);gap:0}
+.akw-facts--wide>div{display:grid;grid-template-columns:58px minmax(0,1fr);gap:8px;align-items:baseline;min-width:0;padding:4px 0;border-top:1px solid var(--dsw-alias-border-l2)}
+.akw-facts--wide>div:first-child{border-top:0;padding-top:0}
+.akw-facts--wide dt{font-size:10px;line-height:15px}
+.akw-facts--wide dd{white-space:normal;overflow-wrap:anywhere;min-width:0}
+.akw-facts--wide code{white-space:normal;overflow-wrap:anywhere}
+.akw-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.akw-cfg__split{display:grid;grid-template-columns:minmax(0,1fr)}
+.akw-cfg__split.has-detail{grid-template-columns:minmax(0,1fr) 8px var(--akw-pane-w,420px)}
+.akw-cfg__resizer{position:relative;width:8px;cursor:col-resize;touch-action:none;border-radius:4px;background:transparent}
+.akw-cfg__resizer::after{content:"";position:absolute;top:10px;bottom:10px;left:3px;width:2px;border-radius:2px;background:var(--dsw-alias-border-l4);transition:background .12s ease}
+.akw-cfg__resizer:hover::after,.akw-cfg__split.is-dragging .akw-cfg__resizer::after{background:var(--dsw-alias-state-business-primary)}
+.akw-cfg__resizer:focus-visible{outline:2px solid var(--dsw-alias-focus-ring-color);outline-offset:2px}
+.akw-cfg__pane{position:sticky;top:0;align-self:start;max-height:calc(100dvh - 140px);overflow:auto;padding-right:24px;scrollbar-gutter:stable}
+.akw-api__card--pane{width:100%;max-height:none;border-radius:16px}
+.akw-api__tools{display:flex;justify-content:flex-end;gap:6px;margin:0 0 6px}
+.akw-fields__headRight{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.akw-fields__scroll{max-height:420px}
+.akw-fields__scroll.is-expanded{max-height:none}
+.akw-fields__scroll th:first-child,.akw-fields__scroll td:first-child{position:sticky;left:0;background:var(--dsw-alias-bg-layer-1)}
+.akw-analysis__toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.akw-analysis__toolbarCount{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.akw-analysis__toolbarActions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.akw-analysis__hint.is-notice{margin:0;color:var(--dsw-alias-label-secondary)}
+.akw-fields__scroll,.akw-cfg__pane{scrollbar-width:thin;scrollbar-color:var(--dsw-alias-border-l4) transparent}
+.akw-fields__scroll::-webkit-scrollbar,.akw-cfg__pane::-webkit-scrollbar{width:8px;height:8px}
+.akw-fields__scroll::-webkit-scrollbar-thumb,.akw-cfg__pane::-webkit-scrollbar-thumb{border-radius:8px;background:var(--dsw-alias-border-l4)}
+.akw-fields__scroll::-webkit-scrollbar-track,.akw-cfg__pane::-webkit-scrollbar-track{background:transparent}
+.akw-analysis__object-card>summary:focus-visible,.akw-api__fold>summary:focus-visible{outline:2px solid var(--dsw-alias-focus-ring-color);outline-offset:-2px;border-radius:8px}
+@media (max-width: 1119px){.akw-cfg__split.has-detail{grid-template-columns:minmax(0,1fr)}.akw-cfg__resizer,.akw-cfg__pane{display:none}}
 
 `
