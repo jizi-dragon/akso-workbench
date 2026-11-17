@@ -211,6 +211,9 @@ export interface AnalysisHistoryView {
   id: string
   createdAt: string
   query: string
+  /** 成功 / 失败都进历史；失败条目带 error，没有结果明细。 */
+  status: 'ok' | 'failed'
+  error?: string
   objectCode: string
   objectName: string
   statuses: number
@@ -221,6 +224,15 @@ export interface AnalysisHistoryView {
   workflows: number
   baseUrl: string
   account: string
+}
+
+/** 打开一条历史：成功给 result，失败给 error。 */
+export interface AnalysisHistoryDetailView {
+  status: 'ok' | 'failed'
+  query: string
+  createdAt: string
+  error?: string
+  result?: AnalysisResultView
 }
 
 export interface AnalysisResultView {
@@ -338,9 +350,9 @@ export const api = {
   /** 能力目录（工具页的数据源）。返回的 items 形状由 tools.tsx 自己声明。 */
   /** 对象分析：输入对象 id/code，读生命周期、状态、动作。 */
   analyzeObject: (query: string) => call<AnalysisResultView>('analysis/object', post({ query })),
-  analysisHistory: () => call<{ items: AnalysisHistoryView[] }>('analysis/history'),
+  analysisHistory: () => call<{ items: AnalysisHistoryView[]; dir?: string }>('analysis/history'),
   analysisHistoryItem: (id: string) =>
-    call<AnalysisResultView>(`analysis/history?id=${encodeURIComponent(id)}`),
+    call<AnalysisHistoryDetailView>(`analysis/history?id=${encodeURIComponent(id)}`),
 
   configCapabilities: () =>
     call<{

@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { errorMessage, uiState } from '../src/cloud.ts'
+import { saveFailedAnalysisHistory } from '../src/analysis-history.ts'
 import { CAPABILITIES } from '../src/config/capabilities.ts'
 import { applyPlan, planBlueprint, saveApproval, savePlan } from '../src/config/engine.ts'
 import { writeEgmpSession } from '../src/config/session.ts'
@@ -1747,4 +1748,31 @@ test('运行日志：未捕获的页面错误可以作为 ui.error 上报（服�
   const download = await callRaw(routes, `${ROUTES.journalDownload}?days=1`, 'GET')
   assert.ok(download.text.includes('"kind":"ui.error"'))
   assert.ok(download.text.includes('boom'))
+})
+
+test('分析历史：列表带目录，失败记录也能列出并读回原因', async () => {
+  const home = freshHome()
+  const { routes } = mount(home)
+
+  const empty = await call(routes, ROUTES.analysisHistory, 'GET')
+  assert.equal(empty.status, 200)
+  assert.deepEqual(empty.json['items'], [])
+  assert.equal(empty.json['dir'], join(home, 'akso-workbench', 'analysis-history'))
+
+  const saved = saveFailedAnalysisHistory(home, 'missing__c', '对象 missing__c 没有返回详情')
+  const listed = await call(routes, ROUTES.analysisHistory, 'GET')
+  const items = listed.json['items'] as Array<Record<string, unknown>>
+  assert.equal(items.length, 1)
+  assert.equal(items[0]?.['status'], 'failed')
+  assert.equal(items[0]?.['error'], '对象 missing__c 没有返回详情')
+
+  const detailRes = await callRaw(routes, `${ROUTES.analysisHistory}?id=${saved.id}`, 'GET')
+  const detail = JSON.parse(detailRes.text) as Record<string, unknown>
+  assert.equal(detailRes.status, 200)
+  assert.equal(detail['status'], 'failed')
+  assert.equal(detail['query'], 'missing__c')
+  assert.equal(detail['error'], '对象 missing__c 没有返回详情')
+
+  const missing = await callRaw(routes, `${ROUTES.analysisHistory}?id=nope`, 'GET')
+  assert.equal(missing.status, 404)
 })

@@ -35,7 +35,13 @@ import { EgmpError, clearEgmpSession, publicSession, readEgmpSession, tokenView,
 import { buildConfigApplyTool, buildConfigPlanTool } from './config/tools.ts'
 import { analyzeObject } from './analysis.ts'
 import { buildAnalysisTool } from './analysis-tool.ts'
-import { listAnalysisHistory, readAnalysisHistory, saveAnalysisHistory } from './analysis-history.ts'
+import {
+  analysisHistoryDir,
+  listAnalysisHistory,
+  readAnalysisHistory,
+  saveAnalysisHistory,
+  saveFailedAnalysisHistory,
+} from './analysis-history.ts'
 import { createJournal, errorText, maskEmail } from './journal.ts'
 
 export const name = 'akso-workbench'
@@ -417,17 +423,39 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
 
   type ObjectAnalysisRun =
     | { ok: true; result: Awaited<ReturnType<typeof analyzeObject>>; history: ReturnType<typeof saveAnalysisHistory> }
-    | { ok: false; status: number; error: string }
+    | { ok: false; status: number; error: string; historyId?: string }
 
-  /** 页面和 agent 工具共用的唯一分析入口：都走这里，都会写同一条历史。 */
+  /**
+   * 记录一次失败的分析尝试。
+   *
+   * ★ 失败也要留历史：用户看到「分析了但历史里没有」时，能直接在列表里看到这次为什么失败；
+   *   写历史本身出错不能盖住真正的分析错误，所以这里自己吞掉并记一条 error.history。
+   */
+  function recordFailedAnalysis(query: string, error: string, status: number, startedAt: number): string | null {
+    let historyId: string | null = null
+    try {
+      const session = readEgmpSession(dshHome)
+      historyId = saveFailedAnalysisHistory(dshHome, query, error, {
+        baseUrl: session?.baseUrl,
+        account: session?.account,
+      }).id
+    } catch (historyError) {
+      recordEvent('error.history', { query, error: errorText(historyError) })
+    }
+    recordEvent('analysis.run', { query, ok: false, status, error, historyId, ms: Date.now() - startedAt })
+    return historyId
+  }
+
+  /** 页面和 agent 工具共用的唯一分析入口：都走这里，成功/失败都写同一条历史。 */
   async function runObjectAnalysis(raw: string): Promise<ObjectAnalysisRun> {
     const startedAt = Date.now()
     const query = raw.trim()
     if (query === '') return { ok: false, status: 400, error: '请输入对象 id 或 code' }
     const ensured = await ensureEgmpSession()
     if (ensured.session === null) {
-      recordEvent('analysis.run', { query, ok: false, error: ensured.reason ?? '还没有连接 eGMP 账号', ms: Date.now() - startedAt })
-      return { ok: false, status: 409, error: ensured.reason ?? '还没有连接 eGMP 账号' }
+      const error = ensured.reason ?? '还没有连接 eGMP 账号'
+      const historyId = recordFailedAnalysis(query, error, 409, startedAt)
+      return { ok: false, status: 409, error, ...(historyId === null ? {} : { historyId }) }
     }
     try {
       const result = await analyzeObject(ensured.session, query)
@@ -449,7 +477,13 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       })
       return { ok: true, result, history }
     } catch (error) {
-      recordEvent('analysis.run', { query, ok: false, error: errorText(error), ms: Date.now() - startedAt })
+      // 真实 HTTP 状态仍由 handleError 决定，这里只给日志/历史一个近似值。
+      const status = error instanceof EgmpError
+        ? 502
+        : error instanceof cloud.CloudError && error.status === 401
+          ? 401
+          : 500
+      recordFailedAnalysis(query, errorText(error), status, startedAt)
       throw error
     }
   }
@@ -929,15 +963,16 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       const url = new URL(String(req?.url ?? '/'), 'http://localhost')
       const id = (url.searchParams.get('id') ?? '').trim()
       if (id === '') {
-        sendJson(res, 200, { items: listAnalysisHistory(dshHome) })
+        // dir 一起返回：页面把历史目录显示出来，用户不必猜「记录到底存哪了」。
+        sendJson(res, 200, { items: listAnalysisHistory(dshHome), dir: analysisHistoryDir(dshHome) })
         return
       }
-      const result = readAnalysisHistory(dshHome, id)
-      if (result === null) {
+      const detail = readAnalysisHistory(dshHome, id)
+      if (detail === null) {
         sendJson(res, 404, { error: '这条分析历史不存在或已损坏' })
         return
       }
-      sendJson(res, 200, result)
+      sendJson(res, 200, detail)
     }),
 
     route('POST', R.analysisObject, false, async (_req, res, body) => {

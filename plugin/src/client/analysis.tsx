@@ -469,12 +469,14 @@ export function ObjectAnalysisTab() {
   const [inputError, setInputError] = useState('')
   const [loading, setLoading] = useState(false)
   const [history, setHistory] = useState<AnalysisHistoryView[]>([])
+  const [historyDir, setHistoryDir] = useState('')
   const [historyError, setHistoryError] = useState('')
 
   async function refreshHistory(): Promise<void> {
     try {
       const payload = await api.analysisHistory()
       setHistory(payload.items)
+      if (typeof payload.dir === 'string') setHistoryDir(payload.dir)
       setHistoryError('')
     } catch (error) {
       setHistoryError(error instanceof Error ? error.message : String(error))
@@ -486,8 +488,20 @@ export function ObjectAnalysisTab() {
     const onFocus = (): void => {
       void refreshHistory()
     }
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') void refreshHistory()
+    }
+    // agent 在后台调工具时页面收不到任何通知；轻量轮询让「历史」自己长出来。
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshHistory()
+    }, 15_000)
     window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
   async function openHistory(item: AnalysisHistoryView): Promise<void> {
@@ -495,9 +509,14 @@ export function ObjectAnalysisTab() {
     setLoading(true)
     setHistoryError('')
     try {
-      const result = await api.analysisHistoryItem(item.id)
-      setEntries([{ query: item.query, result, error: '' }])
-      setQuery(item.query)
+      const detail = await api.analysisHistoryItem(item.id)
+      const query = detail.query === '' ? item.query : detail.query
+      if (detail.status === 'failed' || detail.result === undefined) {
+        setEntries([{ query, result: null, error: detail.error ?? '这次分析没有成功' }])
+      } else {
+        setEntries([{ query, result: detail.result, error: '' }])
+      }
+      setQuery(query)
       setInputError('')
     } catch (error) {
       setHistoryError(error instanceof Error ? error.message : String(error))
@@ -593,26 +612,38 @@ export function ObjectAnalysisTab() {
       <details className="akw-analysis__history" open={history.length > 0}>
         <summary>
           历史分析 <span>{history.length}</span>
-          <em>点一条即可打开当时的分析结果，不用重新请求</em>
+          <em>点一条即可打开当时的分析结果或失败原因，不用重新请求</em>
         </summary>
+        <div className="akw-analysis__history-meta">
+          <code title={historyDir}>{historyDir === '' ? '历史目录：加载中…' : `历史目录：${historyDir}`}</code>
+          <button type="button" className="akw-btn akw-btn--sm" onClick={() => void refreshHistory()}>
+            刷新
+          </button>
+        </div>
         {historyError !== '' ? <p className="akw-analysis__history-error">{historyError}</p> : null}
         {history.length === 0 ? (
-          <p className="akw-analysis__history-empty">还没有历史；每次分析成功后会自动留一份。</p>
+          <p className="akw-analysis__history-empty">还没有历史；每次分析（成功或失败）都会自动留一份。</p>
         ) : (
           <div className="akw-analysis__history-list">
             {history.slice(0, 12).map((item) => (
               <button
                 key={item.id}
                 type="button"
-                className="akw-analysis__history-item"
+                className={`akw-analysis__history-item${item.status === 'failed' ? ' is-failed' : ''}`}
                 disabled={loading}
                 onClick={() => void openHistory(item)}
               >
                 <span>{historyTime(item.createdAt)}</span>
-                <b>{item.objectName}</b>
-                <code>{item.objectCode}</code>
+                {item.status === 'failed' ? (
+                  <b className="akw-analysis__history-bad">失败</b>
+                ) : (
+                  <b>{item.objectName === '' ? item.objectCode : item.objectName}</b>
+                )}
+                <code>{item.objectCode === '' ? item.query : item.objectCode}</code>
                 <em>
-                  {item.enabledStatuses} 状态 · {item.userActions + item.enterActions} 动作 · {item.fields ?? 0} 字段 · {item.workflows} 工作流
+                  {item.status === 'failed'
+                    ? (item.error ?? '分析失败')
+                    : `${item.enabledStatuses} 状态 · ${item.userActions + item.enterActions} 动作 · ${item.fields ?? 0} 字段 · ${item.workflows} 工作流`}
                 </em>
               </button>
             ))}
