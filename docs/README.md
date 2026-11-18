@@ -22,7 +22,7 @@
 | `日志与排查.md` | 运行日志有哪些事件、怎么让用户下载、常见问题怎么 grep |
 | `API-DISCOVERY.md` | 用 `capture/` 监听真实浏览器流量，扩展能力目录 |
 | `EGMP-CONFIG-BASICS.md` | 配置域入门（v0 草稿；与上面规范冲突时以上面为准） |
-| `模板参数配置.md` | Word/Aspose 模板占位符语法 |
+| `模板参数配置.md` | Word/Aspose 运行报告（页面模板）占位符语法 |
 
 ## reference/：资料与样本
 

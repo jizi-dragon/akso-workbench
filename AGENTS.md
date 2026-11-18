@@ -94,6 +94,15 @@
   关联控件 `AKSelectorObject` 的 `listLayoutId` 要填**被关联对象**的列表布局（填全零会空白/列错乱）：
   没特殊要求就改默认布局，不新建。
 
+## 运行报告（页面模板，待接入）
+
+- 用户口径的「页面模板 / 运行报告」= Word 报告模板 + DTE 占位参数，知识在
+  `docs/knowledge/模板参数配置.md`（占位符、条件、循环、关联取值、日期格式、上线检查清单）；
+  填充流程与硬规则见技能 `egmp-dte-report-fill`（配置报告 Excel + 模板 → 替换字段 code，
+  **禁止猜 code / 禁止猜 `__cr`**，填完必须 validate）。
+- 页面入口：`plugin/src/client/page.tsx` 的 `MODULES` 里 `runs`（运行报告），当前渲染
+  `PendingModule`（「入口先留着，内容还没接入」）；启用编辑时从这里接，不要另起导航。
+
 ## 配置任务怎么做（查存量 → 蓝图 → 顺序 → 一次审批 → 判规模修）
 
 细节在 `docs/knowledge/标准配置思路规范.md`，开工前必读。以下是不可跳过的硬规则：
