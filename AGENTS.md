@@ -98,6 +98,7 @@
 
 - 用户口径的「页面模板 / 运行报告」= Word 报告模板 + DTE 占位参数，知识在
   `docs/knowledge/模板参数配置.md`（占位符、条件、循环、关联取值、日期格式、上线检查清单）；
+  配置方法与变更样例映射见 `docs/knowledge/运行报告配置.md`；
   填充流程与硬规则见技能 `egmp-dte-report-fill`（配置报告 Excel + 模板 → 替换字段 code，
   **禁止猜 code / 禁止猜 `__cr`**，填完必须 validate）。
 - 页面入口：`plugin/src/client/page.tsx` 的 `MODULES` 里 `runs`（运行报告），当前渲染
