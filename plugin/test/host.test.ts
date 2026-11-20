@@ -18,13 +18,15 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
 import { test } from 'node:test'
 
 import { errorMessage, uiState } from '../src/cloud.ts'
 import { saveFailedAnalysisHistory } from '../src/analysis-history.ts'
 import { CAPABILITIES } from '../src/config/capabilities.ts'
 import { applyPlan, planBlueprint, saveApproval, savePlan } from '../src/config/engine.ts'
+import { attachApprovalReview, finalizeApprovalReview, reviewMatchesPlan } from '../src/config/approval-review.ts'
+import type { ApprovalReport } from '../src/config/approval.ts'
 import { writeEgmpSession } from '../src/config/session.ts'
 import { buildBusinessSummary } from '../src/config/tools.ts'
 import { writePool, writePrefs } from '../src/store.ts'
@@ -939,6 +941,7 @@ test('配置写入先在对话里弹审批窗：人点同意才发请求', async
 
   const egmp = await startFakeEgmp()
   writeAccount(home, egmp.baseUrl)
+  process.env.AKSO_WORKBENCH_REVIEW_DIR = join(home, 'reviews')
   try {
     savePlan(home, planFixture('pln_writes', { create: 1, update: 2, irreversible: 1 }, egmp.baseUrl))
 
@@ -970,7 +973,57 @@ test('配置写入先在对话里弹审批窗：人点同意才发请求', async
     assert.equal(result.ok, true)
     assert.equal(result.approved, true)
     assert.ok(egmp.hits >= 1, '同意之后必须真的发出请求')
+    const review = report.review as Record<string, any>
+    assert.ok(review.path, '审批报告应带审核文档')
+    const closed = readFileSync(String(review.path), 'utf8')
+    assert.match(closed, /任务状态：已结束（审核文件作废，仅作历史记录）/)
+    assert.match(closed, /## 任务结束/)
+    assert.match(closed, /### 执行结果/)
   } finally {
+    delete process.env.AKSO_WORKBENCH_REVIEW_DIR
+    await egmp.close()
+  }
+})
+
+test('审批窗生成三节审核文档：问题 / 执行 / 预期 checklist', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  const egmp = await startFakeEgmp()
+  writeAccount(home, egmp.baseUrl)
+  const reviewDir = join(home, 'reviews')
+  process.env.AKSO_WORKBENCH_REVIEW_DIR = reviewDir
+  try {
+    savePlan(home, planFixture('pln_review', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
+    const running = applyTool.execute({
+      planId: 'pln_review',
+      review: {
+        taskName: '设计变更物料字段',
+        problem: '需要把 CAPA 物料字段补齐，供设计变更流程使用。',
+        approach: '先建选项集，再建字段，最后回读字段列表。',
+        expected: ['两个选项集可回读', '八个字段均可回读'],
+      },
+    }, {}) as Promise<Record<string, any>>
+    const pending = await waitPending(mounted.routes)
+    const report = pending.report as Record<string, any>
+    const review = report.review as Record<string, any>
+    assert.ok(review !== undefined, '审批报告应带审核文档')
+    assert.equal(review.problem, '需要把 CAPA 物料字段补齐，供设计变更流程使用。')
+    assert.deepEqual(review.expected, ['两个选项集可回读', '八个字段均可回读'])
+    assert.ok(String(review.path).startsWith(reviewDir), '审核文档应放在独立审核文件夹')
+    assert.match(basename(String(review.path)), /^设计变更物料字段-\d{8}-\d{6}\.md$/)
+    const markdown = readFileSync(String(review.path), 'utf8')
+    assert.match(markdown, /## 本次任务需要解决什么问题/)
+    assert.match(markdown, /## 本次任务计划怎么执行/)
+    assert.match(markdown, /## 本次任务完成后预期结果是什么/)
+    assert.match(markdown, /- \[ \] 两个选项集可回读/)
+    assert.match(markdown, /### 执行明细（与工具实际输入一致）/)
+    assert.match(markdown, /计划指纹：/)
+    await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'deny' })
+    assert.equal((await running).status, 'denied')
+  } finally {
+    delete process.env.AKSO_WORKBENCH_REVIEW_DIR
+    delete process.env.AKSO_WORKBENCH_APPROVAL_DIR
     await egmp.close()
   }
 })
@@ -1775,4 +1828,71 @@ test('分析历史：列表带目录，失败记录也能列出并读回原因',
 
   const missing = await callRaw(routes, `${ROUTES.analysisHistory}?id=nope`, 'GET')
   assert.equal(missing.status, 404)
+})
+
+test('审核文档：任务名+时间戳、指纹校验、任务结束作废、二次审核追加', () => {
+  const home = freshHome()
+  const reviewDir = join(home, 'reviews')
+  process.env.AKSO_WORKBENCH_REVIEW_DIR = reviewDir
+  try {
+    const report: ApprovalReport = {
+      planId: 'pln_review_lifecycle',
+      title: '设计变更物料字段',
+      env: 'test',
+      baseUrl: 'https://example.test',
+      host: 'example.test',
+      account: 'lyl',
+      accountId: 'a_test',
+      summary: { create: 1, update: 0, skip: 0, irreversible: 0 },
+      business: [],
+      steps: [{
+        index: 1,
+        action: 'create',
+        kind: 'field',
+        title: '创建字段 material_name__c',
+        method: 'POST',
+        path: '/api/platform/Field/Save',
+        risk: 'low',
+        irreversible: false,
+        params: { objectCode: 'material_involved_in_design_change__c', code: 'material_name__c' },
+        warnings: [],
+      }],
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      hash: 'hash_one',
+    }
+    attachApprovalReview(report, { taskName: '设计变更物料字段' }, home)
+    const path = report.review?.path ?? ''
+    assert.ok(path.startsWith(reviewDir))
+    assert.match(basename(path), /^设计变更物料字段-\d{8}-\d{6}\.md$/)
+    assert.equal(reviewMatchesPlan(path, 'hash_one'), true)
+    assert.equal(reviewMatchesPlan(path, 'hash_other'), false)
+    const markdown = readFileSync(path, 'utf8')
+    assert.match(markdown, /### 执行明细（与工具实际输入一致）/)
+    assert.match(markdown, /material_name__c/)
+
+    finalizeApprovalReview(path, '全部步骤执行成功', [{ title: '创建字段 material_name__c', status: 'ok', durationMs: 12 }])
+    const closed = readFileSync(path, 'utf8')
+    assert.match(closed, /任务状态：已结束（审核文件作废，仅作历史记录）/)
+    assert.match(closed, /### 执行结果/)
+
+    const second = { ...report, planId: 'pln_review_lifecycle_2', hash: 'hash_two' }
+    attachApprovalReview(second, {
+      taskName: '设计变更物料字段',
+      reviewPath: path,
+      reason: '执行中发现还需要补一个字段',
+      executed: ['创建字段 material_name__c'],
+      unexecuted: ['创建字段 specification__c'],
+      expected: ['补齐 specification__c'],
+    }, home)
+    const revised = readFileSync(path, 'utf8')
+    assert.match(revised, /## 二次审核/)
+    assert.match(revised, /执行中发现还需要补一个字段/)
+    assert.match(revised, /- \[x\] 创建字段 material_name__c/)
+    assert.match(revised, /- \[ \] 创建字段 specification__c/)
+    assert.match(revised, /本次计划指纹：`hash_two`/)
+    assert.equal(reviewMatchesPlan(path, 'hash_two'), true)
+  } finally {
+    delete process.env.AKSO_WORKBENCH_REVIEW_DIR
+  }
 })

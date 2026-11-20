@@ -148,6 +148,13 @@ export const zh = {
 
   /* ── 审批窗（对话里弹出的那一张）── */
   'approval.title': '确认这次写入',
+  'approval.reviewTitle': '审核文档',
+  'approval.openReview': '在右侧打开',
+  'approval.reviewProblem': '本次任务需要解决什么问题',
+  'approval.reviewApproach': '本次任务计划怎么执行',
+  'approval.reviewExpected': '本次任务完成后预期结果是什么',
+  'approval.reviewUnavailable': '无法定位当前会话，请在 DSH 右侧文件树中打开审核文档',
+  'approval.reviewFailed': '打开审核文档失败：{message}',
   'approval.expires': '审批窗口的有效期',
   'approval.expired': '已超时',
   'approval.env': '环境',
@@ -325,6 +332,13 @@ export const en: Record<keyof typeof zh, string> = {
 
   /* ── approval window (pops up over the conversation) ── */
   'approval.title': 'Confirm this write',
+  'approval.reviewTitle': 'Review document',
+  'approval.openReview': 'Open on the right',
+  'approval.reviewProblem': 'What problem this task solves',
+  'approval.reviewApproach': 'How this task will be carried out',
+  'approval.reviewExpected': 'Expected result (checklist)',
+  'approval.reviewUnavailable': 'Current session is unavailable; open the review document from the DSH file tree.',
+  'approval.reviewFailed': 'Could not open the review document: {message}',
   'approval.expires': 'How long this approval stays open',
   'approval.expired': 'Expired',
   'approval.env': 'Environment',

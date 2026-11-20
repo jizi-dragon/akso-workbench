@@ -14,6 +14,7 @@
 import { CAPABILITIES } from './capabilities.ts'
 import { applyPlan, loadPlan, planBlueprint, planHash, recordApprovalDecision, saveApproval, type Plan, type Step } from './engine.ts'
 import type { ApprovalBusinessGroup, ApprovalGate, ApprovalReport, ApprovalReportStep } from './approval.ts'
+import { attachApprovalReview, finalizeApprovalReview, reviewMatchesPlan, type ApprovalReviewInput } from './approval-review.ts'
 import type { EgmpSession } from './session.ts'
 
 /** host 解析出来的写入会话；`session: null` 时 `reason` 一定是人话。 */
@@ -230,13 +231,31 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
     description:
       '执行一份**已存在**的配置计划（必须先由 akso_workbench_config_plan 生成）。'
       + '逐步执行、每步回读校验；某步失败即停并返回 checkpoint。不接受临时参数，不能绕过计划。'
-      + '计划里有写入时，本工具会在**对话里弹出一个审批窗**，逐条列出要写的方法、路径、参数与风险；'
+      + '计划里有写入时，本工具会在**对话里弹出一个审批窗**：先打开一份三节审核文档（问题 / 执行计划 / 预期结果 checklist），'
       + '人点「同意」才发请求，点「拒绝」一步都不写，点「补充」则把补充意见回给模型改计划。'
       + '这一关不在工具参数里，模型无法自己批准。',
     parameters: {
       type: 'object',
       properties: {
         planId: { type: 'string', description: '计划 id（pln_ 开头），来自 config_plan 的返回' },
+        review: {
+          type: 'object',
+          description:
+            '可选：给审批文档补充本次任务的问题、执行思路和预期结果；不填则按计划自动生成。'
+            + '审核文档放在 .akso-workbench/reviews/，文件名为「任务名-时间戳.md」；'
+            + '任务完成后会自动标记为作废。二次审核传 reviewPath 并补充 reason/executed/unexecuted，会在原文档追加一节。',
+          properties: {
+            taskName: { type: 'string', description: '任务名；用于审核文档命名，默认取审批标题' },
+            reviewPath: { type: 'string', description: '二次审核：原审核文档的绝对路径；给出后追加到原文档，不新建' },
+            problem: { type: 'string', description: '本次任务需要解决什么问题' },
+            approach: { type: 'string', description: '本次任务计划怎么执行' },
+            expected: { type: 'array', items: { type: 'string' }, description: '本次任务完成后预期结果，逐条作为 checklist' },
+            reason: { type: 'string', description: '二次审核原因（例如执行中发现必须新增创建/更新操作）' },
+            executed: { type: 'array', items: { type: 'string' }, description: '二次审核时已执行的部分' },
+            unexecuted: { type: 'array', items: { type: 'string' }, description: '二次审核时尚未执行的部分' },
+          },
+          additionalProperties: false,
+        },
       },
       required: ['planId'],
       additionalProperties: false,
@@ -253,7 +272,7 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
       if (session === null) {
         return { ok: false, status: 'needs-account', error: opened.reason ?? '账号条没有可用的账号', hint: NEEDS_ACCOUNT_HINT }
       }
-      const input = (args ?? {}) as { planId?: string }
+      const input = (args ?? {}) as { planId?: string; review?: ApprovalReviewInput }
       const planId = String(input.planId ?? '')
       if (planId === '') return { ok: false, error: '缺少 planId' }
       const plan = loadPlan(deps.dshHome, planId)
@@ -261,8 +280,23 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
 
       const writes = plan.steps.filter((step) => step.action !== 'skip')
       const needsApproval = writes.length > 0 && deps.requireApproval()
+      let reviewPath: string | undefined
       if (needsApproval) {
         const report = buildApprovalReport(plan, session)
+        const execInfo = exec as { sessionId?: unknown; session?: { id?: unknown } } | undefined
+        const sessionId = typeof execInfo?.sessionId === 'string'
+          ? execInfo.sessionId
+          : typeof execInfo?.session?.id === 'string' ? execInfo.session.id : undefined
+        attachApprovalReview(report, input.review, deps.dshHome, sessionId)
+        reviewPath = report.review?.path
+        if (reviewPath === undefined || !reviewMatchesPlan(reviewPath, report.hash)) {
+          return {
+            ok: false,
+            status: 'review-unavailable',
+            planId,
+            message: '审核文档没有生成或与当前计划不一致，本次不进入审批、平台一步都没写。请确认工作区可写后重试。',
+          }
+        }
         const signal = (exec as { signal?: unknown } | undefined)?.signal
         const decision = await deps.approvals.request(report, signal === undefined ? {} : { signal })
         // 审批决策留痕：拒批 / 补充 / 超时 / 中断也要能查到（busy 只是"没排上"，不记）
@@ -297,8 +331,21 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
 
       try {
         const applied = await applyPlan(session, planId, deps.dshHome, { requireApproval: needsApproval })
+        const ok = applied.results.every((r) => r.status !== 'failed')
+        if (ok) {
+          finalizeApprovalReview(
+            reviewPath,
+            `全部步骤执行成功（${applied.results.length} 步）`,
+            applied.results.map((r) => ({
+              title: r.title,
+              status: r.status,
+              message: r.message,
+              durationMs: r.durationMs,
+            })),
+          )
+        }
         return {
-          ok: applied.results.every((r) => r.status !== 'failed'),
+          ok,
           status: applied.status,
           planId,
           approved: needsApproval,

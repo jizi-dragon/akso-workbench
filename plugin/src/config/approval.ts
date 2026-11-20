@@ -36,6 +36,21 @@ export interface ApprovalBusinessGroup {
 }
 
 /** 弹窗要展示的全部内容；`hash` 是计划指纹，写审批记录时原样存下。 */
+/**
+ * 审核文档：把「为什么要改 / 怎么改 / 改完预期」固定成一份可阅读、可勾选的 Markdown。
+ * 弹窗只展示摘要，完整文档由 DSH 右侧文件预览打开。
+ */
+export interface ApprovalReview {
+  /** 绝对路径；客户端按当前 Session 转成 dsh-resource 地址。 */
+  path: string
+  /** host 侧如果知道当前 Session，可直接带下来；否则客户端从右侧栏服务读。 */
+  sessionId?: string
+  title: string
+  problem: string
+  approach: string
+  expected: string[]
+}
+
 export interface ApprovalReport {
   planId: string
   title: string
@@ -48,6 +63,8 @@ export interface ApprovalReport {
   /** 业务摘要（弹窗顶部）；技术细节留在 steps 里，折起来看。 */
   business: ApprovalBusinessGroup[]
   steps: ApprovalReportStep[]
+  /** 审核文档；生成失败时为 undefined，弹窗降级为只读步骤列表。 */
+  review?: ApprovalReview
   createdAt: number
   expiresAt: number
   hash: string

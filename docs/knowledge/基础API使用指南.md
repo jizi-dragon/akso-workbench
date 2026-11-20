@@ -153,6 +153,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 **要点**
 
 - statisticsArrange 必填，最容易漏。
+- 新建字段时除 `name__ak` 外，`isRequired` 一律 false；是否必填在表单布局里控制（2026-11-21 用户规则）。
 - dataType=4 要 picklistId（从 query.picklist.get 的 objectPicklistId 取）；=15 要 referenceObjectId + objectRelation。
 - dataType=15 平台强制 isRequired=true，=16 强制 false。
 - **dataType=14 是公式，不是多行文本**。默认用 1（文本），也**只用 1**：长文本 17、富文本 18 已禁用（2026-11-09 管理员规则，不再新建）；公式 14 仅在值由其它字段算出时才用。

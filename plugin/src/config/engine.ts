@@ -155,11 +155,16 @@ export async function invokeCapability(session: EgmpSession, capabilityId: strin
 
 /* ───────────────────────────── 计划 ───────────────────────────── */
 
-function picklistIdOf(data: Record<string, unknown> | null): string {
+function picklistIdOf(data: Record<string, unknown> | Array<Record<string, unknown>> | null): string {
   if (data === null) return ''
+  // query.picklist.get 的 v1.0 形状是选项裸数组；objectPicklistId 在每一项上。
+  if (Array.isArray(data)) {
+    const first = data[0]
+    return first === undefined ? '' : String(first.objectPicklistId ?? first.picklist_id ?? '')
+  }
   const meta = data.picklists as Record<string, unknown> | undefined
   if (meta !== undefined && meta !== null) return String(meta.picklist_id ?? '')
-  return String(data.id ?? '')
+  return String(data.objectPicklistId ?? data.id ?? '')
 }
 
 interface ExistingOption {
@@ -662,6 +667,8 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
       }
       case 'field': {
         const objectCode = String(step.expected?.object ?? '')
+        // 同一计划里前一步刚建的字段不会出现在 buildPlan 阶段的 fields 缓存里。
+        ctx.fields.delete(objectCode)
         const fields = await getFields(ctx, objectCode)
         const ok = fields.some((f) => String(f.field_code ?? f.code ?? '') === String(step.expected?.code ?? ''))
         return { verified: ok, message: ok ? '字段存在' : '回读未找到字段' }

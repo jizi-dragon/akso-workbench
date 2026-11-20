@@ -302,6 +302,7 @@ export const CAPABILITIES: Capability[] = [
     returns: 'data: true（不返回 fieldId）。',
     notes: [
       'statisticsArrange 必填，最容易漏。',
+      '新建字段时除 name__ak 外，isRequired 一律 false；是否必填在表单布局里控制（2026-11-21 用户规则）。',
       'dataType=4 要 picklistId（从 query.picklist.get 的 objectPicklistId 取）；=15 要 referenceObjectId + objectRelation。',
       'dataType=15 平台强制 isRequired=true，=16 强制 false。',
       '**dataType 建完不能改，字段也不能删**：选错只能把旧字段改名（带「(停用)」）+ `status:2` / `disabled:true` 停用，再用新 code 建一个。对象内字段**名称也唯一**，不先给旧字段改名，新字段会报「字段名称重复」。',

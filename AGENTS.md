@@ -40,12 +40,30 @@
   **唯一例外是 journal 本身**：日志写不进去不能影响工具与页面（`journal.record` 内部吞错），这是有意的，改它之前先想清楚会不会把请求打挂。
 - **写日志的铁律**：不记 token、口令、请求体原文；审计记录"谁在什么环境对哪一版计划做了什么"，内容细节用 `planId` 回查计划文件。
 
+## 版本与发布
+
+完整规则见 [`VERSIONING.md`](VERSIONING.md)。硬约束：
+
+- 日常提交：**PATCH +1**（`0.1.0 → 0.1.1`），只提交与构建，不打 tag、不发 Release、不改下载清单。
+- 用户明确要求「打 tag / 打包 release / 发布正式版」：**MINOR +1**、PATCH 归零（`0.1.4 → 0.2.0`）。
+- **MAJOR +1** 只在项目架构发生重大变化且用户明确要求时进行（`0.10.0 → 1.0.0`）。
+- 根 `package.json`、`plugin/package.json`、两个 `package-lock.json` 必须同版本；客户端版本从 `plugin/package.json` 读取。
+
 ## 其他既有约束
 
 - 配置写入只走「模型工具 + 对话内审批窗」：`engine.applyPlan` 是唯一的门，写入前必须有人
   在弹窗里点「同意」（`config-approvals/<planId>.json` 存计划指纹，一次性）；HTTP 直连默认关闭
   （`AKSO_WORKBENCH_ALLOW_DIRECT_WRITE=1` 仅本机调试，开了也仍过引擎的审批门）。
   审批要求 = 环境变量 `AKSO_WORKBENCH_REQUIRE_APPROVAL` > 页面开关 > 默认要求。
+- 审批前必须生成三节审核文档（问题 / 执行计划 / 预期结果 checklist）：host 写到
+  `.akso-workbench/reviews/<任务名>-YYYYMMDD-HHmmss.md`（不入库），弹窗显示摘要并提供「在右侧打开」，
+  用 DSH 的 `sidebarRight.openResource` 打开。文档同时写计划指纹与执行明细（方法/路径/参数），
+  `config_apply` 在审批前校验文档存在且指纹匹配；生成失败或指纹不一致返回 `review-unavailable`，
+  **不进入审批、平台一步不写**。可传 `review{taskName,problem,approach,expected[]}` 补充内容。
+- 审核文件生命周期：文档先于审批，是任务的「第一目标」；预期结果 checklist 未完成前不发起第二次审批。
+  只有任务成功结束后 host 才把文档标记为「已结束（审核文件作废，仅作历史记录）」并附执行结果；
+  拒批、超时、执行失败都不作废。二次审核（执行中发现必须新增创建/更新、导致新增 checklist）传
+  `review{reviewPath,reason,executed[],unexecuted[]}` 追加到原文档，注明已执行/未执行与原因，不另起一份。
 - 写入账号必须来自底部账号条（`prefs.currentAccountId`）且在配置池里；账号条为空时工具返回
   `needs-account`、界面自动弹选账号面板，**不许**回落到磁盘上的旧会话或别的账号。
   计划绑定 `target{baseUrl,accountId}`，apply 前比对，不一致直接 `TARGET_CHANGED`。
@@ -75,6 +93,8 @@
 - **字段类型规则（2026-11-09 管理员口径）**：一律用文本 `dataType: 1`；**长文本 17、富文本 18 已禁用**，
   不再新建、不再使用（`node plugin/scripts/api-guide.mjs --check` 会扫文档里的 17/18 并报错）。
   字段建完不能改类型、也不能删，选错只能改名停用 + 新建。
+- **字段必填规则（2026-11-21 用户口径）**：新建字段时，除对象自带的 `name__ak` 外，其余字段一律
+  `isRequired: false`；是否必填在**表单布局**里控制，不要在建字段时设置必填。
 - **工作流触发（2026-11-09 管理员口径）**：工作流发布后不会自己跑。审批流由对象/状态上的动作
   （`behaviorType: 7`，`behaviorValue.workflowId` 填 workflowBasicId）拉起；提醒流由**进入动作**拉起，
   且必须把工作流级 `isAllowTrigger` 置 true（界面「允许从进入动作和事件动作自动启动」，勾选并启用后

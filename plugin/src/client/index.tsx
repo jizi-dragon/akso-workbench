@@ -16,7 +16,7 @@ import { CSS } from './styles.ts'
 import { dictionaries, NS, setTranslator } from './i18n.ts'
 import { track } from './api.ts'
 
-export const inject = ['slots', 'locale', 'layout']
+export const inject = ['slots', 'locale', 'layout', 'sidebarRight']
 
 const PANEL_ID = 'akso-workbench'
 
@@ -137,6 +137,7 @@ export function apply(ctx: any): void {
           locale: NS,
           inject: () => ({
             openPanel: () => ctx.layout.selectPanel(PANEL_ID),
+            sidebarRight: ctx.sidebarRight,
           }),
         },
         AccountStrip as unknown as (props: never) => never,

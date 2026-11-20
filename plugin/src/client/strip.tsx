@@ -18,10 +18,18 @@ import { t } from './i18n.ts'
 import { connectAccount, disconnect, flash, getState, refresh, subscribe } from './state.ts'
 import { api, type CloudAccount, type EgmpTokenView, type PendingApprovalView } from './api.ts'
 
+interface SidebarRightLike {
+  /** DSH 当前屏幕上挂载的 Session（observable 或裸值）。 */
+  mounted?: unknown
+  openResource?: (address: string, options?: Record<string, unknown>) => unknown
+}
+
 interface StripProps {
   t?: (key: string, vars?: Record<string, string | number>) => string
   /** 由 register 的 `inject` 注入：跳到账号中心页 */
   openPanel?: () => void
+  /** 由 register 的 `inject` 注入：把审批文档打开到 DSH 右侧文件预览 */
+  sidebarRight?: SidebarRightLike
 }
 
 type Translate = (key: string, vars?: Record<string, string | number>) => string
@@ -103,6 +111,20 @@ function countdownOf(ms: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
+/** 从 DSH 右侧栏服务取当前 Session id；兼容 observable 和裸值。 */
+function mountedSessionId(service: SidebarRightLike | undefined): string | null {
+  const mounted = service?.mounted
+  const value = typeof (mounted as { get?: unknown } | undefined)?.get === 'function'
+    ? (mounted as { get: () => unknown }).get()
+    : mounted
+  return typeof value === 'string' && value.trim() !== '' ? value : null
+}
+
+/** 把工作区绝对路径转成 DSH 文档预览地址。 */
+function reviewAddress(path: string, sessionId: string): string {
+  return `dsh-resource://file/session/${encodeURIComponent(sessionId)}/${encodeURI(path.replaceAll('\\', '/'))}`
+}
+
 /**
  * 对话里的审批窗（`m00603`：要弹在**对话区**，不是底部账号条）。
  *
@@ -111,7 +133,7 @@ function countdownOf(ms: number): string {
  * 窗口自己不提供 ×：审批只能显式做，点外面/按 Esc 都不关；宿主侧超时（8 分钟）或工具被取消时，
  * 轮询会发现 pending 消失，窗口自然收起。
  */
-function ApprovalModal(props: { tr: Translate }) {
+function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }) {
   const { tr } = props
   const [pending, setPending] = useState<PendingApprovalView | null>(null)
   const [busy, setBusy] = useState(false)
@@ -149,6 +171,20 @@ function ApprovalModal(props: { tr: Translate }) {
   const total = report.steps.length
   /* 旧 host 还没有 business 字段：降级成「只有逐条接口」，不要白屏。 */
   const business = Array.isArray(report.business) ? report.business : []
+  const review = report.review
+  const openReview = (): void => {
+    if (review === undefined) return
+    const sessionId = review.sessionId ?? mountedSessionId(props.sidebarRight)
+    if (sessionId === null || typeof props.sidebarRight?.openResource !== 'function') {
+      flash(tr('approval.reviewUnavailable'))
+      return
+    }
+    try {
+      void props.sidebarRight.openResource(reviewAddress(review.path, sessionId), { revealIfOpened: true })
+    } catch (error) {
+      flash(tr('approval.reviewFailed', { message: error instanceof Error ? error.message : String(error) }))
+    }
+  }
 
   const decide = async (verdict: 'approve' | 'deny' | 'supplement'): Promise<void> => {
     if (busy) return
@@ -213,6 +249,37 @@ function ApprovalModal(props: { tr: Translate }) {
         {report.summary.irreversible > 0 ? (
           <div className="akw-approval__summary is-warn">
             {tr('approval.irreversibleCount', { count: report.summary.irreversible })}
+          </div>
+        ) : null}
+
+        {review !== undefined ? (
+          <div className="akw-approval__review">
+            <div className="akw-approval__reviewHead">
+              <span>{tr('approval.reviewTitle')}</span>
+              <button type="button" className="akw-btn akw-btn--sm" onClick={openReview}>
+                {tr('approval.openReview')}
+              </button>
+            </div>
+            <div className="akw-approval__reviewSection">
+              <b>{tr('approval.reviewProblem')}</b>
+              <p>{review.problem}</p>
+            </div>
+            <div className="akw-approval__reviewSection">
+              <b>{tr('approval.reviewApproach')}</b>
+              <p className="akw-approval__reviewApproach">{review.approach}</p>
+            </div>
+            <div className="akw-approval__reviewSection">
+              <b>{tr('approval.reviewExpected')}</b>
+              <ul className="akw-approval__reviewChecklist">
+                {review.expected.map((item) => (
+                  <li key={item}>
+                    <input type="checkbox" checked={false} readOnly aria-hidden="true" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="akw-approval__reviewPath" title={review.path}>{review.path}</div>
           </div>
         ) : null}
 
@@ -420,12 +487,12 @@ export function AccountStrip(props: StripProps = {}) {
     }
   }, [open])
 
-  if (state.status === 'loading') return <ApprovalModal tr={tr} />
+  if (state.status === 'loading') return <ApprovalModal tr={tr} sidebarRight={props.sidebarRight} />
 
   if (state.status === 'error') {
     return (
       <>
-        <ApprovalModal tr={tr} />
+        <ApprovalModal tr={tr} sidebarRight={props.sidebarRight} />
         <div className="akw-strip">
           <button type="button" className="akw-strip__retry" title={state.error ?? ''} onClick={() => void refresh()}>
             {tr('strip.error')}
@@ -437,7 +504,7 @@ export function AccountStrip(props: StripProps = {}) {
 
   return (
     <>
-      <ApprovalModal tr={tr} />
+      <ApprovalModal tr={tr} sidebarRight={props.sidebarRight} />
       <div className="akw-strip" ref={rootRef}>
       {connected !== null ? (
         <button

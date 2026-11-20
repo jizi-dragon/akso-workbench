@@ -95,6 +95,14 @@ export interface ApprovalReportView {
   /** 业务摘要（弹窗顶部）：只说新建 / 更新了什么，不列接口与参数。 */
   business: Array<{ action: 'create' | 'update'; kind: string; names: string[] }>
   steps: ApprovalStepView[]
+  review?: {
+    path: string
+    sessionId?: string
+    title: string
+    problem: string
+    approach: string
+    expected: string[]
+  }
   createdAt: number
   expiresAt: number
   hash: string

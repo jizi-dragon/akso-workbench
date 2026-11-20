@@ -8,3 +8,6 @@ plugin/node_modules/
 
 # 对象分析产物：本机生成、只做交付，不入库（图形源与码表在 docs/reference/）
 docs/analysis/
+
+# 审批文档：运行时按计划生成，不入库
+.akso-workbench/

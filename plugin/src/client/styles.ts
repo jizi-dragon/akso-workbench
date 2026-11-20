@@ -428,6 +428,17 @@ export const CSS = `
 .akw-approval__note{box-sizing:border-box;width:100%;min-height:70px;padding:9px 11px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:var(--dsw-specific-input-major);color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;line-height:18px;resize:vertical;outline:none}
 .akw-approval__note:focus{border-color:var(--dsw-alias-state-business-primary)}
 .akw-approval__error{font-size:12px;line-height:17px;color:var(--dsw-alias-state-error-primary)}
+.akw-approval__review{display:flex;flex-direction:column;gap:9px;max-height:260px;padding:11px 12px;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
+.akw-approval__reviewHead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-caption)}
+.akw-approval__reviewHead button{flex:none}
+.akw-approval__reviewSection{display:flex;flex-direction:column;gap:3px}
+.akw-approval__reviewSection b{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
+.akw-approval__reviewSection p{margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-primary);white-space:pre-wrap}
+.akw-approval__reviewApproach{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10.5px;line-height:16px;color:var(--dsw-alias-label-secondary)}
+.akw-approval__reviewChecklist{display:flex;flex-direction:column;gap:3px;margin:0;padding:0;list-style:none}
+.akw-approval__reviewChecklist li{display:flex;align-items:flex-start;gap:6px;font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-primary)}
+.akw-approval__reviewChecklist input{flex:none;margin:3px 0 0;accent-color:var(--dsw-alias-state-business-primary)}
+.akw-approval__reviewPath{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;line-height:14px;color:var(--dsw-alias-label-caption);word-break:break-all;opacity:.8}
 .akw-approval__foot{display:flex;align-items:center;gap:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2)}
 .akw-approval__hint{flex:1;min-width:0;font-size:11px;line-height:15px;color:var(--dsw-alias-label-caption)}
 .akw-approval__buttons{flex:none;display:flex;align-items:center;gap:8px}
