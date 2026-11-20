@@ -205,14 +205,18 @@ sequenceDiagram
 工具被中断会结算成 `cancelled`。浏览器每 2 秒轮询 `pending`，弹窗里**没有 ×**——只能显式选同意、
 拒绝或补充。
 
-审批前 host 会先写一份三节审核文档（`plugin/src/config/approval-review.ts`）：
-`.akso-workbench/reviews/<任务名>-YYYYMMDD-HHmmss.md`，内容为「问题 / 执行计划 / 预期结果 checklist」，
-并附计划指纹与逐条执行明细（方法/路径/参数），保证审核文件与实际工具输入一致。
-报告里带 `review.path`；弹窗展示三节摘要与 checklist，并提供「在右侧打开」，通过
-`ctx.sidebarRight.openResource` 在 DSH 右侧文件预览打开。`config_apply` 可传
-`review{taskName,problem,approach,expected[]}` 覆盖自动生成的内容；审批前会校验文档存在且计划指纹匹配，
-不匹配或写失败返回 `review-unavailable`，不进入审批。任务成功后 host 才把文档标记为
-「已结束（审核文件作废，仅作历史记录）」并附执行结果；拒批 / 超时 / 失败不作废。
+审批前 host 会先写一份审核文档（`plugin/src/config/approval-review.ts`）：
+`create` 类型写到 `.akso-workbench/reviews/<任务名>-YYYYMMDD-HHmmss.md`，内容为「问题 / 执行计划 /
+预期结果 checklist」，并附计划指纹与逐条执行明细（方法/路径/参数），保证审核文件与实际工具输入一致。
+任务已执行后的局部优化/更新用 `update` 类型，写到 `<任务名>-更新-YYYYMMDD-HHmmss.md`，篇幅更短，
+只含任务概述 / 调整计划 / 预期 checklist / 本次操作清单，可带 `previousReviewPath` 与 `reason`。
+报告里带 `review.path` 与 `review.kind`；弹窗展示任务概述、文档地址与「在右侧打开」，通过
+`ctx.sidebarRight.openResource` 在 DSH 右侧文件预览打开；弹窗常驻「调整内容」文本框，填写后只能
+「提交调整」，空内容时只能「同意」。`config_apply` 可传
+`review{kind,taskName,previousReviewPath,problem,approach,expected[],reason}` 覆盖自动生成的内容；
+审批前会校验文档存在、类型匹配且计划指纹匹配，不匹配或写失败返回 `review-unavailable`，不进入审批。
+任务成功后 host 才把文档标记为「已结束（审核文件作废，仅作历史记录）」并附执行结果；拒批 / 超时 /
+失败不作废。**已结束文档禁止再修改**，后续调整必须新建 `update` 文档。
 
 ```mermaid
 sequenceDiagram
@@ -447,8 +451,10 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
    - `config-approvals/pln_*.json`：`hash`、`at`、`usedAt`（有 `usedAt` = 已消费）
    - `config-audit/`：`<YYYY-MM>.jsonl` 每步一条（`status` / `traceId` / `durationMs`），
      `approvals-<YYYY-MM>.jsonl` 审批决策一条
-   - `.akso-workbench/reviews/<任务名>-<YYYYMMDD-HHmmss>.md`：本次任务的审核文档（工作区下，不入库）；
-     任务成功后状态改为「已结束（审核文件作废）」，并附执行结果
+   - `.akso-workbench/reviews/<任务名>-<YYYYMMDD-HHmmss>.md`：创建/调整任务的审核文档（工作区下，不入库）；
+     任务成功后状态改为「已结束（审核文件作废）」并附执行结果；已结束文档不可再改
+   - `.akso-workbench/reviews/<任务名>-更新-<YYYYMMDD-HHmmss>.md`：已执行任务的小范围更新文档，
+     篇幅更短，带关联的已执行文件与调整原因
    - `analysis-history/<id>.json`：分析结果全文
    - `egmp-session.json`：只有票与来源账号，没有口令
 
@@ -464,7 +470,7 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
 | `plugin/src/config/tools.ts` | `config_plan` / `config_apply` 工具；审批报告与业务摘要 |
 | `plugin/src/config/engine.ts` | 读现状、diff、计划文件、`applyPlan` 复验、逐步执行与回读、审计 |
 | `plugin/src/config/approval.ts` | 审批门：单条、8 分钟超时、abort 结算 |
-| `plugin/src/config/approval-review.ts` | 生成三节审核文档（问题 / 执行 / 预期 checklist）、计划指纹校验、任务结束作废、二次审核追加 |
+| `plugin/src/config/approval-review.ts` | 生成 `create` / `update` 两类审核文档、计划指纹校验、任务结束作废；已结束文档禁止再改，更新另起新文件 |
 | `plugin/src/index.ts` | HTTP 路由、`snapshot`、`ensureEgmpSession` / `openWriteSession`、工具注册 |
 | `plugin/src/analysis-tool.ts` | `object_analysis` 工具外壳与返回裁剪 |
 | `plugin/src/analysis.ts` | 对象/状态/动作/工作流的只读读取 |

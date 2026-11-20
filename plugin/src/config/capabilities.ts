@@ -469,6 +469,7 @@ export const CAPABILITIES: Capability[] = [
       '新建 section 只需 `{ id, code, name, type, columnsNum }`；新建 control 只需 `{ id, sectionId, code, name, fieldId, type, gridSpan, attrs }`。id 用新 UUID。',
       '**不要带 `belongId` / `fullPath`**：带上必报「[layout_section] BelongId 不正确，该值必须由 FullPath 生成」；实测请求体里没有这两个字段。',
       '旧 section（如 type=4 工作流时间线）原样回传，不能删；pages 原样回传，没有分页传 []。',
+      '**新增 section 必须顺位追加**：sections 数组按现有顺序排列，新分区放在数组最后，sort 取当前最大 sort + 1；平台按数组顺序归一化 sort，把新分区放数组第一位就会跑到第一位（2026-11-21 实测修正）。',
       '**新分区 / 新控件的 id 必须先经 layout.stable.ids 换成稳定 id**：直接写临时 uuid 会报「[layout_section] BelongId 不正确」，换成稳定 id 后同一个 body 一次通过（2026-11-09 实测）。',
       '已有分区可以压成最小对象（`{ id, layoutId, pageId: null, name, code, type, sort, hidden, displayOnlyInLifecycleStatusIds: [], expandOnlyInLifecycleStatusIds: [] }`），前提是 `id` 已换成稳定 id；之前报 400 的根因是没换稳定 id，与分区繁简无关（2026-11-09 实测）。',
       '关联控件的 attrs 里 objectId / listLayoutId 要写成**带引号的字符串**（形如 "\\"<对象id>\\""），再带 createRecordMode:"3" 才能新建关联记录。',

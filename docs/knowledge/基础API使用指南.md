@@ -328,6 +328,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 - 新分区 / 新控件的 `id` 必须先经 `layout.stable.ids` 换成稳定 id；直接写临时 uuid 同样报 BelongId 那句，换完同一个 body 一次通过。
 - 已有分区要按 `layout.detail` 读回的原样整份回传（90+ 键，含 `pageId`、`relationFilter`、`listlayoutId` 等），压成最小对象会 400；只有新建的才用最小对象。
 - 旧 section（如 type=4 工作流时间线）原样回传，不能删；pages 原样回传，没有分页传 []。
+- **新增分区必须顺位追加**：`sections` 数组保持现有顺序，新分区放在数组最后，`sort` 取现有最大 `sort + 1`；平台按数组顺序归一化 sort，插到第一位会变成“新分区在前”。（2026-11-21 实测）
 - 2026-11-09 抓包验证：给 akwv1109__c 的默认布局加「基础信息」分区 + 4 个控件（名称 / 文本 / 数字 / 单选），200 / 176ms、code 0；回读 LayoutDetail 确认 sections=2、controls=4。
 
 **案例**

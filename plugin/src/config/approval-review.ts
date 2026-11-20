@@ -1,12 +1,13 @@
 /**
  * 审批文档（host 半边）。
  *
- * 一份任务一份审核文档：放在工作区 `.akso-workbench/reviews/` 下，文件名是
- * `任务名-YYYYMMDD-HHmmss.md`。文档先于审批生成，作为任务的「第一目标」；
- * 任务完成后再回来把状态改成「已结束（审核文件作废）」，留作历史记录。
+ * 两类文档，都放在工作区 `.akso-workbench/reviews/` 下：
+ * - `create`：大规模创建/调整，文件名 `任务名-YYYYMMDD-HHmmss.md`，带完整执行明细；
+ * - `update`：任务完成后的小范围优化/更新，文件名 `任务名-更新-YYYYMMDD-HHmmss.md`，只保留摘要与操作清单。
  *
- * 二次审核：调用方传 `reviewPath` 指向原文档，并给出 reason / executed / unexecuted，
- * 这里在原文档追加一节，不另起一份，避免同一任务散成多份。
+ * 文档先于审批生成，是任务的「第一目标」。任务成功后由 `finalizeApprovalReview`
+ * 标成「已结束（审核文件作废）」；**已结束的文档不可再改**。后续调整必须新建一份
+ * `update` 文档，并在其中引用上一份已执行文档。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -14,22 +15,20 @@ import { join } from 'node:path'
 import type { ApprovalReport, ApprovalReview } from './approval.ts'
 
 export interface ApprovalReviewInput {
+  /** `create` 大规模创建/调整（默认）；`update` 已执行任务的小范围更新。 */
+  kind?: 'create' | 'update'
   /** 任务名；不填则用审批标题。 */
   taskName?: string
-  /** 二次审核：指向同一任务的既有审核文档。 */
-  reviewPath?: string
+  /** 小范围更新时，指向上一份已执行审核文档，仅作引用，不修改它。 */
+  previousReviewPath?: string
   /** 本次任务需要解决什么问题。 */
   problem?: string
   /** 本次任务计划怎么执行。 */
   approach?: string
   /** 本次任务完成后预期结果，逐条作为 checklist。 */
   expected?: string[]
-  /** 二次审核原因。 */
+  /** 小范围更新时的调整原因。 */
   reason?: string
-  /** 二次审核时已执行的部分。 */
-  executed?: string[]
-  /** 二次审核时尚未执行的部分。 */
-  unexecuted?: string[]
 }
 
 function clean(value: unknown): string {
@@ -85,6 +84,15 @@ function safeName(value: string): string {
   return name === '' ? '未命名任务' : name
 }
 
+/** 同一任务同一秒只能有一份文档；重名时追加序号，绝不覆盖旧文件。 */
+function uniquePath(dir: string, base: string): string {
+  let candidate = join(dir, `${base}.md`)
+  for (let index = 2; existsSync(candidate); index += 1) {
+    candidate = join(dir, `${base}-${index}.md`)
+  }
+  return candidate
+}
+
 function checklist(items: string[]): string[] {
   return items.map((item) => `- [ ] ${item}`)
 }
@@ -107,12 +115,30 @@ function stepDetails(report: ApprovalReport): string[] {
   return out
 }
 
-function newDocument(report: ApprovalReport, review: Omit<ApprovalReview, 'path'>, at: string): string {
-  return [
+function briefStepDetails(report: ApprovalReport): string[] {
+  const out: string[] = ['### 本次操作清单（小范围更新）', '']
+  for (const step of report.steps) {
+    out.push(`- ${step.index}. ${step.title}（\`${step.method} ${step.path}\`）${step.irreversible ? '【不可逆】' : ''}`)
+  }
+  out.push('')
+  return out
+}
+
+function newDocument(
+  report: ApprovalReport,
+  review: Omit<ApprovalReview, 'path'>,
+  input: ApprovalReviewInput,
+  at: string,
+): string {
+  const update = review.kind === 'update'
+  const previous = clean(input.previousReviewPath)
+  const reason = clean(input.reason)
+  const head = [
     `# ${review.title}`,
     '',
+    `> 文档类型：${update ? '小范围调整 / 更新' : '创建 / 调整'}`,
     '> 任务状态：进行中',
-    `> 任务名：${review.title.replace(/^审核文档：/, '')}`,
+    `> 任务名：${review.title.replace(/^(更新)?审核文档：/, '')}`,
     `> 计划：\`${report.planId}\``,
     `> 计划指纹：\`${report.hash}\``,
     `> 步骤数：${report.steps.length}`,
@@ -120,67 +146,42 @@ function newDocument(report: ApprovalReport, review: Omit<ApprovalReview, 'path'
     `> 目标：${report.host}`,
     `> 账号：${report.account}`,
     `> 创建时间：${at}`,
-    '',
-    '## 本次任务需要解决什么问题',
+  ]
+  if (update && previous !== '') head.push(`> 关联已执行审核文件：\`${previous}\``)
+  if (update && reason !== '') head.push(`> 调整原因：${reason}`)
+  head.push('')
+
+  const problemTitle = update ? '## 本次调整需要解决什么问题' : '## 本次任务需要解决什么问题'
+  const approachTitle = update ? '## 本次调整计划怎么执行' : '## 本次任务计划怎么执行'
+  const expectedTitle = update ? '## 本次调整完成后预期结果是什么' : '## 本次任务完成后预期结果是什么'
+
+  return [
+    ...head,
+    problemTitle,
     '',
     review.problem,
     '',
-    '## 本次任务计划怎么执行',
+    approachTitle,
     '',
     review.approach,
     '',
-    ...stepDetails(report),
-    '## 本次任务完成后预期结果是什么',
+    ...(update ? briefStepDetails(report) : stepDetails(report)),
+    expectedTitle,
     '',
     ...checklist(review.expected),
     '',
     '---',
     '',
     '> 这份文档由 akso-workbench 在审批前生成；只有审批窗点「同意」才会真正写入平台。',
-    '> 任务完成前，审核文件是任务目标；任务完成后会标记为「已结束（审核文件作废）」。',
+    ...(update
+      ? ['> 这是一份小范围更新审核文件；上一份已执行文档不会被修改。']
+      : ['> 任务完成后会标记为「已结束（审核文件作废）」；后续调整必须新建更新审核文件。']),
     '',
   ].join('\n')
 }
 
-/**
- * 二次审核：在原文档末尾追加一节，并记录已执行 / 未执行 / 原因。
- * 不覆盖原文档，避免历史审核内容丢失。
- */
-function appendRevision(
-  existing: string,
-  report: ApprovalReport,
-  review: Omit<ApprovalReview, 'path'>,
-  input: ApprovalReviewInput,
-  at: string,
-): string {
-  const executed = lines(input.executed)
-  const unexecuted = lines(input.unexecuted)
-  const section = [
-    '',
-    `## 二次审核 · ${at}`,
-    '',
-    `> 任务状态：进行中（已更新审核文件）`,
-    `> 原因：${clean(input.reason) || '执行过程中发现需要补充创建/更新操作'}`,
-    `> 本次计划：\`${report.planId}\``,
-    `> 本次计划指纹：\`${report.hash}\``,
-    '',
-    '### 已执行部分',
-    '',
-    ...(executed.length > 0 ? executed.map((item) => `- [x] ${item}`) : ['- （未标注）']),
-    '',
-    '### 未执行部分',
-    '',
-    ...(unexecuted.length > 0 ? unexecuted.map((item) => `- [ ] ${item}`) : ['- （未标注）']),
-    '',
-    '### 本次新增 / 更新的预期结果',
-    '',
-    ...checklist(review.expected),
-    '',
-    ...stepDetails(report),
-    '',
-  ].join('\n')
-  const active = existing.replace('> 任务状态：已结束（审核文件作废，仅作历史记录）', '> 任务状态：进行中')
-  return active + section
+function isExecuted(text: string): boolean {
+  return /^> 任务状态：已结束/m.test(text)
 }
 
 export function attachApprovalReview(
@@ -189,6 +190,7 @@ export function attachApprovalReview(
   dshHome: string,
   sessionId?: string,
 ): void {
+  const kind: 'create' | 'update' = input?.kind === 'update' ? 'update' : 'create'
   const taskName = clean(input?.taskName) || report.title
   const problem = clean(input?.problem) || defaultProblem(report)
   const approach = clean(input?.approach) || defaultApproach(report)
@@ -196,26 +198,14 @@ export function attachApprovalReview(
   const checklistItems = expected.length > 0 ? expected : defaultExpected(report)
   const at = new Date().toLocaleString('zh-CN', { hour12: false })
   const review: Omit<ApprovalReview, 'path'> = {
-    title: `审核文档：${taskName}`,
+    kind,
+    title: `${kind === 'update' ? '更新' : ''}审核文档：${taskName}`,
     ...(typeof sessionId === 'string' && sessionId !== '' ? { sessionId } : {}),
     problem,
     approach,
     expected: checklistItems,
   }
 
-  const existingPath = clean(input?.reviewPath)
-  if (existingPath !== '' && existsSync(existingPath)) {
-    try {
-      const existing = readFileSync(existingPath, 'utf8')
-      writeFileSync(existingPath, appendRevision(existing, report, review, input ?? {}, at), 'utf8')
-      report.review = { path: existingPath, ...review }
-      return
-    } catch (error) {
-      console.warn('[akso-workbench] 二次审核文档更新失败，改为新建一份', error)
-    }
-  }
-
-  const fileName = `${safeName(taskName)}-${stamp()}.md`
   const candidates = [
     process.env.AKSO_WORKBENCH_REVIEW_DIR?.trim(),
     process.env.AKSO_WORKBENCH_APPROVAL_DIR?.trim(),
@@ -223,10 +213,10 @@ export function attachApprovalReview(
     join(dshHome, 'akso-workbench', 'reviews'),
   ].filter((dir): dir is string => typeof dir === 'string' && dir !== '')
   for (const dir of candidates) {
-    const path = join(dir, fileName)
+    const path = uniquePath(dir, `${safeName(taskName)}${kind === 'update' ? '-更新' : ''}-${stamp()}`)
     try {
       mkdirSync(dir, { recursive: true })
-      writeFileSync(path, newDocument(report, review, at), 'utf8')
+      writeFileSync(path, newDocument(report, review, input ?? {}, at), 'utf8')
       report.review = { path, ...review }
       return
     } catch {
@@ -238,33 +228,34 @@ export function attachApprovalReview(
 
 /**
  * 审批文档是否确实对应这一版计划：防止拿旧文档、或文档写入不完整就进入审批。
- * 新文档带「计划指纹」，二次审核追加段落带「本次计划指纹」。
+ * 已执行的文档不能再复用（哪怕指纹碰巧相同）。
  */
 export function reviewMatchesPlan(path: string | undefined, planHash: string): boolean {
   const target = clean(path)
   if (target === '' || !existsSync(target) || planHash === '') return false
   try {
     const text = readFileSync(target, 'utf8')
+    if (isExecuted(text)) return false
     return text.includes(`计划指纹：\`${planHash}\``) || text.includes(`本次计划指纹：\`${planHash}\``)
   } catch {
     return false
   }
 }
 
-/** 任务执行结束：把审核文件标记为作废，只保留历史记录。 */
+/** 任务执行结束：把审核文件标记为作废，只保留历史记录；已结束的文档不再改。 */
 export function finalizeApprovalReview(
   path: string | undefined,
   outcome: string,
   results: Array<{ title: string; status: string; message?: string; durationMs?: number }> = [],
-): void {
+): boolean {
   const target = clean(path)
-  if (target === '' || !existsSync(target)) return
+  if (target === '' || !existsSync(target)) return false
   try {
     const existing = readFileSync(target, 'utf8')
+    if (isExecuted(existing)) return false
     const at = new Date().toLocaleString('zh-CN', { hour12: false })
     const closed = existing
       .replace(/^> 任务状态：.*$/m, '> 任务状态：已结束（审核文件作废，仅作历史记录）')
-      .replace(/^> 结束时间：.*$/gm, '')
       .replace(/> 创建时间：([^\n]*)/, `> 创建时间：$1\n> 结束时间：${at}`)
     const resultLines = results.length > 0
       ? [
@@ -287,7 +278,9 @@ export function finalizeApprovalReview(
       '',
     ].join('\n')
     writeFileSync(target, `${closed}\n${footer}`, 'utf8')
+    return true
   } catch (error) {
     console.warn('[akso-workbench] 审核文档收口失败', error)
+    return false
   }
 }

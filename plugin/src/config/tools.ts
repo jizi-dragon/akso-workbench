@@ -231,8 +231,8 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
     description:
       '执行一份**已存在**的配置计划（必须先由 akso_workbench_config_plan 生成）。'
       + '逐步执行、每步回读校验；某步失败即停并返回 checkpoint。不接受临时参数，不能绕过计划。'
-      + '计划里有写入时，本工具会在**对话里弹出一个审批窗**：先打开一份三节审核文档（问题 / 执行计划 / 预期结果 checklist），'
-      + '人点「同意」才发请求，点「拒绝」一步都不写，点「补充」则把补充意见回给模型改计划。'
+      + '计划里有写入时，本工具会在**对话里弹出一个审批窗**：先打开一份审核文档，'
+      + '人点「同意」才发请求，点「拒绝」一步都不写，填写「调整内容」则交回模型改计划。'
       + '这一关不在工具参数里，模型无法自己批准。',
     parameters: {
       type: 'object',
@@ -242,17 +242,16 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
           type: 'object',
           description:
             '可选：给审批文档补充本次任务的问题、执行思路和预期结果；不填则按计划自动生成。'
-            + '审核文档放在 .akso-workbench/reviews/，文件名为「任务名-时间戳.md」；'
-            + '任务完成后会自动标记为作废。二次审核传 reviewPath 并补充 reason/executed/unexecuted，会在原文档追加一节。',
+            + '新建/大规模调整用 kind=create（默认）；任务完成后的局部更新用 kind=update，'
+            + '并传 previousReviewPath 引用上一份已执行文档。已执行的文档不会被修改，更新必须新建一份。',
           properties: {
+            kind: { type: 'string', enum: ['create', 'update'], description: '文档类型：create 大规模创建/调整；update 小范围更新（默认 create）' },
             taskName: { type: 'string', description: '任务名；用于审核文档命名，默认取审批标题' },
-            reviewPath: { type: 'string', description: '二次审核：原审核文档的绝对路径；给出后追加到原文档，不新建' },
+            previousReviewPath: { type: 'string', description: '小范围更新：上一份已执行审核文档的绝对路径；只引用，不修改' },
             problem: { type: 'string', description: '本次任务需要解决什么问题' },
             approach: { type: 'string', description: '本次任务计划怎么执行' },
             expected: { type: 'array', items: { type: 'string' }, description: '本次任务完成后预期结果，逐条作为 checklist' },
-            reason: { type: 'string', description: '二次审核原因（例如执行中发现必须新增创建/更新操作）' },
-            executed: { type: 'array', items: { type: 'string' }, description: '二次审核时已执行的部分' },
-            unexecuted: { type: 'array', items: { type: 'string' }, description: '二次审核时尚未执行的部分' },
+            reason: { type: 'string', description: '小范围更新的调整原因' },
           },
           additionalProperties: false,
         },

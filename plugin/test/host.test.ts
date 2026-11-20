@@ -1830,7 +1830,7 @@ test('分析历史：列表带目录，失败记录也能列出并读回原因',
   assert.equal(missing.status, 404)
 })
 
-test('审核文档：任务名+时间戳、指纹校验、任务结束作废、二次审核追加', () => {
+test('审核文档：任务名+时间戳、指纹校验、任务结束作废、更新另起新文档', () => {
   const home = freshHome()
   const reviewDir = join(home, 'reviews')
   process.env.AKSO_WORKBENCH_REVIEW_DIR = reviewDir
@@ -1864,34 +1864,47 @@ test('审核文档：任务名+时间戳、指纹校验、任务结束作废、�
     attachApprovalReview(report, { taskName: '设计变更物料字段' }, home)
     const path = report.review?.path ?? ''
     assert.ok(path.startsWith(reviewDir))
+    assert.equal(report.review?.kind, 'create')
     assert.match(basename(path), /^设计变更物料字段-\d{8}-\d{6}\.md$/)
     assert.equal(reviewMatchesPlan(path, 'hash_one'), true)
     assert.equal(reviewMatchesPlan(path, 'hash_other'), false)
     const markdown = readFileSync(path, 'utf8')
+    assert.match(markdown, /> 文档类型：创建 \/ 调整/)
     assert.match(markdown, /### 执行明细（与工具实际输入一致）/)
     assert.match(markdown, /material_name__c/)
+
+    const collision = { ...report, planId: 'pln_review_lifecycle_collision', hash: 'hash_three' }
+    attachApprovalReview(collision, { taskName: '设计变更物料字段' }, home)
+    assert.ok(collision.review !== undefined && collision.review.path !== path, '同秒同任务必须另起文件')
+    assert.equal(readFileSync(path, 'utf8'), markdown, '不能覆盖上一份审核文档')
 
     finalizeApprovalReview(path, '全部步骤执行成功', [{ title: '创建字段 material_name__c', status: 'ok', durationMs: 12 }])
     const closed = readFileSync(path, 'utf8')
     assert.match(closed, /任务状态：已结束（审核文件作废，仅作历史记录）/)
     assert.match(closed, /### 执行结果/)
+    assert.equal(reviewMatchesPlan(path, 'hash_one'), false, '已结束文档不能再次用于审批')
+    assert.equal(finalizeApprovalReview(path, '重复收口'), false, '已结束文档不能再改')
 
     const second = { ...report, planId: 'pln_review_lifecycle_2', hash: 'hash_two' }
     attachApprovalReview(second, {
+      kind: 'update',
       taskName: '设计变更物料字段',
-      reviewPath: path,
-      reason: '执行中发现还需要补一个字段',
-      executed: ['创建字段 material_name__c'],
-      unexecuted: ['创建字段 specification__c'],
+      previousReviewPath: path,
+      reason: '执行后发现还需要补一个字段',
       expected: ['补齐 specification__c'],
     }, home)
-    const revised = readFileSync(path, 'utf8')
-    assert.match(revised, /## 二次审核/)
-    assert.match(revised, /执行中发现还需要补一个字段/)
-    assert.match(revised, /- \[x\] 创建字段 material_name__c/)
-    assert.match(revised, /- \[ \] 创建字段 specification__c/)
-    assert.match(revised, /本次计划指纹：`hash_two`/)
-    assert.equal(reviewMatchesPlan(path, 'hash_two'), true)
+    const updated = second.review?.path ?? ''
+    assert.ok(updated !== '' && updated !== path, '更新必须新建一份文档')
+    assert.equal(second.review?.kind, 'update')
+    assert.match(basename(updated), /^设计变更物料字段-更新-\d{8}-\d{6}\.md$/)
+    const short = readFileSync(updated, 'utf8')
+    assert.match(short, /> 文档类型：小范围调整 \/ 更新/)
+    assert.match(short, /关联已执行审核文件/)
+    assert.match(short, /调整原因：执行后发现还需要补一个字段/)
+    assert.match(short, /### 本次操作清单（小范围更新）/)
+    assert.doesNotMatch(short, /### 执行明细（与工具实际输入一致）/)
+    assert.equal(reviewMatchesPlan(updated, 'hash_two'), true)
+    assert.equal(readFileSync(path, 'utf8'), closed, '已执行文档不允许被更新写入')
   } finally {
     delete process.env.AKSO_WORKBENCH_REVIEW_DIR
   }

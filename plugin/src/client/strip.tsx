@@ -138,7 +138,6 @@ function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }
   const [pending, setPending] = useState<PendingApprovalView | null>(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
-  const [writing, setWriting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
@@ -194,8 +193,7 @@ function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }
       await api.configApprovalDecide(pending.id, verdict, verdict === 'supplement' ? note.trim() : undefined)
       setPending(null)
       setNote('')
-      setWriting(false)
-      flash(verdict === 'approve' ? tr('approval.approved') : verdict === 'deny' ? tr('approval.denied') : tr('approval.supplemented'))
+      flash(verdict === 'approve' ? tr('approval.approved') : verdict === 'deny' ? tr('approval.denied') : tr('approval.adjusted'))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -255,58 +253,55 @@ function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }
         {review !== undefined ? (
           <div className="akw-approval__review">
             <div className="akw-approval__reviewHead">
-              <span>{tr('approval.reviewTitle')}</span>
+              <span>
+                {tr('approval.reviewTitle')}
+                <em className={`akw-approval__reviewKind is-${review.kind}`}>
+                  {tr(review.kind === 'update' ? 'approval.reviewKindUpdate' : 'approval.reviewKindCreate')}
+                </em>
+              </span>
               <button type="button" className="akw-btn akw-btn--sm" onClick={openReview}>
                 {tr('approval.openReview')}
               </button>
             </div>
+            <div className="akw-approval__reviewTitle">{review.title}</div>
             <div className="akw-approval__reviewSection">
-              <b>{tr('approval.reviewProblem')}</b>
+              <b>{tr('approval.taskOverview')}</b>
               <p>{review.problem}</p>
             </div>
-            <div className="akw-approval__reviewSection">
-              <b>{tr('approval.reviewApproach')}</b>
-              <p className="akw-approval__reviewApproach">{review.approach}</p>
-            </div>
-            <div className="akw-approval__reviewSection">
-              <b>{tr('approval.reviewExpected')}</b>
-              <ul className="akw-approval__reviewChecklist">
-                {review.expected.map((item) => (
-                  <li key={item}>
-                    <input type="checkbox" checked={false} readOnly aria-hidden="true" />
-                    <span>{item}</span>
-                  </li>
-                ))}
-              </ul>
+            <div className="akw-approval__reviewMeta">
+              {tr('approval.reviewExpectedCount', { count: review.expected.length })}
             </div>
             <div className="akw-approval__reviewPath" title={review.path}>{review.path}</div>
           </div>
         ) : null}
 
-        <details className="akw-approval__details">
-          <summary>{tr('approval.showSteps', { count: total })}</summary>
-          <div className="akw-approval__steps">
-            {report.steps.map((step) => (
-              <div className="akw-approval__step" key={`${step.index}-${step.path}`}>
-                <div className="akw-approval__stepHead">
-                  <b>{step.index}. {step.title}</b>
-                  <span className={`akw-approval__action is-${step.action}`}>{step.action === 'create' ? tr('approval.create') : tr('approval.update')}</span>
-                </div>
-                <code className="akw-approval__endpoint">{step.method} {step.path}</code>
-                <pre className="akw-approval__params">{JSON.stringify(step.params, null, 2)}</pre>
-                {step.irreversible || step.risk === 'high' || step.warnings.length > 0 ? (
-                  <div className="akw-approval__warn">
-                    {step.irreversible ? <span className="akw-approval__tag is-bad">{tr('approval.irreversible')}</span> : null}
-                    {step.risk === 'high' ? <span className="akw-approval__tag is-bad">{tr('approval.riskHigh')}</span> : null}
-                    {step.warnings.map((warning) => <span className="akw-approval__tag" key={warning}>{warning}</span>)}
+        {review === undefined ? (
+          <details className="akw-approval__details">
+            <summary>{tr('approval.showSteps', { count: total })}</summary>
+            <div className="akw-approval__steps">
+              {report.steps.map((step) => (
+                <div className="akw-approval__step" key={`${step.index}-${step.path}`}>
+                  <div className="akw-approval__stepHead">
+                    <b>{step.index}. {step.title}</b>
+                    <span className={`akw-approval__action is-${step.action}`}>{step.action === 'create' ? tr('approval.create') : tr('approval.update')}</span>
                   </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </details>
+                  <code className="akw-approval__endpoint">{step.method} {step.path}</code>
+                  <pre className="akw-approval__params">{JSON.stringify(step.params, null, 2)}</pre>
+                  {step.irreversible || step.risk === 'high' || step.warnings.length > 0 ? (
+                    <div className="akw-approval__warn">
+                      {step.irreversible ? <span className="akw-approval__tag is-bad">{tr('approval.irreversible')}</span> : null}
+                      {step.risk === 'high' ? <span className="akw-approval__tag is-bad">{tr('approval.riskHigh')}</span> : null}
+                      {step.warnings.map((warning) => <span className="akw-approval__tag" key={warning}>{warning}</span>)}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </details>
+        ) : null}
 
-        {writing ? (
+        <label className="akw-approval__adjust">
+          <span>{tr('approval.adjustLabel')}</span>
           <textarea
             className="akw-approval__note"
             value={note}
@@ -314,40 +309,34 @@ function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }
             placeholder={tr('approval.notePlaceholder')}
             onChange={(event) => setNote(event.target.value)}
           />
-        ) : null}
+        </label>
 
         {error !== null ? <div className="akw-approval__error">{tr('approval.failed', { message: error })}</div> : null}
 
         <div className="akw-approval__foot">
-          <span className="akw-approval__hint">{tr('approval.hint')}</span>
+          <span className="akw-approval__hint">
+            {note.trim() !== '' ? tr('approval.adjustHint') : tr('approval.hint')}
+          </span>
           <div className="akw-approval__buttons">
-            {writing ? (
-              <>
-                <button type="button" className="akw-btn akw-btn--sm" disabled={busy} onClick={() => { setWriting(false); setNote('') }}>
-                  {tr('approval.cancel')}
-                </button>
-                <button
-                  type="button"
-                  className="akw-btn akw-btn--sm akw-btn--primary"
-                  disabled={busy || note.trim() === ''}
-                  onClick={() => void decide('supplement')}
-                >
-                  {busy ? tr('approval.sending') : tr('approval.sendSupplement')}
-                </button>
-              </>
-            ) : (
-              <>
-                <button type="button" className="akw-btn akw-btn--sm" disabled={busy || expired} onClick={() => void decide('deny')}>
-                  {tr('approval.deny')}
-                </button>
-                <button type="button" className="akw-btn akw-btn--sm" disabled={busy || expired} onClick={() => setWriting(true)}>
-                  {tr('approval.supplement')}
-                </button>
-                <button type="button" className="akw-btn akw-btn--sm akw-btn--primary" disabled={busy || expired} onClick={() => void decide('approve')}>
-                  {busy ? tr('approval.sending') : tr('approval.approve')}
-                </button>
-              </>
-            )}
+            <button type="button" className="akw-btn akw-btn--sm" disabled={busy || expired} onClick={() => void decide('deny')}>
+              {tr('approval.deny')}
+            </button>
+            <button
+              type="button"
+              className="akw-btn akw-btn--sm"
+              disabled={busy || expired || note.trim() === ''}
+              onClick={() => void decide('supplement')}
+            >
+              {busy ? tr('approval.sending') : tr('approval.submitAdjust')}
+            </button>
+            <button
+              type="button"
+              className="akw-btn akw-btn--sm akw-btn--primary"
+              disabled={busy || expired || note.trim() !== ''}
+              onClick={() => void decide('approve')}
+            >
+              {busy ? tr('approval.sending') : tr('approval.approve')}
+            </button>
           </div>
         </div>
       </div>

@@ -55,15 +55,18 @@
   在弹窗里点「同意」（`config-approvals/<planId>.json` 存计划指纹，一次性）；HTTP 直连默认关闭
   （`AKSO_WORKBENCH_ALLOW_DIRECT_WRITE=1` 仅本机调试，开了也仍过引擎的审批门）。
   审批要求 = 环境变量 `AKSO_WORKBENCH_REQUIRE_APPROVAL` > 页面开关 > 默认要求。
-- 审批前必须生成三节审核文档（问题 / 执行计划 / 预期结果 checklist）：host 写到
-  `.akso-workbench/reviews/<任务名>-YYYYMMDD-HHmmss.md`（不入库），弹窗显示摘要并提供「在右侧打开」，
-  用 DSH 的 `sidebarRight.openResource` 打开。文档同时写计划指纹与执行明细（方法/路径/参数），
+- 审批前必须生成审核文档（问题 / 执行计划 / 预期结果 checklist）：host 写到
+  `.akso-workbench/reviews/`（不入库），弹窗显示任务概述、文档地址与「在右侧打开」，用 DSH 的
+  `sidebarRight.openResource` 打开。文档同时写计划指纹与执行明细（方法/路径/参数），
   `config_apply` 在审批前校验文档存在且指纹匹配；生成失败或指纹不一致返回 `review-unavailable`，
-  **不进入审批、平台一步不写**。可传 `review{taskName,problem,approach,expected[]}` 补充内容。
+  **不进入审批、平台一步不写**。可传 `review{kind,taskName,problem,approach,expected[]}` 补充内容。
+- 审核文档分两类：`kind:'create'` 用于大规模创建/调整，文件名 `<任务名>-YYYYMMDD-HHmmss.md`，含完整执行明细；
+  `kind:'update'` 用于已执行任务的小范围优化/更新，文件名 `<任务名>-更新-YYYYMMDD-HHmmss.md`，篇幅更短，
+  只含任务概述/调整计划/预期 checklist/本次操作清单，可带 `previousReviewPath` 与 `reason`。
 - 审核文件生命周期：文档先于审批，是任务的「第一目标」；预期结果 checklist 未完成前不发起第二次审批。
   只有任务成功结束后 host 才把文档标记为「已结束（审核文件作废，仅作历史记录）」并附执行结果；
-  拒批、超时、执行失败都不作废。二次审核（执行中发现必须新增创建/更新、导致新增 checklist）传
-  `review{reviewPath,reason,executed[],unexecuted[]}` 追加到原文档，注明已执行/未执行与原因，不另起一份。
+  拒批、超时、执行失败都不作废。**文档变为已结束后禁止再改原文件**；后续调整必须新建 `kind:'update'`
+  文档，注明关联的已执行文件与原因，保证审核文件权威性。
 - 写入账号必须来自底部账号条（`prefs.currentAccountId`）且在配置池里；账号条为空时工具返回
   `needs-account`、界面自动弹选账号面板，**不许**回落到磁盘上的旧会话或别的账号。
   计划绑定 `target{baseUrl,accountId}`，apply 前比对，不一致直接 `TARGET_CHANGED`。
@@ -111,6 +114,8 @@
 - **生命周期**：默认的「开启 / 关闭」两个状态要改名复用（头尾），中间态按流转顺序排 sort；状态不能删、
   只能停用；工作流动作里的 `statusId` 必须是启用中的状态。
 - **表单/列表布局**：新组件 id 必须先经 `Layout/GetStableComponentIds` 换成稳定 id 再 `layout.save`；
+  **新增分区必须顺位追加**：sections 数组保持现有顺序，新分区放数组最后、`sort` 取现有最大 `sort + 1`，
+  不能插到第一位（平台按数组顺序归一化 sort；2026-11-21 实测）；
   关联控件 `AKSelectorObject` 的 `listLayoutId` 要填**被关联对象**的列表布局（填全零会空白/列错乱）：
   没特殊要求就改默认布局，不新建。
 

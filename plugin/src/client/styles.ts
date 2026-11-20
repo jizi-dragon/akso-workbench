@@ -425,12 +425,19 @@ export const CSS = `
 .akw-approval__warn{display:flex;flex-wrap:wrap;gap:5px}
 .akw-approval__tag{padding:1px 7px;border:1px solid var(--dsw-alias-border-l3);border-radius:999px;font-size:10px;line-height:15px;color:var(--dsw-alias-label-tertiary)}
 .akw-approval__tag.is-bad{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary)}
+.akw-approval__adjust{display:flex;flex-direction:column;gap:5px}
+.akw-approval__adjust>span{font-size:11px;line-height:15px;color:var(--dsw-alias-label-secondary)}
 .akw-approval__note{box-sizing:border-box;width:100%;min-height:70px;padding:9px 11px;border:1px solid var(--dsw-alias-border-l3);border-radius:10px;background:var(--dsw-specific-input-major);color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;line-height:18px;resize:vertical;outline:none}
 .akw-approval__note:focus{border-color:var(--dsw-alias-state-business-primary)}
 .akw-approval__error{font-size:12px;line-height:17px;color:var(--dsw-alias-state-error-primary)}
 .akw-approval__review{display:flex;flex-direction:column;gap:9px;max-height:260px;padding:11px 12px;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
 .akw-approval__reviewHead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-caption)}
 .akw-approval__reviewHead button{flex:none}
+.akw-approval__reviewKind{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:9.5px;font-style:normal;line-height:15px;vertical-align:1px}
+.akw-approval__reviewKind.is-create{color:var(--dsw-alias-state-business-primary);background:var(--dsw-alias-interactive-bg-hover)}
+.akw-approval__reviewKind.is-update{color:var(--dsw-alias-state-warn-primary,#b26a00);background:var(--dsw-alias-interactive-bg-hover)}
+.akw-approval__reviewTitle{font-size:12px;line-height:17px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.akw-approval__reviewMeta{font-size:10.5px;line-height:15px;color:var(--dsw-alias-label-caption)}
 .akw-approval__reviewSection{display:flex;flex-direction:column;gap:3px}
 .akw-approval__reviewSection b{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .akw-approval__reviewSection p{margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-primary);white-space:pre-wrap}
