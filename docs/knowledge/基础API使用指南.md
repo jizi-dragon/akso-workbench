@@ -1290,6 +1290,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 - controlConfig.value 是 participantConfig 的 JSON 字符串（字符串，不是对象）。
 - 全量覆盖：先 GetWorkflowStepControls 读回再加。
+- 参与者控件只允许 `selectUserType: 40`（字段）或 `50`（审批矩阵）；下面旧案例的 `10` 只用于展示 `controlConfig`/`participantConfig` 结构，工作台新配置不要采用。
 
 **案例**
 
@@ -1596,3 +1597,50 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
   "id": "<objectId>"
 }
 ```
+
+## 工作流配置模板（非接口，2026-11-22）
+
+> 这一节不是能力目录，不参与 `### <capability id>` 解析；它只给“组合顺序 + 占位符”的模板。具体请求体仍以各接口章节的案例为准。
+
+**模板 0 · 配置前分析**
+
+- 先列三张清单：参与者清单（只能是字段/审批矩阵）、节点清单（开始/状态/任务/判断/动作/结束）、节点关系图（含判断分支与拒绝回退）。
+- 执行顺序：先建参与者 → 再建节点 → 最后收口节点关系。
+- `workflow.*.add/update` 的 `nextStepId` 是必填；节点可先带临时指向占位，节点全部建完后再用 `workflow.*.update` 统一收口，发布前回读 `nextStepId/nextStepList` 与判断分支。
+
+**模板 A · 开始节点：参与者 + 电子签名**
+
+- 参与者控件：只允许「使用字段作为参与者」（`selectUserType:40`）或「使用审批矩阵作为参与者」（`selectUserType:50`）；控件表示“谁能够参与”，不是“谁能够发起”。
+- 电子签名控件：签名含义、是否必填、是否选择职位按业务要求配置。
+- `nextStepId` 指向第一条状态步骤（如“审核中”），不是直接指向任务。
+- 不要用开始节点参与者推断发起入口；发起入口由状态上的用户动作/进入动作决定。
+
+**模板 B · 审批任务：参与者必须先存在**
+
+- 先看开始节点有没有对应参与者控件；有就把任务的 `taskAssign` / `userControlIds` 指向它，没有就回开始节点补。矩阵规则、角色成员、通知接收人是否齐全，放到发布前检查，不是创建任务节点的前置条件。
+- 复制 `workflow.task.add` 的完整 `stepTaskConfig`（16 个键不要删）。
+- `taskAssign` / `userControlIds` 填开始节点参与者控件 id（字符串，不是数组）。
+- `isRequireApproval: true` + `stepTaskApprovals` 配同意/拒绝按钮；按钮签名按标准审批意见配置。
+- 通知任务用 `isNotifyTaskType: true`、`isRequireApproval: false`、空 `stepTaskApprovals`。
+
+**模板 C · 判断与动作**
+
+- 判断节点：`rules[]` 按条件指向 `nextStepId`，`stepDecision.nextStepId` 是 else；`logicValue` 必须是带双引号的按钮 id。
+- 动作节点：`behaviorType: 9` 改本对象状态；`behaviorType: 46` 改关联对象状态并带 `relatedObjectId` / 条件；`behaviorType: 7` 再拉起子流程。
+- 所有拒绝/不通过分支必须显式回到申请状态或指定退回状态，不能只写一个 else 空出口。
+
+**模板 D · 触发器**
+
+- 审批流：状态用户动作 `behaviorType: 7`，`behaviorValue.workflowId` 填 workflowBasicId。
+- 提醒流：进入动作 `behaviorType: 7`，且工作流级 `isAllowTrigger: true`（不可逆，先确认）。
+- 初始状态绑定 `lifecycleStatusIds` 不等于触发器；发布后必须单独检查入口。
+
+**模板 E · 分析读取顺序**
+
+1. 对象/生命周期/状态/字段；
+2. 开始节点参与者 + 电子签名；
+3. 任务参与者 + 审批矩阵；
+4. 全部步骤 + 每步详情；
+5. 判断规则 + else + 动作效果；
+6. 拒绝回退 + 触发绑定；
+7. 最后校验所有分支、无人审批、无触发、无最终状态。
