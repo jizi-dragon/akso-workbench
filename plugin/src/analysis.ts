@@ -14,6 +14,7 @@ import { actionGroupsFor, loadActionMap } from './config/action-map.ts'
 import { call, EgmpError, type EgmpSession } from './config/session.ts'
 import { readWorkflowAnalysis, type AnalysisWorkflow } from './analysis-workflow.ts'
 import { readFields, type AnalysisField } from './analysis-fields.ts'
+import { readMatrixAnalysis, type AnalysisMatrix } from './analysis-matrices.ts'
 
 export interface AnalysisAction {
   id: string
@@ -70,6 +71,8 @@ export interface AnalysisResult {
   fields: AnalysisField[]
   /** 状态动作直接引用到的已发布/草稿工作流；按 workflowBasicId 展开。 */
   workflows: AnalysisWorkflow[]
+  /** 工作流实际挂载的审批矩阵（含菜单/业务数据检查）。 */
+  matrices: AnalysisMatrix[]
   totals: {
     statuses: number
     enabledStatuses: number
@@ -355,6 +358,7 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
     statuses: [],
     fields: [],
     workflows: [],
+    matrices: [],
     totals: { statuses: 0, enabledStatuses: 0, userActions: 0, enterActions: 0, fields: 0 },
     enterCondition: { count: 0, configured: false, readable: true },
     warnings,
@@ -409,8 +413,12 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
   }
 
   const userBehaviors = await readUserActionBehaviors(session, result.object.id)
+  // 停用的生命周期状态不计入报告，也不读取其上的动作。
   const enabledStatuses = statuses.filter((row) => row.isEnabled !== false)
-  for (const row of statuses) {
+  if (enabledStatuses.length === 0) {
+    warnings.push('该生命周期没有启用中的状态；停用状态不计入报告。')
+  }
+  for (const row of enabledStatuses) {
     const statusId = text(row.id)
     const [userActions, enterActions] = await Promise.all([
       readAction(session, statusId, 'user', userBehaviors).catch((error: unknown) => {
@@ -464,7 +472,15 @@ export async function analyzeObject(session: EgmpSession, rawQuery: string): Pro
     }
   }
 
-  result.totals.statuses = statuses.length
+  try {
+    const matrixAnalysis = await readMatrixAnalysis(session, result.workflows)
+    result.matrices = matrixAnalysis.matrices
+    for (const warning of matrixAnalysis.warnings) warnings.push(`审批矩阵：${warning}`)
+  } catch (error) {
+    warnings.push(`审批矩阵分析失败：${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  result.totals.statuses = enabledStatuses.length
   result.totals.enabledStatuses = enabledStatuses.length
   if (!result.enterCondition.readable) {
     warnings.push('生命周期进入条件读取失败（StatusEnterRule/GetList 接口不可用），不能判断是否已配置。')

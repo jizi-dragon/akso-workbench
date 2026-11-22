@@ -15,6 +15,7 @@ import { AccountsPage } from './page.tsx'
 import { CSS } from './styles.ts'
 import { dictionaries, NS, setTranslator } from './i18n.ts'
 import { track } from './api.ts'
+import { setCurrentSessionId } from './session.ts'
 
 export const inject = ['slots', 'locale', 'layout', 'sidebarRight']
 
@@ -127,6 +128,21 @@ export function apply(ctx: any): void {
     injectStyles()
     installErrorHooks()
     installResourceLinkHandler(ctx)
+
+    // 对象分析的“当前工作区”来自当前 DSH Session；sidebarRight.mounted 是唯一的会话来源。
+    const syncSession = (): void => {
+      const mounted = ctx.sidebarRight?.mounted
+      setCurrentSessionId(typeof mounted?.get === 'function' ? mounted.get() : null)
+    }
+    syncSession()
+    ctx.effect(() => {
+      const mounted = ctx.sidebarRight?.mounted
+      if (typeof mounted?.subscribe !== 'function') return () => undefined
+      const dispose = mounted.subscribe(syncSession)
+      if (typeof dispose === 'function') return dispose
+      if (typeof dispose?.unsubscribe === 'function') return () => dispose.unsubscribe()
+      return () => undefined
+    }, 'akso-workbench: session id')
 
     ctx.slots.inject('sidebar.panellist', () =>
       ctx.slots.register(

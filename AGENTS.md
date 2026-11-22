@@ -100,6 +100,10 @@
 - **对象分析产物不入库**：统一放 `<当前工作区>/akso-workbench-data/analysis/`；产物是交付件、
   不是源码；生成后留在本机，不要 `git add`。便笺本、`lifecycle-action-types.md`、样例报告属于源码，放在
   `docs/reference/`，必须入库（改路径要同步 `plugin/src/shared/sticky-notes.ts` 与测试）。
+- **对象分析必须走工具并留痕（2026-11-23 用户口径）**：页面/agent 的每一次对象分析都必须经
+  `runObjectAnalysis` / `akso_workbench_object_analysis`；成功时由 host 写
+  `<当前工作区>/akso-workbench-data/analysis/<对象名>-时间戳/`（md/drawio/png），失败也要写分析历史。
+  禁止手工 Node 查询后只在临时目录留 JSON；不得绕过工具直接拼报告。
 - **生命周期/工作流流程图固定用便笺本模块**：唯一图形源是 `docs/reference/便笺本.xml`（用户提供），代码样式集中在 `plugin/src/shared/sticky-notes.ts`。生命周期状态=浅蓝 `#bdd7ee` 矩形；用户动作=橙色 `#ed7d31` 胶囊；用户任务=橙色 `#ed7d31` 矩形；判断=橙色 `#f4b183` 菱形；开始/结束=`#70ad47` 圆形；连线=黑色箭头。生成 drawio 不得自创配色或圆角；`plugin/test/analysis-artifacts.test.ts` 会断言源文件存在且 drawio 只含这些颜色。
 - **新建对象硬规则（2026-11-22 用户口径）**：新建对象必须同时 `enableLifeCycle: true` 和 `enableSignatures: true`；缺一不可，配置引擎在建对象前直接拒绝。已有对象不受此规则影响。
 - **字段类型规则（2026-11-09 管理员口径）**：一律用文本 `dataType: 1`；**长文本 17、富文本 18 已禁用**，

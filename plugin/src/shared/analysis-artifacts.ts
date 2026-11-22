@@ -9,6 +9,7 @@
  */
 import type { AnalysisWorkflow, AnalysisWorkflowStep } from '../analysis-workflow.ts'
 import type { AnalysisField } from '../analysis-fields.ts'
+import type { AnalysisMatrix } from '../analysis-matrices.ts'
 import { STICKY_STYLES } from './sticky-notes.ts'
 import { layoutLayered } from './lifecycle-layout.ts'
 import { routeEdges } from './orthogonal-route.ts'
@@ -59,6 +60,7 @@ export interface ArtifactAnalysis {
   statuses: ArtifactStatus[]
   fields?: AnalysisField[]
   workflows?: AnalysisWorkflow[]
+  matrices?: AnalysisMatrix[]
   totals: { statuses: number; enabledStatuses: number; userActions: number; enterActions: number; fields?: number }
   enterCondition: { count: number; configured: boolean; readable: boolean }
   warnings: string[]
@@ -106,10 +108,6 @@ function allActions(status: ArtifactStatus): ArtifactAction[] {
 function observations(result: ArtifactAnalysis): string[] {
   const notes: string[] = []
   const workflows = result.workflows ?? []
-  const noUser = result.statuses.filter((status) => status.userActions.length === 0)
-  const empty = result.statuses.filter(
-    (status) => status.userActions.length === 0 && status.enterActions.length === 0,
-  )
   const noWorkflow = result.statuses.flatMap((status) =>
     allActions(status).filter((action) => action.behaviorTypes.includes(7) && workflowIds(action).length === 0),
   )
@@ -128,18 +126,6 @@ function observations(result: ArtifactAnalysis): string[] {
     workflow.steps.some((step) => step.actions.some((action) => action.targetStatusId !== null)),
   )
 
-  if (noUser.length > 0) {
-    notes.push(
-      `${noUser.length} 个状态没有用户动作：${noUser.map((status) => `${status.name}（${status.code}）`).join('、')}。` +
-        '这些状态需要工作流状态步骤或自动动作接管；否则会缺少人工出口。',
-    )
-  }
-  if (empty.length > 0) {
-    notes.push(
-      `${empty.length} 个状态既没有用户动作也没有进入动作：${empty.map((status) => status.name).join('、')}。` +
-        '它们完全依赖外部工作流/事件驱动。',
-    )
-  }
   if (noWorkflow.length > 0) {
     notes.push(
       `${noWorkflow.length} 个动作带「发起工作流」行为，但没有读到 workflowId：` +
@@ -298,6 +284,34 @@ function workflowSection(result: ArtifactAnalysis): string[] {
   return lines
 }
 
+function matrixSection(result: ArtifactAnalysis): string[] {
+  const matrices = result.matrices ?? []
+  const lines: string[] = ['## 审批矩阵分析', '']
+  if (matrices.length === 0) {
+    lines.push('启用状态的用户动作/进入动作触发的工作流中，没有工作流挂载审批矩阵。', '')
+    return lines
+  }
+  lines.push(
+    '只检查启用生命周期状态下、由用户动作/进入动作触发的工作流开始节点上实际挂载的审批矩阵；停用状态与停用矩阵不参与。',
+    '',
+  )
+  lines.push('| 审批矩阵 | 状态 | 使用位置 | 菜单 | 业务数据 | 异常 |')
+  lines.push('| --- | --- | --- | --- | --- | --- |')
+  for (const matrix of matrices) {
+    const usage = matrix.usage.map((item) => `${item.workflowName} / ${item.controlName}`).join('<br>')
+    const menu = matrix.menuFound
+      ? matrix.menus.map((item) => item.path).join('<br>')
+      : '缺失'
+    const count = matrix.recordCount === null ? '未读到' : String(matrix.recordCount)
+    const warnings = matrix.warnings.length > 0 ? matrix.warnings.join('；') : '—'
+    lines.push(
+      `| ${mdCell(matrix.name)}（\`${mdCell(matrix.code)}\`） | ${matrix.isEnabled ? '启用' : `停用（${matrix.status}）`} | ${mdCell(usage)} | ${mdCell(menu)} | ${count} | ${mdCell(warnings)} |`,
+    )
+  }
+  lines.push('')
+  return lines
+}
+
 function fieldSection(result: ArtifactAnalysis): string[] {
   const fields = result.fields ?? []
   const lines: string[] = ['## 字段表', '']
@@ -353,6 +367,7 @@ export function buildAnalysisMarkdown(result: ArtifactAnalysis, options: Artifac
   lines.push(`| 进入动作 | ${result.totals.enterActions} |`)
   lines.push(`| 字段 | ${(result.fields ?? []).length} |`)
   lines.push(`| 工作流 | ${(result.workflows ?? []).length} |`)
+  lines.push(`| 审批矩阵 | ${(result.matrices ?? []).length} |`)
   lines.push(
     `| 进入条件 | ${
       result.enterCondition.readable
@@ -397,6 +412,7 @@ export function buildAnalysisMarkdown(result: ArtifactAnalysis, options: Artifac
   })
 
   lines.push(...workflowSection(result))
+  lines.push(...matrixSection(result))
 
   lines.push('## 自动观察与风险', '')
   const notes = observations(result)
@@ -691,7 +707,7 @@ function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
   out.push('<mxCell id="0"/>')
   out.push('<mxCell id="1" parent="0"/>')
   out.push(cell('title', `${result.object.name}（${result.object.code}）生命周期总览`, 'text;html=1;align=left;fontSize=22;fontStyle=1;', 40, 20, 900, 32))
-  out.push(cell('meta', `环境：${result.source.baseUrl}\n账号：${result.source.account}\n生成：${generatedAt.toISOString()}\n生命周期：${result.lifecycle?.name ?? '—'}\n字段：${(result.fields ?? []).length} 个`, 'text;html=1;align=left;fontSize=10;verticalAlign=top;', 40, 54, 900, 68))
+  out.push(cell('meta', `环境：${result.source.baseUrl}\n账号：${result.source.account}\n生成：${generatedAt.toISOString()}\n生命周期：${result.lifecycle?.name ?? '—'}\n字段：${(result.fields ?? []).length} 个\n审批矩阵：${(result.matrices ?? []).length} 个`, 'text;html=1;align=left;fontSize=10;verticalAlign=top;', 40, 54, 900, 84))
   for (const cellXml of cells) out.push(cellXml)
   let noteY = height - 40 - notes.length * 20
   for (const note of notes) {
@@ -864,7 +880,7 @@ export function buildAnalysisSvg(result: ArtifactAnalysis, options: ArtifactOpti
   out.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`)
   out.push(`<text x="${left}" y="40" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="24" font-weight="700" fill="#1f2937">${escapeXml(result.object.name)}（${escapeXml(result.object.code)}）生命周期总览</text>`)
   out.push(`<text x="${left}" y="64" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="12" fill="#64748b">环境：${escapeXml(result.source.baseUrl)}    账号：${escapeXml(result.source.account)}    生成：${escapeXml(generatedAt.toISOString())}</text>`)
-  out.push(`<text x="${left}" y="84" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="12" fill="#64748b">生命周期：${escapeXml(result.lifecycle?.name ?? '—')}    状态 ${statuses.length} 个    字段 ${(result.fields ?? []).length} 个    工作流 ${(result.workflows ?? []).length} 条</text>`)
+  out.push(`<text x="${left}" y="84" font-family="'Microsoft YaHei','PingFang SC',sans-serif" font-size="12" fill="#64748b">生命周期：${escapeXml(result.lifecycle?.name ?? '—')}    状态 ${statuses.length} 个    字段 ${(result.fields ?? []).length} 个    工作流 ${(result.workflows ?? []).length} 条    审批矩阵 ${(result.matrices ?? []).length} 个</text>`)
 
   statuses.forEach((status, index) => {
     const y = top + index * statusGap

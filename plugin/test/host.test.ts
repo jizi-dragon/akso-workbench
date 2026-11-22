@@ -28,7 +28,7 @@ import { applyPlan, planBlueprint, saveApproval, savePlan } from '../src/config/
 import { attachApprovalReview, finalizeApprovalReview, reviewMatchesPlan } from '../src/config/approval-review.ts'
 import type { ApprovalReport } from '../src/config/approval.ts'
 import { writeEgmpSession } from '../src/config/session.ts'
-import { buildBusinessSummary } from '../src/config/tools.ts'
+import { buildBusinessSummary, sessionIdOf, workspaceRootOf } from '../src/config/tools.ts'
 import { writePool, writePrefs } from '../src/store.ts'
 import { apply, ROUTES } from '../src/index.ts'
 import { buildSnapshotTool } from '../src/tool.ts'
@@ -933,6 +933,18 @@ test('审批窗业务摘要：按「新建 / 更新 × 种类」归并，同类�
     { action: 'update', kind: 'menu', names: ['作业提交'] },
     { action: 'create', kind: 'workflow', names: ['作业审批流'] },
   ])
+})
+
+test('DSH tool exec 的 agent 可作为对象分析的 session / workspace 来源', () => {
+  const exec = {
+    agent: {
+      id: 'session-test-agent',
+      session: { id: 'session-test-agent', cwd: 'D:\\DDUP\\Akso_AI' },
+    },
+  }
+  assert.equal(sessionIdOf(exec), 'session-test-agent')
+  assert.equal(workspaceRootOf(exec), 'D:\\DDUP\\Akso_AI')
+  assert.equal(sessionIdOf({ agent: { session: { id: 'session-only' } } }), 'session-only')
 })
 
 test('配置写入先在对话里弹审批窗：人点同意才发请求', async () => {

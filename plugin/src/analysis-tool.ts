@@ -1,8 +1,14 @@
 import type { AnalysisResult } from './analysis.ts'
+import type { AnalysisArtifacts } from './analysis-output.ts'
 
 export interface AnalysisToolDeps {
-  /** 跑一次分析并落历史；session 不可用时返回 error，不抛。 */
-  run: (query: string) => Promise<{ ok: true; result: AnalysisResult; historyId: string } | { ok: false; error: string }>
+  /** 跑一次分析并落历史/工作区产物；session 不可用时返回 error，不抛。 */
+  run: (query: string, exec?: unknown) => Promise<{
+    ok: true
+    result: AnalysisResult
+    historyId: string
+    artifacts?: AnalysisArtifacts
+  } | { ok: false; error: string }>
 }
 
 const PARAMETERS = {
@@ -23,7 +29,8 @@ export function buildAnalysisTool(deps: AnalysisToolDeps) {
     description:
       '分析一个 eGMP 对象的生命周期：按对象 id 或 code 读取字段表、启用状态、状态上的用户动作/进入动作、'
       + '动作的 behaviorType 与目标状态、相关工作流及步骤、进入条件。'
-      + '只读，不修改平台；每次调用都会写入 akso-workbench 的对象分析历史（与页面共用同一份历史）。',
+      + '只读，不修改平台；每次调用都会写入 akso-workbench 的对象分析历史，并在当前工作区 '
+      + 'akso-workbench-data/analysis/ 下保存 md/drawio/png 产物（与页面共用同一份产物逻辑）。',
     parameters: PARAMETERS,
     output: {
       schema: { type: 'object' },
@@ -31,17 +38,18 @@ export function buildAnalysisTool(deps: AnalysisToolDeps) {
         return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
       },
     },
-    async execute(args: unknown): Promise<unknown> {
+    async execute(args: unknown, exec?: unknown): Promise<unknown> {
       const input = (args ?? {}) as { query?: string }
       const query = String(input.query ?? '').trim()
       if (query === '') return { ok: false, error: 'query 不能为空，请传对象 id 或 code' }
       try {
-        const out = await deps.run(query)
+        const out = await deps.run(query, exec)
         if (!out.ok) return { ok: false, error: out.error }
         const result = out.result
         return {
           ok: true,
           historyId: out.historyId,
+          artifacts: out.artifacts ?? null,
           object: result.object,
           lifecycle: result.lifecycle,
           totals: result.totals,
@@ -84,6 +92,17 @@ export function buildAnalysisTool(deps: AnalysisToolDeps) {
               workflowName: action.workflowName,
               workflowId: action.workflowId,
             })),
+          })),
+          matrices: (result.matrices ?? []).map((matrix) => ({
+            name: matrix.name,
+            code: matrix.code,
+            status: matrix.status,
+            isEnabled: matrix.isEnabled,
+            menuFound: matrix.menuFound,
+            menus: matrix.menus.map((menu) => menu.path),
+            recordCount: matrix.recordCount,
+            usedBy: matrix.usage.map((item) => `${item.workflowName} / ${item.controlName}`),
+            warnings: matrix.warnings,
           })),
           workflows: (result.workflows ?? []).map((workflow) => ({
             name: workflow.name,

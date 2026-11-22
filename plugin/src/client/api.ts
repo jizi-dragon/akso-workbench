@@ -9,6 +9,8 @@
  */
 import type { AnalysisWorkflow } from '../analysis-workflow.ts'
 import type { AnalysisField } from '../analysis-fields.ts'
+import type { AnalysisMatrix } from '../analysis-matrices.ts'
+import { getCurrentSessionId } from './session.ts'
 
 export interface CloudAccount {
   id: string
@@ -245,6 +247,12 @@ export interface AnalysisHistoryDetailView {
   result?: AnalysisResultView
 }
 
+export interface AnalysisArtifactsView {
+  folder: string
+  files: string[]
+  warnings: string[]
+}
+
 export interface AnalysisResultView {
   source: { baseUrl: string; account: string }
   object: { id: string; code: string; name: string; lifecycleId: string; enableLifeCycle: boolean }
@@ -252,6 +260,7 @@ export interface AnalysisResultView {
   statuses: AnalysisStatusView[]
   fields: AnalysisField[]
   workflows: AnalysisWorkflow[]
+  matrices: AnalysisMatrix[]
   totals: {
     statuses: number
     enabledStatuses: number
@@ -261,6 +270,7 @@ export interface AnalysisResultView {
   }
   enterCondition: { count: number; configured: boolean; readable: boolean }
   warnings: string[]
+  artifacts?: AnalysisArtifactsView
 }
 /* ── 运行日志：页面「运行日志」页的数据源 ── */
 
@@ -359,7 +369,7 @@ export const api = {
     call<{ ok: boolean; verdict: string }>('config/approval/decide', post({ id, verdict, note })),
   /** 能力目录（工具页的数据源）。返回的 items 形状由 tools.tsx 自己声明。 */
   /** 对象分析：输入对象 id/code，读生命周期、状态、动作。 */
-  analyzeObject: (query: string) => call<AnalysisResultView>('analysis/object', post({ query })),
+  analyzeObject: (query: string) => call<AnalysisResultView>('analysis/object', post({ query, sessionId: getCurrentSessionId() })),
   analysisHistory: () => call<{ items: AnalysisHistoryView[]; dir?: string }>('analysis/history'),
   analysisHistoryItem: (id: string) =>
     call<AnalysisHistoryDetailView>(`analysis/history?id=${encodeURIComponent(id)}`),

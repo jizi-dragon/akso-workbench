@@ -40,12 +40,15 @@ function textOf(value: unknown): string | undefined {
 }
 
 /** 从 DSH 的 tool exec 上下文里尽量取当前工作区根；取不到时由调用方显式传 review.workspaceDir，绝不回落 profile/仓库。 */
-function workspaceRootOf(exec: unknown): string | undefined {
+export function workspaceRootOf(exec: unknown): string | undefined {
   const info = exec as {
     cwd?: unknown
     workspaceRoot?: unknown
     workspace?: { root?: unknown; cwd?: unknown }
     session?: { cwd?: unknown; workspaceRoot?: unknown; workspace?: { root?: unknown } }
+    agent?: {
+      session?: { cwd?: unknown; workspaceRoot?: unknown; workspace?: { root?: unknown } }
+    }
   } | undefined
   return textOf(info?.cwd)
     ?? textOf(info?.workspaceRoot)
@@ -54,17 +57,24 @@ function workspaceRootOf(exec: unknown): string | undefined {
     ?? textOf(info?.session?.cwd)
     ?? textOf(info?.session?.workspaceRoot)
     ?? textOf(info?.session?.workspace?.root)
+    ?? textOf(info?.agent?.session?.cwd)
+    ?? textOf(info?.agent?.session?.workspaceRoot)
+    ?? textOf(info?.agent?.session?.workspace?.root)
 }
 
 /** 审核文档链接需要 Session id；优先 tool exec，其次 DSH 进程环境。 */
-function sessionIdOf(exec: unknown): string | undefined {
+export function sessionIdOf(exec: unknown): string | undefined {
   const info = exec as {
     sessionId?: unknown
     session?: { id?: unknown; sessionId?: unknown }
+    agent?: { id?: unknown; session?: { id?: unknown; sessionId?: unknown } }
   } | undefined
   return textOf(info?.sessionId)
     ?? textOf(info?.session?.id)
     ?? textOf(info?.session?.sessionId)
+    ?? textOf(info?.agent?.id)
+    ?? textOf(info?.agent?.session?.id)
+    ?? textOf(info?.agent?.session?.sessionId)
     ?? textOf(process.env.DSH_SESSION_ID)
 }
 

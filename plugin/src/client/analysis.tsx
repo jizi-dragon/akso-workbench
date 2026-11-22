@@ -321,6 +321,58 @@ function FieldTable({ fields }: { fields: AnalysisResultView['fields'] }) {
   )
 }
 
+function MatrixTable({ matrices }: { matrices: AnalysisResultView['matrices'] }) {
+  const enabled = matrices.filter((matrix) => matrix.isEnabled).length
+  const missingMenu = matrices.filter((matrix) => !matrix.menuFound).length
+  const emptyData = matrices.filter((matrix) => matrix.recordCount === 0).length
+  if (matrices.length === 0) return null
+  return (
+    <section className="akw-fields">
+      <div className="akw-fields__head">
+        <h3>审批矩阵（{matrices.length}）</h3>
+        <div className="akw-fields__headRight">
+          <span>启用 {enabled} · 无菜单 {missingMenu} · 无数据 {emptyData}</span>
+        </div>
+      </div>
+      <div className="akw-fields__scroll is-expanded">
+        <table className="akw-fields__table">
+          <thead>
+            <tr>
+              <th>审批矩阵</th>
+              <th>状态</th>
+              <th>使用位置</th>
+              <th>菜单</th>
+              <th>业务数据</th>
+              <th>异常</th>
+            </tr>
+          </thead>
+          <tbody>
+            {matrices.map((matrix) => (
+              <tr key={matrix.id}>
+                <td>
+                  <b>{matrix.name}</b>
+                  <div><code>{matrix.code || matrix.id}</code></div>
+                </td>
+                <td>{matrix.isEnabled ? '启用' : `停用（${matrix.status}）`}</td>
+                <td>
+                  {matrix.usage.map((item) => (
+                    <div key={`${item.workflowId}-${item.controlId}`}>
+                      {item.workflowName} / {item.controlName}
+                    </div>
+                  ))}
+                </td>
+                <td>{matrix.menuFound ? matrix.menus.map((menu) => menu.path).join('；') : '缺失'}</td>
+                <td>{matrix.recordCount === null ? '未读到' : matrix.recordCount}</td>
+                <td>{matrix.warnings.length > 0 ? matrix.warnings.join('；') : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
 function ObjectSummary({ entry }: { entry: AnalysisEntry }) {
   const result = entry.result
   if (result === null) {
@@ -356,7 +408,7 @@ function ObjectSummary({ entry }: { entry: AnalysisEntry }) {
         <div><b>{result.totals.enterActions}</b><span>进入动作</span></div>
         <div><b>{fieldCount}</b><span>字段</span></div>
         <div><b>{result.workflows.length}</b><span>工作流</span></div>
-        <div><b>{result.enterCondition.configured ? result.enterCondition.count : '—'}</b><span>进入条件</span></div>
+        <div><b>{(result.matrices ?? []).length}</b><span>审批矩阵</span></div>
       </div>
       <span className="akw-analysis__expand">明细</span>
     </summary>
@@ -419,6 +471,7 @@ function ObjectDetail({ result }: { result: AnalysisResultView }) {
         ))}
       </div>
 
+      <MatrixTable matrices={result.matrices ?? []} />
       <FieldTable fields={result.fields ?? []} />
     </div>
   )
@@ -467,6 +520,7 @@ function ComparisonCard({ entry }: { entry: AnalysisEntry }) {
           <div><dt>进入动作</dt><dd>{result.totals.enterActions}</dd></div>
           <div><dt>字段</dt><dd>{result.fields?.length ?? result.totals.fields ?? 0}</dd></div>
           <div><dt>工作流</dt><dd>{result.workflows.length}</dd></div>
+          <div><dt>审批矩阵</dt><dd>{(result.matrices ?? []).length}</dd></div>
           <div>
             <dt>进入条件</dt>
             <dd>{result.enterCondition.readable ? (result.enterCondition.configured ? '已配置' : '未配置') : '不可读'}</dd>
@@ -610,6 +664,7 @@ export function ObjectAnalysisTab() {
   const successCount = entries.filter((entry) => entry.result !== null).length
   const single = entries.length === 1
   const source = entries.find((entry) => entry.result !== null)?.result?.source ?? null
+  const artifacts = entries.find((entry) => entry.result?.artifacts !== undefined)?.result?.artifacts ?? null
 
   return (
     <div className="akw-analysis">
@@ -703,6 +758,15 @@ export function ObjectAnalysisTab() {
           <code>{source.baseUrl}</code>
           <span>账号</span>
           <code>{source.account}</code>
+        </div>
+      ) : null}
+
+      {artifacts !== null ? (
+        <div className="akw-analysis__source">
+          <span>分析产物</span>
+          <code title={artifacts.folder}>{artifacts.folder}</code>
+          <span>文件</span>
+          <code>{artifacts.files.join(' / ')}</code>
         </div>
       ) : null}
 

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -14,6 +16,7 @@ import {
 } from '../src/shared/analysis-artifacts.ts'
 import type { AnalysisWorkflow } from '../src/analysis-workflow.ts'
 import type { AnalysisField } from '../src/analysis-fields.ts'
+import { writeAnalysisArtifacts } from '../src/analysis-output.ts'
 
 const action = (overrides: Partial<ArtifactAnalysis['statuses'][number]['userActions'][number]>) => ({
   id: 'a1',
@@ -254,10 +257,10 @@ test('Markdown：包含环境、对象、状态、动作和工作流解析', () 
   assert.match(markdown, /流程阅读/)
 })
 
-test('Markdown：输出无人动作、空状态、workflowId 缺失的观察', () => {
+test('Markdown：不再把“状态没有动作”当成异常观察', () => {
   const markdown = buildAnalysisMarkdown(fixture(), { generatedAt: fixedDate })
-  assert.match(markdown, /2 个状态没有用户动作/)
-  assert.match(markdown, /2 个状态既没有用户动作也没有进入动作/)
+  assert.doesNotMatch(markdown, /个状态没有用户动作/)
+  assert.doesNotMatch(markdown, /个状态既没有用户动作也没有进入动作/)
   assert.match(markdown, /进入条件为 0 条且可读/)
 })
 
@@ -384,4 +387,26 @@ test('字段表：报告末尾输出字段、引用/选项集与启用状态', (
   assert.match(drawio, /字段：3 个/)
   const svg = buildAnalysisSvg(result, { generatedAt: fixedDate })
   assert.match(svg, /字段 3 个/)
+})
+
+test('产物落盘：工作区 analysis 下生成 md/drawio（可跳过 PNG）', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'akw-artifacts-'))
+  const previous = process.env.AKSO_WORKBENCH_SKIP_PNG
+  process.env.AKSO_WORKBENCH_SKIP_PNG = '1'
+  try {
+    const out = await writeAnalysisArtifacts(fixture() as never, root, fixedDate)
+    assert.ok(out.folder.startsWith(join(root, 'akso-workbench-data', 'analysis')))
+    assert.deepEqual(out.files.sort(), [
+      'capa_plan__c-analysis-2026-11-12.drawio',
+      'capa_plan__c-analysis-2026-11-12.md',
+    ])
+    assert.equal(out.warnings.length, 0)
+    assert.ok(existsSync(join(out.folder, 'capa_plan__c-analysis-2026-11-12.md')))
+    assert.ok(existsSync(join(out.folder, 'capa_plan__c-analysis-2026-11-12.drawio')))
+    assert.match(readFileSync(join(out.folder, 'capa_plan__c-analysis-2026-11-12.md'), 'utf8'), /CAPA & 计划/)
+  } finally {
+    if (previous === undefined) delete process.env.AKSO_WORKBENCH_SKIP_PNG
+    else process.env.AKSO_WORKBENCH_SKIP_PNG = previous
+    rmSync(root, { recursive: true, force: true })
+  }
 })

@@ -45,6 +45,14 @@ export interface WorkflowDecisionView {
   elseNextStepName: string | null
 }
 
+export interface WorkflowStartControl {
+  id: string
+  name: string
+  selectUserType: number
+  matrixId: string | null
+  fieldIds: string[]
+}
+
 export interface AnalysisWorkflowStep {
   id: string
   code: string
@@ -54,6 +62,7 @@ export interface AnalysisWorkflowStep {
   isEnable: boolean
   nextStepId: string | null
   nextStepName: string | null
+  startControls: WorkflowStartControl[]
   task: WorkflowTaskView | null
   decision: WorkflowDecisionView | null
   actions: WorkflowActionEffect[]
@@ -170,6 +179,46 @@ function collectTriggers(statuses: WorkflowSourceStatus[], basicId: string): Ana
     }
   }
   return triggers
+}
+
+function startControlView(step: Record<string, unknown>): WorkflowStartControl[] {
+  return array(step.startUpControls).map((row) => {
+    const control = record(row)
+    const participant = record(control.participantConfig)
+    const rawFieldIds = participant.fielsObjectIds ?? participant.fieldIds ?? control.fielsObjectIds
+    const fieldIds = Array.isArray(rawFieldIds)
+      ? rawFieldIds.map(text).filter((value) => value !== '')
+      : text(rawFieldIds).split(',').map((value) => value.trim()).filter((value) => value !== '')
+    const matrixValue = participant.approveMatrix ?? control.approveMatrix
+    const matrixId = typeof matrixValue === 'string'
+      ? text(matrixValue)
+      : text(record(matrixValue).id)
+    return {
+      id: text(control.id) || text(control.controlId),
+      name: text(control.name) || text(control.controlName) || text(control.code),
+      selectUserType: number(participant.selectUserType ?? control.selectUserType),
+      matrixId: matrixId === '' ? null : matrixId,
+      fieldIds,
+    }
+  }).filter((control) => control.id !== '')
+}
+
+function resolveStepNames(steps: AnalysisWorkflowStep[]): void {
+  const names = new Map(steps.map((step) => [step.id, step.name]))
+  for (const step of steps) {
+    if (step.nextStepId !== null && step.nextStepName === null) {
+      step.nextStepName = names.get(step.nextStepId) ?? null
+    }
+    if (step.decision === null) continue
+    for (const rule of step.decision.rules) {
+      if (rule.nextStepId !== '' && rule.nextStepName === '') {
+        rule.nextStepName = names.get(rule.nextStepId) ?? ''
+      }
+    }
+    if (step.decision.elseNextStepId !== null && step.decision.elseNextStepName === null) {
+      step.decision.elseNextStepName = names.get(step.decision.elseNextStepId) ?? null
+    }
+  }
 }
 
 function taskView(step: Record<string, unknown>): WorkflowTaskView | null {
@@ -383,6 +432,7 @@ export async function readWorkflowAnalysis(
         isEnable: step.isEnable !== false,
         nextStepId: text(step.nextStepId) === '' ? null : text(step.nextStepId),
         nextStepName: text(step.nextStepName) === '' ? null : text(step.nextStepName),
+        startControls: startControlView(step),
         task: taskView(step),
         decision: decisionView(step),
         actions: actionEffects(step, behaviorMap, statusNames),
@@ -392,6 +442,7 @@ export async function readWorkflowAnalysis(
       if (!item.readable) workflow.warnings.push(`步骤「${view.name}」的详情读取失败，只能读到外壳。`)
     }
     workflow.steps.sort((a, b) => a.sort - b.sort)
+    resolveStepNames(workflow.steps)
     workflow.edges = buildEdges(workflow.steps)
     if (workflow.steps.length === 0) workflow.warnings.push('GetWorkflowSteps 返回空数组。')
     if (workflow.triggeredBy.length === 0) {

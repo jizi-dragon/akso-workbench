@@ -17,6 +17,7 @@
  */
 
 import { execFile } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -32,9 +33,10 @@ import { cloudCredentialProvider } from './credentials.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
 import { createApprovalGate } from './config/approval.ts'
 import { EgmpError, clearEgmpSession, publicSession, readEgmpSession, tokenView, writeEgmpSession, type EgmpSession } from './config/session.ts'
-import { buildConfigApplyTool, buildConfigPlanTool } from './config/tools.ts'
+import { buildConfigApplyTool, buildConfigPlanTool, sessionIdOf, workspaceRootOf } from './config/tools.ts'
 import { analyzeObject } from './analysis.ts'
 import { buildAnalysisTool } from './analysis-tool.ts'
+import { writeAnalysisArtifacts, type AnalysisArtifacts } from './analysis-output.ts'
 import {
   analysisHistoryDir,
   listAnalysisHistory,
@@ -278,6 +280,25 @@ function text(value: unknown, max = MAX_TEXT): string {
 export function apply(ctx: any, config: PluginConfig = {}): void {
   if (config.enabled === false) return
   const dshHome = config.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
+
+  /** 从 DSH 的 workspace.json 按 sessionId 找当前工作区；UI 分析没有 tool exec 时用。 */
+  function resolveWorkspaceRoot(sessionId: string | undefined): string | undefined {
+    if (sessionId === undefined || sessionId.trim() === '') return undefined
+    try {
+      const raw = readFileSync(join(dshHome, 'storages', 'workspace.json'), 'utf8')
+      const data = JSON.parse(raw) as {
+        tables?: { workspaces?: Record<string, { path?: string; sessionIds?: string[] }> }
+      }
+      for (const workspace of Object.values(data.tables?.workspaces ?? {})) {
+        if (typeof workspace.path === 'string' && Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(sessionId)) {
+          return workspace.path
+        }
+      }
+    } catch {
+      // 读不到就返回 undefined；调用方会明确提示“未落盘”，不回落 profile/仓库。
+    }
+    return undefined
+  }
   const baseUrl = cloud.normalizeBase(config.cloudBaseUrl ?? process.env.AKSO_CLOUD_BASE)
   // 配置写入只走「模型工具 + 宿主审批」。HTTP 直连（invoke/apply）默认关闭：
   // 一条 loopback 的 POST 没有人的审批参与，开着它等于给这道门留了个侧门。
@@ -422,7 +443,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   let ensureInflight: Promise<{ session: EgmpSession | null; refreshed: boolean; reason: string | null }> | null = null
 
   type ObjectAnalysisRun =
-    | { ok: true; result: Awaited<ReturnType<typeof analyzeObject>>; history: ReturnType<typeof saveAnalysisHistory> }
+    | {
+      ok: true
+      result: Awaited<ReturnType<typeof analyzeObject>>
+      history: ReturnType<typeof saveAnalysisHistory>
+      artifacts?: AnalysisArtifacts
+    }
     | { ok: false; status: number; error: string; historyId?: string }
 
   /**
@@ -447,7 +473,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   }
 
   /** 页面和 agent 工具共用的唯一分析入口：都走这里，成功/失败都写同一条历史。 */
-  async function runObjectAnalysis(raw: string): Promise<ObjectAnalysisRun> {
+  async function runObjectAnalysis(raw: string, workspaceRoot?: string): Promise<ObjectAnalysisRun> {
     const startedAt = Date.now()
     const query = raw.trim()
     if (query === '') return { ok: false, status: 400, error: '请输入对象 id 或 code' }
@@ -459,6 +485,17 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     }
     try {
       const result = await analyzeObject(ensured.session, query)
+      let artifacts: AnalysisArtifacts | undefined
+      if (workspaceRoot === undefined || workspaceRoot.trim() === '') {
+        result.warnings.push('未定位到当前工作区，分析产物未落盘（仅保留分析历史）')
+      } else {
+        try {
+          artifacts = await writeAnalysisArtifacts(result, workspaceRoot)
+          if (artifacts.warnings.length > 0) result.warnings.push(...artifacts.warnings)
+        } catch (error) {
+          result.warnings.push(`分析产物落盘失败：${errorText(error)}`)
+        }
+      }
       const history = saveAnalysisHistory(dshHome, query, result)
       recordEvent('analysis.run', {
         query,
@@ -473,9 +510,10 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         statuses: result.statuses.length,
         workflows: result.workflows.length,
         warnings: result.warnings.length,
+        artifacts: artifacts?.folder ?? null,
         ms: Date.now() - startedAt,
       })
-      return { ok: true, result, history }
+      return { ok: true, result, history, ...(artifacts === undefined ? {} : { artifacts }) }
     } catch (error) {
       // 真实 HTTP 状态仍由 handleError 决定，这里只给日志/历史一个近似值。
       const status = error instanceof EgmpError
@@ -977,12 +1015,17 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
 
     route('POST', R.analysisObject, false, async (_req, res, body) => {
       const query = text(body.query, 200)
-      const out = await runObjectAnalysis(query)
+      const workspaceRoot = text(body.workspaceDir, 1000) ?? resolveWorkspaceRoot(text(body.sessionId, 300))
+      const out = await runObjectAnalysis(query, workspaceRoot)
       if (!out.ok) {
         sendJson(res, out.status, { error: out.error })
         return
       }
-      sendJson(res, 200, { ...out.result, history: out.history })
+      sendJson(res, 200, {
+        ...out.result,
+        history: out.history,
+        ...(out.artifacts === undefined ? {} : { artifacts: out.artifacts }),
+      })
     }),
     route('GET', R.configToken, false, async (req, res) => {
       // 令牌是凭据：GET 也要求自定义头。跨站既设不了这个头，也读不到响应体，
@@ -1283,10 +1326,16 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
       ctx.effect(() => registry.register(planTool), 'akso-workbench: config plan tool')
       ctx.effect(() => registry.register(applyTool), 'akso-workbench: config apply tool')
       const analysisTool = withToolUid(buildAnalysisTool({
-        run: async (query) => {
-          const out = await runObjectAnalysis(query)
+        run: async (query, exec) => {
+          const workspaceRoot = workspaceRootOf(exec) ?? resolveWorkspaceRoot(sessionIdOf(exec))
+          const out = await runObjectAnalysis(query, workspaceRoot)
           if (!out.ok) return { ok: false, error: out.error }
-          return { ok: true, result: out.result, historyId: out.history.id }
+          return {
+            ok: true,
+            result: out.result,
+            historyId: out.history.id,
+            ...(out.artifacts === undefined ? {} : { artifacts: out.artifacts }),
+          }
         },
       }), toolLog)
       ctx.effect(() => registry.register(analysisTool), 'akso-workbench: object analysis tool')
