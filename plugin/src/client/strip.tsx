@@ -164,10 +164,10 @@ function reviewAddress(path: string, sessionId: string, cwd?: string): string {
       normalized = normalized.slice(root.length + 1)
     }
   }
-  /* 审核文件按约定位于工作区 `.akso-workbench/reviews/`。DSH 文档预览按
+  /* 审核文件按约定位于工作区 `akso-workbench-data/reviews/`。DSH 文档预览按
    * Session 根解析相对路径更稳；即使拿不到 cwd，也能从路径里切出这一段，
    * 避免把 `D:/...` 绝对路径交给文件服务后打不开。 */
-  const marker = '/.akso-workbench/reviews/'
+  const marker = '/akso-workbench-data/reviews/'
   const at = normalized.toLowerCase().indexOf(marker)
   if (at >= 0) normalized = normalized.slice(at + 1)
   return `dsh-resource://file/session/${encodeURIComponent(sessionId)}/${encodeURI(normalized)}`

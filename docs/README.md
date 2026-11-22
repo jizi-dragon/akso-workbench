@@ -7,7 +7,7 @@
 | `knowledge/` | 现行规范、操作手册、排查指南 | ✅ 以这里的为准 |
 | `reference/` | 外部资料、平台接口清单、只读样本 | ⚠️ 只当资料查，不当流程规范 |
 | `archive/` | 带日期的实测台账、历史证据 | ❌ 只证明「当时测过」 |
-| `analysis/` | 本机生成的对象分析产物 | ❌ 不进 git，只做交付 |
+| 工作区数据目录 | `<工作区>/akso-workbench-data/` 下的 `reviews/`、`analysis/` | ❌ 不入库，只做交付 |
 
 ## knowledge/：现行规范
 
@@ -45,5 +45,6 @@
 
 1. 新增现行规范进 `knowledge/`，并在上表加一行；带日期的证据进 `archive/`。
 2. 外部拷贝的资料进 `reference/`，不要在里面改写流程结论。
-3. `analysis/` 已进 `.gitignore`；产物解压到这里只做交付，不入库。
+3. 审批文档与对象分析产物统一放 `<工作区>/akso-workbench-data/`（`reviews/`、`analysis/`），
+   不进 git；不放到仓库内、也不放 DSH profile。
 4. 改工具、审批、会话、日志时，同步改 `knowledge/agent调用时序.md` 的图与事件表。

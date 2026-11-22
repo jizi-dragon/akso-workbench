@@ -1,7 +1,7 @@
 /**
  * 审批文档（host 半边）。
  *
- * 两类文档，都放在工作区 `.akso-workbench/reviews/` 下：
+ * 两类文档，都放在工作区 `akso-workbench-data/reviews/` 下：
  * - `create`：大规模创建/调整，文件名 `任务名-YYYYMMDD-HHmmss.md`，带完整执行明细；
  * - `update`：任务完成后的小范围优化/更新，文件名 `任务名-更新-YYYYMMDD-HHmmss.md`，只保留摘要与操作清单。
  *
@@ -188,7 +188,7 @@ function isExecuted(text: string): boolean {
 
 function reviewUrl(path: string, sessionId: string): string {
   let normalized = path.replaceAll('\\', '/')
-  const marker = '/.akso-workbench/reviews/'
+  const marker = '/akso-workbench-data/reviews/'
   const at = normalized.toLowerCase().indexOf(marker)
   if (at >= 0) normalized = normalized.slice(at + 1)
   return `dsh-resource://file/session/${encodeURIComponent(sessionId)}/${encodeURI(normalized)}`
@@ -197,7 +197,7 @@ function reviewUrl(path: string, sessionId: string): string {
 export function attachApprovalReview(
   report: ApprovalReport,
   input: ApprovalReviewInput | undefined,
-  dshHome: string,
+  _dshHome: string,
   sessionId?: string,
   workspaceRoot?: string,
 ): void {
@@ -217,12 +217,12 @@ export function attachApprovalReview(
     expected: checklistItems,
   }
 
+  // 只允许落在当前工作区。环境变量是显式覆盖（测试/特殊工作区），
+  // 但绝不回落到 process.cwd() 或 dshHome——那会把审核文件写进仓库或 profile。
   const candidates = [
+    workspaceRoot === undefined ? undefined : join(workspaceRoot, 'akso-workbench-data', 'reviews'),
     process.env.AKSO_WORKBENCH_REVIEW_DIR?.trim(),
     process.env.AKSO_WORKBENCH_APPROVAL_DIR?.trim(),
-    workspaceRoot === undefined ? undefined : join(workspaceRoot, '.akso-workbench', 'reviews'),
-    join(process.cwd(), '.akso-workbench', 'reviews'),
-    join(dshHome, 'akso-workbench', 'reviews'),
   ].filter((dir): dir is string => typeof dir === 'string' && dir !== '')
   for (const dir of candidates) {
     const path = uniquePath(dir, `${safeName(taskName)}${kind === 'update' ? '-更新' : ''}-${stamp()}`)

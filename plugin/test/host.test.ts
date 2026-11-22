@@ -54,6 +54,8 @@ interface Mounted {
 }
 
 function mount(dshHome: string, cloudUrl?: string | undefined, withTools = false, withQuestions = true, logs?: string[]): Mounted {
+  // 测试进程没有 DSH session/cwd，显式给审核文档一个临时工作区；真实工具要求 review.workspaceDir。
+  process.env.AKSO_WORKBENCH_REVIEW_DIR = join(dshHome, 'reviews')
   const routes = new Map<string, Captured['handler']>()
   const disposers: Array<() => void> = []
   const opened: string[] = []
@@ -1052,6 +1054,7 @@ test('prepareOnly 只生成工作区审核文档，不弹窗；reviewPath 再复
     assert.equal(prepared.status, 'prepared')
     const review = prepared.review as Record<string, any>
     assert.ok(String(review.path).startsWith(workspaceDir), '审核文档必须落在当前工作区')
+    assert.match(String(review.path).replaceAll('\\', '/'), /\/akso-workbench-data\/reviews\//, '审核文档必须落在显性目录')
     assert.match(String(review.url), /^dsh-resource:\/\/file\/session\/session-test\//)
     assert.ok(existsSync(String(review.path)))
     const pendingAfterPrepare = await call(mounted.routes, P.configApprovalPending, 'GET')
@@ -1983,5 +1986,37 @@ test('审核文档：任务名+时间戳、指纹校验、任务结束作废、�
     assert.equal(readFileSync(path, 'utf8'), closed, '已执行文档不允许被更新写入')
   } finally {
     delete process.env.AKSO_WORKBENCH_REVIEW_DIR
+  }
+})
+
+test('审核文档：没有工作区根时拒绝写入，不落到 profile 或仓库', () => {
+  const home = freshHome()
+  const savedReview = process.env.AKSO_WORKBENCH_REVIEW_DIR
+  const savedApproval = process.env.AKSO_WORKBENCH_APPROVAL_DIR
+  delete process.env.AKSO_WORKBENCH_REVIEW_DIR
+  delete process.env.AKSO_WORKBENCH_APPROVAL_DIR
+  try {
+    const report = {
+      planId: 'pln_no_workspace',
+      title: '没有工作区根',
+      env: 'test',
+      baseUrl: 'https://example.test',
+      host: 'example.test',
+      account: 'lyl',
+      accountId: 'a_test',
+      summary: { create: 0, update: 0, skip: 0, irreversible: 0 },
+      business: [],
+      steps: [],
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      hash: 'hash_no_workspace',
+    } satisfies ApprovalReport
+    attachApprovalReview(report, { taskName: '没有工作区根' }, home)
+    assert.equal(report.review, undefined, '缺少工作区根时不能生成审核文档')
+  } finally {
+    if (savedReview === undefined) delete process.env.AKSO_WORKBENCH_REVIEW_DIR
+    else process.env.AKSO_WORKBENCH_REVIEW_DIR = savedReview
+    if (savedApproval === undefined) delete process.env.AKSO_WORKBENCH_APPROVAL_DIR
+    else process.env.AKSO_WORKBENCH_APPROVAL_DIR = savedApproval
   }
 })

@@ -933,6 +933,16 @@ export function analysisFolderName(
   return `${name}-${stamp}`
 }
 
+/** All object-analysis artifacts live under the workspace data root. */
+export const ANALYSIS_DATA_DIR = 'akso-workbench-data/analysis'
+
+export function analysisOutputFolder(
+  result: { object: { name?: string; code: string } },
+  date: Date = new Date(),
+): string {
+  return `${ANALYSIS_DATA_DIR}/${analysisFolderName(result, date)}`
+}
+
 export function analysisArtifactName(
   result: { object: { code: string } },
   extension: 'md' | 'drawio' | 'png',

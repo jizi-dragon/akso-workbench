@@ -55,12 +55,14 @@
   在弹窗里点「同意」（`config-approvals/<planId>.json` 存计划指纹，一次性）；HTTP 直连默认关闭
   （`AKSO_WORKBENCH_ALLOW_DIRECT_WRITE=1` 仅本机调试，开了也仍过引擎的审批门）。
   审批要求 = 环境变量 `AKSO_WORKBENCH_REQUIRE_APPROVAL` > 页面开关 > 默认要求。
-- 审批前必须生成审核文档（问题 / 执行计划 / 预期结果 checklist）：host 优先写到
-  `<当前工作区>/.akso-workbench/reviews/`（不入库），调用方传 `review.workspaceDir`，不传则由
-  `exec` 推断、最后才回落 profile；弹窗显示任务概述、文档地址与「在右侧打开」，用 DSH 的
-  `sidebarRight.openResource` 打开。文档同时写计划指纹与执行明细（方法/路径/参数），
-  `config_apply` 在审批前校验文档存在且指纹匹配；生成失败或指纹不一致返回 `review-unavailable`，
-  **不进入审批、平台一步不写**。可传 `review{kind,taskName,problem,approach,expected[]}` 补充内容。
+- 审批前必须生成审核文档（问题 / 执行计划 / 预期结果 checklist）：host **只写**
+  `<当前工作区>/akso-workbench-data/reviews/`（不入库）；调用方必须传 `review.workspaceDir`，或由
+  `exec` 提供工作区根。两者都没有时返回 `review-unavailable`，**不回落 profile、不写仓库内的旧
+  `.akso-workbench` 或 `docs/analysis`**；`AKSO_WORKBENCH_REVIEW_DIR` / `AKSO_WORKBENCH_APPROVAL_DIR` 仅作测试/显式覆盖。
+  弹窗显示任务概述、文档地址与「在右侧打开」，用 DSH 的 `sidebarRight.openResource` 打开。
+  文档同时写计划指纹与执行明细（方法/路径/参数），`config_apply` 在审批前校验文档存在且指纹匹配；
+  生成失败或指纹不一致返回 `review-unavailable`，**不进入审批、平台一步不写**。
+  可传 `review{kind,taskName,problem,approach,expected[]}` 补充内容。
 - 两步审批：先 `config_apply({planId, review, prepareOnly:true})` 只生成审核文档并返回路径/地址
   （`status:'prepared'`，不弹窗、不写平台）；assistant 先把目标/方案/结果和文件链接发给用户，
   再用 `config_apply({planId, reviewPath})` 正式进入审批，复用同一份文档，不能重新生成另一份。
@@ -88,13 +90,15 @@
   `docs/knowledge/API-DISCOVERY.md` 是一个整体（只连回环地址）。它不参与插件运行时，但删掉/改坏就
   没法再用真实流量扩展能力目录；根 `package.json` 的 `test` 与 `tsconfig.json` 的 `include` 都覆盖它。
 - **文档分层**：`docs/knowledge/` 放现行规范与手册，`docs/reference/` 放外部资料与只读样本，
-  `docs/archive/` 放带日期的历史台账（只证明当时测过），`docs/analysis/` 是 gitignored 的本机产物。
+  `docs/archive/` 放带日期的历史台账（只证明当时测过）。
   新增文档前先看 `docs/README.md` 的索引与维护约定。
 - **清理死代码的判据**：无入链的文件、无引用的导出/组件/CSS 类，先用 `tsc --noUnusedLocals
   --noUnusedParameters` + 引用计数双确认再删；删完跑 `npm run check`。历史证据不要直接删，
   移到 `docs/archive/` 并加「历史记录」抬头。
-- **对象分析产物不入库**：`docs/analysis/` 已进 `.gitignore`，产物是交付件、不是源码；生成后留在本机，
-  不要 `git add`。便笺本、`lifecycle-action-types.md`、`homework2__c-lifecycle.md` 是**源码**，放在
+- **工作区数据目录（2026-11-22）**：akso-workbench 产出的文件统一放
+  `<当前工作区>/akso-workbench-data/`，不入库；审批文档在 `reviews/`，对象分析产物在 `analysis/`。
+- **对象分析产物不入库**：统一放 `<当前工作区>/akso-workbench-data/analysis/`；产物是交付件、
+  不是源码；生成后留在本机，不要 `git add`。便笺本、`lifecycle-action-types.md`、样例报告属于源码，放在
   `docs/reference/`，必须入库（改路径要同步 `plugin/src/shared/sticky-notes.ts` 与测试）。
 - **生命周期/工作流流程图固定用便笺本模块**：唯一图形源是 `docs/reference/便笺本.xml`（用户提供），代码样式集中在 `plugin/src/shared/sticky-notes.ts`。生命周期状态=浅蓝 `#bdd7ee` 矩形；用户动作=橙色 `#ed7d31` 胶囊；用户任务=橙色 `#ed7d31` 矩形；判断=橙色 `#f4b183` 菱形；开始/结束=`#70ad47` 圆形；连线=黑色箭头。生成 drawio 不得自创配色或圆角；`plugin/test/analysis-artifacts.test.ts` 会断言源文件存在且 drawio 只含这些颜色。
 - **新建对象硬规则（2026-11-22 用户口径）**：新建对象必须同时 `enableLifeCycle: true` 和 `enableSignatures: true`；缺一不可，配置引擎在建对象前直接拒绝。已有对象不受此规则影响。

@@ -39,7 +39,7 @@ function textOf(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined
 }
 
-/** 从 DSH 的 tool exec 上下文里尽量取当前工作区根；取不到就退回旧候选。 */
+/** 从 DSH 的 tool exec 上下文里尽量取当前工作区根；取不到时由调用方显式传 review.workspaceDir，绝不回落 profile/仓库。 */
 function workspaceRootOf(exec: unknown): string | undefined {
   const info = exec as {
     cwd?: unknown
@@ -295,7 +295,7 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
             approach: { type: 'string', description: '本次任务计划怎么执行' },
             expected: { type: 'array', items: { type: 'string' }, description: '本次任务完成后预期结果，逐条作为 checklist' },
             reason: { type: 'string', description: '小范围更新的调整原因' },
-            workspaceDir: { type: 'string', description: '当前工作区根目录；审核文档会落在 <workspaceDir>/.akso-workbench/reviews，省略时从 exec 推断' },
+            workspaceDir: { type: 'string', description: '当前工作区根目录；审核文档会落在 <workspaceDir>/akso-workbench-data/reviews，省略时从 exec 推断' },
           },
           additionalProperties: false,
         },

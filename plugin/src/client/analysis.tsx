@@ -12,7 +12,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { parseAnalysisQueries } from '../shared/analysis-query.ts'
 import {
   analysisArtifactName,
-  analysisFolderName,
+  analysisOutputFolder,
   analysisPackageName,
   buildAnalysisDrawio,
   buildAnalysisMarkdown,
@@ -108,7 +108,7 @@ function renderPngBlob(result: AnalysisResultView): Promise<Blob> {
 
 async function buildPackageBlob(result: AnalysisResultView): Promise<{ name: string; blob: Blob }> {
   const generatedAt = new Date()
-  const folder = analysisFolderName(result, generatedAt)
+  const folder = analysisOutputFolder(result, generatedAt)
   const encoder = new TextEncoder()
   const png = await renderPngBlob(result)
   const files = [

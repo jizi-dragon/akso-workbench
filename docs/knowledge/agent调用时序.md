@@ -206,8 +206,8 @@ sequenceDiagram
 拒绝或补充。
 
 审批前 host 会先写一份审核文档（`plugin/src/config/approval-review.ts`）：
-优先写到 `<当前工作区>/.akso-workbench/reviews/<任务名>-YYYYMMDD-HHmmss.md`（`review.workspaceDir`
-优先，其次 `exec.cwd`，最后才回落 profile），内容为「问题 / 执行计划 / 预期结果 checklist」，并附
+优先写到 `<当前工作区>/akso-workbench-data/reviews/<任务名>-YYYYMMDD-HHmmss.md`（`review.workspaceDir`
+优先，其次 `exec` 提供的工作区根；两者都没有时返回 `review-unavailable`，不回落 profile 或仓库内目录），内容为「问题 / 执行计划 / 预期结果 checklist」，并附
 计划指纹与逐条执行明细（方法/路径/参数），保证审核文件与实际工具输入一致。
 任务已执行后的局部优化/更新用 `update` 类型，写到 `<任务名>-更新-YYYYMMDD-HHmmss.md`，篇幅更短，
 只含任务概述 / 调整计划 / 预期 checklist / 本次操作清单，可带 `previousReviewPath` 与 `reason`。
@@ -240,7 +240,7 @@ sequenceDiagram
         H-->>A: error，或直接返回已完成的计划
     else 有写入且要求审批（默认）
         H->>H: buildApprovalReport：业务摘要 + 逐条方法/路径/参数/风险 + 计划指纹
-        H->>F: 写 .akso-workbench/reviews/<任务名>-<时间戳>.md
+        H->>F: 写 akso-workbench-data/reviews/<任务名>-<时间戳>.md
         H->>H: 校验文件存在且计划指纹匹配
         H->>H: report.review = 三节文档 + checklist + 执行明细
         H->>H: approvals.request：挂起，8 分钟超时，同时只挂一条
@@ -455,9 +455,9 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
    - `config-approvals/pln_*.json`：`hash`、`at`、`usedAt`（有 `usedAt` = 已消费）
    - `config-audit/`：`<YYYY-MM>.jsonl` 每步一条（`status` / `traceId` / `durationMs`），
      `approvals-<YYYY-MM>.jsonl` 审批决策一条
-   - `.akso-workbench/reviews/<任务名>-<YYYYMMDD-HHmmss>.md`：创建/调整任务的审核文档（工作区下，不入库）；
+   - `akso-workbench-data/reviews/<任务名>-<YYYYMMDD-HHmmss>.md`：创建/调整任务的审核文档（工作区下，不入库）；
      任务成功后状态改为「已结束（审核文件作废）」并附执行结果；已结束文档不可再改
-   - `.akso-workbench/reviews/<任务名>-更新-<YYYYMMDD-HHmmss>.md`：已执行任务的小范围更新文档，
+   - `akso-workbench-data/reviews/<任务名>-更新-<YYYYMMDD-HHmmss>.md`：已执行任务的小范围更新文档，
      篇幅更短，带关联的已执行文件与调整原因
    - `analysis-history/<id>.json`：分析结果全文
    - `egmp-session.json`：只有票与来源账号，没有口令
