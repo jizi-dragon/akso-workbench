@@ -99,7 +99,7 @@ interface GuideInfo {
 
 interface Group { domain: string; label?: string; items: Capability[] }
 
-type SectionId = 'model' | 'layout' | 'lifecycle' | 'workflow' | 'menu'
+type SectionId = 'model' | 'layout' | 'lifecycle' | 'approvalmatrix' | 'workflow' | 'menu'
 
 interface Section {
   id: SectionId
@@ -133,6 +133,7 @@ const SECTIONS: Section[] = [
     ],
   },
   { id: 'lifecycle', label: '生命周期', hint: '对象状态机：状态节点、状态上的按钮动作。', domains: ['lifecycle'] },
+  { id: 'approvalmatrix', label: '审批矩阵', hint: '建矩阵类型 → 匹配字段 → 规则（角色约束/使用条件）→ 回读。', domains: ['approvalmatrix'] },
   { id: 'workflow', label: '工作流', hint: '审批流：建流程 → 切编辑中 → 加节点 → 配按钮 → 发布。', domains: ['workflow'] },
   { id: 'menu', label: '菜单 / 通知', hint: '菜单树（母/子、排序）与按对象取通知模板。', domains: ['menu', 'notice'] },
 ]

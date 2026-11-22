@@ -24,6 +24,7 @@ export type Domain =
   | 'layout'
   | 'listlayout'
   | 'lifecycle'
+  | 'approvalmatrix'
   | 'workflow'
   | 'menu'
   | 'notice'
@@ -81,6 +82,7 @@ export const DOMAIN_LABEL: Record<Domain, string> = {
   layout: '表单布局',
   listlayout: '列表布局',
   lifecycle: '生命周期',
+  approvalmatrix: '审批矩阵',
   workflow: '工作流',
   menu: '菜单',
   notice: '通知',
@@ -94,6 +96,7 @@ export const DOMAIN_ORDER: Domain[] = [
   'layout',
   'listlayout',
   'lifecycle',
+  'approvalmatrix',
   'workflow',
   'menu',
   'notice',
@@ -865,6 +868,120 @@ export const CAPABILITIES: Capability[] = [
     example: { statusId: '<statusId>' },
     returns: 'data 为进入动作数组；实测每项含 id / sort / belongId / name / isEnabled / description / modifiedTime / belongType / executeType，不含 code、configs；没有时是 []。',
     notes: ['按 statusId 过滤；与 lifecycle.useraction.list 分属两套动作。'],
+  },
+
+  /* ─────────────────────── 审批矩阵（4） ─────────────────────── */
+  {
+    id: 'approvalmatrix.create',
+    domain: 'approvalmatrix',
+    title: '创建审批矩阵类型',
+    description: '创建一个审批矩阵配置；平台会同时生成「***_mgt__ak 管理对象」与「***_role__ak 角色对象」，但创建响应通常不返回这两个对象 id。',
+    method: 'POST',
+    path: '/api/platform/ApproveMatrix/CreateConfigApproveMatrix',
+    risk: 'high',
+    evidence: 'partial',
+    params: [
+      p('status', 'body', true, 'number', '1 = 启用'),
+      p('name', 'body', true, 'string', '矩阵名称'),
+      p('code', 'body', true, 'string', '矩阵编码，建议以 __c 结尾'),
+      p('objectId', 'body', true, 'string', '绑定的业务对象 id'),
+      p('lifecycleId', 'body', true, 'string', '对象生命周期 id'),
+      p('objectTypeId', 'body', true, 'string', '对象类型 id'),
+    ],
+    example: {
+      status: 1,
+      name: '企业负责人审核矩阵',
+      code: 'corporate_head_review_matrix__c',
+      objectId: '<objectId>',
+      lifecycleId: '<lifecycleId>',
+      objectTypeId: '<objectTypeId>',
+    },
+    returns: 'data 为 matrixConfigId（审批矩阵配置 id）；后续 AddMatchField / AddMatrixRule 都用它。',
+    notes: [
+      '自动生成的管理/角色对象 code 通常是把矩阵 code 去掉 __c 后拼 _mgt__ak / _role__ak，但响应不返回对象 id，必须用 BasicObject/{code} 再查确认。',
+      'objectId / lifecycleId / objectTypeId 必须来自同一个已启用生命周期的对象。',
+      '创建完只得到矩阵类型；还要 AddMatchField → AddMatrixRule → 给管理对象建菜单 → 建管理/角色业务数据。',
+    ],
+  },
+  {
+    id: 'approvalmatrix.matchfield.add',
+    domain: 'approvalmatrix',
+    title: '给审批矩阵加匹配字段',
+    description: '指定矩阵按业务对象的哪个字段匹配；一个矩阵可加多个匹配字段。',
+    method: 'POST',
+    path: '/api/platform/ApproveMatrix/AddMatchField',
+    risk: 'medium',
+    evidence: 'partial',
+    params: [
+      p('matrixConfigId', 'body', true, 'string', 'approvalmatrix.create 返回的 id'),
+      p('objectId', 'body', true, 'string', '业务对象 id'),
+      p('fieldId', 'body', true, 'string', '业务字段 id'),
+      p('matchType', 'body', true, 'number', '抓包示例 1'),
+      p('matchNullValueType', 'body', true, 'number', '抓包示例 10'),
+    ],
+    example: {
+      matrixConfigId: '<matrixConfigId>',
+      objectId: '<objectId>',
+      fieldId: '<fieldId>',
+      matchType: 1,
+      matchNullValueType: 10,
+    },
+    returns: 'data 为匹配字段 id。',
+    notes: [
+      'fieldId 必须是矩阵绑定对象上的字段；跨对象字段不适用。',
+      'matchType=1、matchNullValueType=10 来自 2026-11-22 通桥演示抓包，其他组合未实测。',
+    ],
+  },
+  {
+    id: 'approvalmatrix.rule.add',
+    domain: 'approvalmatrix',
+    title: '给审批矩阵加规则',
+    description: '新增一条矩阵规则，包含「应用角色约束」与可选的「使用的条件」。',
+    method: 'POST',
+    path: '/api/platform/ApproveMatrix/AddMatrixRule',
+    risk: 'high',
+    evidence: 'partial',
+    params: [
+      p('matrixConfigId', 'body', true, 'string'),
+      p('status', 'body', true, 'number', '1 = 启用'),
+      p('scheduleType', 'body', true, 'number', '抓包示例 10'),
+      p('name', 'body', true, 'string'),
+      p('code', 'body', true, 'string'),
+      p('constraintRoleIds', 'body', false, 'array', '应用角色约束：限制可参与的角色，数组项可为 {id, name}'),
+      p('constraintsCondition', 'body', false, 'object', '使用条件：更原始的条件树，含 details / relations'),
+    ],
+    example: {
+      matrixConfigId: '<matrixConfigId>',
+      status: 1,
+      scheduleType: 10,
+      name: '企业负责人',
+      code: 'corporate_head_review_matrix__c',
+      constraintRoleIds: [{ id: '<roleId>', name: '变更用户' }],
+      constraintsCondition: { details: [], relations: [] },
+    },
+    returns: 'data 为矩阵规则 id（与角色业务数据里的 matrix_rule__ak 不一定是同一个 id，建工具时先读回确认）。',
+    notes: [
+      '「应用角色约束」= constraintRoleIds，限制哪些角色能参与；「使用的条件」= constraintsCondition，用条件树做更原始的角色/字段限制，两者不是一回事。',
+      'constraintsCondition.details[].logicValue 是二次序列化的 JSON 字符串；不能直接传对象。',
+      'AddMatrixRule 返回的规则 id 与角色记录 matrix_rule__ak 的引用 id 可能不同，写入业务数据前先用 approvalmatrix.rule.list 回读确认。',
+    ],
+  },
+  {
+    id: 'approvalmatrix.rule.list',
+    domain: 'approvalmatrix',
+    title: '读取审批矩阵规则',
+    description: '按矩阵配置 id 列出规则，用于创建后回读、查重与确认规则 id。',
+    method: 'GET',
+    path: '/api/platform/ApproveMatrix/GetMatrixRuleList',
+    risk: 'low',
+    readonly: true,
+    evidence: 'verified',
+    params: [p('matrixConfigId', 'query', true, 'string')],
+    example: { matrixConfigId: '<matrixConfigId>' },
+    returns: 'data 为规则数组；实测含 id / code / name / status / constraintRoleIds[] / constraintsCondition / scheduleType / sort。',
+    notes: [
+      '规则数组里的 id 是配置规则 id；角色业务数据的 matrix_rule__ak 可能引用另一个 id，需对照读取。',
+    ],
   },
 
   /* ───────────────────────── 工作流（18） ───────────────────────── */

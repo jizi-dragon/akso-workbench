@@ -827,6 +827,114 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 }
 ```
 
+## 审批矩阵（补充）
+
+### approvalmatrix.create 创建审批矩阵类型
+
+> 创建一个审批矩阵配置；平台会同时生成管理与角色两个业务对象。
+
+**返回**：`data` 为 `matrixConfigId`（审批矩阵配置 id）。
+
+**要点**
+
+- 自动生成的 `***_mgt__ak` / `***_role__ak` 对象 id 不在创建响应里，必须再按 code 查对象确认。
+- `objectId` / `lifecycleId` / `objectTypeId` 必须来自同一个已启用生命周期的对象。
+- 创建后还要加匹配字段、加规则、给管理对象建菜单，并建管理/角色业务数据。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "status": 1,
+  "name": "企业负责人审核矩阵",
+  "code": "corporate_head_review_matrix__c",
+  "objectId": "<objectId>",
+  "lifecycleId": "<lifecycleId>",
+  "objectTypeId": "<objectTypeId>"
+}
+```
+
+### approvalmatrix.matchfield.add 给审批矩阵加匹配字段
+
+> 指定矩阵按业务对象的哪个字段匹配。
+
+**返回**：`data` 为匹配字段 id。
+
+**要点**
+
+- `fieldId` 必须是矩阵绑定对象上的字段。
+- `matchType=1`、`matchNullValueType=10` 来自 2026-11-22 通桥演示抓包，其他组合未实测。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "matrixConfigId": "<matrixConfigId>",
+  "objectId": "<objectId>",
+  "fieldId": "<fieldId>",
+  "matchType": 1,
+  "matchNullValueType": 10
+}
+```
+
+### approvalmatrix.rule.add 给审批矩阵加规则
+
+> 新增矩阵规则，包含「应用角色约束」与可选的「使用的条件」。
+
+**返回**：`data` 为矩阵规则 id；角色业务数据里的 `matrix_rule__ak` 可能是另一个 id，建工具时要先回读确认。
+
+**要点**
+
+- `constraintRoleIds` 是**应用角色约束**：限制哪些角色能参与。
+- `constraintsCondition` 是**使用的条件**：更原始的条件树，按字段/角色做进一步限制；两者不是一回事。
+- `constraintsCondition.details[].logicValue` 是二次序列化的 JSON 字符串，不能直接传对象。
+- 规则 id 与角色记录 `matrix_rule__ak` 的引用 id 可能不同，写入业务数据前先用 `approvalmatrix.rule.list` 回读。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "matrixConfigId": "<matrixConfigId>",
+  "status": 1,
+  "scheduleType": 10,
+  "name": "企业负责人",
+  "code": "corporate_head_review_matrix__c",
+  "constraintRoleIds": [
+    { "id": "<roleId>", "name": "变更用户" }
+  ],
+  "constraintsCondition": {
+    "details": [],
+    "relations": []
+  }
+}
+```
+
+### approvalmatrix.rule.list 读取审批矩阵规则
+
+> 按矩阵配置 id 列出规则，用于创建后回读、查重与确认规则 id。
+
+**返回**：`data` 为规则数组；实测含 `id` / `code` / `name` / `status` / `constraintRoleIds[]` / `constraintsCondition` / `scheduleType` / `sort`。
+
+**要点**
+
+- 规则数组里的 `id` 是配置规则 id；角色业务数据的 `matrix_rule__ak` 可能引用另一个 id，需对照读取。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "matrixConfigId": "<matrixConfigId>"
+}
+```
+
 ## 工作流（补充）
 
 ### workflow.create 新建工作流

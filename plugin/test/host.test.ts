@@ -1282,6 +1282,38 @@ test('生命周期挂载能力：进入动作 / 用户动作的路径与只读�
   assert.match(actionGet.returns, /roles/, 'useraction.get 只回角色授权，不能当用户动作列表用')
 })
 
+test('审批矩阵能力：创建/匹配字段/规则/规则列表的路径与参数固定', () => {
+  const byId = new Map(CAPABILITIES.map((cap) => [cap.id, cap]))
+
+  const create = byId.get('approvalmatrix.create')
+  assert.ok(create, '缺少 approvalmatrix.create')
+  assert.equal(create.method, 'POST')
+  assert.equal(create.path, '/api/platform/ApproveMatrix/CreateConfigApproveMatrix')
+  assert.deepEqual(create.params.map((item) => item.name), ['status', 'name', 'code', 'objectId', 'lifecycleId', 'objectTypeId'])
+  assert.ok(create.notes?.some((note) => note.includes('_mgt__ak')), '创建矩阵必须提醒自动管理对象')
+
+  const match = byId.get('approvalmatrix.matchfield.add')
+  assert.ok(match, '缺少 approvalmatrix.matchfield.add')
+  assert.equal(match.method, 'POST')
+  assert.equal(match.path, '/api/platform/ApproveMatrix/AddMatchField')
+  assert.deepEqual(match.params.map((item) => item.name), ['matrixConfigId', 'objectId', 'fieldId', 'matchType', 'matchNullValueType'])
+
+  const rule = byId.get('approvalmatrix.rule.add')
+  assert.ok(rule, '缺少 approvalmatrix.rule.add')
+  assert.equal(rule.method, 'POST')
+  assert.equal(rule.path, '/api/platform/ApproveMatrix/AddMatrixRule')
+  assert.ok(rule.params.some((item) => item.name === 'constraintRoleIds'))
+  assert.ok(rule.params.some((item) => item.name === 'constraintsCondition'))
+  assert.ok(rule.notes?.some((note) => note.includes('应用角色约束')), '规则必须区分应用角色约束和使用条件')
+  assert.ok(rule.notes?.some((note) => note.includes('logicValue')), '规则必须提醒 logicValue 是 JSON 字符串')
+
+  const list = byId.get('approvalmatrix.rule.list')
+  assert.ok(list, '缺少 approvalmatrix.rule.list')
+  assert.equal(list.method, 'GET')
+  assert.equal(list.path, '/api/platform/ApproveMatrix/GetMatrixRuleList')
+  assert.equal(list.readonly, true)
+})
+
 /* ─────────────── 令牌详情：只给时间戳（原文不出 host），且必须带自定义头 ─────────────── */
 
 test('令牌详情：只回从 JWT 解出的签发/到期时间，原文不出 host', async () => {
