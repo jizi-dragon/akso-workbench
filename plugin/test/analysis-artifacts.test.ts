@@ -294,7 +294,7 @@ test('便笺本：固定源文件存在，drawio 只用便笺本的形状与颜�
   assert.doesNotMatch(xml, /#dae8fc|#6c8ebf|#4d6a86|#d5e8d4|#fff2cc|#ffe6cc/)
 })
 
-test('SVG：总览包含全部状态，未知触发源放右侧而不是省略', () => {
+test('SVG：总览包含启用状态，未知触发源放右侧而不是省略', () => {
   const unknown = fixture()
   unknown.workflows = [{ ...workflow(), triggeredBy: [], statusBindings: [] }]
   const svg = buildAnalysisSvg(unknown, { generatedAt: fixedDate })
@@ -308,15 +308,18 @@ test('SVG：总览包含全部状态，未知触发源放右侧而不是省略',
   assert.doesNotMatch(svg, /CAPA & 计划/)
 })
 
-test('停用状态：drawio 与 SVG 仍列出，并明确标启用：否', () => {
+test('停用状态：drawio、SVG 与 Markdown 都不列出', () => {
   const withDisabled = fixture()
   withDisabled.statuses[1]!.isEnabled = false
+  withDisabled.totals.enabledStatuses = 2
   const drawio = buildAnalysisDrawio(withDisabled, { generatedAt: fixedDate })
   const svg = buildAnalysisSvg(withDisabled, { generatedAt: fixedDate })
-  assert.match(drawio, /CAPA申请审核/)
-  assert.match(drawio, /启用：否/)
-  assert.match(svg, /CAPA申请审核/)
-  assert.match(svg, /启用：否/)
+  const md = buildAnalysisMarkdown(withDisabled, { generatedAt: fixedDate })
+  assert.doesNotMatch(drawio, /启用：否/)
+  assert.doesNotMatch(svg, /启用：否/)
+  assert.doesNotMatch(svg, /2\. CAPA申请审核/)
+  assert.doesNotMatch(md, /### 2\. CAPA申请审核/)
+  assert.match(md, /### 2\. 事件调查/)
 })
 
 test('文件夹用秒级时间戳，报告文件名保持日期命名', () => {
@@ -387,6 +390,45 @@ test('字段表：报告末尾输出字段、引用/选项集与启用状态', (
   assert.match(drawio, /字段：3 个/)
   const svg = buildAnalysisSvg(result, { generatedAt: fixedDate })
   assert.match(svg, /字段 3 个/)
+})
+
+test('审批矩阵表：列出矩阵、关联工作流、参与者控件与应用节点', () => {
+  const result = fixture()
+  result.matrices = [{
+    id: 'm1',
+    name: '部门负责人审核矩阵',
+    code: 'dept_head_review_matrix__c',
+    status: 1,
+    isEnabled: true,
+    menuFound: true,
+    recordCount: 1,
+    menus: [{
+      id: 'menu1',
+      name: '部门负责人审核矩阵',
+      path: '质量管理 / 审批矩阵 / 部门负责人审核矩阵',
+      objectId: 'obj1',
+      viewId: 'view1',
+    }],
+    usage: [{
+      workflowId: 'w1',
+      workflowName: '变更申请审核工作流',
+      statusNames: ['变更申请'],
+      controlId: 'c1',
+      controlName: '部门负责人审核',
+      appliedStepIds: ['st3'],
+      appliedStepNames: ['任务：部门负责人审核'],
+      triggerLabel: '变更申请 / 提交',
+    }],
+    warnings: [],
+  }]
+  const md = buildAnalysisMarkdown(result, { generatedAt: fixedDate })
+  assert.match(md, /## 审批矩阵分析/)
+  assert.match(md, /关联工作流/)
+  assert.match(md, /参与者控件/)
+  assert.match(md, /应用节点/)
+  assert.match(md, /部门负责人审核矩阵/)
+  assert.match(md, /变更申请审核工作流/)
+  assert.match(md, /任务：部门负责人审核/)
 })
 
 test('产物落盘：工作区 analysis 下生成 md/drawio（可跳过 PNG）', async () => {

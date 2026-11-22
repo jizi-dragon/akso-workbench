@@ -357,6 +357,7 @@ export async function readWorkflowAnalysis(
   }
 
   const statusNames = new Map(statuses.map((status) => [status.id, status.name]))
+  const enabledStatusIds = new Set(statuses.map((status) => status.id))
   for (const basicId of basicIds) {
     const row = pickWorkflowRow(rows, basicId)
     const statusIds = row === null ? [] : text(row.lifecycleStatusIds).split(',').map((value) => value.trim()).filter((value) => value !== '')
@@ -365,6 +366,9 @@ export async function readWorkflowAnalysis(
       statusId,
       statusName: statusNames.get(statusId) ?? statusNameList[index] ?? statusId,
     }))
+    // 用户口径：分析范围内的工作流必须挂到启用中的生命周期状态上。
+    // 只挂停用状态、或完全没有状态绑定（无法确认挂载）的流程不进入分析。
+    if (!statusBindings.some((binding) => enabledStatusIds.has(binding.statusId))) continue
     const workflow: AnalysisWorkflow = {
       basicId,
       configId: row === null ? '' : text(row.id),

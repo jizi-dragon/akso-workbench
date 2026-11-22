@@ -105,20 +105,25 @@ function allActions(status: ArtifactStatus): ArtifactAction[] {
   return [...status.userActions, ...status.enterActions]
 }
 
+function enabledStatuses(result: ArtifactAnalysis): ArtifactStatus[] {
+  return result.statuses.filter((status) => status.isEnabled)
+}
+
 function observations(result: ArtifactAnalysis): string[] {
   const notes: string[] = []
   const workflows = result.workflows ?? []
-  const noWorkflow = result.statuses.flatMap((status) =>
+  const statuses = enabledStatuses(result)
+  const noWorkflow = statuses.flatMap((status) =>
     allActions(status).filter((action) => action.behaviorTypes.includes(7) && workflowIds(action).length === 0),
   )
   const unknownLabels = [...new Set(
-    result.statuses.flatMap((status) =>
+    statuses.flatMap((status) =>
       allActions(status).flatMap((action) =>
         action.behaviorLabels.filter((label) => /^行为 \d+$/.test(label) || label === '母菜单'),
       ),
     ),
   )]
-  const crossObject = result.statuses.flatMap((status) =>
+  const crossObject = statuses.flatMap((status) =>
     allActions(status).filter((action) => action.behaviorTypes.includes(46)),
   )
   const untriggered = workflows.filter((workflow) => workflow.triggeredBy.length === 0 && workflow.statusBindings.length === 0)
@@ -288,25 +293,37 @@ function matrixSection(result: ArtifactAnalysis): string[] {
   const matrices = result.matrices ?? []
   const lines: string[] = ['## 审批矩阵分析', '']
   if (matrices.length === 0) {
-    lines.push('启用状态的用户动作/进入动作触发的工作流中，没有工作流挂载审批矩阵。', '')
+    lines.push('挂在启用生命周期状态上的工作流，开始节点没有挂载审批矩阵。', '')
     return lines
   }
   lines.push(
-    '只检查启用生命周期状态下、由用户动作/进入动作触发的工作流开始节点上实际挂载的审批矩阵；停用状态与停用矩阵不参与。',
+    '只检查已挂载到启用生命周期状态上的工作流；矩阵必须由开始节点参与者控件实际引用。',
+    '控件应用节点取自任务节点的 userControlIds；没有任务引用时标“开始节点（未绑定任务）”。',
     '',
   )
-  lines.push('| 审批矩阵 | 状态 | 使用位置 | 菜单 | 业务数据 | 异常 |')
-  lines.push('| --- | --- | --- | --- | --- | --- |')
+  lines.push('| 审批矩阵 | 状态 | 关联工作流 | 参与者控件 | 应用节点 | 菜单 | 业务数据 | 异常 |')
+  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |')
   for (const matrix of matrices) {
-    const usage = matrix.usage.map((item) => `${item.workflowName} / ${item.controlName}`).join('<br>')
-    const menu = matrix.menuFound
-      ? matrix.menus.map((item) => item.path).join('<br>')
-      : '缺失'
+    const menu = matrix.menuFound ? matrix.menus.map((item) => item.path).join('<br>') : '缺失'
     const count = matrix.recordCount === null ? '未读到' : String(matrix.recordCount)
     const warnings = matrix.warnings.length > 0 ? matrix.warnings.join('；') : '—'
-    lines.push(
-      `| ${mdCell(matrix.name)}（\`${mdCell(matrix.code)}\`） | ${matrix.isEnabled ? '启用' : `停用（${matrix.status}）`} | ${mdCell(usage)} | ${mdCell(menu)} | ${count} | ${mdCell(warnings)} |`,
-    )
+    const usages = matrix.usage.length > 0
+      ? matrix.usage
+      : [{
+          workflowId: '',
+          workflowName: '—',
+          statusNames: [],
+          controlId: '',
+          controlName: '—',
+          appliedStepIds: [],
+          appliedStepNames: ['—'],
+          triggerLabel: '',
+        }]
+    for (const usage of usages) {
+      lines.push(
+        `| ${mdCell(matrix.name)}（\`${mdCell(matrix.code)}\`） | ${matrix.isEnabled ? '启用' : `停用（${matrix.status}）`} | ${mdCell(usage.workflowName)} | ${mdCell(usage.controlName)} | ${mdCell(usage.appliedStepNames.join('<br>'))} | ${mdCell(menu)} | ${count} | ${mdCell(warnings)} |`,
+      )
+    }
   }
   lines.push('')
   return lines
@@ -346,7 +363,7 @@ function fieldSection(result: ArtifactAnalysis): string[] {
 export function buildAnalysisMarkdown(result: ArtifactAnalysis, options: ArtifactOptions = {}): string {
   const generatedAt = options.generatedAt ?? new Date()
   const lines: string[] = []
-  const statuses = result.statuses
+  const statuses = enabledStatuses(result)
   const lifecycleName = result.lifecycle?.name || '—'
 
   lines.push(`# ${mdLine(result.object.name)}（${result.object.code}）对象分析`, '')
@@ -362,7 +379,7 @@ export function buildAnalysisMarkdown(result: ArtifactAnalysis, options: Artifac
   lines.push(`| 生命周期 | ${mdCell(lifecycleName)} |`)
   lines.push(`| lifecycleId | \`${result.object.lifecycleId}\` |`)
   lines.push(`| 启用生命周期 | ${result.object.enableLifeCycle ? '是' : '否'} |`)
-  lines.push(`| 状态 | ${result.totals.enabledStatuses} 启用 / ${result.totals.statuses} 总数 |`)
+  lines.push(`| 状态 | ${statuses.length} 个启用状态 |`)
   lines.push(`| 用户动作 | ${result.totals.userActions} |`)
   lines.push(`| 进入动作 | ${result.totals.enterActions} |`)
   lines.push(`| 字段 | ${(result.fields ?? []).length} |`)
@@ -497,7 +514,7 @@ function workflowStepLabel(step: AnalysisWorkflowStep, index: number): string {
 }
 
 function lifecyclePage(result: ArtifactAnalysis, generatedAt: Date): string {
-  const statuses = [...result.statuses].sort((left, right) => left.sort - right.sort || left.name.localeCompare(right.name))
+  const statuses = enabledStatuses(result).sort((left, right) => left.sort - right.sort || left.name.localeCompare(right.name))
   const statusById = new Map(statuses.map((status) => [status.id, status]))
 
   interface FlowNode {
@@ -808,7 +825,7 @@ export function buildAnalysisDrawio(result: ArtifactAnalysis, options: ArtifactO
  */
 export function buildAnalysisSvg(result: ArtifactAnalysis, options: ArtifactOptions = {}): string {
   const generatedAt = options.generatedAt ?? new Date()
-  const statuses = [...result.statuses].sort((left, right) => left.sort - right.sort || left.name.localeCompare(right.name))
+  const statuses = enabledStatuses(result).sort((left, right) => left.sort - right.sort || left.name.localeCompare(right.name))
   const statusById = new Map(statuses.map((status) => [status.id, status]))
   const known: Array<{ from: string; to: string; labels: Set<string> }> = []
   const addEdge = (from: string, to: string, text: string): void => {

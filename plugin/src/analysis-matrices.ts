@@ -1,10 +1,12 @@
 /**
  * 对象分析的「审批矩阵」检查（只读）。
  *
- * 只分析同时满足以下条件的矩阵：
- *   1. 目标对象有启用中的生命周期状态（调用方只传启用状态）；
- *   2. 矩阵出现在「启用状态的用户动作/进入动作」直接触发的工作流开始节点上；
- *   3. 该矩阵是工作流里实际挂载的参与者矩阵。
+ * 调用方只传已挂到启用生命周期状态上的工作流（analysis-workflow 已过滤）。
+ * 这里统计这些工作流开始节点上实际挂载的参与者矩阵，并记录：
+ *   - 矩阵名称；
+ *   - 关联工作流；
+ *   - 参与者控件；
+ *   - 该控件被哪些任务节点引用（应用节点）。
  *
  * 对每个矩阵检查同名菜单是否存在，以及菜单对应管理对象是否有业务数据。
  * 查不到就写 warning，不猜。
@@ -15,10 +17,16 @@ import type { AnalysisWorkflow } from './analysis-workflow.ts'
 export interface MatrixUsage {
   workflowId: string
   workflowName: string
-  stepId: string
-  stepName: string
+  /** 工作流挂到的启用状态（名称），例如“变更申请”。 */
+  statusNames: string[]
+  /** 开始节点上的参与者控件；它由该矩阵创建。 */
   controlId: string
   controlName: string
+  /** 实际引用这个参与者控件的任务节点。没有任务引用时写“开始节点（未绑定任务）”。 */
+  appliedStepIds: string[]
+  appliedStepNames: string[]
+  /** 触发来源：动作名，或“状态绑定（未反查到动作）”。 */
+  triggerLabel: string
 }
 
 export interface MatrixMenu {
@@ -84,33 +92,47 @@ interface FlatMenu extends MatrixMenu {
   parentNames: string[]
 }
 
-function flattenMenus(value: unknown, parentNames: string[] = [], out: FlatMenu[] = []): FlatMenu[] {
-  for (const raw of array(value)) {
-    const row = record(raw)
+/**
+ * 平台返回的是扁平菜单数组（只有 parentMenuId），不是嵌套树；
+ * 这里按 parentMenuId 还原祖先链，匹配“审批矩阵”父菜单时才有依据。
+ */
+function menusFromRows(value: unknown): FlatMenu[] {
+  const rows = array(value).map(record).filter((row) => text(row.name) !== '')
+  const byId = new Map(rows.map((row) => [text(row.id), row]))
+  const ancestors = (row: Record<string, unknown>): string[] => {
+    const names: string[] = []
+    const seen = new Set<string>()
+    let parentId = text(row.parentMenuId)
+    while (parentId !== '' && byId.has(parentId) && !seen.has(parentId)) {
+      seen.add(parentId)
+      const parent = byId.get(parentId)
+      if (parent === undefined) break
+      names.unshift(text(parent.name))
+      parentId = text(parent.parentMenuId)
+    }
+    return names
+  }
+  return rows.map((row) => {
     const name = text(row.name)
-    if (name === '') continue
-    const pathNames = [...parentNames, name]
     const id = text(row.id)
     const objectId = text(row.objectId)
     const listLayoutId = text(row.listLayoutId) || text(row.viewId)
-    out.push({
+    const parentNames = ancestors(row)
+    return {
       id,
       name,
-      path: pathNames.join(' / '),
+      path: [...parentNames, name].join(' / '),
       objectId,
       viewId: listLayoutId !== '' ? listLayoutId : id,
       parentNames,
-    })
-    const children = row.children ?? row.childMenus ?? row.items
-    if (Array.isArray(children)) flattenMenus(children, pathNames, out)
-  }
-  return out
+    }
+  })
 }
 
 async function readMenus(session: EgmpSession): Promise<FlatMenu[]> {
   try {
     const response = await call(session, 'GET', '/api/platform/Menu/GetUserMenuPermission')
-    return flattenMenus(response.data)
+    return menusFromRows(response.data)
   } catch {
     return []
   }
@@ -166,7 +188,7 @@ async function readViewId(session: EgmpSession, objectId: string): Promise<strin
   const cached = viewIdCache.get(objectId)
   if (cached !== undefined) return cached
   try {
-    const response = await call(session, 'GET', '/api/platform/Listlayout/List', { objectId })
+    const response = await call(session, 'GET', '/api/platform/Listlayout/List', undefined, { objectId })
     const rows = Array.isArray(response.data) ? response.data : []
     const first = record(rows[0])
     const id = text(first.id)
@@ -206,7 +228,22 @@ async function readRecordCount(session: EgmpSession, menu: MatrixMenu): Promise<
 }
 
 /**
- * @param workflows 已展开的工作流；只有 triggeredBy 非空的流程才参与矩阵检查。
+ * 同一矩阵可能同时有“配置菜单”和“业务数据菜单”；
+ * 配置菜单的 objectId 不一定有列表布局，必须逐个候选尝试，不能只看第一个。
+ */
+async function readRecordCountForMenus(
+  session: EgmpSession,
+  menus: MatrixMenu[],
+): Promise<number | null> {
+  for (const menu of menus) {
+    const count = await readRecordCount(session, menu)
+    if (count !== null) return count
+  }
+  return null
+}
+
+/**
+ * @param workflows 已展开的工作流；调用方已过滤为“挂在启用生命周期状态上”的流程。
  */
 export async function readMatrixAnalysis(
   session: EgmpSession,
@@ -216,23 +253,28 @@ export async function readMatrixAnalysis(
   const usageById = new Map<string, MatrixUsage[]>()
   const triggerUncertain: string[] = []
   for (const workflow of workflows) {
-    // 用户口径：只检查“启用状态的用户动作/进入动作触发的工作流”。
-    // statusBindings 只是生命周期可用范围，不能当成触发点。
-    if (workflow.triggeredBy.length === 0) {
-      triggerUncertain.push(workflow.name)
-      continue
-    }
+    if (workflow.triggeredBy.length === 0) triggerUncertain.push(workflow.name)
     for (const step of workflow.steps) {
       for (const control of step.startControls) {
         if (control.matrixId === null) continue
+        // 开始控件由任务节点的 userControlIds 引用；这就是“控件应用到了哪个节点”。
+        const applied = workflow.steps.filter((candidate) =>
+          candidate.task !== null && candidate.task.userControlIds.includes(control.id),
+        )
         const list = usageById.get(control.matrixId) ?? []
         list.push({
           workflowId: workflow.basicId,
           workflowName: workflow.name,
-          stepId: step.id,
-          stepName: step.name,
+          statusNames: workflow.statusBindings.map((binding) => binding.statusName),
           controlId: control.id,
           controlName: control.name,
+          appliedStepIds: applied.map((candidate) => candidate.id),
+          appliedStepNames: applied.length > 0
+            ? applied.map((candidate) => candidate.name)
+            : ['开始节点（未绑定任务）'],
+          triggerLabel: workflow.triggeredBy.length > 0
+            ? workflow.triggeredBy.map((trigger) => `${trigger.statusName} / ${trigger.actionName}`).join('、')
+            : '状态绑定（未反查到动作）',
         })
         usageById.set(control.matrixId, list)
       }
@@ -258,12 +300,15 @@ export async function readMatrixAnalysis(
     const candidates = sameName.length > 0
       ? sameName
       : menus.filter((menu) => {
+          if (menu.objectId === '') return false
           const a = normalized(menu.name)
           const b = normalized(name)
-          return menu.objectId !== '' && (a.includes(b) || b.includes(a))
+          // 至少要求是“某某矩阵”级别，避免把只有“变更”两字的业务菜单当成矩阵菜单。
+          if (a.length < 3) return false
+          return a.includes(b) || b.includes(a)
         })
     const matched = candidates.filter((menu) => menu.parentNames.some((parent) => normalized(parent).includes('审批矩阵')))
-    const menuList = (matched.length > 0 ? matched : candidates).map((menu) => ({
+    const menuList = matched.map((menu) => ({
       id: menu.id,
       name: menu.name,
       path: menu.path,
@@ -276,14 +321,9 @@ export async function readMatrixAnalysis(
     if (menuList.length === 0) {
       matrixWarnings.push('没有找到同名业务菜单。')
     } else {
-      const firstMenu = menuList[0]
-      if (firstMenu === undefined) {
-        matrixWarnings.push('菜单列表为空，无法读取业务数据。')
-      } else {
-        recordCount = await readRecordCount(session, firstMenu)
-        if (recordCount === null) matrixWarnings.push('菜单已找到，但业务数据条数读取失败。')
-        else if (recordCount === 0) matrixWarnings.push('菜单存在，但业务数据为 0 条。')
-      }
+      recordCount = await readRecordCountForMenus(session, menuList)
+      if (recordCount === null) matrixWarnings.push('菜单已找到，但业务数据条数读取失败。')
+      else if (recordCount === 0) matrixWarnings.push('菜单存在，但业务数据为 0 条。')
     }
     if (matrixWarnings.length > 0) warnings.push(`${name}：${matrixWarnings.join('；')}`)
     matrices.push({
@@ -301,7 +341,7 @@ export async function readMatrixAnalysis(
   }
   matrices.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
   if (triggerUncertain.length > 0) {
-    warnings.push(`以下工作流没有绑定用户动作/进入动作触发，未纳入矩阵检查：${triggerUncertain.join('、')}`)
+    warnings.push(`以下工作流未反查到用户动作/进入动作触发，按挂载的启用状态纳入矩阵检查：${triggerUncertain.join('、')}`)
   }
   return { matrices, warnings }
 }

@@ -340,32 +340,44 @@ function MatrixTable({ matrices }: { matrices: AnalysisResultView['matrices'] })
             <tr>
               <th>审批矩阵</th>
               <th>状态</th>
-              <th>使用位置</th>
+              <th>关联工作流</th>
+              <th>参与者控件</th>
+              <th>应用节点</th>
               <th>菜单</th>
               <th>业务数据</th>
               <th>异常</th>
             </tr>
           </thead>
           <tbody>
-            {matrices.map((matrix) => (
-              <tr key={matrix.id}>
-                <td>
-                  <b>{matrix.name}</b>
-                  <div><code>{matrix.code || matrix.id}</code></div>
-                </td>
-                <td>{matrix.isEnabled ? '启用' : `停用（${matrix.status}）`}</td>
-                <td>
-                  {matrix.usage.map((item) => (
-                    <div key={`${item.workflowId}-${item.controlId}`}>
-                      {item.workflowName} / {item.controlName}
-                    </div>
-                  ))}
-                </td>
-                <td>{matrix.menuFound ? matrix.menus.map((menu) => menu.path).join('；') : '缺失'}</td>
-                <td>{matrix.recordCount === null ? '未读到' : matrix.recordCount}</td>
-                <td>{matrix.warnings.length > 0 ? matrix.warnings.join('；') : '—'}</td>
-              </tr>
-            ))}
+            {matrices.flatMap((matrix) => {
+              const rows = matrix.usage.length > 0
+                ? matrix.usage
+                : [{
+                    workflowId: '',
+                    workflowName: '—',
+                    statusNames: [],
+                    controlId: '',
+                    controlName: '—',
+                    appliedStepIds: [],
+                    appliedStepNames: ['—'],
+                    triggerLabel: '',
+                  }]
+              return rows.map((usage) => (
+                <tr key={`${matrix.id}-${usage.workflowId}-${usage.controlId}`}>
+                  <td>
+                    <b>{matrix.name}</b>
+                    <div><code>{matrix.code || matrix.id}</code></div>
+                  </td>
+                  <td>{matrix.isEnabled ? '启用' : `停用（${matrix.status}）`}</td>
+                  <td>{usage.workflowName}</td>
+                  <td>{usage.controlName}</td>
+                  <td>{usage.appliedStepNames.join('；')}</td>
+                  <td>{matrix.menuFound ? matrix.menus.map((menu) => menu.path).join('；') : '缺失'}</td>
+                  <td>{matrix.recordCount === null ? '未读到' : matrix.recordCount}</td>
+                  <td>{matrix.warnings.length > 0 ? matrix.warnings.join('；') : '—'}</td>
+                </tr>
+              ))
+            })}
           </tbody>
         </table>
       </div>
