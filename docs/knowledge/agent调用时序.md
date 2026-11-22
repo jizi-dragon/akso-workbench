@@ -206,15 +206,19 @@ sequenceDiagram
 拒绝或补充。
 
 审批前 host 会先写一份审核文档（`plugin/src/config/approval-review.ts`）：
-`create` 类型写到 `.akso-workbench/reviews/<任务名>-YYYYMMDD-HHmmss.md`，内容为「问题 / 执行计划 /
-预期结果 checklist」，并附计划指纹与逐条执行明细（方法/路径/参数），保证审核文件与实际工具输入一致。
+优先写到 `<当前工作区>/.akso-workbench/reviews/<任务名>-YYYYMMDD-HHmmss.md`（`review.workspaceDir`
+优先，其次 `exec.cwd`，最后才回落 profile），内容为「问题 / 执行计划 / 预期结果 checklist」，并附
+计划指纹与逐条执行明细（方法/路径/参数），保证审核文件与实际工具输入一致。
 任务已执行后的局部优化/更新用 `update` 类型，写到 `<任务名>-更新-YYYYMMDD-HHmmss.md`，篇幅更短，
 只含任务概述 / 调整计划 / 预期 checklist / 本次操作清单，可带 `previousReviewPath` 与 `reason`。
-报告里带 `review.path` 与 `review.kind`；弹窗展示任务概述、文档地址与「在右侧打开」，通过
-`ctx.sidebarRight.openResource` 在 DSH 右侧文件预览打开；弹窗常驻「调整内容」文本框，填写后只能
+报告里带 `review.path`、`review.kind` 与 `review.url`；弹窗展示任务概述、文档地址与「在右侧打开」，
+通过 `ctx.sidebarRight.openResource` 在 DSH 右侧文件预览打开；弹窗常驻「调整内容」文本框，填写后只能
 「提交调整」，空内容时只能「同意」。`config_apply` 可传
-`review{kind,taskName,previousReviewPath,problem,approach,expected[],reason}` 覆盖自动生成的内容；
-审批前会校验文档存在、类型匹配且计划指纹匹配，不匹配或写失败返回 `review-unavailable`，不进入审批。
+`review{kind,taskName,previousReviewPath,problem,approach,expected[],reason,workspaceDir}` 覆盖自动
+生成的内容；审批前会校验文档存在、类型匹配且计划指纹匹配，不匹配或写失败返回
+`review-unavailable`，不进入审批。
+两步审批：先 `prepareOnly:true` 只生成文档并返回 `status:'prepared'` + 路径/URL（不弹窗、不写平台），
+模型把目标和文件链接发给用户；之后用 `reviewPath` 再调用，复用同一份文档进入审批，不会重新生成。
 任务成功后 host 才把文档标记为「已结束（审核文件作废，仅作历史记录）」并附执行结果；拒批 / 超时 /
 失败不作废。**已结束文档禁止再修改**，后续调整必须新建 `update` 文档。
 

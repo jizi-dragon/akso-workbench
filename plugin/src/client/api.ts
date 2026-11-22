@@ -97,6 +97,7 @@ export interface ApprovalReportView {
   steps: ApprovalStepView[]
   review?: {
     path: string
+    url?: string
     kind: 'create' | 'update'
     sessionId?: string
     title: string

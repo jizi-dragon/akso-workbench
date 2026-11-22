@@ -1028,6 +1028,50 @@ test('审批窗生成三节审核文档：问题 / 执行 / 预期 checklist', a
   }
 })
 
+test('prepareOnly 只生成工作区审核文档，不弹窗；reviewPath 再复用同一份文档', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  const egmp = await startFakeEgmp()
+  writeAccount(home, egmp.baseUrl)
+  const workspaceDir = join(home, 'workspace')
+  try {
+    savePlan(home, planFixture('pln_prepare', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
+    const prepared = await applyTool.execute({
+      planId: 'pln_prepare',
+      prepareOnly: true,
+      review: {
+        taskName: '预生成审核文档',
+        problem: '用户要先看文档再决定是否审批。',
+        approach: '先生成文档并返回链接，不打开审批窗。',
+        expected: ['文档落在当前工作区', '审批窗没有打开'],
+        workspaceDir,
+      },
+    }, { sessionId: 'session-test' }) as Record<string, any>
+
+    assert.equal(prepared.status, 'prepared')
+    const review = prepared.review as Record<string, any>
+    assert.ok(String(review.path).startsWith(workspaceDir), '审核文档必须落在当前工作区')
+    assert.match(String(review.url), /^dsh-resource:\/\/file\/session\/session-test\//)
+    assert.ok(existsSync(String(review.path)))
+    const pendingAfterPrepare = await call(mounted.routes, P.configApprovalPending, 'GET')
+    assert.equal(pendingAfterPrepare.json.pending, null, 'prepareOnly 不能弹审批窗')
+    assert.equal(egmp.hits, 0, 'prepareOnly 不能写平台')
+
+    const running = applyTool.execute({
+      planId: 'pln_prepare',
+      reviewPath: review.path,
+    }, { sessionId: 'session-test' }) as Promise<Record<string, any>>
+    const pending = await waitPending(mounted.routes)
+    assert.equal((pending.report.review as Record<string, any>).path, review.path, '第二次必须复用同一份文档')
+    await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'deny' })
+    assert.equal((await running).status, 'denied')
+    assert.equal(egmp.hits, 0)
+  } finally {
+    await egmp.close()
+  }
+})
+
 test('人点拒绝：计划一步都不写，审批窗清掉', async () => {
   const home = freshHome()
   const mounted = mount(home, undefined, true)

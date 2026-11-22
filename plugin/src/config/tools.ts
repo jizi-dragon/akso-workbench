@@ -14,7 +14,7 @@
 import { CAPABILITIES } from './capabilities.ts'
 import { applyPlan, loadPlan, planBlueprint, planHash, recordApprovalDecision, saveApproval, type Plan, type Step } from './engine.ts'
 import type { ApprovalBusinessGroup, ApprovalGate, ApprovalReport, ApprovalReportStep } from './approval.ts'
-import { attachApprovalReview, finalizeApprovalReview, reviewMatchesPlan, type ApprovalReviewInput } from './approval-review.ts'
+import { attachApprovalReview, finalizeApprovalReview, loadApprovalReview, reviewMatchesPlan, type ApprovalReviewInput } from './approval-review.ts'
 import type { EgmpSession } from './session.ts'
 
 /** host 解析出来的写入会话；`session: null` 时 `reason` 一定是人话。 */
@@ -34,6 +34,39 @@ export interface ConfigToolDeps {
 }
 
 const NEEDS_ACCOUNT_HINT = '写入必须使用底部账号条里选中的账号：请先在账号条里连接一个账号（没有就点「添加账号」），再让我重试。'
+
+function textOf(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined
+}
+
+/** 从 DSH 的 tool exec 上下文里尽量取当前工作区根；取不到就退回旧候选。 */
+function workspaceRootOf(exec: unknown): string | undefined {
+  const info = exec as {
+    cwd?: unknown
+    workspaceRoot?: unknown
+    workspace?: { root?: unknown; cwd?: unknown }
+    session?: { cwd?: unknown; workspaceRoot?: unknown; workspace?: { root?: unknown } }
+  } | undefined
+  return textOf(info?.cwd)
+    ?? textOf(info?.workspaceRoot)
+    ?? textOf(info?.workspace?.root)
+    ?? textOf(info?.workspace?.cwd)
+    ?? textOf(info?.session?.cwd)
+    ?? textOf(info?.session?.workspaceRoot)
+    ?? textOf(info?.session?.workspace?.root)
+}
+
+/** 审核文档链接需要 Session id；优先 tool exec，其次 DSH 进程环境。 */
+function sessionIdOf(exec: unknown): string | undefined {
+  const info = exec as {
+    sessionId?: unknown
+    session?: { id?: unknown; sessionId?: unknown }
+  } | undefined
+  return textOf(info?.sessionId)
+    ?? textOf(info?.session?.id)
+    ?? textOf(info?.session?.sessionId)
+    ?? textOf(process.env.DSH_SESSION_ID)
+}
 
 const KIND_LABEL: Record<string, string> = {
   picklist: '选项集',
@@ -233,11 +266,21 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
       + '逐步执行、每步回读校验；某步失败即停并返回 checkpoint。不接受临时参数，不能绕过计划。'
       + '计划里有写入时，本工具会在**对话里弹出一个审批窗**：先打开一份审核文档，'
       + '人点「同意」才发请求，点「拒绝」一步都不写，填写「调整内容」则交回模型改计划。'
+      + '传 prepareOnly:true 时只生成审核文档并返回路径/链接，不弹审批窗、不写平台；'
+      + '拿到链接先发摘要消息，再用 reviewPath 正式进入审批。'
       + '这一关不在工具参数里，模型无法自己批准。',
     parameters: {
       type: 'object',
       properties: {
         planId: { type: 'string', description: '计划 id（pln_ 开头），来自 config_plan 的返回' },
+        prepareOnly: {
+          type: 'boolean',
+          description: '只生成审核文档并返回路径/链接，不弹审批窗、不写平台。用于先给用户看“目标/方案/预期结果 + 文件链接”。',
+        },
+        reviewPath: {
+          type: 'string',
+          description: '已通过 prepareOnly 生成的审核文档绝对路径；传入后复用该文档进入审批，不再新建。',
+        },
         review: {
           type: 'object',
           description:
@@ -252,6 +295,7 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
             approach: { type: 'string', description: '本次任务计划怎么执行' },
             expected: { type: 'array', items: { type: 'string' }, description: '本次任务完成后预期结果，逐条作为 checklist' },
             reason: { type: 'string', description: '小范围更新的调整原因' },
+            workspaceDir: { type: 'string', description: '当前工作区根目录；审核文档会落在 <workspaceDir>/.akso-workbench/reviews，省略时从 exec 推断' },
           },
           additionalProperties: false,
         },
@@ -271,7 +315,12 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
       if (session === null) {
         return { ok: false, status: 'needs-account', error: opened.reason ?? '账号条没有可用的账号', hint: NEEDS_ACCOUNT_HINT }
       }
-      const input = (args ?? {}) as { planId?: string; review?: ApprovalReviewInput }
+      const input = (args ?? {}) as {
+        planId?: string
+        review?: ApprovalReviewInput
+        prepareOnly?: boolean
+        reviewPath?: string
+      }
       const planId = String(input.planId ?? '')
       if (planId === '') return { ok: false, error: '缺少 planId' }
       const plan = loadPlan(deps.dshHome, planId)
@@ -279,14 +328,28 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
 
       const writes = plan.steps.filter((step) => step.action !== 'skip')
       const needsApproval = writes.length > 0 && deps.requireApproval()
-      let reviewPath: string | undefined
+      if (input.prepareOnly === true && !needsApproval) {
+        return { ok: true, status: 'no-approval-needed', planId, message: '没有需要审批的写入步骤；未生成审核文档，平台一步都没写。' }
+      }
+      let reviewPath: string | undefined = textOf(input.reviewPath)
       if (needsApproval) {
         const report = buildApprovalReport(plan, session)
-        const execInfo = exec as { sessionId?: unknown; session?: { id?: unknown } } | undefined
-        const sessionId = typeof execInfo?.sessionId === 'string'
-          ? execInfo.sessionId
-          : typeof execInfo?.session?.id === 'string' ? execInfo.session.id : undefined
-        attachApprovalReview(report, input.review, deps.dshHome, sessionId)
+        const sessionId = sessionIdOf(exec)
+        if (reviewPath !== undefined) {
+          const loaded = loadApprovalReview(reviewPath, report, sessionId)
+          if (loaded === null) {
+            return {
+              ok: false,
+              status: 'review-unavailable',
+              planId,
+              message: '指定的审核文档不存在、已结束或与当前计划指纹不一致；本次不进入审批、平台一步都没写。',
+            }
+          }
+          report.review = loaded
+        } else {
+          const workspaceRoot = textOf(input.review?.workspaceDir) ?? workspaceRootOf(exec)
+          attachApprovalReview(report, input.review, deps.dshHome, sessionId, workspaceRoot)
+        }
         reviewPath = report.review?.path
         if (reviewPath === undefined || !reviewMatchesPlan(reviewPath, report.hash)) {
           return {
@@ -294,6 +357,15 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
             status: 'review-unavailable',
             planId,
             message: '审核文档没有生成或与当前计划不一致，本次不进入审批、平台一步都没写。请确认工作区可写后重试。',
+          }
+        }
+        if (input.prepareOnly === true) {
+          return {
+            ok: true,
+            status: 'prepared',
+            planId,
+            review: report.review,
+            message: '审核文档已生成，审批窗尚未打开，平台一步都没写。请先把目标/方案/预期结果和文件链接发给用户；确认后再调用 config_apply，并带 reviewPath。',
           }
         }
         const signal = (exec as { signal?: unknown } | undefined)?.signal

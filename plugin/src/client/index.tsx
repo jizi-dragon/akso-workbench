@@ -61,6 +61,31 @@ function injectStyles(): void {
  * 用户看不到、我们也拿不到；写进 journal 后，用户下载日志就能带回来。
  * 只记消息与栈的前几行，**不记页面内容**。HMR 会重复 apply，用 window 上的标记去重。
  */
+/** DSH 的 Markdown 链接目前不会自己处理 `dsh-resource://file/...`。
+ * 插件在捕获阶段接管这些链接，交给右侧栏的 openResource —— 与审批窗按钮同一条链路。
+ * 用 window 标记避免 HMR 重复挂监听。 */
+function installResourceLinkHandler(ctx: any): void {
+  const flags = window as unknown as { __aksoWorkbenchResourceLinks?: boolean }
+  if (flags.__aksoWorkbenchResourceLinks === true) return
+  flags.__aksoWorkbenchResourceLinks = true
+  document.addEventListener(
+    'click',
+    (event) => {
+      const target = event.target
+      const anchor = target instanceof Element ? target.closest('a[href^="dsh-resource://file/"]') : null
+      if (!(anchor instanceof HTMLAnchorElement)) return
+      const href = anchor.getAttribute('href')
+      if (href === null) return
+      const service = ctx.sidebarRight as { openResource?: (address: string) => unknown } | undefined
+      if (typeof service?.openResource !== 'function') return
+      event.preventDefault()
+      event.stopPropagation()
+      void service.openResource(href)
+    },
+    true,
+  )
+}
+
 function installErrorHooks(): void {
   const flags = window as unknown as { __aksoWorkbenchErrorHooks?: boolean }
   if (flags.__aksoWorkbenchErrorHooks === true) return
@@ -101,6 +126,7 @@ export function apply(ctx: any): void {
     setTranslator((key, vars) => bound(key, vars))
     injectStyles()
     installErrorHooks()
+    installResourceLinkHandler(ctx)
 
     ctx.slots.inject('sidebar.panellist', () =>
       ctx.slots.register(

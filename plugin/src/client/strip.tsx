@@ -12,7 +12,8 @@
  *   · **不显示 JWT 原文** —— eGMP 令牌就是 JWT，换票由 host 自己处理；
  *     面板里只留一个「到期时间」，签发时间已按用户要求去掉（v4.2.54）。
  */
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 
 import { t } from './i18n.ts'
 import { connectAccount, disconnect, flash, getState, refresh, subscribe } from './state.ts'
@@ -50,6 +51,9 @@ const APPROVAL_KIND_KEY: Record<string, string> = {
 
 /** 一行里最多念几个名字，再多就「等 N 项」——弹窗要一眼看完，不是清单。 */
 const APPROVAL_NAME_LIMIT = 6
+
+/** 概述分组首屏最多展示几类；其余折叠，保证底部按钮始终可见。 */
+const APPROVAL_GROUP_LIMIT = 4
 
 function accountLabel(account: CloudAccount): string {
   const head = account.tabName.trim() !== '' ? account.tabName : account.username
@@ -111,18 +115,89 @@ function countdownOf(ms: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
-/** 从 DSH 右侧栏服务取当前 Session id；兼容 observable 和裸值。 */
-function mountedSessionId(service: SidebarRightLike | undefined): string | null {
-  const mounted = service?.mounted
-  const value = typeof (mounted as { get?: unknown } | undefined)?.get === 'function'
-    ? (mounted as { get: () => unknown }).get()
-    : mounted
-  return typeof value === 'string' && value.trim() !== '' ? value : null
+interface MountedSessionInfo {
+  id: string
+  cwd?: string
 }
 
-/** 把工作区绝对路径转成 DSH 文档预览地址。 */
-function reviewAddress(path: string, sessionId: string): string {
-  return `dsh-resource://file/session/${encodeURIComponent(sessionId)}/${encodeURI(path.replaceAll('\\', '/'))}`
+function snapshotOf(value: unknown): unknown {
+  if (typeof (value as { getSnapshot?: unknown } | undefined)?.getSnapshot === 'function') {
+    return (value as { getSnapshot: () => unknown }).getSnapshot()
+  }
+  if (typeof (value as { get?: unknown } | undefined)?.get === 'function') {
+    return (value as { get: () => unknown }).get()
+  }
+  return value
+}
+
+/** 从右侧栏服务取当前 Session；兼容 snapshot store、裸 id 和 Session 对象。 */
+function mountedSessionInfo(service: SidebarRightLike | undefined): MountedSessionInfo | null {
+  const mounted = service?.mounted
+  const value = snapshotOf(mounted)
+  const mountedRecord = (typeof value === 'string' ? { id: value } : value) as {
+    id?: unknown
+    sessionId?: unknown
+    cwd?: unknown
+    workspaceRoot?: unknown
+    workspace?: { root?: unknown; cwd?: unknown }
+  } | null | undefined
+  const id = typeof mountedRecord?.id === 'string'
+    ? mountedRecord.id
+    : typeof mountedRecord?.sessionId === 'string' ? mountedRecord.sessionId : null
+  if (id === null || id.trim() === '') return null
+  const cwd = typeof mountedRecord?.cwd === 'string'
+    ? mountedRecord.cwd
+    : typeof mountedRecord?.workspaceRoot === 'string'
+      ? mountedRecord.workspaceRoot
+      : typeof mountedRecord?.workspace?.root === 'string'
+        ? mountedRecord.workspace.root
+        : typeof mountedRecord?.workspace?.cwd === 'string' ? mountedRecord.workspace.cwd : undefined
+  return { id, ...(cwd === undefined ? {} : { cwd }) }
+}
+
+/** 把工作区绝对路径转成 DSH 文档预览地址；有 cwd 时优先转相对路径。 */
+function reviewAddress(path: string, sessionId: string, cwd?: string): string {
+  let normalized = path.replaceAll('\\', '/')
+  if (cwd !== undefined) {
+    const root = cwd.replaceAll('\\', '/').replace(/\/+$/, '')
+    if (root !== '' && normalized.toLowerCase().startsWith(`${root.toLowerCase()}/`)) {
+      normalized = normalized.slice(root.length + 1)
+    }
+  }
+  /* 审核文件按约定位于工作区 `.akso-workbench/reviews/`。DSH 文档预览按
+   * Session 根解析相对路径更稳；即使拿不到 cwd，也能从路径里切出这一段，
+   * 避免把 `D:/...` 绝对路径交给文件服务后打不开。 */
+  const marker = '/.akso-workbench/reviews/'
+  const at = normalized.toLowerCase().indexOf(marker)
+  if (at >= 0) normalized = normalized.slice(at + 1)
+  return `dsh-resource://file/session/${encodeURIComponent(sessionId)}/${encodeURI(normalized)}`
+}
+
+/**
+ * 审批窗不能按整个 viewport 定位：DSH 左右侧栏开合时，只有中间会话区才是
+ * 合法范围。`.akw-strip` 本身只是账号条里的一小段，不能拿它的宽度当会话区；
+ * 向上找第一个“像输入区/会话栏”的祖先（>=360px 且不是整页根节点）。
+ */
+function approvalAnchorElement(): Element | null {
+  const strip = document.querySelector('.akw-strip')
+  if (strip === null) return null
+  const viewportW = window.innerWidth
+  const minWidth = Math.min(360, Math.max(240, viewportW - 24))
+  let fallback: Element | null = null
+  let element: Element | null = strip.parentElement
+  for (let depth = 0; element !== null && depth < 8; depth += 1) {
+    const rect = element.getBoundingClientRect()
+    if (rect.width >= minWidth && rect.height >= 32) {
+      if (rect.width <= viewportW - 24) return element
+      fallback = fallback ?? element
+    }
+    element = element.parentElement
+  }
+  return fallback
+}
+
+function approvalAnchorRect(): DOMRect | null {
+  return approvalAnchorElement()?.getBoundingClientRect() ?? null
 }
 
 /**
@@ -133,13 +208,23 @@ function reviewAddress(path: string, sessionId: string): string {
  * 窗口自己不提供 ×：审批只能显式做，点外面/按 Esc 都不关；宿主侧超时（8 分钟）或工具被取消时，
  * 轮询会发现 pending 消失，窗口自然收起。
  */
-function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }) {
+function ApprovalModal(props: {
+  tr: Translate
+  sidebarRight?: SidebarRightLike
+}) {
   const { tr } = props
   const [pending, setPending] = useState<PendingApprovalView | null>(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  /** 审批卡片是 composer 的兄弟节点，portal 后不能再用 viewport 居中：
+   *  要同时让出输入框（bottom）和左右侧边栏（left/right），只覆盖会话区。 */
+  const [layout, setLayout] = useState({ bottom: 120, left: 12, right: 12 })
+  /** 允许折叠成一条标题栏，避免整个审批窗挡住对话。 */
+  const [collapsed, setCollapsed] = useState(false)
+  /** 概述默认只展示前几类，完整清单在审核文档里。 */
+  const [showAllBusiness, setShowAllBusiness] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -164,6 +249,66 @@ function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }
     }
   }, [])
 
+  /* composer 会把 fixed 子元素限制在自己的层里；portal 到 body 后必须自己
+   * 量一下账号条：底部抬到输入区上方，左右让出侧边栏，只覆盖会话区。
+   * 侧边栏开合、窗口 resize、visualViewport 滚动都会改变这个矩形。 */
+  useLayoutEffect(() => {
+    if (pending === null) return
+    let frame = 0
+    let lastKey = ''
+    const measure = (): void => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        const rect = approvalAnchorRect()
+        const viewportW = window.innerWidth
+        const viewportH = window.visualViewport?.height ?? window.innerHeight
+        if (rect === null || !Number.isFinite(rect.top) || rect.top <= 0 || rect.width <= 0) {
+          const fallback = {
+            bottom: Math.max(96, Math.round(viewportH * 0.16)),
+            left: 12,
+            right: 12,
+          }
+          const key = `${fallback.bottom}/${fallback.left}/${fallback.right}`
+          if (key !== lastKey) {
+            lastKey = key
+            setLayout(fallback)
+          }
+          return
+        }
+        const bottom = Math.max(16, Math.min(Math.round(viewportH - 16), Math.round(window.innerHeight - rect.top + 14)))
+        const left = Math.max(12, Math.min(Math.round(viewportW / 2), Math.round(rect.left)))
+        const right = Math.max(12, Math.min(Math.round(viewportW / 2), Math.round(viewportW - rect.right)))
+        const key = `${bottom}/${left}/${right}`
+        if (key !== lastKey) {
+          lastKey = key
+          setLayout({ bottom, left, right })
+        }
+      })
+    }
+    measure()
+    const anchor = approvalAnchorElement()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    if (observer !== null) {
+      if (anchor !== null) observer.observe(anchor)
+      observer.observe(document.body)
+    }
+    window.addEventListener('resize', measure)
+    window.visualViewport?.addEventListener('resize', measure)
+    window.visualViewport?.addEventListener('scroll', measure)
+    document.addEventListener('transitionend', measure, true)
+    // 侧边栏开合/输入区变高不一定触发 resize；轻量轮询保证位置在一帧内跟上。
+    const settle = window.setInterval(measure, 250)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearInterval(settle)
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+      window.visualViewport?.removeEventListener('resize', measure)
+      window.visualViewport?.removeEventListener('scroll', measure)
+      document.removeEventListener('transitionend', measure, true)
+    }
+  }, [pending])
+
   if (pending === null) return null
   const report = pending.report
   const expired = pending.expiresAt <= now
@@ -173,13 +318,16 @@ function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }
   const review = report.review
   const openReview = (): void => {
     if (review === undefined) return
-    const sessionId = review.sessionId ?? mountedSessionId(props.sidebarRight)
-    if (sessionId === null || typeof props.sidebarRight?.openResource !== 'function') {
+    const mounted = mountedSessionInfo(props.sidebarRight)
+    const sessionId = review.sessionId ?? mounted?.id
+    const address = review.url
+      ?? (sessionId === null || sessionId === undefined ? null : reviewAddress(review.path, sessionId, mounted?.cwd))
+    if (address === null || typeof props.sidebarRight?.openResource !== 'function') {
       flash(tr('approval.reviewUnavailable'))
       return
     }
     try {
-      void props.sidebarRight.openResource(reviewAddress(review.path, sessionId), { revealIfOpened: true })
+      void props.sidebarRight.openResource(address, { revealIfOpened: true })
     } catch (error) {
       flash(tr('approval.reviewFailed', { message: error instanceof Error ? error.message : String(error) }))
     }
@@ -201,19 +349,40 @@ function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }
     }
   }
 
-  return (
-    <div className="akw-approval" role="presentation">
+  const visibleBusiness = showAllBusiness ? business : business.slice(0, APPROVAL_GROUP_LIMIT)
+  const hiddenBusiness = business.length - visibleBusiness.length
+  const overlayStyle = {
+    '--akw-approval-bottom': `${layout.bottom}px`,
+    '--akw-approval-left': `${layout.left}px`,
+    '--akw-approval-right': `${layout.right}px`,
+  } as CSSProperties
+  return createPortal(
+    <div className="akw-approval" role="presentation" style={overlayStyle}>
       <div className="akw-approval__card" role="dialog" aria-modal="true" aria-label={tr('approval.title')}>
         <div className="akw-approval__head">
           <div>
             <b>{tr('approval.title')}</b>
             <span className="akw-approval__plan">{report.planId}</span>
           </div>
-          <span className={`akw-approval__clock${expired ? ' is-off' : ''}`} title={tr('approval.expires')}>
-            {expired ? tr('approval.expired') : countdownOf(pending.expiresAt - now)}
-          </span>
+          <div className="akw-approval__headActions">
+            <button
+              type="button"
+              className="akw-approval__collapse"
+              aria-expanded={!collapsed}
+              title={tr(collapsed ? 'approval.expand' : 'approval.collapse')}
+              onClick={() => setCollapsed((value) => !value)}
+            >
+              {tr(collapsed ? 'approval.expand' : 'approval.collapse')}
+            </button>
+            <span className={`akw-approval__clock${expired ? ' is-off' : ''}`} title={tr('approval.expires')}>
+              {expired ? tr('approval.expired') : countdownOf(pending.expiresAt - now)}
+            </span>
+          </div>
         </div>
 
+        {!collapsed ? (
+          <>
+        <div className="akw-approval__body">
         <div className="akw-approval__meta">
           <div><span>{tr('approval.env')}</span><b>{report.env.trim() === '' ? '—' : report.env}</b></div>
           <div><span>{tr('approval.target')}</span><b>{report.host}</b></div>
@@ -224,7 +393,7 @@ function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }
           <div className="akw-approval__business">
             <div className="akw-approval__businessHead">{tr('approval.business')}</div>
             <ul className="akw-approval__businessList">
-              {business.map((group) => {
+              {visibleBusiness.map((group) => {
                 const shown = group.names.slice(0, APPROVAL_NAME_LIMIT)
                 const rest = group.names.length - shown.length
                 return (
@@ -241,6 +410,17 @@ function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }
                 )
               })}
             </ul>
+            {business.length > APPROVAL_GROUP_LIMIT ? (
+              <button
+                type="button"
+                className="akw-approval__more"
+                onClick={() => setShowAllBusiness((value) => !value)}
+              >
+                {showAllBusiness
+                  ? tr('approval.showFewerGroups')
+                  : tr('approval.showAllGroups', { count: hiddenBusiness })}
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -312,6 +492,7 @@ function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }
         </label>
 
         {error !== null ? <div className="akw-approval__error">{tr('approval.failed', { message: error })}</div> : null}
+        </div>
 
         <div className="akw-approval__foot">
           <span className="akw-approval__hint">
@@ -339,8 +520,15 @@ function ApprovalModal(props: { tr: Translate; sidebarRight?: SidebarRightLike }
             </button>
           </div>
         </div>
+          </>
+        ) : (
+          <div className="akw-approval__collapsed">
+            {tr('approval.collapsedHint')}
+          </div>
+        )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -476,12 +664,12 @@ export function AccountStrip(props: StripProps = {}) {
     }
   }, [open])
 
-  if (state.status === 'loading') return <ApprovalModal tr={tr} sidebarRight={props.sidebarRight} />
+  if (state.status === 'loading') return <ApprovalModal tr={tr} sidebarRight={props.sidebarRight}  />
 
   if (state.status === 'error') {
     return (
       <>
-        <ApprovalModal tr={tr} sidebarRight={props.sidebarRight} />
+        <ApprovalModal tr={tr} sidebarRight={props.sidebarRight}  />
         <div className="akw-strip">
           <button type="button" className="akw-strip__retry" title={state.error ?? ''} onClick={() => void refresh()}>
             {tr('strip.error')}
@@ -493,7 +681,7 @@ export function AccountStrip(props: StripProps = {}) {
 
   return (
     <>
-      <ApprovalModal tr={tr} sidebarRight={props.sidebarRight} />
+      <ApprovalModal tr={tr} sidebarRight={props.sidebarRight}  />
       <div className="akw-strip" ref={rootRef}>
       {connected !== null ? (
         <button

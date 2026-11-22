@@ -55,11 +55,15 @@
   在弹窗里点「同意」（`config-approvals/<planId>.json` 存计划指纹，一次性）；HTTP 直连默认关闭
   （`AKSO_WORKBENCH_ALLOW_DIRECT_WRITE=1` 仅本机调试，开了也仍过引擎的审批门）。
   审批要求 = 环境变量 `AKSO_WORKBENCH_REQUIRE_APPROVAL` > 页面开关 > 默认要求。
-- 审批前必须生成审核文档（问题 / 执行计划 / 预期结果 checklist）：host 写到
-  `.akso-workbench/reviews/`（不入库），弹窗显示任务概述、文档地址与「在右侧打开」，用 DSH 的
+- 审批前必须生成审核文档（问题 / 执行计划 / 预期结果 checklist）：host 优先写到
+  `<当前工作区>/.akso-workbench/reviews/`（不入库），调用方传 `review.workspaceDir`，不传则由
+  `exec` 推断、最后才回落 profile；弹窗显示任务概述、文档地址与「在右侧打开」，用 DSH 的
   `sidebarRight.openResource` 打开。文档同时写计划指纹与执行明细（方法/路径/参数），
   `config_apply` 在审批前校验文档存在且指纹匹配；生成失败或指纹不一致返回 `review-unavailable`，
   **不进入审批、平台一步不写**。可传 `review{kind,taskName,problem,approach,expected[]}` 补充内容。
+- 两步审批：先 `config_apply({planId, review, prepareOnly:true})` 只生成审核文档并返回路径/地址
+  （`status:'prepared'`，不弹窗、不写平台）；assistant 先把目标/方案/结果和文件链接发给用户，
+  再用 `config_apply({planId, reviewPath})` 正式进入审批，复用同一份文档，不能重新生成另一份。
 - 审核文档分两类：`kind:'create'` 用于大规模创建/调整，文件名 `<任务名>-YYYYMMDD-HHmmss.md`，含完整执行明细；
   `kind:'update'` 用于已执行任务的小范围优化/更新，文件名 `<任务名>-更新-YYYYMMDD-HHmmss.md`，篇幅更短，
   只含任务概述/调整计划/预期 checklist/本次操作清单，可带 `previousReviewPath` 与 `reason`。

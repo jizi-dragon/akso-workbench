@@ -43,6 +43,8 @@ export interface ApprovalBusinessGroup {
 export interface ApprovalReview {
   /** 绝对路径；客户端按当前 Session 转成 dsh-resource 地址。 */
   path: string
+  /** 可直接交给 DSH 文件预览的地址；有它时客户端不必再拼路径。 */
+  url?: string
   /** 文档类型：大规模创建/调整，或任务完成后的小范围更新。 */
   kind: 'create' | 'update'
   /** host 侧如果知道当前 Session，可直接带下来；否则客户端从右侧栏服务读。 */

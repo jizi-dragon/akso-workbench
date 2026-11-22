@@ -29,6 +29,8 @@ export interface ApprovalReviewInput {
   expected?: string[]
   /** 小范围更新时的调整原因。 */
   reason?: string
+  /** 当前工作区根；调用方知道时优先用它落审核文档。 */
+  workspaceDir?: string
 }
 
 function clean(value: unknown): string {
@@ -184,11 +186,20 @@ function isExecuted(text: string): boolean {
   return /^> 任务状态：已结束/m.test(text)
 }
 
+function reviewUrl(path: string, sessionId: string): string {
+  let normalized = path.replaceAll('\\', '/')
+  const marker = '/.akso-workbench/reviews/'
+  const at = normalized.toLowerCase().indexOf(marker)
+  if (at >= 0) normalized = normalized.slice(at + 1)
+  return `dsh-resource://file/session/${encodeURIComponent(sessionId)}/${encodeURI(normalized)}`
+}
+
 export function attachApprovalReview(
   report: ApprovalReport,
   input: ApprovalReviewInput | undefined,
   dshHome: string,
   sessionId?: string,
+  workspaceRoot?: string,
 ): void {
   const kind: 'create' | 'update' = input?.kind === 'update' ? 'update' : 'create'
   const taskName = clean(input?.taskName) || report.title
@@ -209,6 +220,7 @@ export function attachApprovalReview(
   const candidates = [
     process.env.AKSO_WORKBENCH_REVIEW_DIR?.trim(),
     process.env.AKSO_WORKBENCH_APPROVAL_DIR?.trim(),
+    workspaceRoot === undefined ? undefined : join(workspaceRoot, '.akso-workbench', 'reviews'),
     join(process.cwd(), '.akso-workbench', 'reviews'),
     join(dshHome, 'akso-workbench', 'reviews'),
   ].filter((dir): dir is string => typeof dir === 'string' && dir !== '')
@@ -217,13 +229,49 @@ export function attachApprovalReview(
     try {
       mkdirSync(dir, { recursive: true })
       writeFileSync(path, newDocument(report, review, input ?? {}, at), 'utf8')
-      report.review = { path, ...review }
+      report.review = {
+        path,
+        ...review,
+        ...(typeof sessionId === 'string' && sessionId !== '' ? { url: reviewUrl(path, sessionId) } : {}),
+      }
       return
     } catch {
       // 当前目录可能只读（例如 DSH 安装在 asar 内），继续试 dshHome。
     }
   }
   console.warn('[akso-workbench] 审核文档写入失败，审批窗降级为步骤列表')
+}
+
+/**
+ * 二次进入审批时读取已准备文档的摘要。指纹校验先由 `reviewMatchesPlan` 完成；
+ * 读取失败返回 null，调用方应拒绝进入审批，而不是拿空文档糊弄。
+ */
+export function loadApprovalReview(path: string, report: ApprovalReport, sessionId?: string): ApprovalReview | null {
+  const target = clean(path)
+  if (target === '' || !existsSync(target) || !reviewMatchesPlan(target, report.hash)) return null
+  try {
+    const text = readFileSync(target, 'utf8')
+    const title = /^# (.+)$/m.exec(text)?.[1]?.trim() ?? report.title
+    const kind: 'create' | 'update' = /> 文档类型：([^\n]+)/.exec(text)?.[1]?.includes('更新') === true ? 'update' : 'create'
+    const section = (heading: string): string => {
+      const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      return new RegExp(`## ${escaped}\\n\\n([\\s\\S]*?)\\n\\n(?:##|###) `).exec(text)?.[1]?.trim() ?? ''
+    }
+    const problem = section(kind === 'update' ? '本次调整需要解决什么问题' : '本次任务需要解决什么问题')
+    const approach = section(kind === 'update' ? '本次调整计划怎么执行' : '本次任务计划怎么执行')
+    const expected = [...text.matchAll(/^- \[ \] (.+)$/gm)].map((match) => match[1]?.trim() ?? '').filter((item) => item !== '')
+    return {
+      path: target,
+      ...(typeof sessionId === 'string' && sessionId !== '' ? { sessionId, url: reviewUrl(target, sessionId) } : {}),
+      kind,
+      title,
+      problem,
+      approach,
+      expected,
+    }
+  } catch {
+    return null
+  }
 }
 
 /**

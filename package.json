@@ -1,10 +1,12 @@
 {
   "name": "akso-workbench-ts",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "description": "akso-workbench 仓库根：capture 接口监听工具 + 插件工作区的统一校验脚本（eGMP 域逻辑在 plugin/）",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "test": "node --test \"capture/test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
