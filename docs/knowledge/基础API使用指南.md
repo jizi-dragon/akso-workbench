@@ -323,7 +323,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 **要点**
 
 - 全量替换：没带上的 section/control 会被删；写入前先 layout.detail 读全量，改完整份回写。
-- 新建 section 只需 `{ id, code, name, type, columnsNum }`；新建 control 只需 `{ id, sectionId, code, name, fieldId, type, gridSpan, attrs }`。id 用新 UUID。
+- 新建 section 需 `{ id, layoutId, code, name, type, columnsNum }`；新建 control 需 `{ id, layoutId, sectionId, code, name, fieldId, type, gridSpan, attrs }`。id 用新 UUID；缺 `layoutId` 会报「无法删除其他布局部分Section」。
 - **不要带 `belongId` / `fullPath`**：带上必报「[layout_section] BelongId 不正确，该值必须由 FullPath 生成」；实测请求体里没有这两个字段。
 - 新分区 / 新控件的 `id` 必须先经 `layout.stable.ids` 换成稳定 id；直接写临时 uuid 同样报 BelongId 那句，换完同一个 body 一次通过。
 - 已有分区要按 `layout.detail` 读回的原样整份回传（90+ 键，含 `pageId`、`relationFilter`、`listlayoutId` 等），压成最小对象会 400；只有新建的才用最小对象。

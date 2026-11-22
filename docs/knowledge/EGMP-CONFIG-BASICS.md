@@ -60,8 +60,9 @@
 ### 2.5 表单布局 `layout.save`（最大的坑）
 - 平台自动生成的布局：有 1 个「流程时间线」分区，**控件为 0** → 控制台打开表单是空的。
 - 写法：先 `layout.detail` 读全量 → 在 `sections` / `controls` 上改 → **整份写回**（全量替换）。
-- 新建分区只需 `{ id: 新UUID, code, name, type: 1, columnsNum }`；新建控件只需
-  `{ id: 新UUID, sectionId, code, name, fieldId, type: 'AKInput', gridSpan: 1, attrs }`。
+- 新建分区需 `{ id: 新UUID, layoutId: 当前布局id, code, name, type: 1, columnsNum }`；新建控件需
+  `{ id: 新UUID, layoutId: 当前布局id, sectionId, code, name, fieldId, type: 'AKInput', gridSpan: 1, attrs }`。
+  缺 `layoutId` 会报「无法删除其他布局部分Section」（2026-11-22 实测）。
 - **不要带 `belongId` / `fullPath`**：带了必报 `[layout_section] BelongId 不正确，该值必须由 FullPath 生成`
   （2026-11-09 抓包确认：浏览器的真实请求体里没有这两个字段）。
 - 旧分区（尤其 type=4 工作流时间线）原样回传，不能删；`pages` 原样回传，没有分页传 `[]`。

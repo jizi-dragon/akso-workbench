@@ -137,7 +137,7 @@ export const CAPABILITIES: Capability[] = [
       summaryFields: [],
     },
     returns: 'data: true（不返回 objectId，需用 query.object.get 反查）。',
-    notes: ['code 必须 __c 结尾。', 'enableLifeCycle=true 之后不能改回 false。', '新建对象不会自带字段与布局。'],
+    notes: ['code 必须 __c 结尾。', '新建对象必须同时 enableLifeCycle=true、enableSignatures=true（2026-11-22 用户硬规则）。', 'enableLifeCycle=true 之后不能改回 false。', '新建对象不会自带字段与布局。'],
   },
   {
     id: 'object.field.page',
@@ -469,7 +469,7 @@ export const CAPABILITIES: Capability[] = [
     returns: 'data: 布局 id（字符串，不是 true）。',
     notes: [
       '全量替换：没带上的 section/control 会被删；写入前先 layout.detail 读全量，改完整份回写。',
-      '新建 section 只需 `{ id, code, name, type, columnsNum }`；新建 control 只需 `{ id, sectionId, code, name, fieldId, type, gridSpan, attrs }`。id 用新 UUID。',
+      '新建 section 需 `{ id, code, name, type, columnsNum }` 且必须带 `layoutId`；新建 control 需 `{ id, sectionId, code, name, fieldId, type, gridSpan, attrs }` 且必须带 `layoutId`。id 用新 UUID。缺 `layoutId` 时 SaveLayoutDetail 会报「无法删除其他布局部分Section」（2026-11-22 实测）。',
       '**不要带 `belongId` / `fullPath`**：带上必报「[layout_section] BelongId 不正确，该值必须由 FullPath 生成」；实测请求体里没有这两个字段。',
       '旧 section（如 type=4 工作流时间线）原样回传，不能删；pages 原样回传，没有分页传 []。',
       '**新增 section 必须顺位追加**：sections 数组按现有顺序排列，新分区放在数组最后，sort 取当前最大 sort + 1；平台按数组顺序归一化 sort，把新分区放数组第一位就会跑到第一位（2026-11-21 实测修正）。',

@@ -315,6 +315,9 @@ export async function planBlueprint(session: EgmpSession, input: Blueprint, dshH
       case 'object': {
         const spec = resource as ObjectResource
         const existing = await getObject(ctx, spec.code)
+        if (existing === null && (spec.enableLifeCycle !== true || spec.enableSignatures !== true)) {
+          throw new EgmpError(`新建对象必须同时开启生命周期与电子签名：${spec.code}`)
+        }
         const id = add({
           kind: 'object',
           action: existing === null ? 'create' : 'skip',
