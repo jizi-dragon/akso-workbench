@@ -13,14 +13,17 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { CaptureStore, capturesRoot } from './store.ts'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { CaptureStore, capturesRoot, sessionAgeMs } from './store.ts'
 import { CdpClient } from './cdp.ts'
 import { Recorder } from './recorder.ts'
 import { filterRecords, draftFrom, formatDraft, summarize } from './query.ts'
 import type { CaptureRecord } from './records.ts'
-import { listTargets, pickTarget, versionInfo } from './targets.ts'
+import { listAllTargets, listTargets, pickTarget, versionInfo } from './targets.ts'
 
 interface ParsedArgs {
   command: string
@@ -101,6 +104,13 @@ function sizeOf(record: CaptureRecord): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}M`
 }
 
+function ageText(ms: number): string {
+  if (ms < 60_000) return `${Math.max(0, Math.round(ms / 1000))} 秒前`
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)} 分钟前`
+  if (ms < 86_400_000) return `${(ms / 3_600_000).toFixed(1)} 小时前`
+  return `${(ms / 86_400_000).toFixed(1)} 天前`
+}
+
 function chromeCandidates(): string[] {
   if (process.platform === 'win32') {
     const programFiles = process.env['PROGRAMFILES'] ?? 'C:\\Program Files'
@@ -123,14 +133,86 @@ function chromeCandidates(): string[] {
   return ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/microsoft-edge']
 }
 
-function findBrowser(explicit?: string): string {
+function chromiumCandidates(): string[] {
+  const rows: string[] = []
+  if (process.platform === 'win32') {
+    const localAppData = process.env['LOCALAPPDATA'] ?? ''
+    const root = join(localAppData, 'ms-playwright')
+    if (existsSync(root)) {
+      for (const name of readdirSync(root)) {
+        if (!name.startsWith('chromium-')) continue
+        rows.push(join(root, name, 'chrome-win64', 'chrome.exe'))
+        rows.push(join(root, name, 'chrome-win', 'chrome.exe'))
+      }
+    }
+    rows.push(join(process.env['PROGRAMFILES'] ?? 'C:\\Program Files', 'Chromium', 'Application', 'chrome.exe'))
+    return rows
+  }
+  if (process.platform === 'darwin') {
+    return [
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      join(homedir(), 'Library', 'Caches', 'ms-playwright'),
+    ]
+  }
+  return ['/usr/bin/chromium', '/usr/bin/chromium-browser']
+}
+
+function findBrowser(explicit?: string, preferChromium = false): string {
   if (explicit !== undefined) {
     if (!existsSync(explicit)) throw new Error(`找不到浏览器：${explicit}`)
     return explicit
   }
-  const found = chromeCandidates().find((candidate) => existsSync(candidate))
-  if (found === undefined) throw new Error('找不到 Chrome/Edge，请用 --chrome 指定可执行文件')
+  const candidates = preferChromium ? [...chromiumCandidates(), ...chromeCandidates()] : chromeCandidates()
+  const found = candidates.find((candidate) => existsSync(candidate))
+  if (found === undefined) throw new Error('找不到 Chrome/Edge/Chromium，请用 --chrome 指定可执行文件')
   return found
+}
+
+function defaultExtension(): string | undefined {
+  const here = dirname(fileURLToPath(import.meta.url))
+  const bundled = resolve(here, '..', 'extension')
+  return existsSync(join(bundled, 'manifest.json')) ? bundled : undefined
+}
+
+function asExtensionPath(flags: ParsedArgs['flags']): string | null {
+  if (bool(flags, 'no-extension')) return null
+  const explicit = str(flags, 'extension')
+  const candidate = explicit === undefined ? defaultExtension() : resolve(explicit)
+  if (candidate === undefined) {
+    console.error('[capture] 未找到 capture/extension；本次不加载翻译扩展，可用 --extension 指定解压目录。')
+    return null
+  }
+  if (!existsSync(join(candidate, 'manifest.json'))) {
+    if (explicit !== undefined) throw new Error(`扩展目录缺少 manifest.json：${candidate}`)
+    console.error(`[capture] 扩展目录不完整：${candidate}；本次不加载扩展。`)
+    return null
+  }
+  return candidate
+}
+
+function extensionForMeta(flags: ParsedArgs['flags']): string | null {
+  if (bool(flags, 'no-extension')) return null
+  const explicit = str(flags, 'extension')
+  if (explicit !== undefined) return resolve(explicit)
+  return defaultExtension() ?? null
+}
+
+/**
+ * 从 manifest.key 算 Chrome 扩展 ID。
+ *
+ * Chrome 的算法：对 DER 公钥做 SHA-256，取前 32 个 hex 半字节，再把 0–f 映射成 a–p。
+ * launch 用它只认目标扩展自己的 service worker，而不是浏览器里任意
+ * `chrome-extension://` worker（Chromium 自带 UI 也会注册 worker，误报会让人以为翻译已加载）。
+ */
+function extensionIdOf(dir: string): string | null {
+  try {
+    const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as { key?: unknown }
+    if (typeof manifest.key !== 'string' || manifest.key.length === 0) return null
+    const hash = createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex').slice(0, 32)
+    return [...hash].map((char) => String.fromCharCode(97 + Number.parseInt(char, 16))).join('')
+  } catch {
+    return null
+  }
 }
 
 async function commandTabs(args: ParsedArgs): Promise<void> {
@@ -150,25 +232,53 @@ async function commandTabs(args: ParsedArgs): Promise<void> {
 async function commandLaunch(args: ParsedArgs): Promise<void> {
   const port = num(args.flags, 'port', 9222)
   const url = str(args.flags, 'url') ?? 'https://www.aksoegmp.com'
-  const browser = findBrowser(str(args.flags, 'chrome'))
+  const extension = asExtensionPath(args.flags)
+  const browser = findBrowser(str(args.flags, 'chrome'), extension !== null)
   const root = capturesRoot()
   const profile = str(args.flags, 'profile') ?? join(root, 'chrome-profile')
   mkdirSync(profile, { recursive: true, mode: 0o700 })
-  const child = spawn(browser, [
+  const launchArgs = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profile}`,
     '--no-first-run',
     '--no-default-browser-check',
-    url,
-  ], { detached: true, stdio: 'ignore' })
+  ]
+  if (extension !== null) {
+    launchArgs.push(
+      `--load-extension=${extension}`,
+      `--disable-extensions-except=${extension}`,
+      // Chrome 137+ 对品牌版关闭了命令行加载扩展；Chromium/Chrome for Testing 不受影响。
+      '--disable-features=DisableLoadExtensionCommandLineSwitch',
+    )
+  }
+  launchArgs.push(url)
+  const child = spawn(browser, launchArgs, { detached: true, stdio: 'ignore' })
   child.unref()
   console.log(`已启动：${browser}`)
   console.log(`调试端口：http://127.0.0.1:${port}   profile：${profile}`)
+  console.log(extension === null ? '扩展：未加载（--no-extension）' : `扩展：${extension}（最小翻译扩展，页面输入框 Ctrl+X 取译文）`)
   const deadline = Date.now() + 20_000
   while (Date.now() < deadline) {
     try {
       const info = await versionInfo({ port })
       console.log(`已就绪：${info.Browser ?? '浏览器'}（协议 ${info['Protocol-Version'] ?? '?'}）`)
+      if (extension !== null) {
+        await new Promise((resolve) => setTimeout(resolve, 800))
+        const targets = await listAllTargets({ port })
+        const expectedId = extensionIdOf(extension)
+        const worker = targets.find(
+          (target) =>
+            target.type === 'service_worker' &&
+            target.url.startsWith('chrome-extension://') &&
+            (expectedId === null || target.url.startsWith(`chrome-extension://${expectedId}/`)),
+        )
+        console.log(worker === undefined
+          ? '[capture] 暂未看到目标扩展的 service worker；若扩展未出现，请用 Chrome for Testing/Chromium，或在 chrome://extensions 手动加载。'
+          : `[capture] 已加载扩展：${worker.url}`)
+        if (expectedId === null) {
+          console.log('[capture] manifest 没有 key，无法精确核对扩展 ID；上面的 worker 可能来自其他扩展。')
+        }
+      }
       console.log('这是一个独立的浏览器 profile，需要在这里重新登录一次；登录后运行 attach 开始监听。')
       return
     } catch {
@@ -205,6 +315,11 @@ async function commandAttach(args: ParsedArgs): Promise<void> {
   const client = await CdpClient.connect(target.webSocketDebuggerUrl)
   const store = new CaptureStore()
   const hosts = bool(args.flags, 'all') ? null : (str(args.flags, 'host') ?? 'aksoegmp.com').split(',').map((item) => item.trim()).filter(Boolean)
+  store.writeMeta({
+    tab: { id: target.id, url: target.url, title: target.title },
+    hosts,
+    extension: extensionForMeta(args.flags),
+  })
   const verbose = bool(args.flags, 'verbose')
   const recorder = new Recorder({
     client,
@@ -225,6 +340,7 @@ async function commandAttach(args: ParsedArgs): Promise<void> {
   console.log(`host 过滤：${hosts === null ? '不限制' : hosts.join(', ')}    按 Ctrl+C 结束`)
   await waitForStop(num(args.flags, 'duration', 0) * 1000)
   recorder.stop()
+  store.finish()
   client.close()
   console.log(`\n结束：${store.size} 条记录 → ${store.file}`)
 }
@@ -232,6 +348,20 @@ async function commandAttach(args: ParsedArgs): Promise<void> {
 async function loadSession(args: ParsedArgs): Promise<{ file: string; records: CaptureRecord[] }> {
   const file = CaptureStore.resolve(str(args.flags, 'session'))
   if (file === null) throw new Error(`找不到捕获会话（${capturesRoot()}）；先运行 attach。`)
+  const ageMs = sessionAgeMs(file)
+  const maxAgeMin = num(args.flags, 'max-age', 24 * 60)
+  const info = CaptureStore.info(file)
+  const label = info === null ? file : `${info.sessionId}（${ageText(ageMs)}${info.tab?.url === undefined ? '' : `，${info.tab.url}`}）`
+  console.error(`[capture] 证据会话：${label}`)
+  if (maxAgeMin > 0 && ageMs > maxAgeMin * 60_000 && !bool(args.flags, 'allow-stale')) {
+    throw new Error(
+      `捕获会话已过期（${ageText(ageMs)} > ${maxAgeMin} 分钟）。监听只用于发现接口/流程形状，不能用来判断当前配置；` +
+      `请重新 attach，或确认后加 --allow-stale 只读取旧证据。`,
+    )
+  }
+  if (maxAgeMin > 0 && ageMs > maxAgeMin * 60_000) {
+    console.error('[capture] 警告：正在读取过期证据；不得把其中的配置状态当成当前状态。')
+  }
   return { file, records: CaptureStore.read(file) }
 }
 
@@ -337,8 +467,15 @@ async function commandSessions(): Promise<void> {
     return
   }
   printTable(
-    ['session', 'records', 'size', 'updated', 'file'],
-    rows.map((row) => [row.sessionId, String(row.records), `${(row.size / 1024).toFixed(1)}K`, new Date(row.mtime).toLocaleString(), row.file]),
+    ['session', 'age', 'records', 'size', 'tab', 'file'],
+    rows.map((row) => [
+      row.sessionId,
+      `${ageText(Date.now() - row.startedAt)}${row.stoppedAt === undefined ? '' : '（已结束）'}`,
+      String(row.records),
+      `${(row.size / 1024).toFixed(1)}K`,
+      row.tab?.url ?? '—',
+      row.file,
+    ]),
   )
 }
 
@@ -346,12 +483,12 @@ function usage(): void {
   console.log(`akw-capture —— 用 CDP 监听浏览器里的 HTTP 调用，给「扩接口」提供证据。
 
   tabs                          列出可录的标签页
-  launch [--url URL] [--port 9222] [--chrome PATH]
-                                起一个带调试端口的独立浏览器（profile 在 captures 下）
+  launch [--url URL] [--port 9222] [--chrome PATH] [--extension DIR|--no-extension]
+                                起一个带调试端口的独立浏览器（默认加载 capture/extension 最小翻译扩展）
   attach [--tab 片段] [--host a,b] [--all] [--all-types] [--duration 秒] [--verbose]
                                 开始监听；默认只记 aksoegmp.com 的 XHR/Fetch/Document
-  list [--session latest] [--method POST] [--grep 关键词] [--limit 40] [--json]
-                                看原始记录
+  list [--session latest] [--max-age 分钟] [--allow-stale] [--method POST] [--grep 关键词] [--limit 40] [--json]
+                                看原始记录；默认拒绝超过 24h 的会话
   show <序号|id> [--session latest]   看一条完整记录（已脱敏）
   endpoints [--session latest] [--json]  按 method + 路径模板去重
   export [--session latest] [--out 文件] 导出 Markdown 清单
@@ -360,6 +497,7 @@ function usage(): void {
   sessions                      列出本机的捕获会话
 
 数据目录：${capturesRoot()}
+边界：监听只用于发现接口/流程形状；当前配置状态必须用查询工具确认。
 安全：口令/令牌/Authorization 不落原文；请求与响应体各截断 64KB；只连 127.0.0.1。`)
 }
 

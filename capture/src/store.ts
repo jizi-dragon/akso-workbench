@@ -6,7 +6,7 @@
  * 数据**不进仓库**：DSH_HOME 在仓库外，.gitignore 也不含这个目录。
  */
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -14,11 +14,26 @@ import type { CaptureRecord } from './records.ts'
 
 const FILE_RE = /^capture-cap_[0-9]{14}_[a-z0-9]{4}\.jsonl$/
 
+export interface CaptureSessionMeta {
+  v: 1
+  sessionId: string
+  startedAt: number
+  stoppedAt?: number
+  tab?: { id?: string; url?: string; title?: string }
+  hosts?: string[] | null
+  extension?: string | null
+}
+
 export interface CaptureSessionInfo {
   sessionId: string
   file: string
   size: number
   mtime: number
+  startedAt: number
+  stoppedAt?: number
+  tab?: CaptureSessionMeta['tab']
+  hosts?: CaptureSessionMeta['hosts']
+  extension?: CaptureSessionMeta['extension']
   records: number
 }
 
@@ -42,10 +57,43 @@ function newSessionId(date: Date): string {
   return `cap_${stamp(date).replace('-', '')}_${randomBytes(2).toString('hex')}`
 }
 
+function metaFileOf(file: string): string {
+  return file.endsWith('.jsonl') ? `${file.slice(0, -'.jsonl'.length)}.meta.json` : `${file}.meta.json`
+}
+
+function readMeta(file: string): CaptureSessionMeta | null {
+  const metaFile = metaFileOf(file)
+  if (!existsSync(metaFile)) return null
+  try {
+    const parsed = JSON.parse(readFileSync(metaFile, 'utf8')) as Partial<CaptureSessionMeta>
+    if (parsed.v !== 1 || typeof parsed.sessionId !== 'string' || typeof parsed.startedAt !== 'number') return null
+    return parsed as CaptureSessionMeta
+  } catch {
+    return null
+  }
+}
+
+/** 捕获会话的实际开始时间（没有 sidecar 时退回文件创建时间）。 */
+export function sessionStartedAt(file: string): number {
+  const meta = readMeta(file)
+  if (meta !== null) return meta.startedAt
+  try {
+    const stat = statSync(file)
+    return stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs
+  } catch {
+    return Date.now()
+  }
+}
+
+export function sessionAgeMs(file: string, now = Date.now()): number {
+  return Math.max(0, now - sessionStartedAt(file))
+}
+
 export class CaptureStore {
   readonly root: string
   readonly sessionId: string
   readonly file: string
+  readonly metaFile: string
   readonly startedAt: number
   private count = 0
   private ready = false
@@ -56,6 +104,7 @@ export class CaptureStore {
     this.sessionId = sessionId ?? newSessionId(now)
     this.startedAt = Date.now()
     this.file = join(root, `capture-${this.sessionId}.jsonl`)
+    this.metaFile = metaFileOf(this.file)
   }
 
   private ensure(): void {
@@ -70,8 +119,53 @@ export class CaptureStore {
     this.count += 1
   }
 
+  /** 写会话 sidecar：记录开始时间、标签页与 host 过滤范围，读取时用于判断新鲜度。 */
+  writeMeta(patch: Omit<CaptureSessionMeta, 'v' | 'sessionId' | 'startedAt'> & { startedAt?: number } = {}): void {
+    this.ensure()
+    const previous = readMeta(this.file)
+    const stoppedAt = patch.stoppedAt ?? previous?.stoppedAt
+    const tab = patch.tab ?? previous?.tab
+    const hosts = patch.hosts !== undefined ? patch.hosts : previous?.hosts
+    const extension = patch.extension !== undefined ? patch.extension : previous?.extension
+    const meta: CaptureSessionMeta = {
+      v: 1,
+      sessionId: this.sessionId,
+      startedAt: patch.startedAt ?? previous?.startedAt ?? this.startedAt,
+      ...(stoppedAt === undefined ? {} : { stoppedAt }),
+      ...(tab === undefined ? {} : { tab }),
+      ...(hosts === undefined ? {} : { hosts }),
+      ...(extension === undefined ? {} : { extension }),
+    }
+    writeFileSync(this.metaFile, `${JSON.stringify(meta, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  }
+
+  finish(): void {
+    this.writeMeta({ stoppedAt: Date.now() })
+  }
+
   get size(): number {
     return this.count
+  }
+
+  static info(file: string): CaptureSessionInfo | null {
+    try {
+      const stat = statSync(file)
+      const meta = readMeta(file)
+      return {
+        sessionId: meta?.sessionId ?? file.replace(/^.*capture-/, '').replace(/\.jsonl$/, ''),
+        file,
+        size: stat.size,
+        mtime: stat.mtimeMs,
+        startedAt: meta?.startedAt ?? (stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs),
+        ...(meta?.stoppedAt === undefined ? {} : { stoppedAt: meta.stoppedAt }),
+        ...(meta?.tab === undefined ? {} : { tab: meta.tab }),
+        ...(meta?.hosts === undefined ? {} : { hosts: meta.hosts }),
+        ...(meta?.extension === undefined ? {} : { extension: meta.extension }),
+        records: countLines(file),
+      }
+    } catch {
+      return null
+    }
   }
 
   static list(root = capturesRoot()): CaptureSessionInfo[] {
@@ -79,15 +173,8 @@ export class CaptureStore {
     const rows: CaptureSessionInfo[] = []
     for (const name of readdirSync(root)) {
       if (!FILE_RE.test(name)) continue
-      const file = join(root, name)
-      const stat = statSync(file)
-      rows.push({
-        sessionId: name.slice('capture-'.length, -'.jsonl'.length),
-        file,
-        size: stat.size,
-        mtime: stat.mtimeMs,
-        records: countLines(file),
-      })
+      const info = CaptureStore.info(join(root, name))
+      if (info !== null) rows.push(info)
     }
     return rows.sort((left, right) => right.mtime - left.mtime)
   }

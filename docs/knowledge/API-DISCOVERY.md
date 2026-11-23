@@ -18,6 +18,7 @@
 
 ```bash
 node capture/bin/akw-capture.mjs launch --url https://standard-val.aksoegmp.com
+# 默认加载 capture/extension（最小翻译扩展），页面输入框 Ctrl+X 翻译并复制；--no-extension 可关闭
 # 在这个独立浏览器里登录
 node capture/bin/akw-capture.mjs attach --tab aksoegmp --host aksoegmp.com
 # 在页面里操作要观察的功能；Ctrl+C 结束
@@ -27,6 +28,13 @@ node capture/bin/akw-capture.mjs promote 5
 ```
 
 细节见 `capture/README.md`。
+
+## 2.1 捕获不是当前配置真相（2026-11-23 用户口径）
+
+监听的价值是**发现接口**和**看清流程步骤/参数形状**；它不是当前系统配置的查询结果。
+判断对象、工作流、审批矩阵、布局现在是什么状态，必须走查询工具/只读 API，并以查询结果为准。
+捕获只能作为历史证据引用，且必须带 `session` 和采集时间；CLI 默认拒绝超过 24 小时的会话
+（`--allow-stale` 仅在明确只读旧证据时使用）。不要拿几天前的 JSONL 判断今天的平台配置。
 
 ## 3. 从「一条记录」到「一条能力」
 

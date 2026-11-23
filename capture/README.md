@@ -18,6 +18,7 @@
 
 ```bash
 # 1. 起一个带调试端口的独立浏览器（默认 profile 在 captures/chrome-profile）
+#    默认自动加载 capture/extension（最小翻译扩展），输入框 Ctrl+X 可直接翻译并复制
 node capture/bin/akw-capture.mjs launch --url https://standard-val.aksoegmp.com
 
 # 2. 在这个浏览器里登录（独立 profile，需要重新登一次）
@@ -31,6 +32,24 @@ node capture/bin/akw-capture.mjs endpoints
 node capture/bin/akw-capture.mjs promote 3
 ```
 
+`launch` 默认优先使用 Playwright 的 Chromium/Chrome for Testing：Chrome 137+ 的品牌版会忽略
+`--load-extension`，Chromium 才能稳定加载扩展。默认扩展是 `capture/extension`（只保留 Ctrl+X
+翻译，无账号/计数/换源）；也可以显式指定其他扩展目录：
+
+```bash
+node capture/bin/akw-capture.mjs launch --extension D:\DDUP\Akso_AI\akso-pass\dist
+node capture/bin/akw-capture.mjs launch --no-extension
+```
+
+**监听不是当前配置真相**：监听只用于发现接口、流程步骤和参数形状。对象/工作流/矩阵/布局的
+当前状态必须用查询工具（对象分析、`config_plan` 的只读查询等）确认；捕获结论必须带会话 id 和
+时间，不能拿几天前的 JSONL 判断今天的平台配置。CLI 默认拒绝超过 24 小时的会话：
+
+```bash
+node capture/bin/akw-capture.mjs endpoints --max-age 120
+node capture/bin/akw-capture.mjs list --allow-stale   # 仅在明确只读旧证据时使用
+```
+
 也可以直接复用**已经开着调试端口的** Chrome：`tabs` 找到目标，`attach --tab <url 片段>`。
 Chrome 136+ 不允许在默认 profile 上开 `--remote-debugging-port`，所以 `launch` 用独立 profile。
 
@@ -39,14 +58,14 @@ Chrome 136+ 不允许在默认 profile 上开 `--remote-debugging-port`，所以
 | 命令 | 作用 |
 | --- | --- |
 | `tabs` | 列出 `127.0.0.1:9222` 上可录的标签页 |
-| `launch` | 起独立浏览器（`--url`、`--port`、`--chrome`、`--profile`） |
+| `launch` | 起独立浏览器（`--url`、`--port`、`--chrome`、`--profile`、`--extension`、`--no-extension`） |
 | `attach` | 开始监听（`--tab`、`--host`、`--all`、`--all-types`、`--duration`、`--verbose`） |
-| `list` | 原始记录（`--method`、`--grep`、`--limit`、`--json`） |
+| `list` | 原始记录（`--session`、`--max-age`、`--allow-stale`、`--method`、`--grep`、`--limit`、`--json`） |
 | `show` | 一条完整记录（已脱敏） |
 | `endpoints` | 按 `method + 路径模板 + 查询键名` 去重 |
 | `export` | 导出 Markdown 清单（`--out`） |
 | `promote` | 打印 `capabilities.ts` 草稿（`--id`、`--domain`），**不写文件** |
-| `sessions` | 本机的捕获会话 |
+| `sessions` | 本机的捕获会话（含年龄、标签页、是否已结束） |
 
 默认只记 `aksoegmp.com` 的 XHR/Fetch/Document；`--all` 放开 host，`--all-types` 连静态资源也记。
 `--duration 60` 录 60 秒后自动停；不填就 Ctrl+C。
@@ -55,6 +74,9 @@ Chrome 136+ 不允许在默认 profile 上开 `--remote-debugging-port`，所以
 
 位置：`$DSH_HOME/akso-workbench/captures/capture-cap_<YYYYMMDDhhmmss>_<xxxx>.jsonl`
 （`DSH_HOME` 默认 `~/.dsh`；可用 `AKW_CAPTURE_DIR` 覆盖。）
+
+每个会话旁有 `capture-<session>.meta.json`，记录 **开始时间、标签页、host 过滤、扩展路径、结束时间**；
+`list/show/endpoints/export` 先读它判断会话年龄。没有 sidecar 的旧会话退回文件创建时间。
 
 一行一条记录，关键字段：
 
@@ -86,3 +108,8 @@ Chrome 136+ 不允许在默认 profile 上开 `--remote-debugging-port`，所以
 - `Network.getResponseBody` 对 Already-evicted 的体拿不到，此时记录只有状态与头。
 - 路径模板只折 UUID/纯数字/长 hex；带业务语义的短 code（`akwv1109__c`）保持原样。
 - 不做回放：平台接口有副作用，回放应由审批过的工具执行，而不是监听器。
+- 品牌版 Chrome 137+ 会忽略命令行 `--load-extension`；`launch` 会优先选 Chromium/Chrome for Testing。
+  仍加载不了时，在 `chrome://extensions` 手动「加载已解压的扩展程序」指向 `capture/extension`。
+- `capture/extension` 只做 Ctrl+X 翻译并复制：有选中文本翻译选中部分，否则翻译整个输入；不改原输入，
+  用户自己 Ctrl+V。翻译方向自动判断：含中文→英文，否则英文→中文。
+- 捕获只证明「某次操作这样调过」，不能证明当前对象/工作流/矩阵/布局还是这个状态。

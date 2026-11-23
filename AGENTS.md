@@ -81,6 +81,13 @@
 - 改完跑：`npm run check`（根 typecheck + capture 测试 + 插件 typecheck / 测试 / 构建）。只改插件时可跑
   `npm run typecheck:plugin`、`npm --prefix plugin test`、`npm --prefix plugin run build`。
 
+## 监听数据边界（2026-11-23 用户口径）
+
+- **监听只用于发现接口与流程步骤**，不是当前配置的真相。对象、工作流、审批矩阵、布局的现状必须通过查询工具/只读 API 读取；捕获只能作为历史证据。
+- 引用捕获必须带 `session` 与采集时间；默认不使用超过 24 小时的会话（`--allow-stale` 仅限明确只读旧证据）。禁止拿旧 JSONL 判断当前平台配置。
+- `capture` 启动浏览器默认加载 `capture/extension`（最小翻译扩展，仅 Ctrl+X 翻译并复制，无账号/计数/换源）；完整 akso-pass 只在显式 `--extension` 时加载。不能加载时用 Chromium/Chrome for Testing，或在 `chrome://extensions` 手动加载解压目录。
+- 监听目录 `capture/` 属于接口发现体系，不参与插件运行时；不要把捕获文件提交到仓库。
+
 ## 结构边界（2026-11-17 清理后）
 
 - **`plugin/` 是产品本体**：host 半边（路由 / 工具 / 审批 / 会话 / 日志）+ 浏览器半边（五个模块）。
@@ -89,6 +96,8 @@
 - **`capture/` 是接口监听体系，必须保留**：`capture/bin/` + `capture/src/` + `capture/test/` 与
   `docs/knowledge/API-DISCOVERY.md` 是一个整体（只连回环地址）。它不参与插件运行时，但删掉/改坏就
   没法再用真实流量扩展能力目录；根 `package.json` 的 `test` 与 `tsconfig.json` 的 `include` 都覆盖它。
+  `capture/extension/` 是给 `launch` 用的最小翻译扩展（仅 Ctrl+X 翻译并复制，无账号/计数/换源），
+  不属于产品运行时，也不要打包进 workbench 发布物。
 - **文档分层**：`docs/knowledge/` 放现行规范与手册，`docs/reference/` 放外部资料与只读样本，
   `docs/archive/` 放带日期的历史台账（只证明当时测过）。
   新增文档前先看 `docs/README.md` 的索引与维护约定。

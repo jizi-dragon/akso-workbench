@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { CaptureStore } from '../src/store.ts'
+import { CaptureStore, sessionAgeMs } from '../src/store.ts'
 import type { CaptureRecord } from '../src/records.ts'
 
 function record(method: string, path: string, at: number): CaptureRecord {
@@ -59,6 +59,26 @@ test('会话：坏行/半行跳过，好行照读', () => {
     writeFileSync(store.file, '{"half":', { flag: 'a' })
     const rows = CaptureStore.read(store.file)
     assert.equal(rows.length, 1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('会话：sidecar 记录开始时间/标签页，用于判断证据新鲜度', () => {
+  const root = mkdtempSync(join(tmpdir(), 'akw-capture-meta-'))
+  try {
+    const store = new CaptureStore(root)
+    store.writeMeta({
+      tab: { id: 't1', url: 'https://standard-val.aksoegmp.com/web', title: '变更' },
+      hosts: ['aksoegmp.com'],
+    })
+    store.append(record('GET', '/api/a', Date.now()))
+    const info = CaptureStore.info(store.file)
+    assert.ok(info !== null)
+    assert.equal(info?.tab?.title, '变更')
+    assert.deepEqual(info?.hosts, ['aksoegmp.com'])
+    assert.ok((info?.startedAt ?? 0) > 0)
+    assert.ok(sessionAgeMs(store.file) >= 0)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -18,13 +18,17 @@ export interface ListTargetsOptions {
   timeoutMs?: number
 }
 
-export async function listTargets(options: ListTargetsOptions = {}): Promise<CdpTarget[]> {
+export async function listAllTargets(options: ListTargetsOptions = {}): Promise<CdpTarget[]> {
   const host = options.host ?? '127.0.0.1'
   const port = options.port ?? 9222
   const timeoutMs = options.timeoutMs ?? 3000
   const response = await fetch(`http://${host}:${port}/json/list`, { signal: AbortSignal.timeout(timeoutMs) })
   if (!response.ok) throw new Error(`调试端口返回 HTTP ${response.status}：http://${host}:${port}/json/list`)
-  const rows = (await response.json()) as CdpTarget[]
+  return (await response.json()) as CdpTarget[]
+}
+
+export async function listTargets(options: ListTargetsOptions = {}): Promise<CdpTarget[]> {
+  const rows = await listAllTargets(options)
   return rows.filter((row) => row.type === 'page' && typeof row.webSocketDebuggerUrl === 'string')
 }
 
