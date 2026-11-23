@@ -1047,6 +1047,8 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 **要点**
 
 - 顺序：10 建 → 40 编辑（加步骤）→ 20 启用。
+- `status: 20` 发布的是**当前草稿版本**；已发布版本上继续编辑会生成新草稿（`versionNo + 1`、`status: 40`、新 id），改完要再发一次。
+- 回读 `GET /api/platform/Workflow/GetWorkflowBasic` 看 `status`（20 已发布 / 40 编辑中）、`versionNo` 与 `id`，不要沿用旧版本 id。
 
 **案例**
 
@@ -1112,6 +1114,8 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 - isAssignToPromoter=true 是发起人审批；指定参与者要给 taskAssign（= userControlIds）。
 - dispatchMode：10 会签 / 20 或签。
 - 按钮字段名注意拼写：isShowResons / resonTitle / responsibieTitle 都是平台原样。
+- 任务级签名：`isHaveSign: true` 表示节点带签名栏，`isRequireSign: false` 表示任务级签名不必填（签名落在按钮上），`externalSignatureInfoFrom: 1` 是平台回读值。
+- 按钮签名四开关：`isRequireSign`（本按钮要电子签名）、`isShowResons` + `isRequiredResons` + `resonTitle`（签名备注，同意可不填、拒绝必填）、`isShowResponsibilities` + `isRequireResponsibilities` + `responsibieTitle`（签名含义标题，字段名拼写原样）+ `responsibleOptions[].value`（该按钮的含义文案）、`isRequirePosition`（需要选择职位）。
 
 **案例**
 
@@ -1177,9 +1181,11 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 **要点**
 
-- targetType=7 表示"上一步的按钮"；logicType 40/41 对应按钮的两种结果。
+- targetType=7 表示"上一步的按钮"；按钮结果由 logicValue 指定，logicType 用 40（所有断言等于）。
+- 单条件也用 `logicType: 40`（所有断言等于）；`41`（至少一个断言等于）只在同一组挂多条断言时用。
 - logicValue 是带双引号的 UUID 字符串，写成裸 UUID 会不生效。
 - rules 里的 nextStepId 是"满足时"，stepDecision.nextStepId 是 else。
+- 审批流的 else 分支应指向「修改状态：已驳回」动作节点，再由它连结束；直接指结束会导致拒绝后状态不变。
 
 **案例**
 
@@ -1291,6 +1297,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 - controlConfig.value 是 participantConfig 的 JSON 字符串（字符串，不是对象）。
 - 全量覆盖：先 GetWorkflowStepControls 读回再加。
 - 参与者控件只允许 `selectUserType: 40`（字段）或 `50`（审批矩阵）；下面旧案例的 `10` 只用于展示 `controlConfig`/`participantConfig` 结构，工作台新配置不要采用。
+- 电子签名控件在 `startUpControls[].signatureConfig`：`isShowSignatureMean` 显示签名含义、`isRequiredMean` 含义必填、`signatureMeanName` 标题、`signatureMeanOptions[].value` 含义选项（内联，没有独立字典接口）、`isShowSignatureRemark` + `signatureRemarkName` + `reasonInputType: 20`（备注）、`isRequirePosition`（选职位）、`isRequireUserName`（填用户名）、`isRequiredSignature`（签名必填）。更新时保留已有 option 的 `id`，只改 `value` 文案。
 
 **案例**
 
@@ -1368,6 +1375,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 **要点**
 
 - stepTaskApprovals 传 [] 会删光按钮，改按钮时保留原数组。
+- 改签名文案（`responsibleOptions[].value`）时保留原 option 的 `id`，其余开关按 `workflow.task.add` 的按钮签名四开关写。
 
 **案例**
 
