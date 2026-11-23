@@ -104,6 +104,11 @@
   `runObjectAnalysis` / `akso_workbench_object_analysis`；成功时由 host 写
   `<当前工作区>/akso-workbench-data/analysis/<对象名>-时间戳/`（md/drawio/png），失败也要写分析历史。
   禁止手工 Node 查询后只在临时目录留 JSON；不得绕过工具直接拼报告。
+- **布局规则阅读器（2026-11-23）**：表单布局的 `rules[]` 用
+  `npm --prefix plugin run layout-rules -- --capture <抓包.jsonl>`（或 `--file <LayoutDetail.json>`）翻成
+  条件 / 效果人话；`--check` 有 error 时退出码 1，`--json` 给脚本吃。枚举映射维护在
+  `docs/knowledge/系统常用映射表.md` 的「表单布局联动规则」五组，改枚举要同步
+  `plugin/src/shared/layout-rules.ts`。它只读不写；写规则仍走 `layout.save` 整份回写。
 - **生命周期/工作流流程图固定用便笺本模块**：唯一图形源是 `docs/reference/便笺本.xml`（用户提供），代码样式集中在 `plugin/src/shared/sticky-notes.ts`。生命周期状态=浅蓝 `#bdd7ee` 矩形；用户动作=橙色 `#ed7d31` 胶囊；用户任务=橙色 `#ed7d31` 矩形；判断=橙色 `#f4b183` 菱形；开始/结束=`#70ad47` 圆形；连线=黑色箭头。生成 drawio 不得自创配色或圆角；`plugin/test/analysis-artifacts.test.ts` 会断言源文件存在且 drawio 只含这些颜色。
 - **新建对象硬规则（2026-11-22 用户口径）**：新建对象必须同时 `enableLifeCycle: true` 和 `enableSignatures: true`；缺一不可，配置引擎在建对象前直接拒绝。已有对象不受此规则影响。
 - **字段类型规则（2026-11-09 管理员口径）**：一律用文本 `dataType: 1`；**长文本 17、富文本 18 已禁用**，
@@ -200,7 +205,7 @@
   同一接口可多块；`>` 是方案简介；`**步骤**` 有序列表，每条开头用反引号写接口 id（如 `layout.detail`）；
   `**校验**` 列表；`**示例**` 一个 json 代码块；`**预期**` 散文。文档里没登记方案的接口，卡片上就不出
   「标准配置用法」这一栏——所以"还没标准方案"本身就是一种合法状态，不用凑。
-- **动作映射格式**：`## 分组名` + 一行 `作用域：workflow / lifecycle / menu`（用来描述这组码表适用哪些接口域，
+- **动作映射格式**：`## 分组名` + 一行 `作用域：workflow / lifecycle / menu / layout`（用来描述这组码表适用哪些接口域，
   写「通用」表示不分域）+ `| 值 | 含义 | 备注 |` 表。新动作码先在这份文档登记，再改代码。当前页面不渲染
   这张映射表，但 `config/capabilities` 仍返回它，`api-guide.mjs --check` 也会校验格式与空组。
 - **校验**：`node plugin/scripts/api-guide.mjs --check` 连三份文档一起校验（缺章节 / 多余 id / 解析告警 /
