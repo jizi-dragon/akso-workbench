@@ -23,7 +23,9 @@
  * 2026-11-09 夜新增 3 条生命周期动作能力（`lifecycle.useraction.list`、`lifecycle.enteraction.create`、
  * `lifecycle.enteraction.list`，当时仅抓包确认，未进本名单），并按用户要求删除 `menu.sort`。
  * 2026-11-11 在 standard-val 上真调通过三条能力，用户核对输入/输出后确认；三条均已进本名单。
- * 当前目录 47 条、本名单 47 条，卡片不再有「过期」。
+ * 2026-11-25 在 standard-val 实测六条曾标「过期」的能力并回读确认：
+ * 生命周期状态配置、生命周期进入条件（空结果）、审批矩阵创建/匹配字段/规则/规则回读。
+ * 当前目录 69 条、本名单 53 条。
  */
 export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   // 对象
@@ -58,6 +60,13 @@ export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   'lifecycle.useraction.list',
   'lifecycle.enteraction.create',
   'lifecycle.enteraction.list',
+  'query.lifecycle.status.config.list',
+  'query.lifecycle.enterrule.list',
+  // 审批矩阵
+  'approvalmatrix.create',
+  'approvalmatrix.matchfield.add',
+  'approvalmatrix.rule.add',
+  'approvalmatrix.rule.list',
   // 工作流
   'workflow.create',
   'workflow.get',

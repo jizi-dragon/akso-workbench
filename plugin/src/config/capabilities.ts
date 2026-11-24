@@ -234,25 +234,25 @@ export const CAPABILITIES: Capability[] = [
   {
     id: 'query.lifecycle.status.config.list',
     domain: 'lifecycle',
-    title: '读生命周期状态配置（未验证）',
+    title: '读生命周期状态配置',
     description: '读生命周期状态的配置详情，补足 openapi 状态列表没有的 isEnabled / sort。',
     method: 'GET',
     path: '/api/config/lifecycle/Status/GetList',
     risk: 'low',
     readonly: true,
-    evidence: 'partial',
+    evidence: 'verified',
     params: [p('lifecycleId', 'query', false, 'string', '服务端当前忽略该参数，需客户端按 lifecycleId 过滤')],
     example: { lifecycleId: '<lifecycleId>' },
     returns: 'data.datas 为全量状态数组；每项含 id / name / code / lifecycleId / sort / isEnabled / description 等。',
     notes: [
-      '2026-11-12 实测：一次返回 4014 条，lifecycleId 参数不生效；POST 为 405。',
-      '未入账，待验证后再加入 approved-tools。',
+      '2026-11-25 standard-val 复测：一次返回 4326 条，lifecycleId 参数仍不生效；POST 为 405。',
+      '必须客户端按 lifecycleId 过滤；返回体积约 2 MB，调用方要留足超时/解析时间。',
     ],
   },
   {
     id: 'query.lifecycle.enterrule.list',
     domain: 'lifecycle',
-    title: '读生命周期进入条件（未验证）',
+    title: '读生命周期进入条件',
     description: '读生命周期上挂载的进入条件规则；返回空数组表示未配置。',
     method: 'GET',
     path: '/api/config/lifecycle/StatusEnterRule/GetList',
@@ -262,7 +262,10 @@ export const CAPABILITIES: Capability[] = [
     params: [p('lifecycleId', 'query', false, 'string')],
     example: { lifecycleId: '<lifecycleId>' },
     returns: 'data 为进入条件数组；2026-11-12 在 homework2__c / audit_plan__c 均返回 []，非空结构未验证。',
-    notes: ['Get / GetByLifecycleId 均 404；仅 GetList 可用。未入账，待验证。'],
+    notes: [
+      'Get / GetByLifecycleId 均 404；仅 GetList 可用。',
+      '2026-11-25 standard-val 复测：带/不带 lifecycleId 均返回 []；空结果已验证，非空结构尚未覆盖。',
+    ],
   },
 
   /* ───────────────────────── 字段（1）/ 选项集（1） ───────────────────────── */
@@ -879,7 +882,7 @@ export const CAPABILITIES: Capability[] = [
     method: 'POST',
     path: '/api/platform/ApproveMatrix/CreateConfigApproveMatrix',
     risk: 'high',
-    evidence: 'partial',
+    evidence: 'verified',
     params: [
       p('status', 'body', true, 'number', '1 = 启用'),
       p('name', 'body', true, 'string', '矩阵名称'),
@@ -911,7 +914,7 @@ export const CAPABILITIES: Capability[] = [
     method: 'POST',
     path: '/api/platform/ApproveMatrix/AddMatchField',
     risk: 'medium',
-    evidence: 'partial',
+    evidence: 'verified',
     params: [
       p('matrixConfigId', 'body', true, 'string', 'approvalmatrix.create 返回的 id'),
       p('objectId', 'body', true, 'string', '业务对象 id'),
@@ -940,7 +943,7 @@ export const CAPABILITIES: Capability[] = [
     method: 'POST',
     path: '/api/platform/ApproveMatrix/AddMatrixRule',
     risk: 'high',
-    evidence: 'partial',
+    evidence: 'verified',
     params: [
       p('matrixConfigId', 'body', true, 'string'),
       p('status', 'body', true, 'number', '1 = 启用'),

@@ -676,15 +676,15 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 }
 ```
 
-### query.lifecycle.status.config.list 读生命周期状态配置（未验证）
+### query.lifecycle.status.config.list 读生命周期状态配置
 
-> 读生命周期状态的配置详情，补足 openapi 状态列表没有的 `isEnabled` / `sort`。**2026-11-12 实测，未入账。**
+> 读生命周期状态的配置详情，补足 openapi 状态列表没有的 `isEnabled` / `sort`。**2026-11-25 标准验证环境复测已入账。**
 
 **返回**：`data.datas` 为全量状态数组；每项含 `id / name / code / lifecycleId / sort / isEnabled / description` 等。
 
 **要点**
 
-- 服务端当前忽略 `lifecycleId` 查询参数，一次返回 4014 条；调用后必须按 `lifecycleId` 客户端过滤。
+- 服务端当前忽略 `lifecycleId` 查询参数，2026-11-25 一次返回 4326 条；调用后必须按 `lifecycleId` 客户端过滤。
 - 只支持 GET；POST 返回 405。
 
 **案例**
@@ -697,11 +697,11 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 }
 ```
 
-### query.lifecycle.enterrule.list 读生命周期进入条件（未验证）
+### query.lifecycle.enterrule.list 读生命周期进入条件
 
-> 读生命周期上挂载的进入条件规则；返回空数组表示未配置。**2026-11-12 实测，未入账。**
+> 读生命周期上挂载的进入条件规则；返回空数组表示未配置。**2026-11-25 标准验证环境复测已入账；目前只覆盖空结果。**
 
-**返回**：`data` 为进入条件数组；`homework2__c` / `audit_plan__c` 均返回 `[]`，非空结构尚未验证。
+**返回**：`data` 为进入条件数组；`homework2__c` / `audit_plan__c` 均返回 `[]`，2026-11-25 在 `standard-val` 带/不带 `lifecycleId` 也均为 `[]`；非空结构尚未验证。
 
 **要点**
 
@@ -873,7 +873,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 **要点**
 
 - `fieldId` 必须是矩阵绑定对象上的字段。
-- `matchType=1`、`matchNullValueType=10` 来自 2026-11-22 通桥演示抓包，其他组合未实测。
+- `matchType=1`、`matchNullValueType=10` 来自 2026-11-22 通桥演示抓包；2026-11-25 在 `standard-val` 用 `name__ak` 实测通过，回读 `GetMatrixMatchFieldList` 一致；其他组合未实测。
 
 **案例**
 
