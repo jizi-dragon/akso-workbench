@@ -1,6 +1,6 @@
 {
   "name": "akso-workbench-dsh-ui",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "type": "module",
   "description": "akso-workbench 的 DSH 客户端半边：左侧栏账号中心 + 输入框下方账号条",
@@ -26,7 +26,7 @@
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
     "layout-rules": "node scripts/layout-rules.mjs",
-    "test": "node --test test/host.test.ts test/analysis-history.test.ts test/journal.test.ts test/api-guide.test.ts test/config-docs.test.ts test/layout-rules.test.ts test/analysis-query.test.ts test/analysis-artifacts.test.ts test/analysis-tool.test.ts test/zip-store.test.ts",
+    "test": "node --test test/host.test.ts test/analysis-history.test.ts test/journal.test.ts test/api-guide.test.ts test/config-docs.test.ts test/config-task.test.ts test/layout-rules.test.ts test/analysis-query.test.ts test/analysis-artifacts.test.ts test/analysis-tool.test.ts test/zip-store.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {

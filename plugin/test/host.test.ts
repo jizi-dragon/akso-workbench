@@ -2032,3 +2032,36 @@ test('审核文档：没有工作区根时拒绝写入，不落到 profile 或�
     else process.env.AKSO_WORKBENCH_APPROVAL_DIR = savedApproval
   }
 })
+
+test('任务级：一条任务只生成一份审核文档，步骤按阶段编号', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const planTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_plan')!
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  const egmp = await startFakeEgmp()
+  writeAccount(home, egmp.baseUrl)
+  try {
+    const task = JSON.stringify({
+      name: '任务级验证',
+      stages: [{
+        name: '阶段一',
+        blueprint: { resources: [{ kind: 'call', capability: 'layout.list', params: { basicObjectId: 'obj-1' } }] },
+      }],
+    })
+    const planned = await planTool.execute({ task }, { agent: { id: 'agent-task' } }) as Record<string, any>
+    assert.equal(planned.ok, true, String(planned.error ?? ''))
+    assert.match(String(planned.taskId), /^tsk_/)
+    assert.equal(planned.stages.length, 1)
+    assert.equal(planned.stages[0].steps.length, 1)
+
+    const prepared = await applyTool.execute({ taskId: planned.taskId, prepareOnly: true }, { agent: { id: 'agent-task' } }) as Record<string, any>
+    assert.equal(prepared.ok, true, String(prepared.error ?? ''))
+    assert.equal(prepared.status, 'prepared')
+    const markdown = readFileSync(String(prepared.review.path), 'utf8')
+    assert.match(markdown, /任务级验证/)
+    assert.match(markdown, /阶段一 · /)
+    assert.match(markdown, /计划指纹/)
+  } finally {
+    await egmp.close()
+  }
+})

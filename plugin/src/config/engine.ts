@@ -254,7 +254,11 @@ function fieldBody(spec: FieldResource): Record<string, unknown> {
   return body
 }
 
-export async function planBlueprint(session: EgmpSession, input: Blueprint, dshHome: string): Promise<Plan> {
+/**
+ * 只把蓝图算成计划，**不落盘、不发审批**。任务级审批会按阶段重新算一遍（顺序执行，
+ * 后一阶段要用前一阶段刚建出来的对象/字段），所以这里必须能单独拿出来用。
+ */
+export async function buildPlan(session: EgmpSession, input: Blueprint): Promise<Plan> {
   const validation = validateBlueprint(input)
   if (!validation.valid) {
     throw new EgmpError(`蓝图校验失败：${validation.errors.join('；')}`)
@@ -507,6 +511,12 @@ export async function planBlueprint(session: EgmpSession, input: Blueprint, dshH
     status: 'planned',
     results: [],
   }
+  return plan
+}
+
+/** 生成单计划并落盘（单计划审批的入口，行为与旧版一致）。 */
+export async function planBlueprint(session: EgmpSession, input: Blueprint, dshHome: string): Promise<Plan> {
+  const plan = await buildPlan(session, input)
   savePlan(dshHome, plan)
   return plan
 }
@@ -763,7 +773,7 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
         throw new EgmpError('这个计划的审批已经用过了，不能重复执行', { code: 'APPROVAL_USED' })
       }
       // 先标记已用再写：中途失败也不能拿同一张审批重试，必须重新审批。
-      markApprovalUsed(dshHome, planId)
+      consumeApproval(dshHome, planId)
     }
   }
 
@@ -830,8 +840,8 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
 
 /* ───────────────────────────── 持久化 ───────────────────────────── */
 
-/** 计划 id 的形状是固定的；`loadPlan` 只认这个形状，路径拼接不会被 `../` 带出去。 */
-const PLAN_ID = /^pln_[a-z0-9]{4,40}$/
+/** 计划/任务 id 的形状是固定的；`loadPlan` 只认这个形状，路径拼接不会被 `../` 带出去。 */
+const PLAN_ID = /^(pln|tsk)_[a-z0-9]{4,40}$/
 
 function plansDir(dshHome: string): string {
   return join(dataDir(dshHome), 'config-plans')
@@ -906,8 +916,9 @@ export function readApproval(dshHome: string, planId: string): ApprovalRecord | 
   }
 }
 
-function markApprovalUsed(dshHome: string, planId: string): void {
-  const record = readApproval(dshHome, planId)
+/** 把审批标记为已用（任务级审批在整条任务开跑前调一次）。 */
+export function consumeApproval(dshHome: string, recordId: string): void {
+  const record = readApproval(dshHome, recordId)
   if (record === null) return
   saveApproval(dshHome, { ...record, usedAt: Date.now() })
 }
