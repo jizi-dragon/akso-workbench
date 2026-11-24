@@ -108,6 +108,23 @@ function walk(value, visit) {
   for (const item of Object.values(value)) walk(item, visit)
 }
 
+/** 从抓包里收选项 id → 名称；只认 Picklist 接口返回的 options 数组，避免把控件名混进来。 */
+function collectOptions(records) {
+  const options = new Map()
+  for (const record of records) {
+    const url = typeof record?.url === 'string' ? record.url : ''
+    if (!url.includes('Picklist')) continue
+    walk(materialize(record?.responseBody ?? record?.response?.body ?? null), (array) => {
+      for (const item of array) {
+        if (isObject(item) && typeof item.id === 'string' && typeof item.name === 'string') {
+          options.set(item.id, item.name)
+        }
+      }
+    })
+  }
+  return options
+}
+
 /** 从抓包里收状态 id → 名称；只认带 lifecycleId 的列表项，避免把分区/控件也收进来。 */
 function collectStatuses(records) {
   const statuses = new Map()
@@ -187,6 +204,9 @@ for (const item of [...(layout.sections ?? []), ...(layout.controls ?? [])]) {
 }
 
 if (records.length > 0) {
+  for (const [id, name] of collectOptions(records)) {
+    labels[id] = name
+  }
   for (const [id, name] of collectStatuses(records)) {
     labels[id] = name
   }

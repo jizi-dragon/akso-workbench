@@ -330,6 +330,13 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 - 旧 section（如 type=4 工作流时间线）原样回传，不能删；pages 原样回传，没有分页传 []。
 - **新增分区必须顺位追加**：`sections` 数组保持现有顺序，新分区放在数组最后，`sort` 取现有最大 `sort + 1`；平台按数组顺序归一化 sort，插到第一位会变成“新分区在前”。（2026-11-21 实测）
 - 2026-11-09 抓包验证：给 akwv1109__c 的默认布局加「基础信息」分区 + 4 个控件（名称 / 文本 / 数字 / 单选），200 / 176ms、code 0；回读 LayoutDetail 确认 sections=2、controls=4。
+- **联动规则也随布局整份回写**：`rules[]` 每条为 `{ id, name, sort, enable, conditions, effectSuccess, effectFailed }`；客户端请求里不带 `sort`、带 `__observed/__observed__id/sortId`，服务端会剥掉并补 `sort: 0`，以回读为准。
+- 条件 `targetType: 0`（当前对象状态）：单个状态用 `logicType: 1` + `logicValue` 为带引号的 id；多个状态用 `logicType: 19`（包含于）+ `logicValue` 为 JSON 字符串数组，如 `"[\"<statusId1>\",\"<statusId2>\"]"`。
+- 条件 `targetType: 1`（当前对象字段）：`targetId` 填**字段 id（fieldId）**，不是控件 id；选项类字段的 `logicValue` 是选项 id，不是选项名。
+- 效果 `targetType: 4`（分区）/ `5`（控件）：`targetId` 填分区 / 控件 id（控件效果不能用 fieldId）；`value` 是属性包，如 `{ "readOnly": false }`、`{ "hidden": false }`。
+- 规则只覆盖 `value` 里写出的属性。控件在布局里的 `hidden/visible` 为 `null`（默认显示）时，写 `{ hidden: false }` 等于空操作；要做「二选一显示」，需成对写 `{ hidden: true }`，或先把默认值改成隐藏。
+- 条件相同的规则可以拆成多条（每条 `relationId` 独立生成、不复用）；同一目标同一属性的多条规则，运行时以最后触发的一条为准。
+- 规则名是自由文本，不能用它反推状态或字段；一律以 id 为准（实测规则名写「已退回」，实际状态名是「已驳回」）。
 
 **案例**
 

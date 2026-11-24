@@ -98,6 +98,18 @@ test('条件文案：状态 id 能按映射表翻成「草稿」', () => {
   assert.equal(text, '当前对象状态 等于 草稿')
 })
 
+test('条件文案：包含于的多个状态逐个翻名，不把 id 拼在一起', () => {
+  const base = rule().conditions?.details?.[0]
+  assert.ok(base)
+  const detail = {
+    ...base,
+    logicType: 19,
+    logicValue: JSON.stringify([STATUS_ID, AUTH_SECTION]),
+  }
+  const text = describeCondition(detail, { labels: { [STATUS_ID]: '草稿', [AUTH_SECTION]: '已驳回' } })
+  assert.equal(text, '当前对象状态 包含于 草稿、已驳回')
+})
+
 test('效果属性：readOnly 等键翻成中文，未知键原样保留', () => {
   assert.equal(describeEffectValue({ readOnly: false, required: true }), '只读=false，必填=true')
   assert.equal(describeEffectValue({ customFlag: 1 }), 'customFlag=1')

@@ -210,15 +210,16 @@ export function parseLogicValue(raw: unknown): unknown {
   }
 }
 
-export function displayValue(raw: unknown): string {
+export function displayValue(raw: unknown, labels?: Readonly<Record<string, string>>): string {
   const value = parseLogicValue(raw)
+  const label = (text: string): string => labels?.[text] ?? text
   if (value === null || value === undefined || value === '') return '空'
   if (Array.isArray(value)) {
     return value
-      .map((item) => (typeof item === 'string' ? item : JSON.stringify(item) ?? String(item)))
+      .map((item) => label(typeof item === 'string' ? item : JSON.stringify(item) ?? String(item)))
       .join('、')
   }
-  if (typeof value === 'string') return value
+  if (typeof value === 'string') return label(value)
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   return JSON.stringify(value) ?? String(value)
 }
@@ -260,9 +261,7 @@ export function describeCondition(detail: LayoutRuleCondition, lookups: RuleLook
   const name = targetName(detail.targetType, detail.targetId, lookups)
   const target = name === "—" ? label : `${label}「${name}」`
   const operator = logicTypeLabel(detail.logicType)
-  const value = displayValue(detail.logicValue)
-  const labelled = typeof value === 'string' ? lookups.labels?.[value] : undefined
-  const shown = labelled ?? value
+  const shown = displayValue(detail.logicValue, lookups.labels)
   const needsValue =
     detail.logicType !== undefined &&
     detail.logicType !== null &&
