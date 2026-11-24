@@ -63,6 +63,23 @@ export interface LayoutRuleComponent {
   name?: string
   /** 控件才有：字段 id，条件里按字段定位时用它。 */
   fieldId?: string
+  /** 组件自带的默认规则属性：规则没写到的属性，运行时取这里的值。 */
+  readOnly?: boolean | null
+  required?: boolean | null
+  visible?: boolean | null
+  hidden?: boolean | null
+  readPretty?: boolean | null
+  expansion?: boolean | null
+}
+
+/** 一个组件的默认属性；只收 payload 里真实出现过的键，避免把「没配」当成 false。 */
+export interface ComponentBaseline {
+  readOnly?: boolean | null
+  required?: boolean | null
+  visible?: boolean | null
+  hidden?: boolean | null
+  readPretty?: boolean | null
+  expansion?: boolean | null
 }
 
 export interface LayoutRuleLayout {
@@ -229,8 +246,11 @@ export function shortId(value: string | null | undefined): string {
   return value.length > 8 ? value.slice(0, 8) : value
 }
 
-/** 效果包转 `readOnly=false, required=true` 这样的一行。 */
-export function describeEffectValue(value: Record<string, unknown> | null | undefined): string {
+/** 效果包转 `readOnly=false, required=true` 这样的一行；给了组件默认值时顺带标出覆盖或空操作。 */
+export function describeEffectValue(
+  value: Record<string, unknown> | null | undefined,
+  baseline?: ComponentBaseline,
+): string {
   if (value === null || value === undefined) return ''
   const entries = Object.entries(value)
   if (entries.length === 0) return ''
@@ -238,10 +258,32 @@ export function describeEffectValue(value: Record<string, unknown> | null | unde
     .map(([key, raw]) => {
       const label = EFFECT_ATTR_LABELS[key] ?? key
       if (raw === null || raw === undefined) return `${label}=空`
-      if (typeof raw === 'object') return `${label}=${JSON.stringify(raw)}`
-      return `${label}=${String(raw)}`
+      const text = typeof raw === 'object' ? `${label}=${JSON.stringify(raw)}` : `${label}=${String(raw)}`
+      return `${text}${baselineNote(key, raw, baseline)}`
     })
     .join('，')
+}
+
+/** 把一个效果属性与组件默认值比较：不同就说默认值，相同就点破「空操作」。 */
+function baselineNote(key: string, raw: unknown, baseline?: ComponentBaseline): string {
+  if (baseline === undefined) return ''
+  if (key === 'hidden' || key === 'visible') {
+    const base = baselineHidden(baseline)
+    if (base === undefined || typeof raw !== 'boolean') return ''
+    const effective = key === 'hidden' ? raw : !raw
+    return effective === base ? '（与组件默认相同，等于空操作）' : `（组件默认${base ? '隐藏' : '显示'}）`
+  }
+  if (key !== 'readOnly' && key !== 'required' && key !== 'readPretty' && key !== 'expansion') return ''
+  const base = baselineFlag(baseline, key)
+  if (base === undefined || typeof raw !== 'boolean') return ''
+  return base === raw ? '（与组件默认相同，等于空操作）' : `（组件默认 ${base ? 'true' : 'false'}）`
+}
+
+/** 只读取标量布尔默认值；attrs.* 这类没有默认值可比。 */
+function baselineFlag(baseline: ComponentBaseline, key: string): boolean | undefined {
+  if (key !== 'readOnly' && key !== 'required' && key !== 'readPretty' && key !== 'expansion') return undefined
+  const value = baseline[key]
+  return typeof value === 'boolean' ? value : undefined
 }
 
 /* ───────────────────────────── 规则描述 ───────────────────────────── */
@@ -249,6 +291,8 @@ export function describeEffectValue(value: Record<string, unknown> | null | unde
 export interface RuleLookups {
   /** 目标 id → 展示名，例如 `5463d9b7-…` → `基础信息 basic_information__cs`。 */
   labels?: Readonly<Record<string, string>>
+  /** 目标 id → 组件自带属性；用于标出「覆盖了默认值」或「与默认值相同，等于空操作」。 */
+  baselines?: Readonly<Record<string, ComponentBaseline>>
 }
 
 function targetName(type: number | null | undefined, id: string | null | undefined, lookups: RuleLookups): string {
@@ -271,7 +315,8 @@ export function describeCondition(detail: LayoutRuleCondition, lookups: RuleLook
 
 export function describeEffect(effect: LayoutRuleEffect, lookups: RuleLookups = {}): string {
   const target = `${effectTargetLabel(effect.targetType)}「${targetName(effect.targetType, effect.targetId, lookups)}」`
-  const value = describeEffectValue(effect.value)
+  const baseline = typeof effect.targetId === 'string' ? lookups.baselines?.[effect.targetId] : undefined
+  const value = describeEffectValue(effect.value, baseline)
   return value === '' ? target : `${target} → ${value}`
 }
 
@@ -355,7 +400,10 @@ export function describeRule(rule: LayoutRule, index: number, lookups: RuleLooku
 }
 
 export function describeLayout(layout: LayoutRuleLayout, lookups: RuleLookups = {}): RuleDescription[] {
-  const merged: RuleLookups = { labels: { ...componentLabels(layout), ...(lookups.labels ?? {}) } }
+  const merged: RuleLookups = {
+    labels: { ...componentLabels(layout), ...(lookups.labels ?? {}) },
+    baselines: { ...componentBaselines(layout), ...(lookups.baselines ?? {}) },
+  }
   return (layout.rules ?? []).map((rule, index) => describeRule(rule, index, merged))
 }
 
@@ -371,6 +419,33 @@ export function componentLabels(layout: LayoutRuleLayout): Record<string, string
     if (typeof item.fieldId === 'string' && item.fieldId !== '' && text !== '') labels[item.fieldId] = text
   }
   return labels
+}
+
+const BASELINE_KEYS = ['readOnly', 'required', 'visible', 'hidden', 'readPretty', 'expansion'] as const
+
+/** 组件 id → 自带的默认属性；只收 payload 里真实出现过的键，没出现的不猜默认值。 */
+export function componentBaselines(layout: LayoutRuleLayout): Record<string, ComponentBaseline> {
+  const baselines: Record<string, ComponentBaseline> = {}
+  for (const item of [...(layout.sections ?? []), ...(layout.controls ?? [])]) {
+    if (typeof item.id !== 'string' || item.id === '') continue
+    const baseline: ComponentBaseline = {}
+    for (const key of BASELINE_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(item, key)) baseline[key] = item[key]
+    }
+    baselines[item.id] = baseline
+  }
+  return baselines
+}
+
+/** 组件默认是否隐藏；`hidden`/`visible` 都没显式配时按平台默认「显示」处理。 */
+function baselineHidden(baseline: ComponentBaseline | undefined): boolean | undefined {
+  if (baseline === undefined) return undefined
+  if (baseline.hidden === true) return true
+  if (baseline.hidden === false) return false
+  if (baseline.visible === false) return true
+  if (baseline.visible === true) return false
+  if ('hidden' in baseline || 'visible' in baseline) return false
+  return undefined
 }
 
 /* ───────────────────────────── 校验 ───────────────────────────── */
@@ -478,6 +553,34 @@ export function checkLayoutRules(layout: LayoutRuleLayout): LayoutRuleCheck {
       ruleName: names[0] ?? '规则',
       message: `${label} 被 ${names.join(' / ')} 同时设置且取值不同；按平台语义，最后触发的规则生效`,
     })
+  }
+
+  const baselines = componentBaselines(layout)
+  const labels = componentLabels(layout)
+  for (const [index, rule] of (layout.rules ?? []).entries()) {
+    const effects = [...(rule.effectSuccess ?? []), ...(rule.effectFailed ?? [])]
+    for (const effect of effects) {
+      if (typeof effect.targetId !== 'string' || typeof effect.targetType !== 'number') continue
+      const value = effect.value
+      if (value === null || typeof value !== 'object') continue
+      const baseline = baselines[effect.targetId]
+      if (baseline === undefined) continue
+      const target = `${effectTargetLabel(effect.targetType)}「${labels[effect.targetId] ?? shortId(effect.targetId)}」`
+      for (const [key, raw] of Object.entries(value)) {
+        if (typeof raw !== 'boolean') continue
+        let noop = false
+        if (key === 'hidden' || key === 'visible') {
+          const base = baselineHidden(baseline)
+          if (base !== undefined) noop = (key === 'hidden' ? raw : !raw) === base
+        } else if (key === 'readOnly' || key === 'required' || key === 'readPretty' || key === 'expansion') {
+          const base = baselineFlag(baseline, key)
+          if (base !== undefined) noop = base === raw
+        }
+        if (!noop) continue
+        const label = EFFECT_ATTR_LABELS[key] ?? key
+        warnings.push(issue('warning', rule, index, `${target} 的「${label}」与组件默认相同，等于空操作`))
+      }
+    }
   }
 
   return { errors, warnings }

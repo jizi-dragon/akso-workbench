@@ -116,6 +116,13 @@ test('效果属性：readOnly 等键翻成中文，未知键原样保留', () =>
   assert.equal(describeEffectValue(null), '')
 })
 
+test('组件默认值：与默认不同的属性标出默认值，相同的标成空操作', () => {
+  assert.equal(describeEffectValue({ readOnly: false }, { readOnly: true }), '只读=false（组件默认 true）')
+  assert.equal(describeEffectValue({ hidden: false }, { hidden: null }), '隐藏=false（与组件默认相同，等于空操作）')
+  assert.equal(describeEffectValue({ hidden: true }, { hidden: null }), '隐藏=true（组件默认显示）')
+  assert.equal(describeEffectValue({ readOnly: false }), '只读=false')
+})
+
 test('整条规则：条件 + 两条效果，目标 id 翻成分区 code', () => {
   const described = describeLayout(layout(), { labels: { [STATUS_ID]: '草稿' } })
   assert.equal(described.length, 1)
@@ -170,6 +177,26 @@ test('校验：未知枚举只提醒，不阻断', () => {
   assert.equal(issues.filter((item) => item.level === 'error').length, 0)
   assert.ok(issues.some((item) => item.message.includes('targetType=99')))
   assert.ok(issues.some((item) => item.message.includes('logicType=999')))
+})
+
+test('校验：效果与组件默认值相同时提醒「空操作」', () => {
+  const base = layout()
+  base.controls = [{ id: 'control-1', code: 'name__ak', name: '名称', fieldId: 'field-1', hidden: null }]
+  base.rules = [
+    rule({
+      effectSuccess: [{ ruleId: RULE_ID, targetType: 5, targetId: 'control-1', path: null, value: { hidden: false } }],
+    }),
+  ]
+  const { warnings } = checkLayoutRules(base)
+  assert.ok(warnings.some((item) => item.message.includes('等于空操作')))
+
+  base.rules = [
+    rule({
+      effectSuccess: [{ ruleId: RULE_ID, targetType: 5, targetId: 'control-1', path: null, value: { hidden: true } }],
+    }),
+  ]
+  const changed = checkLayoutRules(base)
+  assert.ok(!changed.warnings.some((item) => item.message.includes('等于空操作')))
 })
 
 test('多规则冲突：同一目标同一属性被不同规则设置时提醒「最后触发为准」', () => {

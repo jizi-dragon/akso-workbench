@@ -118,6 +118,8 @@
   条件 / 效果人话；`--check` 有 error 时退出码 1，`--json` 给脚本吃。枚举映射维护在
   `docs/knowledge/系统常用映射表.md` 的「表单布局联动规则」五组，改枚举要同步
   `plugin/src/shared/layout-rules.ts`。它只读不写；写规则仍走 `layout.save` 整份回写。
+  规则只覆盖 `value` 里的属性，其余取组件自带值；阅读器会标出「组件默认 …」并把与默认相同的效果
+  标成「等于空操作」（提醒级，不影响退出码）。
 - **生命周期/工作流流程图固定用便笺本模块**：唯一图形源是 `docs/reference/便笺本.xml`（用户提供），代码样式集中在 `plugin/src/shared/sticky-notes.ts`。生命周期状态=浅蓝 `#bdd7ee` 矩形；用户动作=橙色 `#ed7d31` 胶囊；用户任务=橙色 `#ed7d31` 矩形；判断=橙色 `#f4b183` 菱形；开始/结束=`#70ad47` 圆形；连线=黑色箭头。生成 drawio 不得自创配色或圆角；`plugin/test/analysis-artifacts.test.ts` 会断言源文件存在且 drawio 只含这些颜色。
 - **新建对象硬规则（2026-11-22 用户口径）**：新建对象必须同时 `enableLifeCycle: true` 和 `enableSignatures: true`；缺一不可，配置引擎在建对象前直接拒绝。已有对象不受此规则影响。
 - **字段类型规则（2026-11-09 管理员口径）**：一律用文本 `dataType: 1`；**长文本 17、富文本 18 已禁用**，

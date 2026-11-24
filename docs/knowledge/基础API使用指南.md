@@ -334,7 +334,8 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 - 条件 `targetType: 0`（当前对象状态）：单个状态用 `logicType: 1` + `logicValue` 为带引号的 id；多个状态用 `logicType: 19`（包含于）+ `logicValue` 为 JSON 字符串数组，如 `"[\"<statusId1>\",\"<statusId2>\"]"`。
 - 条件 `targetType: 1`（当前对象字段）：`targetId` 填**字段 id（fieldId）**，不是控件 id；选项类字段的 `logicValue` 是选项 id，不是选项名。
 - 效果 `targetType: 4`（分区）/ `5`（控件）：`targetId` 填分区 / 控件 id（控件效果不能用 fieldId）；`value` 是属性包，如 `{ "readOnly": false }`、`{ "hidden": false }`。
-- 规则只覆盖 `value` 里写出的属性。控件在布局里的 `hidden/visible` 为 `null`（默认显示）时，写 `{ hidden: false }` 等于空操作；要做「二选一显示」，需成对写 `{ hidden: true }`，或先把默认值改成隐藏。
+- 组件的自带属性是规则生效前的**基线**：分区带 `readOnly/required/hidden/expansion`，控件带 `readOnly/required/visible/hidden/readPretty`；规则只覆盖 `value` 里写出的属性，其余沿用基线。组件对象里没配过时这些字段是 `null`（未显式设置）。
+- 写与基线相同的值等于空操作：控件 `hidden/visible` 为 `null`（默认显示）时写 `{ hidden: false }` 不改变任何东西；要做「二选一显示」，需成对写 `{ hidden: true }`，或先把默认值改成隐藏。阅读器会标出 `（组件默认 true）` 与 `（与组件默认相同，等于空操作）`，`--check` 不把空操作算错误。
 - 条件相同的规则可以拆成多条（每条 `relationId` 独立生成、不复用）；同一目标同一属性的多条规则，运行时以最后触发的一条为准。
 - 规则名是自由文本，不能用它反推状态或字段；一律以 id 为准（实测规则名写「已退回」，实际状态名是「已驳回」）。
 
