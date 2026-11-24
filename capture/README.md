@@ -72,8 +72,8 @@ Chrome 136+ 不允许在默认 profile 上开 `--remote-debugging-port`，所以
 
 ## 数据长什么样
 
-位置：`$DSH_HOME/akso-workbench/captures/capture-cap_<YYYYMMDDhhmmss>_<xxxx>.jsonl`
-（`DSH_HOME` 默认 `~/.dsh`；可用 `AKW_CAPTURE_DIR` 覆盖。）
+位置：`<当前工作区>/akso-workbench-data/captures/capture-cap_<YYYYMMDDhhmmss>_<xxxx>.jsonl`
+（从当前目录向上找最近的 `akso-workbench-data`；找不到直接报错，可用 `AKW_CAPTURE_DIR` 显式覆盖。）
 
 每个会话旁有 `capture-<session>.meta.json`，记录 **开始时间、标签页、host 过滤、扩展路径、结束时间**；
 `list/show/endpoints/export` 先读它判断会话年龄。没有 sidecar 的旧会话退回文件创建时间。
@@ -100,7 +100,7 @@ Chrome 136+ 不允许在默认 profile 上开 `--remote-debugging-port`，所以
 - **令牌/口令不落原文**：`Authorization`、`Cookie`、`Set-Cookie` 及 `password`/`token`/`secret`
   一类键的值只记 `«redacted:len=N»`；文本里的 JWT / Bearer 也会打码。
 - **体截断 64KB**；目录 0700、文件 0600。
-- **数据不进仓库**：默认写到 `$DSH_HOME`，仓库里的 `.gitignore` 不含这个目录，也不该把捕获文件提交上来。
+- **数据不进仓库**：写到 `<当前工作区>/akso-workbench-data/captures`，该目录不在仓库内，也不该把捕获文件提交上来。
 
 ## 已知限制
 

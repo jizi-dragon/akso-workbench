@@ -457,14 +457,19 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
    * ★ 失败也要留历史：用户看到「分析了但历史里没有」时，能直接在列表里看到这次为什么失败；
    *   写历史本身出错不能盖住真正的分析错误，所以这里自己吞掉并记一条 error.history。
    */
-  function recordFailedAnalysis(query: string, error: string, status: number, startedAt: number): string | null {
+  function recordFailedAnalysis(workspaceRoot: string | undefined, query: string, error: string, status: number, startedAt: number): string | null {
     let historyId: string | null = null
     try {
       const session = readEgmpSession(dshHome)
-      historyId = saveFailedAnalysisHistory(dshHome, query, error, {
-        baseUrl: session?.baseUrl,
-        account: session?.account,
-      }).id
+      if (workspaceRoot === undefined || workspaceRoot.trim() === '') {
+        recordEvent('error.history', { query, error: '未定位到当前工作区，分析历史未落盘' })
+        historyId = null
+      } else {
+        historyId = saveFailedAnalysisHistory(workspaceRoot, query, error, {
+          baseUrl: session?.baseUrl,
+          account: session?.account,
+        }).id
+      }
     } catch (historyError) {
       recordEvent('error.history', { query, error: errorText(historyError) })
     }
@@ -480,7 +485,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     const ensured = await ensureEgmpSession()
     if (ensured.session === null) {
       const error = ensured.reason ?? '还没有连接 eGMP 账号'
-      const historyId = recordFailedAnalysis(query, error, 409, startedAt)
+      const historyId = recordFailedAnalysis(workspaceRoot, query, error, 409, startedAt)
       return { ok: false, status: 409, error, ...(historyId === null ? {} : { historyId }) }
     }
     try {
@@ -496,7 +501,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
           result.warnings.push(`分析产物落盘失败：${errorText(error)}`)
         }
       }
-      const history = saveAnalysisHistory(dshHome, query, result)
+      const history = saveAnalysisHistory(workspaceRoot, query, result)
       recordEvent('analysis.run', {
         query,
         ok: true,
@@ -521,7 +526,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         : error instanceof cloud.CloudError && error.status === 401
           ? 401
           : 500
-      recordFailedAnalysis(query, errorText(error), status, startedAt)
+      recordFailedAnalysis(workspaceRoot, query, errorText(error), status, startedAt)
       throw error
     }
   }
@@ -1000,12 +1005,18 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     route('GET', R.analysisHistory, false, async (req, res) => {
       const url = new URL(String(req?.url ?? '/'), 'http://localhost')
       const id = (url.searchParams.get('id') ?? '').trim()
-      if (id === '') {
-        // dir 一起返回：页面把历史目录显示出来，用户不必猜「记录到底存哪了」。
-        sendJson(res, 200, { items: listAnalysisHistory(dshHome), dir: analysisHistoryDir(dshHome) })
+      const sessionId = (url.searchParams.get('sessionId') ?? '').trim()
+      const workspaceRoot = text(url.searchParams.get('workspaceDir'), 1000) ?? resolveWorkspaceRoot(sessionId)
+      if (workspaceRoot === undefined) {
+        sendJson(res, 400, { error: '未定位到当前工作区：分析历史只存放在工作区 akso-workbench-data/analysis-history' })
         return
       }
-      const detail = readAnalysisHistory(dshHome, id)
+      if (id === '') {
+        // dir 一起返回：页面把历史目录显示出来，用户不必猜「记录到底存哪了」。
+        sendJson(res, 200, { items: listAnalysisHistory(workspaceRoot), dir: analysisHistoryDir(workspaceRoot) })
+        return
+      }
+      const detail = readAnalysisHistory(workspaceRoot, id)
       if (detail === null) {
         sendJson(res, 404, { error: '这条分析历史不存在或已损坏' })
         return
@@ -1173,7 +1184,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 409, { error: opened.reason, code: 'NEEDS_ACCOUNT' })
         return
       }
-      const plan = await planBlueprint(opened.session, body.blueprint as never, dshHome)
+      const workspaceRoot = text(body.workspaceDir, 1000) ?? resolveWorkspaceRoot(text(body.sessionId, 300))
+      if (workspaceRoot === undefined) {
+        sendJson(res, 400, { error: '未定位到当前工作区：配置计划只存放在工作区 akso-workbench-data/config-plans' })
+        return
+      }
+      const plan = await planBlueprint(opened.session, body.blueprint as never, workspaceRoot)
       recordEvent('plan.created', {
         planId: plan.planId,
         steps: plan.steps.length,
@@ -1188,7 +1204,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
     route('GET', R.configPlanGet, false, async (req, res) => {
       const url = new URL(String(req.url ?? '/'), 'http://127.0.0.1')
       const id = url.searchParams.get('id') ?? ''
-      const plan = id === '' ? null : loadPlan(dshHome, id)
+      const workspaceRoot = text(url.searchParams.get('workspaceDir'), 1000) ?? resolveWorkspaceRoot(url.searchParams.get('sessionId') ?? '')
+      if (workspaceRoot === undefined) {
+        sendJson(res, 400, { error: '未定位到当前工作区：配置计划只存放在工作区 akso-workbench-data/config-plans' })
+        return
+      }
+      const plan = id === '' ? null : loadPlan(workspaceRoot, id)
       if (plan === null) {
         sendJson(res, 404, { error: '计划不存在' })
         return
@@ -1212,7 +1233,12 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         sendJson(res, 400, { error: '缺少 planId' })
         return
       }
-      const plan = await applyPlan(opened.session, planId, dshHome, { requireApproval: requireApproval() })
+      const workspaceRoot = text(body.workspaceDir, 1000) ?? resolveWorkspaceRoot(text(body.sessionId, 300))
+      if (workspaceRoot === undefined) {
+        sendJson(res, 400, { error: '未定位到当前工作区：配置计划只存放在工作区 akso-workbench-data/config-plans' })
+        return
+      }
+      const plan = await applyPlan(opened.session, planId, dshHome, { requireApproval: requireApproval() }, workspaceRoot)
       recordEvent('apply.run', {
         planId,
         status: plan.status,

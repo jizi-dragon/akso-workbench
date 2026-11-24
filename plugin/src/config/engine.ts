@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { findCapability, type Risk } from './capabilities.ts'
 import { call, EgmpError, normalizeBase, type EgmpSession } from './session.ts'
 import { dataDir } from '../store.ts'
+import { workspaceDataPath } from '../workspace-data.ts'
 import type { Blueprint, CallResource, FieldResource, FormLayoutResource, ListLayoutResource, MenuResource, ObjectResource, PicklistResource, LifecycleResource, ResourceKind } from './blueprint.ts'
 import { validateBlueprint } from './blueprint.ts'
 
@@ -515,9 +516,9 @@ export async function buildPlan(session: EgmpSession, input: Blueprint): Promise
 }
 
 /** 生成单计划并落盘（单计划审批的入口，行为与旧版一致）。 */
-export async function planBlueprint(session: EgmpSession, input: Blueprint, dshHome: string): Promise<Plan> {
+export async function planBlueprint(session: EgmpSession, input: Blueprint, workspaceRoot: string): Promise<Plan> {
   const plan = await buildPlan(session, input)
-  savePlan(dshHome, plan)
+  savePlan(workspaceRoot, plan)
   return plan
 }
 
@@ -737,8 +738,8 @@ export interface ApplyOptions {
   requireApproval?: boolean
 }
 
-export async function applyPlan(session: EgmpSession, planId: string, dshHome: string, options: ApplyOptions = {}): Promise<Plan> {
-  const plan = loadPlan(dshHome, planId)
+export async function applyPlan(session: EgmpSession, planId: string, dshHome: string, options: ApplyOptions = {}, workspaceRoot: string = dshHome): Promise<Plan> {
+  const plan = loadPlan(workspaceRoot, planId)
   if (plan === null) throw new EgmpError(`计划不存在：${planId}`)
   if (Date.now() > plan.expiresAt) throw new EgmpError('计划已过期（30 分钟），请重新生成')
   if (plan.status === 'applied') return plan
@@ -827,14 +828,14 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
       audit(dshHome, plan, step, result)
       if (!verify.verified) {
         plan.status = 'failed'
-        savePlan(dshHome, plan)
+        savePlan(workspaceRoot, plan)
         return plan
       }
     }
   }
   plan.status = plan.results.some((r) => r.status === 'failed') ? 'failed' : 'applied'
   plan.results.push({ stepId: '-', title: '汇总', kind: 'object', action: 'update', status: 'ok', message: `用时 ${Date.now() - started}ms`, traceId: null, durationMs: Date.now() - started })
-  savePlan(dshHome, plan)
+  savePlan(workspaceRoot, plan)
   return plan
 }
 
@@ -843,8 +844,8 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
 /** 计划/任务 id 的形状是固定的；`loadPlan` 只认这个形状，路径拼接不会被 `../` 带出去。 */
 const PLAN_ID = /^(pln|tsk)_[a-z0-9]{4,40}$/
 
-function plansDir(dshHome: string): string {
-  return join(dataDir(dshHome), 'config-plans')
+function plansDir(workspaceRoot: string): string {
+  return workspaceDataPath(workspaceRoot, 'config-plans')
 }
 
 function auditDir(dshHome: string): string {
@@ -923,15 +924,15 @@ export function consumeApproval(dshHome: string, recordId: string): void {
   saveApproval(dshHome, { ...record, usedAt: Date.now() })
 }
 
-export function savePlan(dshHome: string, plan: Plan): void {
-  const dir = plansDir(dshHome)
+export function savePlan(workspaceRoot: string, plan: Plan): void {
+  const dir = plansDir(workspaceRoot)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   writeFileSync(join(dir, `${plan.planId}.json`), `${JSON.stringify(plan, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
 }
 
-export function loadPlan(dshHome: string, planId: string): Plan | null {
+export function loadPlan(workspaceRoot: string, planId: string): Plan | null {
   if (!PLAN_ID.test(planId)) return null
-  const file = join(plansDir(dshHome), `${planId}.json`)
+  const file = join(plansDir(workspaceRoot), `${planId}.json`)
   if (!existsSync(file)) return null
   try {
     return JSON.parse(readFileSync(file, 'utf8')) as Plan

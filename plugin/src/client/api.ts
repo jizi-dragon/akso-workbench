@@ -370,9 +370,10 @@ export const api = {
   /** 能力目录（工具页的数据源）。返回的 items 形状由 tools.tsx 自己声明。 */
   /** 对象分析：输入对象 id/code，读生命周期、状态、动作。 */
   analyzeObject: (query: string) => call<AnalysisResultView>('analysis/object', post({ query, sessionId: getCurrentSessionId() })),
-  analysisHistory: () => call<{ items: AnalysisHistoryView[]; dir?: string }>('analysis/history'),
+  analysisHistory: () =>
+    call<{ items: AnalysisHistoryView[]; dir?: string }>(`analysis/history?sessionId=${encodeURIComponent(getCurrentSessionId() ?? '')}`),
   analysisHistoryItem: (id: string) =>
-    call<AnalysisHistoryDetailView>(`analysis/history?id=${encodeURIComponent(id)}`),
+    call<AnalysisHistoryDetailView>(`analysis/history?id=${encodeURIComponent(id)}&sessionId=${encodeURIComponent(getCurrentSessionId() ?? '')}`),
 
   configCapabilities: () =>
     call<{

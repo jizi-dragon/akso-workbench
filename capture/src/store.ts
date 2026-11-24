@@ -1,14 +1,14 @@
 /**
  * 捕获数据的落盘层：一个会话一个 JSONL，追加写。
  *
- * 位置：`$DSH_HOME/akso-workbench/captures/`（可用 AKW_CAPTURE_DIR 覆盖）。
+ * 位置：`<最近工作区>/akso-workbench-data/captures/`；找不到工作区直接报错，
+ * 不再回落到 `$DSH_HOME`（可用 AKW_CAPTURE_DIR 显式覆盖）。
  * 权限：目录 0700、文件 0600（Windows 上 chmod 语义有限，但至少不落到共享位置）。
- * 数据**不进仓库**：DSH_HOME 在仓库外，.gitignore 也不含这个目录。
+ * 数据**不进仓库**：工作区数据目录在仓库外；捕获文件不要提交。
  */
 
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { CaptureRecord } from './records.ts'
 
@@ -37,15 +37,26 @@ export interface CaptureSessionInfo {
   records: number
 }
 
-function dshHome(): string {
-  const fromEnv = process.env.DSH_HOME
-  return fromEnv !== undefined && fromEnv !== '' ? fromEnv : join(homedir(), '.dsh')
+/** 从当前目录向上找最近一个带 `akso-workbench-data` 的工作区根。 */
+function nearestWorkspaceRoot(): string | null {
+  let dir = resolve(process.cwd())
+  for (;;) {
+    if (existsSync(join(dir, 'akso-workbench-data'))) return dir
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
 }
 
 export function capturesRoot(): string {
   const override = process.env.AKW_CAPTURE_DIR
   if (override !== undefined && override !== '') return override
-  return join(dshHome(), 'akso-workbench', 'captures')
+  const workspace = nearestWorkspaceRoot()
+  if (workspace !== null) return join(workspace, 'akso-workbench-data', 'captures')
+  throw new Error(
+    '捕获数据必须写在工作区的 akso-workbench-data/captures：当前目录向上找不到 akso-workbench-data；' +
+      '请从工作区运行，或显式设置 AKW_CAPTURE_DIR',
+  )
 }
 
 function stamp(date: Date): string {

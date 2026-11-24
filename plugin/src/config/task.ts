@@ -26,7 +26,7 @@ import {
   type Step,
   type StepResult,
 } from './engine.ts'
-import { dataDir } from '../store.ts'
+import { workspaceDataPath } from '../workspace-data.ts'
 import { EgmpError, type EgmpSession } from './session.ts'
 
 export interface TaskStage {
@@ -114,21 +114,21 @@ export function parseTaskInput(raw: unknown): { valid: true; name: string; stage
   return { valid: true, name, stages }
 }
 
-function tasksDir(dshHome: string): string {
-  return join(dataDir(dshHome), 'config-tasks')
+function tasksDir(workspaceRoot: string): string {
+  return workspaceDataPath(workspaceRoot, 'config-tasks')
 }
 
 const TASK_ID = /^tsk_[a-z0-9]{4,40}$/
 
-export function saveTask(dshHome: string, task: Task): void {
-  const dir = tasksDir(dshHome)
+export function saveTask(workspaceRoot: string, task: Task): void {
+  const dir = tasksDir(workspaceRoot)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   writeFileSync(join(dir, `${task.taskId}.json`), `${JSON.stringify(task, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
 }
 
-export function loadTask(dshHome: string, taskId: string): Task | null {
+export function loadTask(workspaceRoot: string, taskId: string): Task | null {
   if (!TASK_ID.test(taskId)) return null
-  const file = join(tasksDir(dshHome), `${taskId}.json`)
+  const file = join(tasksDir(workspaceRoot), `${taskId}.json`)
   if (!existsSync(file)) return null
   try {
     return JSON.parse(readFileSync(file, 'utf8')) as Task
@@ -218,8 +218,9 @@ export async function applyTask(
   taskId: string,
   dshHome: string,
   options: TaskApplyOptions = {},
+  workspaceRoot: string = dshHome,
 ): Promise<Task> {
-  const task = loadTask(dshHome, taskId)
+  const task = loadTask(workspaceRoot, taskId)
   if (task === null) throw new EgmpError(`任务不存在：${taskId}`, { code: 'TASK_MISSING' })
   if (Date.now() > task.expiresAt) throw new EgmpError('任务已过期（60 分钟），请重新生成', { code: 'TASK_EXPIRED' })
   if (task.status === 'applied') return task
@@ -256,10 +257,10 @@ export async function applyTask(
         message: `计划生成失败：${error instanceof Error ? error.message : String(error)}`,
         steps: [],
       })
-      saveTask(dshHome, task)
+      saveTask(workspaceRoot, task)
       return task
     }
-    savePlan(dshHome, plan)
+    savePlan(workspaceRoot, plan)
     if (plan.steps.every((step) => step.action === 'skip')) {
       task.results.push({
         stage: index + 1,
@@ -272,7 +273,7 @@ export async function applyTask(
       continue
     }
     try {
-      const applied = await applyPlan(session, plan.planId, dshHome, { requireApproval: false })
+      const applied = await applyPlan(session, plan.planId, dshHome, { requireApproval: false }, workspaceRoot)
       const failed = applied.results.some((result) => result.status === 'failed')
       task.results.push({
         stage: index + 1,
@@ -284,7 +285,7 @@ export async function applyTask(
       })
       if (failed) {
         task.status = 'failed'
-        saveTask(dshHome, task)
+        saveTask(workspaceRoot, task)
         return task
       }
     } catch (error) {
@@ -297,11 +298,11 @@ export async function applyTask(
         message: error instanceof Error ? error.message : String(error),
         steps: [],
       })
-      saveTask(dshHome, task)
+      saveTask(workspaceRoot, task)
       return task
     }
   }
   task.status = 'applied'
-  saveTask(dshHome, task)
+  saveTask(workspaceRoot, task)
   return task
 }

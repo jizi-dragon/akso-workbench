@@ -31,6 +31,7 @@ import {
 } from './state.ts'
 import { ConfigToolsTab } from './tools.tsx'
 import { ObjectAnalysisTab } from './analysis.tsx'
+import { RunReportTab } from './runs.tsx'
 import { LogsTab } from './logs.tsx'
 import { ScrollBody, useFoldSet } from './view.tsx'
 
@@ -842,18 +843,6 @@ const MODULES: Array<{ key: Section; label: string }> = [
   { key: 'logs', label: '运行日志' },
 ]
 
-/**
- * 一级模块占位（2026-10-27 用户要求先把入口加上、内容留空）。
- * 不画假数据、不摆假按钮 —— 就一句"内容还没接入"，等真内容进来再换掉。
- */
-function PendingModule({ title, note }: { title: string; note: string }) {
-  return (
-    <div className="akw-pending">
-      <b>{title}</b>
-      <span>{note}</span>
-    </div>
-  )
-}
 export function AccountsPage(props: { t?: (key: string, vars?: Record<string, string | number>) => string } = {}) {
   const tr = typeof props.t === 'function' ? props.t : t
   const state = useStore()
@@ -1083,7 +1072,7 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
 
       {section === 'runs' ? (
         <ScrollBody id="runs">
-          <PendingModule title="运行报告" note="入口先留着，内容还没接入。" />
+          <RunReportTab />
         </ScrollBody>
       ) : null}
 

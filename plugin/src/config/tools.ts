@@ -41,9 +41,18 @@ function textOf(value: unknown): string | undefined {
 }
 
 /** 从 DSH 的 tool exec 上下文里尽量取当前工作区根；取不到时由调用方显式传 review.workspaceDir，绝不回落 profile/仓库。 */
+function requireWorkspaceRoot(exec: unknown): string {
+  const root = workspaceRootOf(exec)
+  if (root === undefined) {
+    throw new Error('未定位到当前工作区：配置计划/任务只存放在工作区 akso-workbench-data')
+  }
+  return root
+}
+
 export function workspaceRootOf(exec: unknown): string | undefined {
   const info = exec as {
     cwd?: unknown
+    workspaceDir?: unknown
     workspaceRoot?: unknown
     workspace?: { root?: unknown; cwd?: unknown }
     session?: { cwd?: unknown; workspaceRoot?: unknown; workspace?: { root?: unknown } }
@@ -52,6 +61,7 @@ export function workspaceRootOf(exec: unknown): string | undefined {
     }
   } | undefined
   return textOf(info?.cwd)
+    ?? textOf(info?.workspaceDir)
     ?? textOf(info?.workspaceRoot)
     ?? textOf(info?.workspace?.root)
     ?? textOf(info?.workspace?.cwd)
@@ -235,7 +245,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
         return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
       },
     },
-    async execute(args: unknown): Promise<unknown> {
+    async execute(args: unknown, exec?: unknown): Promise<unknown> {
       const opened = await deps.openSession()
       const session = opened.session
       if (session === null) {
@@ -262,7 +272,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
         try {
           const task = createTask(session, { name: parsed.name, stages: parsed.stages })
           const plans = await previewTaskPlans(session, task)
-          saveTask(deps.dshHome, task)
+          saveTask(requireWorkspaceRoot(exec), task)
           const merged = mergeTaskPreview(task, plans)
           return {
             ok: true,
@@ -291,7 +301,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
         return { ok: false, error: `蓝图不是合法 JSON：${error instanceof Error ? error.message : String(error)}` }
       }
       try {
-        const plan = await planBlueprint(session, blueprint as never, deps.dshHome)
+        const plan = await planBlueprint(session, blueprint as never, requireWorkspaceRoot(exec))
         return {
           ok: true,
           planId: plan.planId,
@@ -419,7 +429,7 @@ async function runTaskApply(
   const gate = await gateApproval(deps, report, merged, gateInput, exec, needsApproval)
   if (!gate.ok) return gate.result
   try {
-    const applied = await applyTask(session, task.taskId, deps.dshHome, { requireApproval: needsApproval })
+    const applied = await applyTask(session, task.taskId, deps.dshHome, { requireApproval: needsApproval }, requireWorkspaceRoot(exec))
     const ok = applied.status === 'applied' && applied.results.every((stage) => stage.status !== 'failed')
     if (ok) {
       finalizeApprovalReview(
@@ -532,12 +542,12 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
         return { ok: false, error: 'planId 与 taskId 必须二选一' }
       }
       if (taskId !== '') {
-        const task = loadTask(deps.dshHome, taskId)
+        const task = loadTask(requireWorkspaceRoot(exec), taskId)
         if (task === null) return { ok: false, error: `任务不存在：${taskId}` }
         return runTaskApply(deps, session, task, input, exec)
       }
 
-      const plan = loadPlan(deps.dshHome, planId)
+      const plan = loadPlan(requireWorkspaceRoot(exec), planId)
       if (plan === null) return { ok: false, error: `计划不存在：${planId}` }
 
       const writes = plan.steps.filter((step) => step.action !== 'skip')
@@ -547,7 +557,7 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
       if (!gate.ok) return gate.result
 
       try {
-        const applied = await applyPlan(session, planId, deps.dshHome, { requireApproval: needsApproval })
+        const applied = await applyPlan(session, planId, deps.dshHome, { requireApproval: needsApproval }, requireWorkspaceRoot(exec))
         const ok = applied.results.every((r) => r.status !== 'failed')
         if (ok) {
           finalizeApprovalReview(

@@ -110,8 +110,12 @@
 - **清理死代码的判据**：无入链的文件、无引用的导出/组件/CSS 类，先用 `tsc --noUnusedLocals
   --noUnusedParameters` + 引用计数双确认再删；删完跑 `npm run check`。历史证据不要直接删，
   移到 `docs/archive/` 并加「历史记录」抬头。
-- **工作区数据目录（2026-11-22）**：akso-workbench 产出的文件统一放
-  `<当前工作区>/akso-workbench-data/`，不入库；审批文档在 `reviews/`，对象分析产物在 `analysis/`。
+- **工作区数据目录（2026-11-22，2026-11-25 收紧）**：akso-workbench 产出的文件统一放
+  `<当前工作区>/akso-workbench-data/`，不入库；审批文档在 `reviews/`，对象分析产物在 `analysis/`，
+  分析历史在 `analysis-history/`，配置计划/任务在 `config-plans/`、`config-tasks/`，捕获证据在 `captures/`。没有工作区根时直接拒绝，
+  不静默回落到 `$DSH_HOME`。**日志系统例外**：`journal/`、`config-audit/`、`config-approvals/` 仍留
+  `$DSH_HOME/akso-workbench/`；`cloud.json`/`egmp-session.json`/`pool.json`/`prefs.json` 是账号/会话状态，
+  也留 `$DSH_HOME`，不得写进项目工作区。
 - **对象分析产物不入库**：统一放 `<当前工作区>/akso-workbench-data/analysis/`；产物是交付件、
   不是源码；生成后留在本机，不要 `git add`。便笺本、`lifecycle-action-types.md`、样例报告属于源码，放在
   `docs/reference/`，必须入库（改路径要同步 `plugin/src/shared/sticky-notes.ts` 与测试）。
@@ -168,15 +172,22 @@
 - **流程结束在中间状态时要注明承接方**：结束在“分配责任部门/项目计划/报告”等状态，不等于对象已完成；后续执行/关闭流程要单独列出。
 - 详细知识见 `docs/knowledge/标准配置使用规范.md`、`docs/knowledge/基础API使用指南.md`、`docs/knowledge/标准对象分析流程.md`。
 
-## 运行报告（页面模板，待接入）
+## 运行报告（页面模板 / 入口已开放，2026-11-24）
 
-- 用户口径的「页面模板 / 运行报告」= Word 报告模板 + DTE 占位参数，知识在
-  `docs/knowledge/模板参数配置.md`（占位符、条件、循环、关联取值、日期格式、上线检查清单）；
-  配置方法与变更样例映射见 `docs/knowledge/运行报告配置.md`；
-  填充流程与硬规则见技能 `egmp-dte-report-fill`（配置报告 Excel + 模板 → 替换字段 code，
-  **禁止猜 code / 禁止猜 `__cr`**，填完必须 validate）。
-- 页面入口：`plugin/src/client/page.tsx` 的 `MODULES` 里 `runs`（运行报告），当前渲染
-  `PendingModule`（「入口先留着，内容还没接入」）；启用编辑时从这里接，不要另起导航。
+- 用户口径的「页面模板 / 运行报告」= Word 报告模板 + DTE 占位参数；完整生成流程见
+  `docs/knowledge/运行报告生成.md`，Aspose 语法见 `docs/knowledge/模板参数配置.md`，
+  变更对象样例见 `docs/knowledge/运行报告配置.md`。
+- 页面入口：`plugin/src/client/page.tsx` 的 `MODULES` 里 `runs` 已渲染 `RunReportTab`
+  （`plugin/src/client/runs.tsx`）；入口只负责收集目标对象/原始表单路径、生成并复制 Agent
+  指令、索引资料，不伪造成品，不写死 CAPA 字段。
+- 制作顺序固定：原始表单 → 中间态（`<<字段名称>>`）→ 用户逐段审核 → 最终 `<<[code]>>`
+  + `if`/`foreach`。中间态未确认前不得替换 code。
+- 相关对象表**有且仅有两行**：第一行表头，第二行字段映射值；第二行每格只放一个字段；
+  `foreach` 写在数据行内，不把多个字段塞进一个单元格。
+- 签字/日期只用电子签名关系（如 `capa_plan_esignature_parent_id__sysr`），不能写普通
+  `<<签字/日期>>` 占位；无法映射的格子留空并写入“待确认”，**禁止猜 code / `__cr` / `__sysr`**。
+- 生成物落 `<当前工作区>/akso-workbench-data/reports/`；中间态和字段映射都要留档，
+  最终模板必须用真实数据渲染 + 校验后再交付。
 
 ## 配置任务怎么做（查存量 → 蓝图 → 顺序 → 一次审批 → 判规模修）
 

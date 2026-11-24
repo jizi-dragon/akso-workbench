@@ -28,7 +28,8 @@
 | 模型（agent） | DSH 里的模型 | 只看得到工具 description 与返回值，看不到 token |
 | DSH 工具注册表 | `ctx.tools.register` | 调 `definition.execute(args)`，把结果交回模型 |
 | host | 插件的 node 半边（`plugin/src/index.ts`） | 唯一持有 eGMP token 的地方；围栏只放行本机 |
-| 本机数据目录 | `<dshHome>/akso-workbench/` | `cloud.json` / `prefs.json` / `pool.json` / `egmp-session.json` / `config-plans/` / `config-approvals/` / `config-audit/` / `analysis-history/` |
+| 本机状态/日志目录 | `<dshHome>/akso-workbench/` | `cloud.json` / `prefs.json` / `pool.json` / `egmp-session.json` / `config-approvals/` / `config-audit/` / `journal/` |
+| 工作区数据目录 | `<当前工作区>/akso-workbench-data/` | `analysis/` / `analysis-history/` / `config-plans/` / `config-tasks/` / `reviews/` / `reports/`；没有工作区根时拒绝写入 |
 | GUI | 浏览器里的插件页面 | 底部账号条、对话里的审批窗；只读 host 的 HTTP 接口 |
 | akso-cloud | 云端账号库 | 存口令、代登录 eGMP、提供 `/api/ui/state` 快照 |
 | eGMP | 客户平台 | 所有配置读写的最终落点 |
@@ -472,16 +473,17 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
 1. **模型侧**：返回值里的 `_uid` 和工具列表 description 末尾的 `UID: …` 对上，确认调的是哪个工具。
 2. **host 日志**：`grep "[AKW-TOOL-CONFIG-APPLY-V1]"`，看 `invoke` / `done ok=` / `failed`；
    `done` 的耗时能区分「卡在审批」还是「卡在平台」。
-3. **落盘文件**（都在 `<dshHome>/akso-workbench/`）：
-   - `config-plans/pln_*.json`：计划原文（含 `target`、`hash` 输入、每步 `params`）
-   - `config-approvals/pln_*.json`：`hash`、`at`、`usedAt`（有 `usedAt` = 已消费）
+3. **落盘文件**（状态/日志在 `<dshHome>/akso-workbench/`，生成物在工作区 `akso-workbench-data/`）：
+   - `akso-workbench-data/config-plans/pln_*.json`：计划原文（含 `target`、`hash` 输入、每步 `params`）
+   - `akso-workbench-data/config-tasks/tsk_*.json`：任务原文（阶段、指纹、过期时间）
+   - `config-approvals/pln_*.json`：`hash`、`at`、`usedAt`（有 `usedAt` = 已消费，日志系统数据）
    - `config-audit/`：`<YYYY-MM>.jsonl` 每步一条（`status` / `traceId` / `durationMs`），
-     `approvals-<YYYY-MM>.jsonl` 审批决策一条
+     `approvals-<YYYY-MM>.jsonl` 审批决策一条（日志系统数据）
    - `akso-workbench-data/reviews/<任务名>-<YYYYMMDD-HHmmss>.md`：创建/调整任务的审核文档（工作区下，不入库）；
      任务成功后状态改为「已结束（审核文件作废）」并附执行结果；已结束文档不可再改
    - `akso-workbench-data/reviews/<任务名>-更新-<YYYYMMDD-HHmmss>.md`：已执行任务的小范围更新文档，
      篇幅更短，带关联的已执行文件与调整原因
-   - `analysis-history/<id>.json`：分析结果全文
+   - `akso-workbench-data/analysis-history/<id>.json`：分析结果全文
    - `egmp-session.json`：只有票与来源账号，没有口令
 
 审批窗不出现时：先看 host 是否在跑（`configApprovalPending` 每 2 秒轮询，失败只打 `console.debug`），

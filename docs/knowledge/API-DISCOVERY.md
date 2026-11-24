@@ -66,6 +66,6 @@ node capture/bin/akw-capture.mjs promote 5
 ## 5. 安全
 
 - 只连 `127.0.0.1:9222`；不要把调试端口暴露到局域网。
-- 捕获文件在 `$DSH_HOME/akso-workbench/captures/`，**不进仓库**。
+- 捕获文件在 `<最近工作区>/akso-workbench-data/captures/`（从当前目录向上找 `akso-workbench-data`）；没有工作区时直接报错，不再回落 `$DSH_HOME`（可用 `AKW_CAPTURE_DIR` 显式覆盖）。**不进仓库**。
 - `Authorization`/`Cookie`/`password`/`token` 一类值只记长度；JWT 在文本里也会被打码。
 - 分享 `export` 出来的清单前，仍要扫一眼 host 与路径是否含内部信息。

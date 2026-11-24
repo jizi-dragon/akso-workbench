@@ -959,7 +959,7 @@ test('配置写入先在对话里弹审批窗：人点同意才发请求', async
   try {
     savePlan(home, planFixture('pln_writes', { create: 1, update: 2, irreversible: 1 }, egmp.baseUrl))
 
-    const running = applyTool!.execute({ planId: 'pln_writes' }, { agent: { id: 'agent-1' } }) as Promise<Record<string, any>>
+    const running = applyTool!.execute({ planId: 'pln_writes' }, { workspaceDir: home, agent: { id: 'agent-1' } }) as Promise<Record<string, any>>
     const pending = await waitPending(mounted.routes)
     const report = pending.report as Record<string, any>
 
@@ -1005,7 +1005,7 @@ test('审批窗生成三节审核文档：问题 / 执行 / 预期 checklist', a
   const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
   const egmp = await startFakeEgmp()
   writeAccount(home, egmp.baseUrl)
-  const reviewDir = join(home, 'reviews')
+  const reviewDir = join(home, 'akso-workbench-data', 'reviews')
   process.env.AKSO_WORKBENCH_REVIEW_DIR = reviewDir
   try {
     savePlan(home, planFixture('pln_review', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
@@ -1017,7 +1017,7 @@ test('审批窗生成三节审核文档：问题 / 执行 / 预期 checklist', a
         approach: '先建选项集，再建字段，最后回读字段列表。',
         expected: ['两个选项集可回读', '八个字段均可回读'],
       },
-    }, {}) as Promise<Record<string, any>>
+    }, { workspaceDir: home }) as Promise<Record<string, any>>
     const pending = await waitPending(mounted.routes)
     const report = pending.report as Record<string, any>
     const review = report.review as Record<string, any>
@@ -1061,7 +1061,7 @@ test('prepareOnly 只生成工作区审核文档，不弹窗；reviewPath 再复
         expected: ['文档落在当前工作区', '审批窗没有打开'],
         workspaceDir,
       },
-    }, { sessionId: 'session-test' }) as Record<string, any>
+    }, { sessionId: 'session-test', workspaceDir: home }) as Record<string, any>
 
     assert.equal(prepared.status, 'prepared')
     const review = prepared.review as Record<string, any>
@@ -1076,7 +1076,7 @@ test('prepareOnly 只生成工作区审核文档，不弹窗；reviewPath 再复
     const running = applyTool.execute({
       planId: 'pln_prepare',
       reviewPath: review.path,
-    }, { sessionId: 'session-test' }) as Promise<Record<string, any>>
+    }, { sessionId: 'session-test', workspaceDir: home }) as Promise<Record<string, any>>
     const pending = await waitPending(mounted.routes)
     assert.equal((pending.report.review as Record<string, any>).path, review.path, '第二次必须复用同一份文档')
     await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'deny' })
@@ -1095,7 +1095,7 @@ test('人点拒绝：计划一步都不写，审批窗清掉', async () => {
   writeAccount(home, egmp.baseUrl)
   try {
     savePlan(home, planFixture('pln_deny', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
-    const running = applyTool.execute({ planId: 'pln_deny' }, {}) as Promise<Record<string, any>>
+    const running = applyTool.execute({ planId: 'pln_deny' }, { workspaceDir: home }) as Promise<Record<string, any>>
     const pending = await waitPending(mounted.routes)
     await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'deny' })
     const result = await running
@@ -1117,7 +1117,7 @@ test('人点补充：不写，把补充意见原样回给 agent', async () => {
   writeAccount(home, egmp.baseUrl)
   try {
     savePlan(home, planFixture('pln_more', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
-    const running = applyTool.execute({ planId: 'pln_more' }, {}) as Promise<Record<string, any>>
+    const running = applyTool.execute({ planId: 'pln_more' }, { workspaceDir: home }) as Promise<Record<string, any>>
     const pending = await waitPending(mounted.routes)
 
     // 光点「补充」不写意见：400，审批还挂着
@@ -1149,9 +1149,9 @@ test('同一时间只挂一条审批：第二条直接 busy，不排队', async 
   try {
     savePlan(home, planFixture('pln_first', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
     savePlan(home, planFixture('pln_second', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
-    const first = applyTool.execute({ planId: 'pln_first' }, {}) as Promise<Record<string, any>>
+    const first = applyTool.execute({ planId: 'pln_first' }, { workspaceDir: home }) as Promise<Record<string, any>>
     const pending = await waitPending(mounted.routes)
-    const second = await applyTool.execute({ planId: 'pln_second' }, {}) as Record<string, any>
+    const second = await applyTool.execute({ planId: 'pln_second' }, { workspaceDir: home }) as Record<string, any>
     assert.equal(second.status, 'busy')
     await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'deny' })
     assert.equal((await first).status, 'denied')
@@ -1170,7 +1170,7 @@ test('账号条为空：工具返回 needs-account，平台一步都不写，界
     // 只有磁盘上的旧会话、账号条没选账号 —— 这就是「不回落旧会话」的场景
     writeEgmpSession(home, { baseUrl: egmp.baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() })
     savePlan(home, planFixture('pln_none', { create: 1, update: 0, irreversible: 0 }, egmp.baseUrl))
-    const result = await applyTool.execute({ planId: 'pln_none' }, {}) as Record<string, any>
+    const result = await applyTool.execute({ planId: 'pln_none' }, { workspaceDir: home }) as Record<string, any>
     assert.equal(result.status, 'needs-account')
     assert.match(String(result.hint), /账号条/)
     assert.equal(egmp.hits, 0, '没有账号就不许碰平台')
@@ -1191,7 +1191,7 @@ test('没有写入的计划不弹审批窗', async () => {
   writeAccount(home, egmp.baseUrl)
   try {
     savePlan(home, planFixture('pln_noop', { create: 0, update: 0, irreversible: 0 }, egmp.baseUrl))
-    const result = await applyTool.execute({ planId: 'pln_noop' }, {}) as Record<string, any>
+    const result = await applyTool.execute({ planId: 'pln_noop' }, { workspaceDir: home }) as Record<string, any>
     assert.equal(result.status, 'applied')
     assert.equal(result.approved, false)
     const pending = await call(mounted.routes, P.configApprovalPending, 'GET')
@@ -1211,7 +1211,7 @@ test('计划的目标环境变了：引擎拒绝执行', async () => {
   try {
     // 计划绑的是另一个环境：就算人点了同意，也不许把包发到这边
     savePlan(home, planFixture('pln_moved', { create: 1, update: 0, irreversible: 0 }, 'https://other.example.com'))
-    const running = applyTool.execute({ planId: 'pln_moved' }, {}) as Promise<Record<string, any>>
+    const running = applyTool.execute({ planId: 'pln_moved' }, { workspaceDir: home }) as Promise<Record<string, any>>
     const pending = await waitPending(mounted.routes)
     await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'approve' })
     const result = await running
@@ -1289,7 +1289,7 @@ test('HTTP 直连：写接口默认 403，读接口放行到登录检查', async
     const withAccount = mount(home)
     writeAccount(home, 'https://egmp.example.com')
     savePlan(home, planFixture('pln_direct', { create: 1, update: 0, irreversible: 0 }, 'https://egmp.example.com'))
-    const guarded = await call(withAccount.routes, P.configApply, 'POST', { planId: 'pln_direct' })
+    const guarded = await call(withAccount.routes, P.configApply, 'POST', { planId: 'pln_direct', workspaceDir: home })
     assert.equal(guarded.status, 502)
     assert.equal(guarded.json.code, 'APPROVAL_REQUIRED')
   } finally {
@@ -1529,7 +1529,7 @@ test('选项集回读：平台留下的旧选项不算失败，只在消息里�
       results: [],
     }
     savePlan(home, plan as never)
-    const running = applyTool.execute({ planId: 'pln_extra' }, { agent: { id: 'agent-1' } }) as Promise<Record<string, any>>
+    const running = applyTool.execute({ planId: 'pln_extra' }, { workspaceDir: home, agent: { id: 'agent-1' } }) as Promise<Record<string, any>>
     const pending = await waitPending(mounted.routes)
     await call(mounted.routes, P.configApprovalDecide, 'POST', { id: pending.id, verdict: 'approve' })
     const result = await running
@@ -1772,7 +1772,7 @@ test('日志：写入审计带目标账号，审批决策单独留痕，HTTP 请
   try {
     // ① 拒批：平台一步不写，但"谁拒了哪一版计划"要留痕
     savePlan(home, planFixture('pln_logdeny', { create: 1, update: 0, irreversible: false }, egmp.baseUrl))
-    const denyRun = applyTool.execute({ planId: 'pln_logdeny' }, {})
+    const denyRun = applyTool.execute({ planId: 'pln_logdeny' }, { workspaceDir: home })
     const denyPending = await waitPending(mounted.routes)
     await call(mounted.routes, ROUTES.configApprovalDecide, 'POST', { id: denyPending.id, verdict: 'deny' })
     const denied = (await denyRun) as { status: string }
@@ -1788,7 +1788,7 @@ test('日志：写入审计带目标账号，审批决策单独留痕，HTTP 请
 
     // ② 同意并写入：每条步骤审计都要能回答"写到了哪个环境、哪个账号"
     savePlan(home, planFixture('pln_logapprove', { create: 1, update: 0, irreversible: false }, egmp.baseUrl))
-    const approveRun = applyTool.execute({ planId: 'pln_logapprove' }, {})
+    const approveRun = applyTool.execute({ planId: 'pln_logapprove' }, { workspaceDir: home })
     const approvePending = await waitPending(mounted.routes)
     await call(mounted.routes, ROUTES.configApprovalDecide, 'POST', { id: approvePending.id, verdict: 'approve' })
     const applied = (await approveRun) as { ok: boolean }
@@ -1898,26 +1898,27 @@ test('分析历史：列表带目录，失败记录也能列出并读回原因',
   const home = freshHome()
   const { routes } = mount(home)
 
-  const empty = await call(routes, ROUTES.analysisHistory, 'GET')
+  const workspace = encodeURIComponent(home)
+  const empty = await callRaw(routes, `${ROUTES.analysisHistory}?workspaceDir=${workspace}`, 'GET')
   assert.equal(empty.status, 200)
-  assert.deepEqual(empty.json['items'], [])
-  assert.equal(empty.json['dir'], join(home, 'akso-workbench', 'analysis-history'))
+  assert.deepEqual(JSON.parse(empty.text)['items'], [])
+  assert.equal(JSON.parse(empty.text)['dir'], join(home, 'akso-workbench-data', 'analysis-history'))
 
   const saved = saveFailedAnalysisHistory(home, 'missing__c', '对象 missing__c 没有返回详情')
-  const listed = await call(routes, ROUTES.analysisHistory, 'GET')
-  const items = listed.json['items'] as Array<Record<string, unknown>>
+  const listed = await callRaw(routes, `${ROUTES.analysisHistory}?workspaceDir=${workspace}`, 'GET')
+  const items = JSON.parse(listed.text)['items'] as Array<Record<string, unknown>>
   assert.equal(items.length, 1)
   assert.equal(items[0]?.['status'], 'failed')
   assert.equal(items[0]?.['error'], '对象 missing__c 没有返回详情')
 
-  const detailRes = await callRaw(routes, `${ROUTES.analysisHistory}?id=${saved.id}`, 'GET')
+  const detailRes = await callRaw(routes, `${ROUTES.analysisHistory}?id=${saved.id}&workspaceDir=${workspace}`, 'GET')
   const detail = JSON.parse(detailRes.text) as Record<string, unknown>
   assert.equal(detailRes.status, 200)
   assert.equal(detail['status'], 'failed')
   assert.equal(detail['query'], 'missing__c')
   assert.equal(detail['error'], '对象 missing__c 没有返回详情')
 
-  const missing = await callRaw(routes, `${ROUTES.analysisHistory}?id=nope`, 'GET')
+  const missing = await callRaw(routes, `${ROUTES.analysisHistory}?id=nope&workspaceDir=${workspace}`, 'GET')
   assert.equal(missing.status, 404)
 })
 
@@ -2048,13 +2049,13 @@ test('任务级：一条任务只生成一份审核文档，步骤按阶段编�
         blueprint: { resources: [{ kind: 'call', capability: 'layout.list', params: { basicObjectId: 'obj-1' } }] },
       }],
     })
-    const planned = await planTool.execute({ task }, { agent: { id: 'agent-task' } }) as Record<string, any>
+    const planned = await planTool.execute({ task }, { workspaceDir: home, agent: { id: 'agent-task' } }) as Record<string, any>
     assert.equal(planned.ok, true, String(planned.error ?? ''))
     assert.match(String(planned.taskId), /^tsk_/)
     assert.equal(planned.stages.length, 1)
     assert.equal(planned.stages[0].steps.length, 1)
 
-    const prepared = await applyTool.execute({ taskId: planned.taskId, prepareOnly: true }, { agent: { id: 'agent-task' } }) as Record<string, any>
+    const prepared = await applyTool.execute({ taskId: planned.taskId, prepareOnly: true }, { workspaceDir: home, agent: { id: 'agent-task' } }) as Record<string, any>
     assert.equal(prepared.ok, true, String(prepared.error ?? ''))
     assert.equal(prepared.status, 'prepared')
     const markdown = readFileSync(String(prepared.review.path), 'utf8')
