@@ -10,7 +10,6 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { join } from 'node:path'
 
 import type { AnalysisResult } from './analysis.ts'
-import { workspaceDataPath } from './workspace-data.ts'
 
 const MAX_ENTRIES = 50
 const MAX_ERROR = 800
@@ -53,17 +52,17 @@ export interface AnalysisHistoryDetail {
   result?: AnalysisResult
 }
 
-function historyDir(workspaceRoot: string): string {
-  return workspaceDataPath(workspaceRoot, 'analysis-history')
+function historyDir(dshHome: string): string {
+  return join(dshHome, 'akso-workbench', 'analysis-history')
 }
 
 /** 历史文件所在目录：页面会把它显示出来，方便用户/支持同学直接去翻。 */
-export function analysisHistoryDir(workspaceRoot: string): string {
-  return historyDir(workspaceRoot)
+export function analysisHistoryDir(dshHome: string): string {
+  return historyDir(dshHome)
 }
 
-function entryFile(workspaceRoot: string, id: string): string {
-  return join(historyDir(workspaceRoot), `${id}.json`)
+function entryFile(dshHome: string, id: string): string {
+  return join(historyDir(dshHome), `${id}.json`)
 }
 
 function summary(entry: StoredEntry): AnalysisHistoryItem {
@@ -88,7 +87,7 @@ function summary(entry: StoredEntry): AnalysisHistoryItem {
 }
 
 /** 保存一次成功分析；返回页面刷新列表需要的摘要字段。 */
-export function saveAnalysisHistory(workspaceRoot: string | undefined, query: string, result: AnalysisResult): AnalysisHistoryItem {
+export function saveAnalysisHistory(dshHome: string, query: string, result: AnalysisResult): AnalysisHistoryItem {
   const item: AnalysisHistoryItem = {
     id: newId(),
     createdAt: new Date().toISOString(),
@@ -106,7 +105,7 @@ export function saveAnalysisHistory(workspaceRoot: string | undefined, query: st
     account: result.source.account,
   }
   const stored: StoredEntry = { ...item, result }
-  if (workspaceRoot !== undefined && workspaceRoot.trim() !== '') writeEntry(workspaceRoot, stored)
+  writeEntry(dshHome, stored)
   return item
 }
 
@@ -117,7 +116,7 @@ export function saveAnalysisHistory(workspaceRoot: string | undefined, query: st
  *   把错误、查询词和环境一起落盘，历史列表里能直接看到「这次为什么没出来」。
  */
 export function saveFailedAnalysisHistory(
-  workspaceRoot: string,
+  dshHome: string,
   query: string,
   error: string,
   source: AnalysisHistorySource = {},
@@ -140,7 +139,7 @@ export function saveFailedAnalysisHistory(
     baseUrl: source.baseUrl ?? '',
     account: source.account ?? '',
   }
-  writeEntry(workspaceRoot, item)
+  writeEntry(dshHome, item)
   return item
 }
 
@@ -148,18 +147,18 @@ function newId(): string {
   return `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
 }
 
-function writeEntry(workspaceRoot: string, entry: StoredEntry): void {
-  const dir = historyDir(workspaceRoot)
+function writeEntry(dshHome: string, entry: StoredEntry): void {
+  const dir = historyDir(dshHome)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const file = entryFile(workspaceRoot, entry.id)
+  const file = entryFile(dshHome, entry.id)
   const tmp = `${file}.tmp`
   writeFileSync(tmp, `${JSON.stringify(entry)}\n`, { encoding: 'utf8', mode: 0o600 })
   renameSync(tmp, file)
-  prune(workspaceRoot)
+  prune(dshHome)
 }
 
-function prune(workspaceRoot: string): void {
-  const dir = historyDir(workspaceRoot)
+function prune(dshHome: string): void {
+  const dir = historyDir(dshHome)
   if (!existsSync(dir)) return
   const files = readdirSync(dir)
     .filter((name) => name.endsWith('.json'))
@@ -179,8 +178,8 @@ function prune(workspaceRoot: string): void {
 }
 
 /** 按时间倒序返回摘要；坏文件跳过，不让一条损坏记录拖垮整个列表。 */
-export function listAnalysisHistory(workspaceRoot: string): AnalysisHistoryItem[] {
-  const dir = historyDir(workspaceRoot)
+export function listAnalysisHistory(dshHome: string): AnalysisHistoryItem[] {
+  const dir = historyDir(dshHome)
   if (!existsSync(dir)) return []
   const entries: AnalysisHistoryItem[] = []
   for (const name of readdirSync(dir)) {
@@ -200,9 +199,9 @@ export function listAnalysisHistory(workspaceRoot: string): AnalysisHistoryItem[
 }
 
 /** 读取一条历史的分析结果或失败原因；id 只允许生成器写出的字符，挡目录穿越。 */
-export function readAnalysisHistory(workspaceRoot: string, id: string): AnalysisHistoryDetail | null {
+export function readAnalysisHistory(dshHome: string, id: string): AnalysisHistoryDetail | null {
   if (!ID_PATTERN.test(id)) return null
-  const file = entryFile(workspaceRoot, id)
+  const file = entryFile(dshHome, id)
   if (!existsSync(file)) return null
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as StoredEntry

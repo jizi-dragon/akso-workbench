@@ -28,8 +28,8 @@
 | 模型（agent） | DSH 里的模型 | 只看得到工具 description 与返回值，看不到 token |
 | DSH 工具注册表 | `ctx.tools.register` | 调 `definition.execute(args)`，把结果交回模型 |
 | host | 插件的 node 半边（`plugin/src/index.ts`） | 唯一持有 eGMP token 的地方；围栏只放行本机 |
-| 本机状态/日志目录 | `<dshHome>/akso-workbench/` | `cloud.json` / `prefs.json` / `pool.json` / `egmp-session.json` / `config-approvals/` / `config-audit/` / `journal/` |
-| 工作区数据目录 | `<当前工作区>/akso-workbench-data/` | `analysis/` / `analysis-history/` / `config-plans/` / `config-tasks/` / `reviews/` / `reports/`；没有工作区根时拒绝写入 |
+| 本机状态/日志目录 | `<dshHome>/akso-workbench/` | `cloud.json` / `prefs.json` / `pool.json` / `egmp-session.json` / `config-approvals/` / `config-audit/` / `journal/` / `analysis-history/` |
+| 工作区数据目录 | `<当前工作区>/akso-workbench-data/` | `analysis/` / `config-plans/` / `config-tasks/` / `captures/` / `reviews/` / `reports/`；没有工作区根时拒绝写入 |
 | GUI | 浏览器里的插件页面 | 底部账号条、对话里的审批窗；只读 host 的 HTTP 接口 |
 | akso-cloud | 云端账号库 | 存口令、代登录 eGMP、提供 `/api/ui/state` 快照 |
 | eGMP | 客户平台 | 所有配置读写的最终落点 |
@@ -369,7 +369,7 @@ sequenceDiagram
         H->>E: GET UserAction/GetUserAction + GetListByStatusId<br/>GET EnterAction/GetListByStatusId + GetById
         H->>E: POST Workflow/GetWorkflowBasicPageViewList<br/>GET Workflow/GetWorkflowSteps + GetWorkflowStepWithDetails
         H->>H: 用 behaviorType 码表翻译动作；解析目标状态、关联对象、工作流名称<br/>读不到的保留 id 并进 warnings
-        H->>F: 写 analysis-history/ID.json（只留最近 50 条）
+        H->>F: 写 <dshHome>/akso-workbench/analysis-history/ID.json（只留最近 50 条）
         H-->>A: ok=true / historyId / object / lifecycle / statuses / fields / workflows / totals / warnings
     end
 ```
@@ -483,7 +483,7 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
      任务成功后状态改为「已结束（审核文件作废）」并附执行结果；已结束文档不可再改
    - `akso-workbench-data/reviews/<任务名>-更新-<YYYYMMDD-HHmmss>.md`：已执行任务的小范围更新文档，
      篇幅更短，带关联的已执行文件与调整原因
-   - `akso-workbench-data/analysis-history/<id>.json`：分析结果全文
+   - `<dshHome>/akso-workbench/analysis-history/<id>.json`：分析结果全文
    - `egmp-session.json`：只有票与来源账号，没有口令
 
 审批窗不出现时：先看 host 是否在跑（`configApprovalPending` 每 2 秒轮询，失败只打 `console.debug`），

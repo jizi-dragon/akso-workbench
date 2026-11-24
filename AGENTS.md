@@ -112,10 +112,11 @@
   移到 `docs/archive/` 并加「历史记录」抬头。
 - **工作区数据目录（2026-11-22，2026-11-25 收紧）**：akso-workbench 产出的文件统一放
   `<当前工作区>/akso-workbench-data/`，不入库；审批文档在 `reviews/`，对象分析产物在 `analysis/`，
-  分析历史在 `analysis-history/`，配置计划/任务在 `config-plans/`、`config-tasks/`，捕获证据在 `captures/`。没有工作区根时直接拒绝，
+  配置计划/任务在 `config-plans/`、`config-tasks/`，捕获证据在 `captures/`。没有工作区根时直接拒绝，
   不静默回落到 `$DSH_HOME`。**日志系统例外**：`journal/`、`config-audit/`、`config-approvals/` 仍留
   `$DSH_HOME/akso-workbench/`；`cloud.json`/`egmp-session.json`/`pool.json`/`prefs.json` 是账号/会话状态，
-  也留 `$DSH_HOME`，不得写进项目工作区。
+  也留 `$DSH_HOME`，不得写进项目工作区。**分析历史例外**：它只是「时间/对象/成功与否/关联分析文件」的
+  索引，不是分析产物，固定留 `$DSH_HOME/akso-workbench/analysis-history/`，不随工作区迁移。
 - **对象分析产物不入库**：统一放 `<当前工作区>/akso-workbench-data/analysis/`；产物是交付件、
   不是源码；生成后留在本机，不要 `git add`。便笺本、`lifecycle-action-types.md`、样例报告属于源码，放在
   `docs/reference/`，必须入库（改路径要同步 `plugin/src/shared/sticky-notes.ts` 与测试）。

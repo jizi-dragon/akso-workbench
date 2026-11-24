@@ -1898,27 +1898,26 @@ test('分析历史：列表带目录，失败记录也能列出并读回原因',
   const home = freshHome()
   const { routes } = mount(home)
 
-  const workspace = encodeURIComponent(home)
-  const empty = await callRaw(routes, `${ROUTES.analysisHistory}?workspaceDir=${workspace}`, 'GET')
+  const empty = await callRaw(routes, ROUTES.analysisHistory, 'GET')
   assert.equal(empty.status, 200)
   assert.deepEqual(JSON.parse(empty.text)['items'], [])
-  assert.equal(JSON.parse(empty.text)['dir'], join(home, 'akso-workbench-data', 'analysis-history'))
+  assert.equal(JSON.parse(empty.text)['dir'], join(home, 'akso-workbench', 'analysis-history'))
 
   const saved = saveFailedAnalysisHistory(home, 'missing__c', '对象 missing__c 没有返回详情')
-  const listed = await callRaw(routes, `${ROUTES.analysisHistory}?workspaceDir=${workspace}`, 'GET')
+  const listed = await callRaw(routes, ROUTES.analysisHistory, 'GET')
   const items = JSON.parse(listed.text)['items'] as Array<Record<string, unknown>>
   assert.equal(items.length, 1)
   assert.equal(items[0]?.['status'], 'failed')
   assert.equal(items[0]?.['error'], '对象 missing__c 没有返回详情')
 
-  const detailRes = await callRaw(routes, `${ROUTES.analysisHistory}?id=${saved.id}&workspaceDir=${workspace}`, 'GET')
+  const detailRes = await callRaw(routes, `${ROUTES.analysisHistory}?id=${saved.id}`, 'GET')
   const detail = JSON.parse(detailRes.text) as Record<string, unknown>
   assert.equal(detailRes.status, 200)
   assert.equal(detail['status'], 'failed')
   assert.equal(detail['query'], 'missing__c')
   assert.equal(detail['error'], '对象 missing__c 没有返回详情')
 
-  const missing = await callRaw(routes, `${ROUTES.analysisHistory}?id=nope&workspaceDir=${workspace}`, 'GET')
+  const missing = await callRaw(routes, `${ROUTES.analysisHistory}?id=nope`, 'GET')
   assert.equal(missing.status, 404)
 })
 
