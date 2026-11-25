@@ -17,6 +17,7 @@ import { dataDir } from '../store.ts'
 import { workspaceDataPath } from '../workspace-data.ts'
 import type { Blueprint, CallResource, FieldResource, FormLayoutResource, ListLayoutResource, MenuResource, ObjectResource, PicklistResource, LifecycleResource, ResourceKind } from './blueprint.ts'
 import { validateBlueprint } from './blueprint.ts'
+import { resolveBindings, validatePlanBindings, type BindingContext } from './bindings.ts'
 
 export interface Step {
   id: string
@@ -493,6 +494,9 @@ export async function buildPlan(session: EgmpSession, input: Blueprint): Promise
     }
   }
 
+  const bindingErrors = validatePlanBindings(steps)
+  if (bindingErrors.length > 0) throw new EgmpError(`计划输出绑定校验失败：${bindingErrors.join('；')}`)
+
   const summary = { create: 0, update: 0, skip: 0, irreversible: 0 }
   for (const step of steps) {
     if (step.action === 'create') summary.create += 1
@@ -565,9 +569,9 @@ async function resolvePicklistId(ctx: QueryContext, res: Resolution, picklistCod
   return id
 }
 
-async function applyListLayout(ctx: QueryContext, step: Step, res: Resolution): Promise<{ message: string; after: unknown }> {
-  const objectCode = String((step.params as Record<string, unknown>).objectRef)
-  const columns = (step.params as Record<string, unknown>).columns as ListLayoutResource['columns']
+async function applyListLayout(ctx: QueryContext, step: Step, res: Resolution, params: Record<string, unknown>): Promise<{ message: string; after: unknown }> {
+  const objectCode = String(params.objectRef)
+  const columns = params.columns as ListLayoutResource['columns']
   const objectId = await resolveObjectId(ctx, res, objectCode)
   const list = await invokeCapability(ctx.session, 'listlayout.list', { objectId })
   const layouts = Array.isArray(list.data) ? (list.data as Array<Record<string, unknown>>) : []
@@ -587,11 +591,13 @@ async function applyListLayout(ctx: QueryContext, step: Step, res: Resolution): 
   return { message: `列表列 ${merged.length} 个（本次目标 ${columns.length}）`, after: { listlayoutId, columns: merged.length } }
 }
 
-async function applyStep(ctx: QueryContext, step: Step, res: Resolution): Promise<{ message: string; after: unknown }> {
-  if (step.kind === 'listLayout') return await applyListLayout(ctx, step, res)
-
-  // 通用：按 capability 调用，执行前解析引用
-  const params: Record<string, unknown> = { ...step.params }
+async function applyStep(ctx: QueryContext, step: Step, res: Resolution, bindings: BindingContext): Promise<{ message: string; after: unknown }> {
+  const resolved = resolveBindings(step.params, bindings)
+  if (resolved === null || typeof resolved !== 'object' || Array.isArray(resolved)) {
+    throw new EgmpError(`步骤 ${step.id} 的参数必须是对象`, { code: 'BINDING_INVALID' })
+  }
+  const params = resolved as Record<string, unknown>
+  if (step.kind === 'listLayout') return await applyListLayout(ctx, step, res, params)
   if (step.kind === 'object' || step.kind === 'picklist' || step.kind === 'call') {
     const json = await invokeCapability(ctx.session, step.capabilityId, params)
     return { message: step.kind === 'call' ? `已调用 ${step.capabilityId}` : 'ok', after: json.data ?? null }
@@ -736,6 +742,8 @@ export interface ApplyOptions {
    * 只有调试（环境变量 / 页面开关明确关掉）时才允许 false。
    */
   requireApproval?: boolean
+  /** 任务级执行时传入已完成阶段的输出；单计划不需要。 */
+  bindings?: BindingContext
 }
 
 export async function applyPlan(session: EgmpSession, planId: string, dshHome: string, options: ApplyOptions = {}, workspaceRoot: string = dshHome): Promise<Plan> {
@@ -780,6 +788,8 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
 
   const ctx: QueryContext = { session, objects: new Map(), fields: new Map(), picklists: new Map(), statuses: new Map() }
   const res: Resolution = { objects: new Map(), fields: new Map(), picklists: new Map(), lifecycles: new Map() }
+  const stepOutputs: Record<string, unknown> = {}
+  const bindings: BindingContext = { ...(options.bindings ?? {}), steps: stepOutputs }
   const started = Date.now()
   for (const step of plan.steps) {
     if (step.action === 'skip') {
@@ -788,7 +798,8 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
     }
     const t0 = Date.now()
     try {
-      const { message, after } = await applyStep(ctx, step, res)
+      const { message, after } = await applyStep(ctx, step, res, bindings)
+      if (after !== undefined) stepOutputs[step.id] = after
       const verify = await verifyStep(ctx, step, res)
       const result: StepResult = {
         stepId: step.id,

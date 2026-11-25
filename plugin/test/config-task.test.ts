@@ -15,6 +15,7 @@ import {
   type Task,
 } from '../src/config/task.ts'
 import type { Blueprint } from '../src/config/blueprint.ts'
+import { parseBindingRef, resolveBindings, validatePlanBindings, validateTaskBindings } from '../src/config/bindings.ts'
 import type { EgmpSession } from '../src/config/session.ts'
 
 function withHome(run: (home: string) => void): void {
@@ -132,6 +133,91 @@ test('taskHash：等价对象稳定，改阶段顺序或名字就变', () => {
   assert.equal(taskHash(a), taskHash(b))
   assert.notEqual(taskHash(a), taskHash({ ...a, stages: [...a.stages].reverse() }))
   assert.notEqual(taskHash(a), taskHash({ ...a, stages: [{ ...a.stages[0]!, name: '改过名' }, a.stages[1]!] }))
+})
+
+test('输出绑定：解析步骤/阶段引用与路径', () => {
+  assert.deepEqual(parseBindingRef('steps.s1.after'), { kind: 'step', stage: null, stepId: 's1', path: '' })
+  assert.deepEqual(parseBindingRef('stages.2.steps.s3.after.data[0].id'), { kind: 'stage', stage: 2, stepId: 's3', path: '.data[0].id' })
+  assert.throws(() => parseBindingRef('steps.s1.data'), /格式不合法/)
+
+  const context = { steps: { s1: { data: { id: 'wf_1', rows: [{ id: 'r1' }] } } } }
+  assert.deepEqual(
+    resolveBindings({ a: { $ref: 'steps.s1.after.data.id' }, b: [{ $ref: 'steps.s1.after.data.rows[0].id' }] }, context),
+    { a: 'wf_1', b: ['r1'] },
+  )
+  assert.throws(() => resolveBindings({ a: { $ref: 'steps.s2.after' } }, context), /尚未产生输出/)
+})
+
+test('输出绑定：计划内只能引用更早步骤，任务内只能引用更早阶段', () => {
+  const plans = [
+    [{ id: 's1', params: {} }, { id: 's2', params: { id: { $ref: 'steps.s1.after' } } }],
+    [{ id: 's1', params: {} }, { id: 's2', params: { id: { $ref: 'stages.1.steps.s1.after' } } }],
+  ]
+  assert.deepEqual(validatePlanBindings(plans[0]!), [])
+  assert.deepEqual(validatePlanBindings(plans[1]!), [])
+  assert.match(validatePlanBindings([{ id: 's1', params: { id: { $ref: 'steps.s2.after' } } }, { id: 's2', params: {} }])[0] ?? '', /只能引用更早步骤/)
+  assert.deepEqual(validateTaskBindings([[{ id: 's1' }], [{ id: 's1', params: { id: { $ref: 'stages.1.steps.s1.after' } } }]]), [])
+  assert.match(validateTaskBindings([[{ id: 's1' }], [{ id: 's1', params: { id: { $ref: 'stages.2.steps.s1.after' } } }]])[0] ?? '', /只能引用更早阶段/)
+  assert.match(validateTaskBindings([[{ id: 's1' }], [{ id: 's1', params: { id: { $ref: 'stages.1.steps.s9.after' } } }]])[0] ?? '', /不存在的步骤/)
+})
+
+test('taskHash：绑定模板参与指纹，改引用就变', () => {
+  const withRef = (ref: string): Blueprint => ({
+    version: 1,
+    resources: [{ kind: 'call', capability: 'workflow.create', params: { parentId: { $ref: ref } } }],
+  } as unknown as Blueprint)
+  const a = createTask(session(), {
+    name: 'x',
+    stages: [{ name: 's1', blueprint: withRef('steps.s1.after') }, { name: 's2', blueprint: withRef('stages.1.steps.s1.after') }],
+  })
+  const b = createTask(session(), {
+    name: 'x',
+    stages: [{ name: 's1', blueprint: withRef('steps.s1.after') }, { name: 's2', blueprint: withRef('stages.1.steps.s2.after') }],
+  })
+  assert.notEqual(taskHash(a), taskHash(b))
+})
+
+test('applyTask：跨阶段 $ref 在执行时填入前序返回', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'akw-task-'))
+  const originalFetch = globalThis.fetch
+  const urls: string[] = []
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    urls.push(String(input))
+    return new Response(JSON.stringify({ code: 0, data: { id: 'wf_from_stage_1', name: 'x' } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }) as typeof fetch
+  try {
+    const task = createTask(session(), {
+      name: '绑定执行',
+      stages: [
+        {
+          name: '一',
+          blueprint: {
+            version: '1',
+            env: 'test',
+            resources: [{ kind: 'call', capability: 'workflow.steps.list', params: { workflowConfigId: 'wf_a' } }],
+          } as unknown as Blueprint,
+        },
+        {
+          name: '二',
+          blueprint: {
+            version: '1',
+            env: 'test',
+            resources: [{ kind: 'call', capability: 'workflow.step.get', params: { id: { $ref: 'stages.1.steps.s1.after.id' } } }],
+          } as unknown as Blueprint,
+        },
+      ],
+    })
+    saveTask(home, task)
+    const applied = await applyTask(session(), task.taskId, home, { requireApproval: false })
+    assert.equal(applied.status, 'applied', JSON.stringify(applied.results, null, 2))
+    assert.match(urls[1] ?? '', /wf_from_stage_1/)
+  } finally {
+    globalThis.fetch = originalFetch
+    rmSync(home, { recursive: true, force: true })
+  }
 })
 
 test('applyTask：任务不存在直接拒绝', async () => {

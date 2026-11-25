@@ -12,6 +12,8 @@
 
 export interface ApprovalReportStep {
   index: number
+  /** 计划内的步骤 id；审批文档用它解释 $ref 指向。 */
+  stepId: string
   action: 'create' | 'update' | 'skip'
   kind: string
   title: string

@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { validateBlueprint, type Blueprint } from './blueprint.ts'
+import { validateTaskBindings, type BindingContext } from './bindings.ts'
 import {
   applyPlan,
   buildPlan,
@@ -162,6 +163,8 @@ export async function previewTaskPlans(session: EgmpSession, task: Task): Promis
   for (const stage of task.stages) {
     plans.push(await buildPlan(session, stage.blueprint))
   }
+  const bindingErrors = validateTaskBindings(plans.map((plan) => plan.steps))
+  if (bindingErrors.length > 0) throw new EgmpError(`任务输出绑定校验失败：${bindingErrors.join('；')}`)
   return plans
 }
 
@@ -243,10 +246,14 @@ export async function applyTask(
   }
 
   const started = Date.now()
+  const completedPlans: Plan[] = []
+  const stageOutputs: Record<number, Record<string, unknown>> = {}
   for (const [index, stage] of task.stages.entries()) {
     let plan: Plan
     try {
       plan = await buildPlan(session, stage.blueprint)
+      const bindingErrors = validateTaskBindings([...completedPlans.map((item) => item.steps), plan.steps])
+      if (bindingErrors.length > 0) throw new EgmpError(`任务输出绑定校验失败：${bindingErrors.join('；')}`)
     } catch (error) {
       task.status = 'failed'
       task.results.push({
@@ -273,8 +280,17 @@ export async function applyTask(
       continue
     }
     try {
-      const applied = await applyPlan(session, plan.planId, dshHome, { requireApproval: false }, workspaceRoot)
+      const bindings: BindingContext = { stages: stageOutputs }
+      const applied = await applyPlan(session, plan.planId, dshHome, { requireApproval: false, bindings }, workspaceRoot)
       const failed = applied.results.some((result) => result.status === 'failed')
+      if (!failed) {
+        stageOutputs[index + 1] = Object.fromEntries(
+          applied.results
+            .filter((result) => result.after !== undefined)
+            .map((result) => [result.stepId, result.after]),
+        )
+        completedPlans.push(applied)
+      }
       task.results.push({
         stage: index + 1,
         name: stage.name,

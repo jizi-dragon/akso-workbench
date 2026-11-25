@@ -11,6 +11,8 @@
  * 引擎 `applyPlan` 还会再验一次（计划指纹 / 目标环境 / 账号 / 审批记录），
  * 所以就算有人绕过工具直接调 HTTP，也过不了引擎这一关。
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { CAPABILITIES } from './capabilities.ts'
 import { applyPlan, loadPlan, planBlueprint, planHash, recordApprovalDecision, saveApproval, type Plan, type Step } from './engine.ts'
 import { applyTask, createTask, loadTask, mergeTaskPreview, parseTaskInput, previewTaskPlans, saveTask, taskHash, type Task } from './task.ts'
@@ -41,12 +43,31 @@ function textOf(value: unknown): string | undefined {
 }
 
 /** 从 DSH 的 tool exec 上下文里尽量取当前工作区根；取不到时由调用方显式传 review.workspaceDir，绝不回落 profile/仓库。 */
-function requireWorkspaceRoot(exec: unknown): string {
-  const root = workspaceRootOf(exec)
+function requireWorkspaceRoot(exec: unknown, dshHome: string): string {
+  const root = workspaceRootOf(exec) ?? resolveWorkspaceFromSession(dshHome, sessionIdOf(exec))
   if (root === undefined) {
     throw new Error('未定位到当前工作区：配置计划/任务只存放在工作区 akso-workbench-data')
   }
   return root
+}
+
+/** 工具 exec 没有 cwd 时，按 sessionId 查 DSH 的 workspace.json；与对象分析工具同一回退口径。 */
+function resolveWorkspaceFromSession(dshHome: string, sessionId: string | undefined): string | undefined {
+  if (sessionId === undefined || sessionId.trim() === '') return undefined
+  try {
+    const raw = readFileSync(join(dshHome, 'storages', 'workspace.json'), 'utf8')
+    const data = JSON.parse(raw) as {
+      tables?: { workspaces?: Record<string, { path?: string; sessionIds?: string[] }> }
+    }
+    for (const workspace of Object.values(data.tables?.workspaces ?? {})) {
+      if (typeof workspace.path === 'string' && Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(sessionId)) {
+        return workspace.path
+      }
+    }
+  } catch {
+    // 读不到就返回 undefined；调用方会明确提示“未落盘”，不回落 profile/仓库。
+  }
+  return undefined
 }
 
 export function workspaceRootOf(exec: unknown): string | undefined {
@@ -186,6 +207,7 @@ export function buildApprovalReport(plan: Plan, session: EgmpSession, hashOverri
     const capability = CAPABILITIES.find((item) => item.id === step.capabilityId)
     steps.push({
       index,
+      stepId: step.id,
       action: step.action,
       kind: step.kind,
       title: step.title,
@@ -272,7 +294,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
         try {
           const task = createTask(session, { name: parsed.name, stages: parsed.stages })
           const plans = await previewTaskPlans(session, task)
-          saveTask(requireWorkspaceRoot(exec), task)
+          saveTask(requireWorkspaceRoot(exec, deps.dshHome), task)
           const merged = mergeTaskPreview(task, plans)
           return {
             ok: true,
@@ -301,7 +323,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
         return { ok: false, error: `蓝图不是合法 JSON：${error instanceof Error ? error.message : String(error)}` }
       }
       try {
-        const plan = await planBlueprint(session, blueprint as never, requireWorkspaceRoot(exec))
+        const plan = await planBlueprint(session, blueprint as never, requireWorkspaceRoot(exec, deps.dshHome))
         return {
           ok: true,
           planId: plan.planId,
@@ -355,7 +377,7 @@ async function gateApproval(
     }
     report.review = loaded
   } else {
-    const workspaceRoot = textOf(input.review?.workspaceDir) ?? workspaceRootOf(exec)
+    const workspaceRoot = textOf(input.review?.workspaceDir) ?? requireWorkspaceRoot(exec, deps.dshHome)
     attachApprovalReview(report, input.review, deps.dshHome, sessionId, workspaceRoot)
   }
   reviewPath = report.review?.path
@@ -429,7 +451,7 @@ async function runTaskApply(
   const gate = await gateApproval(deps, report, merged, gateInput, exec, needsApproval)
   if (!gate.ok) return gate.result
   try {
-    const applied = await applyTask(session, task.taskId, deps.dshHome, { requireApproval: needsApproval }, requireWorkspaceRoot(exec))
+    const applied = await applyTask(session, task.taskId, deps.dshHome, { requireApproval: needsApproval }, requireWorkspaceRoot(exec, deps.dshHome))
     const ok = applied.status === 'applied' && applied.results.every((stage) => stage.status !== 'failed')
     if (ok) {
       finalizeApprovalReview(
@@ -542,12 +564,12 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
         return { ok: false, error: 'planId 与 taskId 必须二选一' }
       }
       if (taskId !== '') {
-        const task = loadTask(requireWorkspaceRoot(exec), taskId)
+        const task = loadTask(requireWorkspaceRoot(exec, deps.dshHome), taskId)
         if (task === null) return { ok: false, error: `任务不存在：${taskId}` }
         return runTaskApply(deps, session, task, input, exec)
       }
 
-      const plan = loadPlan(requireWorkspaceRoot(exec), planId)
+      const plan = loadPlan(requireWorkspaceRoot(exec, deps.dshHome), planId)
       if (plan === null) return { ok: false, error: `计划不存在：${planId}` }
 
       const writes = plan.steps.filter((step) => step.action !== 'skip')
@@ -557,7 +579,7 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
       if (!gate.ok) return gate.result
 
       try {
-        const applied = await applyPlan(session, planId, deps.dshHome, { requireApproval: needsApproval }, requireWorkspaceRoot(exec))
+        const applied = await applyPlan(session, planId, deps.dshHome, { requireApproval: needsApproval }, requireWorkspaceRoot(exec, deps.dshHome))
         const ok = applied.results.every((r) => r.status !== 'failed')
         if (ok) {
           finalizeApprovalReview(

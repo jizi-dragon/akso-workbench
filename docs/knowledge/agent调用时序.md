@@ -341,6 +341,24 @@ sequenceDiagram
 任务级与单计划的差别只在「审批覆盖几段」：单计划 30 分钟过期，任务 60 分钟过期；单计划指纹覆盖
 一份 blueprint，任务指纹覆盖阶段顺序。执行引擎、逐步回读、审计与 checkpoint 完全复用。
 
+### 5.4 输出绑定：把前序步骤的真实 id 传给下一步
+
+平台生成的 workflow / step / control / task id 有前后依赖，计划在**生成时**还看不到这些值。参数需要
+前序输出时，写单键对象 `$ref`，不要填临时假 id：
+
+```json
+{ "$ref": "steps.s1.after.data.id" }
+{ "$ref": "stages.1.steps.s3.after.data.step.id" }
+```
+
+- `steps.<stepId>.after[.path]`：同一计划内、只允许引用更早步骤的返回。
+- `stages.<n>.steps.<stepId>.after[.path]`：任务级跨阶段，`n` 从 1 开始，只允许引用已执行阶段。
+- 路径支持属性与数组下标（如 `.data[0].id`）；缺失路径、未来步骤、未来阶段、非法 `$ref` 都在计划或
+  执行前报错，不会静默传 `undefined`。
+- 审批指纹保留原始 `$ref` 模板，执行时按真实返回解析；审核文档的「输出绑定」段会列出引用，避免
+  审批时是一套值、执行时换成另一套值。
+- 任务级多段依赖应装进**一条任务、一次审批**；任一段失败即停，已执行段的 `after` 会保留在 checkpoint。
+
 ## 6. `akso_workbench_object_analysis`：只读分析
 
 读路径换票（图 2）之后，把「对象 → 生命周期 → 状态 → 动作 → 工作流」一次性读成模型；只读，

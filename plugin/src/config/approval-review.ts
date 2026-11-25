@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { ApprovalReport, ApprovalReview } from './approval.ts'
+import { collectBindingRefs, parseBindingRef } from './bindings.ts'
 
 export interface ApprovalReviewInput {
   /** `create` 大规模创建/调整（默认）；`update` 已执行任务的小范围更新。 */
@@ -117,6 +118,39 @@ function stepDetails(report: ApprovalReport): string[] {
   return out
 }
 
+function bindingDetails(report: ApprovalReport): string[] {
+  const rows: string[] = []
+  for (const step of report.steps) {
+    let refs: string[] = []
+    try {
+      refs = collectBindingRefs(step.params)
+    } catch {
+      continue
+    }
+    for (const ref of refs) {
+      try {
+        const parsed = parseBindingRef(ref)
+        const source = parsed.kind === 'stage'
+          ? `第 ${parsed.stage} 阶段步骤 ${parsed.stepId}`
+          : `本计划步骤 ${parsed.stepId}`
+        const path = parsed.path === '' ? '完整输出' : parsed.path.replace(/^\./, '').replaceAll('[', ' [').trim()
+        rows.push(`- 第 ${step.index} 步「${step.title}」引用 ${source} 的${path}`)
+      } catch {
+        rows.push(`- 第 ${step.index} 步「${step.title}」含未识别引用 \`${ref}\``)
+      }
+    }
+  }
+  if (rows.length === 0) return []
+  return [
+    '### 输出绑定（执行时解析）',
+    '',
+    '审批锁定的是引用模板；执行时按前序步骤的真实返回填充，审批前不会写入平台。',
+    '',
+    ...rows,
+    '',
+  ]
+}
+
 function briefStepDetails(report: ApprovalReport): string[] {
   const out: string[] = ['### 本次操作清单（小范围更新）', '']
   for (const step of report.steps) {
@@ -168,6 +202,7 @@ function newDocument(
     review.approach,
     '',
     ...(update ? briefStepDetails(report) : stepDetails(report)),
+    ...bindingDetails(report),
     expectedTitle,
     '',
     ...checklist(review.expected),
