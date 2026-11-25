@@ -1373,6 +1373,90 @@ test('审批矩阵能力：创建/匹配字段/规则/规则列表的路径与�
   assert.equal(list.readonly, true)
 })
 
+test('通知模板能力：写侧与配套读接口的路径、方法与关键参数固定', () => {
+  const byId = new Map(CAPABILITIES.map((cap) => [cap.id, cap]))
+
+  const create = byId.get('notice.template.create')
+  assert.ok(create, '缺少 notice.template.create')
+  assert.equal(create.method, 'POST')
+  assert.equal(create.path, '/api/platform/Notice/SubmitAsyncMessageTemplate')
+  assert.equal(create.evidence, 'verified')
+  assert.deepEqual(
+    create.params.map((item) => item.name),
+    ['name', 'code', 'objectid', 'templatesettinglist', 'notificationchannelist', 'status', 'source', 'description', 'isHuawei'],
+  )
+  assert.ok(create.notes?.some((note) => note.includes('messagechannel:99')), '创建必须提醒正文只在 99 号渠道')
+  assert.ok(create.notes?.some((note) => note.includes('sort 由服务端分配')), '创建必须提醒不传 sort')
+
+  const update = byId.get('notice.template.update')
+  assert.ok(update, '缺少 notice.template.update')
+  assert.equal(update.method, 'POST')
+  assert.equal(update.path, '/api/platform/Notice/SubmitAsyncMessageTemplate')
+  assert.equal(update.evidence, 'partial', '整份回传已抓包，最小形状未实测，不能标 verified')
+  assert.ok(update.notes?.some((note) => note.includes('还没实测')), '修改必须标出「只传 id + 改动字段」未实测')
+
+  const page = byId.get('notice.template.page')
+  assert.ok(page, '缺少 notice.template.page')
+  assert.equal(page.method, 'POST')
+  assert.equal(page.path, '/api/platform/Notice/GetMessageTemplateList')
+  assert.equal(page.readonly, true)
+  assert.ok(
+    page.notes?.some((note) => note.includes('keywords') && note.includes('keyword')),
+    '列表必须提醒搜索词双键同传',
+  )
+
+  const single = byId.get('notice.template.get')
+  assert.ok(single, '缺少 notice.template.get')
+  assert.equal(single.method, 'GET')
+  assert.equal(single.path, '/api/platform/Notice/GetMessageTemplate')
+  assert.equal(single.readonly, true)
+  assert.deepEqual(single.params.map((item) => item.name), ['id'])
+  assert.equal(single.params[0]?.location, 'query')
+
+  const channel = byId.get('notice.channel.list')
+  assert.ok(channel, '缺少 notice.channel.list')
+  assert.equal(channel.method, 'GET')
+  assert.equal(channel.path, '/api/platform/Notice/GetMessageConfigurationList')
+  assert.equal(channel.readonly, true)
+  assert.ok(channel.notes?.some((note) => note.includes('posttype')), '渠道配置必须提醒 posttype 与 messagechannel 不是一套')
+
+  const fixedVar = byId.get('notice.variable.fixed.list')
+  assert.ok(fixedVar, '缺少 notice.variable.fixed.list')
+  assert.equal(fixedVar.path, '/api/platform/Notice/GetFixedObjectByManage')
+  assert.equal(fixedVar.readonly, true)
+
+  const fieldVar = byId.get('notice.variable.field.list')
+  assert.ok(fieldVar, '缺少 notice.variable.field.list')
+  assert.equal(fieldVar.method, 'GET')
+  assert.equal(fieldVar.path, '/api/platform/Notice/GetObjectField')
+  assert.equal(fieldVar.params[0]?.name, 'id')
+  assert.equal(fieldVar.params[0]?.location, 'query')
+
+  const task = byId.get('workflow.task.update')
+  assert.ok(task, '缺少 workflow.task.update')
+  assert.ok(task.notes?.some((note) => note.includes('notifyTemplateId')), '改节点必须提 stepTaskConfig.notifyTemplateId')
+})
+
+test('工作流编辑态：发布用 20，切「编辑中」走 UpdateWorkflowBasic 而不是改状态接口', () => {
+  const byId = new Map(CAPABILITIES.map((cap) => [cap.id, cap]))
+
+  const update = byId.get('workflow.update')
+  assert.ok(update, '缺少 workflow.update')
+  assert.equal(update.method, 'POST')
+  assert.equal(update.path, '/api/platform/Workflow/UpdateWorkflowBasic')
+  assert.ok(update.notes?.some((note) => note.includes('切编辑中')), '必须说明调它就是切编辑中')
+  assert.ok(update.notes?.some((note) => note.includes('versionNo+1')), '必须说明服务端换新 id、versionNo+1')
+  assert.match(String(update.returns), /status=40/, '返回必须说明拿回来的是 status 40 的草稿版本')
+
+  const status = byId.get('workflow.status.change')
+  assert.ok(status, '缺少 workflow.status.change')
+  assert.equal(status.method, 'POST')
+  assert.equal(status.path, '/api/platform/Workflow/ChangeWorkflowBasicStatus')
+  assert.match(JSON.stringify(status.example), /"status":20/, '示例必须是发布（20），不是 40')
+  assert.ok(status.notes?.some((note) => note.includes('workflow.update')), '必须指向 workflow.update 去切编辑中')
+  assert.ok(status.notes?.some((note) => note.includes('未实测')), '本接口直接传 40 未实测，必须标出来')
+})
+
 /* ─────────────── 令牌详情：只给时间戳（原文不出 host），且必须带自定义头 ─────────────── */
 
 test('令牌详情：只回从 JWT 解出的签发/到期时间，原文不出 host', async () => {

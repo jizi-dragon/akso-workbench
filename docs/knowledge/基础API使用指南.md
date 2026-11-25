@@ -20,6 +20,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 ## 通用约定
 
+- **以 UI 实际请求为准**：参数形状、调用顺序、状态怎么流转，一律以页面上操作时真实发出的请求为准（抓包对照）。UI 没走过的写法不要自己发明；没实测过的路径，要点里必须标「未实测」。
 - **鉴权**：令牌由底部账号条自动取（akso-cloud 里的账号口令换 eGMP 令牌），过期自动续。文档与案例里都不写令牌，也不写口令。
 - **参数位置**：`path` 参数填进路径里的 `{xxx}`；`query` 参数拼查询串；其余整体作为请求体。GET 接口全部进 query。
 - **响应信封**：`{ code: 0, data: … }`。`code !== 0` 时看 `message`；查询类 `data` 是对象或数组，写入类多半是 `true`。
@@ -998,17 +999,19 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 ### workflow.update 更新工作流
 
-> 全量写回 basicConfig（含 versionNo 乐观锁）与变量。
+> 全量写回 basicConfig（含 versionNo 乐观锁）与变量；对已启用的工作流，调它就是「开始编辑」。
 
-**返回**：data: true。
+**返回**：`data.basicConfig` 是服务端新建的草稿版本：`id` 换成新的 workflowConfigId、`status: 40`（编辑中）、`versionNo + 1`、`workflowBasicId` 不变。
 
 **要点**
 
+- 这是「切编辑中」的真正入口：已启用（20）的工作流必须先调一次本接口（原样回传 Get 到的 basicConfig，不用自己改成 40），服务端会新建草稿版本；之后改节点、发布都用响应里的新 id。
+- 实测 2026-11-25 通桥：`department_change_plan_notice__c` 请求 `ab91d3c2… / status 20 / ver 7` → 响应 `6898c1ab… / status 40 / ver 8`；`choose_responsible_person__c` 请求 ver 2 → 响应 ver 3。
 - versionNo 不是最新会失败；先 Get 再改。
 
 **案例**
 
-#### 案例 · 基础调用
+#### 案例 · 从启用版本开一份草稿
 
 ```json
 {
@@ -1016,7 +1019,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
     "id": "<workflowConfigId>",
     "name": "变更审批流（改）",
     "code": "change_approval",
-    "status": 40,
+    "status": 20,
     "objectId": "<objectId>",
     "lifecycleId": "<lifecycleId>",
     "workflowType": 10,
@@ -1027,6 +1030,8 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
   "variables": []
 }
 ```
+
+预期：响应里 `status: 40`、`versionNo` 比请求大 1、`id` 与请求的 id 不同——这个新 id 才是后面改节点与发布要用的。
 
 ### workflow.page.list 工作流分页列表
 
@@ -1048,26 +1053,28 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 ### workflow.status.change 发布 / 停用工作流
 
-> 切换工作流状态；加步骤前必须切到 40（编辑中）。
+> 发布 / 停用工作流；发布用 20。切「编辑中」不要调本接口，走 workflow.update。
 
-**返回**：data: true。
+**返回**：`data` 为 `null`（实测）。
 
 **要点**
 
-- 顺序：10 建 → 40 编辑（加步骤）→ 20 启用。
-- `status: 20` 发布的是**当前草稿版本**；已发布版本上继续编辑会生成新草稿（`versionNo + 1`、`status: 40`、新 id），改完要再发一次。
+- 发布：`{ ids: [要发布的 workflowConfigId], status: 20, workflowBasicId }`；`ids` 与 `workflowBasicId` 是两个不同层级的 id，别互串。
+- 已启用（20）的工作流不能直接改节点：先 `workflow.update` 切到编辑中（服务端换新 workflowConfigId、status 40），改完再用本接口发布那个新 id。
+- 顺序：10 建草稿 → 20 启用；要改已启用的，先 `workflow.update` 开新草稿版本（40）→ 改节点 → 本接口 20 发布。
+- 本接口直接传 `status: 40` 能不能进编辑中未实测（2026-11-25 通桥抓包里 UI 从不这么发）。
 - 回读 `GET /api/platform/Workflow/GetWorkflowBasic` 看 `status`（20 已发布 / 40 编辑中）、`versionNo` 与 `id`，不要沿用旧版本 id。
 
 **案例**
 
-#### 案例 · 基础调用
+#### 案例 · 发布当前草稿
 
 ```json
 {
   "ids": [
     "<workflowConfigId>"
   ],
-  "status": 40,
+  "status": 20,
   "workflowBasicId": "<workflowBasicId>"
 }
 ```
@@ -1611,6 +1618,204 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 ```json
 {
   "id": "<objectId>"
+}
+```
+
+### notice.template.page 消息模板分页列表
+
+> 分页读全部消息模板（含通用模板 objectid=all），按关键词搜也是它；找模板 id 用这个。
+
+**返回**：data.count 为总数（实测 113）、data.datas[] 每条含 templatetype / name / code / source / objectid / objectname / status / description / sort / notificationchannelist / templatesettinglist / createdTime / modifiedTime / id。
+
+**要点**
+
+- 搜索时 `keywords` 与 `keyword` 要同时给（UI 实测两个键都传），只给一个在个别环境搜不到。
+- datas 里的 title / content 只有「单渠道」老模板才有值；多渠道模板这两项是 null，正文在 templatesettinglist 里 —— 要看正文用 notice.template.get。
+- 列表只用于挑 id；写回前一定按 id 读单条，别拿列表项当回写来源（列表里的 templatesettinglist / notificationchannelist 可能为 null）。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "pageIndex": 1,
+  "pageSize": 20,
+  "keywords": "待办",
+  "keyword": "待办",
+  "filters": []
+}
+```
+
+### notice.template.get 读单条消息模板
+
+> 取一条模板的全部字段与每个渠道的设置，改之前必须先读这一条。
+
+**返回**：data 为模板全字段：templatetype / name / code / source / objectid / objectname / status / description / title / jumplink / content / sort / signature / sendernum / textmessageid / notificationchannelist / templatesettinglist[] / createdTime / modifiedTime / id。
+
+**要点**
+
+- templatesettinglist[] 是「每个渠道一份设置」，各带自己的 id、messagechannel、templatecode；改模板时按原 id 整份回写（见 notice.template.update）。
+- 实测 messagechannel 99 承载标题与正文（title / content），2 与 3 只是渠道开关位。
+- 2 / 3 上的 iscovered 标记该渠道「设置是否已单独覆盖过」（通用模板实测 2=true 且带正文、99=false、3 为空壳），含义平台没文档，回写时原样带回即可。
+- 通用模板的 objectid 是字符串 `all`，不是对象 id；按对象取模板另见 notice.template.list。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "id": "<templateId>"
+}
+```
+
+### notice.template.create 新建消息模板
+
+> 按对象建一条消息模板；标题与正文放在 templatesettinglist 的 messagechannel 99 那一项。
+
+**返回**：data 为新模板 id（字符串）。
+
+**要点**
+
+- 创建时不传 id、也不传 sort；sort 由服务端分配（实测 109）。
+- 标题与正文只认 templatesettinglist 里 messagechannel:99 那一项；顶层 title / content / jumplink 留空，平台自己存成 null。
+- 正文可写 {!record.<字段 code>} / {!$environment.egmp_url} / {!$link.record_detail} / {!$workflow.label} / {!$workflow.promoter} 等变量，并支持 <a>、<br> 与换行。
+- 模板 code 建议全局唯一：实测与字段 code 撞名也能建，但之后按 code 回查会混。
+- 改同一条模板走同一个接口（带 id）→ notice.template.update；建完要挂到流程节点 → workflow.task.update 的 stepTaskConfig.notifyTemplateId。
+- 2026-11-25 通桥环境按 UI 抓包确认：546 字节请求体建成功，返回 id 后可回读；随后挂到变更对象 8 条流程 13 个节点。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "source": 3,
+  "status": 1,
+  "notificationchannelist": [2, 3],
+  "templatesettinglist": [
+    {
+      "messagechannel": 99,
+      "title": "提醒：您有新的待办任务，请及时处理",
+      "content": "您有新的待办任务，请及时处理\n变更事项：{!record.change_title__c}\n变更原因：{!record.change_reason__c}"
+    },
+    { "messagechannel": 2 },
+    { "messagechannel": 3 }
+  ],
+  "isHuawei": true,
+  "name": "变更待办任务通知",
+  "code": "change_todo_notice__c",
+  "objectid": "<objectId>",
+  "description": ""
+}
+```
+
+### notice.template.update 修改消息模板
+
+> 同一个接口带 id 覆盖；UI 的做法是读回整份实体、改 99 号渠道的正文、再整份回传。
+
+**返回**：data 为模板 id（回传同一个 id，不会新建）。
+
+**要点**
+
+- 先 notice.template.get 读回，只改 99 号渠道的 title / content，其余字段与每个子表项的 id、templatecode 原样带回。
+- 子表项丢了 id 会被当成新渠道设置（推断，未单独实测）——不要手搓子表，从读回结果改。
+- 顶层 title / content / jumplink 在实测请求里是 null，平台不采用；正文只认 messagechannel:99 那一项。
+- createdBy / createdTime / modifiedBy / modifiedTime 回传也不会被采用（实测改完 modifiedTime 仍是原值，平台自己盖时间戳）。
+- 能否只传 id + 要改的字段还没实测（UI 从不这么发）——先在测试环境小步验证，别在正式环境试。
+- 改完要重新发布流程才生效的是流程，不是模板：模板本身保存即生效，但节点上引用的是模板 id，换模板要另走 workflow.task.update。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "id": "<templateId>",
+  "source": 3,
+  "status": 1,
+  "templatetype": 0,
+  "name": "变更待办任务通知",
+  "code": "change_todo_notice__c",
+  "objectid": "<objectId>",
+  "objectname": "变更",
+  "sort": 109,
+  "notificationchannelist": [2, 3],
+  "templatesettinglist": [
+    {
+      "id": "<settingId99>",
+      "templatecode": "change_todo_notice__c",
+      "messagechannel": 99,
+      "title": "提醒：您有新的待办任务，请及时处理",
+      "content": "您有新的待办任务，请及时处理<a href=\"{!$environment.egmp_url}{!$link.record_detail}\">查看任务详情</a>。<br>\n变更事项：{!record.change_title__c}"
+    },
+    { "id": "<settingId2>", "templatecode": "change_todo_notice__c", "messagechannel": 2 },
+    { "id": "<settingId3>", "templatecode": "change_todo_notice__c", "messagechannel": 3 }
+  ]
+}
+```
+
+### notice.channel.list 通知渠道配置
+
+> 读各通知渠道（posttype）的启停与外部接口配置，判断某个渠道是否可用。
+
+**返回**：data 为渠道配置数组（实测 8 条，posttype 9/8/7/5/4/2/1/0）：posttype / status / apiaddress / appkey / mailhost / mailport / smsType / imap* / id。
+
+**要点**
+
+- 实测只有 posttype 5 的 status 为 1（其余为 2），它的 apiaddress 指向外部网关 https://cj.ton-bridge.cn:9099/api/akso/notice、appkey 为 1234。
+- status 1 / 2 是不是「启用 / 停用」没逐条验证，别据此断言渠道已开通。
+- 这里的 posttype 与模板里的 messagechannel 不是同一套编号，不能互相套用。
+- 账号口令类字段（appsecret / mailpwd）在监听产物里是脱敏占位，不代表平台真实返回值。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{}
+```
+
+### notice.variable.fixed.list 模板固定变量
+
+> 读模板正文可用的全局/系统变量（实例、链接、发起人、任务名等），按分组树返回。
+
+**返回**：data 为分组树：type_name / type_code / field_name / field_code / dataType / showPosition / status / fixedObjectList[]（叶子项同样是这个形状，嵌在 fixedObjectList 里）。
+
+**要点**
+
+- 全局变量组 type_code 为 qjbl，叶子 field_code 形如 {!$environment.current_instance}，直接粘进正文即可。
+- showPosition 是可用位置标记（实测 [2,1,3] 这类数组），含义未确认，先全量列给用户挑。
+- 变量只是文本，平台不会校验变量是否存在于该对象；错变量在发送时才变成空白，配完最好发一条试。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{}
+```
+
+### notice.variable.field.list 模板对象字段变量
+
+> 读对象字段对应的 {!record.xxx} 变量，配置模板正文时用来插入记录字段。
+
+**返回**：data 为按对象分组的数组：objectId / name / code / objectList / fileList[]；fileList 每项带 code（形如 {!record.detailed_documentation__c}）、name、dataType。
+
+**要点**
+
+- 一次返回全部对象字段约 2MB，别在循环里反复调；按 objectId 过滤出目标对象的 fileList。
+- code 已是 {!record.<字段 code>} 形态，直接粘进正文即可，不用自己拼。
+- 参数 id 传空串等于「全部对象」；传对象 id 时是否只回该对象未验证（UI 只传空串），别依赖这个过滤。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "id": ""
 }
 ```
 

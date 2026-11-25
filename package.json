@@ -1,6 +1,6 @@
 {
   "name": "akso-workbench-ts",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "private": true,
   "type": "module",
   "description": "akso-workbench 仓库根：capture 接口监听工具 + 插件工作区的统一校验脚本（eGMP 域逻辑在 plugin/）",

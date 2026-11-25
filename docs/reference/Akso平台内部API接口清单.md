@@ -1200,6 +1200,46 @@ body 是空对象（不是空 body）。响应 `data[]` 为菜单组，含 `appI
 
 `objectid:"all"` 表示通用模板；`content` 里是 `{!$...}` 变量与 HTML 片段。这条在抓包里出现 73 次，形状确定。
 
+#### 消息模板的写侧与配套读接口 ✅（2026-11-25 通桥环境抓包）
+
+新建与修改是**同一个接口**：不带 `id` 是新建，带 `id` 是覆盖。实测新建请求体 546 字节，响应 `data` 就是模板 id：
+
+```json
+POST /api/platform/Notice/SubmitAsyncMessageTemplate
+{
+  "source": 3,
+  "status": 1,
+  "notificationchannelist": [2, 3],
+  "templatesettinglist": [
+    { "messagechannel": 99, "title": "提醒：您有新的待办任务，请及时处理",
+      "content": "您有新的待办任务，请及时处理\n变更事项：{!record.change_title__c}" },
+    { "messagechannel": 2 },
+    { "messagechannel": 3 }
+  ],
+  "isHuawei": true,
+  "name": "变更待办任务通知",
+  "code": "other_modes_of_implementation__c",
+  "objectid": "3a19fd65-6221-30f1-8860-0f4b3ff405a8",
+  "description": ""
+}
+```
+
+- 新建不传 `id`、不传 `sort`（平台分配，实测 109）；顶层 `title` / `content` / `jumplink` 会被存成 `null`，**正文只认 `templatesettinglist` 里 `messagechannel: 99` 那一项**。
+- 修改时 UI 是「读回整份实体 → 改 99 号渠道的 `content` → 整份回传」，子表项各自带原 `id` 与 `templatecode`；`createdTime` / `modifiedTime` 回传也不被采用（平台自己盖）。
+- 正文变量：`{!record.<字段 code>}`、`{!$environment.egmp_url}`、`{!$link.record_detail}`、`{!$workflow.label}`、`{!$workflow.promoter}`；支持 `<a>` / `<br>` 与换行。
+
+配套读接口（同一会话实测）：
+
+| 方法 | 路径 | 说明 | 参数 / 返回 |
+| --- | --- | --- | --- |
+| POST | `/api/platform/Notice/GetMessageTemplateList` | 模板分页列表（含通用模板） | body `{pageIndex, pageSize, keywords, keyword, filters}`；`data.count` 实测 113，`data.datas[]` 与上文同形 |
+| GET | `/api/platform/Notice/GetMessageTemplate` | 读单条模板全字段 | query `id`；`data.templatesettinglist[]` 每项带自己的 `id` / `messagechannel` |
+| GET | `/api/platform/Notice/GetMessageConfigurationList` | 通知渠道配置 | 无参；`data[]` 8 条，键含 `posttype` / `status` / `apiaddress` / `appkey`，实测只有 `posttype: 5` 的 `status` 为 1 |
+| GET | `/api/platform/Notice/GetFixedObjectByManage` | 模板固定变量树 | 无参；`data[]` 分组，全局变量组 `type_code: "qjbl"`，叶子 `field_code` 形如 `{!$environment.current_instance}` |
+| GET | `/api/platform/Notice/GetObjectField` | 模板对象字段变量 | query `id`（空串 = 全部对象，实测约 2MB）；`data[]` 按对象分组，`fileList[].code` 形如 `{!record.detailed_documentation__c}` |
+
+注意 `posttype`（渠道配置）与 `messagechannel`（模板里的渠道号）不是同一套编号；99 / 2 / 3 的业务含义平台没文档，实测 99 承载标题与正文。
+
 ## 端到端最小链路（建对象 → 能提交审批）
 
 一条从零到「页面上点提交能跑起工作流」的最短路径，按顺序调，每步都能回读验证：
@@ -1288,7 +1328,11 @@ body 是空对象（不是空 body）。响应 `data[]` 为菜单组，含 `appI
 | 生命周期 | 8 | `query.lifecycle.status.list`、`lifecycle.status.create`、`lifecycle.status.update`、`lifecycle.useraction.create`、`lifecycle.useraction.get`、`lifecycle.useraction.list`、`lifecycle.enteraction.create`、`lifecycle.enteraction.list` |
 | 工作流 | 18 | `workflow.create` / `get` / `update` / `page.list` / `status.change` / `delete` / `steps.list` / `task.add` / `decision.add` / `action.add` / `start.update` / `task.update` / `decision.update` / `action.update` / `step.copy` / `step.delete` / `step.get` / `controls.list` |
 | 菜单 | 2 | `menu.submit`、`menu.group.list` |
-| 通知 | 1 | `notice.template.list` |
+| 通知 | 8 | `notice.template.list` / `page` / `get` / `create` / `update`、`notice.channel.list`、`notice.variable.fixed.list`、`notice.variable.field.list` |
+
+> 2026-11-25 补的通知 7 条（page / get / create / update / channel.list / variable.fixed.list / variable.field.list）来自通桥环境实抓，
+> 写入侧 `notice.template.create` 有完整成功报文；`notice.template.update` 的「只传 id + 改动字段」最小形状**尚未实测**（UI 只发整份），
+> 因此这 7 条在界面卡片上仍标「过期」，等真跑一遍由用户点头后再进 `approved-tools.ts` 台账。
 
 **当前 3 条保持「过期」**（与界面卡片一致）：`lifecycle.useraction.list`、`lifecycle.enteraction.create`、`lifecycle.enteraction.list`——真实抓包/回读已确认，未走脚本实测。`menu.sort` 已按用户要求从工具目录删除（全量替换且无读整棵树接口）。`layout.save` 已于 2026-11-09 晚抓包复验通过——正确姿势是「`LayoutDetail.data` 整份读出 → 原地改 → 整份回写」；新建 section 用 `{ id, code, name, type, columnsNum }`、control 用 `{ id, sectionId, code, name, fieldId, type, gridSpan, attrs }` 即可，但**不要带 `belongId` / `fullPath`**（带上会报 `[layout_section] BelongId 不正确…必须由 FullPath 生成`，见上文表单布局节）。`auth.oauth.login`、`auth.oauth.refresh` 已于 2026-11-09 实测无作用并删除；`listlayout.filter.save` 已实测通过（`relationId` 须为 GUID、返回 `data: null`，见上文）。`object.fields.outfield` 与 `listlayout.filter.get` 已于 2026-11-05 在验证环境跑通，参数名与响应形状按实测改正（见上文各节）。
 

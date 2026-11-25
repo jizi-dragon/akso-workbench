@@ -25,7 +25,9 @@
  * 2026-11-11 在 standard-val 上真调通过三条能力，用户核对输入/输出后确认；三条均已进本名单。
  * 2026-11-25 在 standard-val 实测六条曾标「过期」的能力并回读确认：
  * 生命周期状态配置、生命周期进入条件（空结果）、审批矩阵创建/匹配字段/规则/规则回读。
- * 当前目录 69 条、本名单 53 条。
+ * 2026-11-25 晚按用户要求补 7 条通知模板读写能力（通桥环境抓包确认，未实测）：
+ * `notice.template.page/get/create/update`、`notice.channel.list`、`notice.variable.fixed.list`、`notice.variable.field.list`。
+ * 目录 53 → 60，本名单仍 53——新 7 条在卡片上标「过期」，等真跑一遍、用户点头后再追加。
  */
 export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   // 对象
