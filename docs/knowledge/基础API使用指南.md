@@ -1134,6 +1134,8 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 - 按钮字段名注意拼写：isShowResons / resonTitle / responsibieTitle 都是平台原样。
 - 任务级签名：`isHaveSign: true` 表示节点带签名栏，`isRequireSign: false` 表示任务级签名不必填（签名落在按钮上），`externalSignatureInfoFrom: 1` 是平台回读值。
 - 按钮签名四开关：`isRequireSign`（本按钮要电子签名）、`isShowResons` + `isRequiredResons` + `resonTitle`（签名备注，同意可不填、拒绝必填）、`isShowResponsibilities` + `isRequireResponsibilities` + `responsibieTitle`（签名含义标题，字段名拼写原样）+ `responsibleOptions[].value`（该按钮的含义文案）、`isRequirePosition`（需要选择职位）。
+- 2026-11-26 v3 实测：审核任务两个按钮都 `isHaveSign: true`、`isRequireSign: true`（两个都必填电子签名）；同意 `isRequiredResons: false`（备注可选），拒绝 `isRequiredResons: true`（备注必填）；两者 `isShowResons/isShowResponsibilities/isRequireResponsibilities/isRequirePosition` 均为 true。用户动作挂载的审批流，开始节点必须放电子签名控件（`ctrlType:60`），本次 `signatureConfig` 为 `isRequirePosition:true`、`isShowSignatureMean:true`、`isRequiredMean:true`、`isShowSignatureRemark:true`、`isRequiredSignature:false`、`reasonInputType:20`；**开始节点只要存在电子签名控件，实际执行即按必填处理**（用户 2026-11-26 口径），不能因 `isRequiredSignature:false` 就判断它的签名可选；备注只显示、不必填。
+- 工作流在 UI 编辑并发布后会生成新版本：`workflowBasicId` 不变，但 `workflowConfigId`、`versionNo` 和全部 step id 会变；更新开始/任务/判断/动作前必须重新读取 workflowConfigId 和 step id，不能复用旧 id。
 
 **案例**
 
@@ -1320,7 +1322,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 - controlConfig.value 是 participantConfig 的 JSON 字符串（字符串，不是对象）。
 - 全量覆盖：先 GetWorkflowStepControls 读回再加。
 - 参与者控件只允许 `selectUserType: 40`（字段）或 `50`（审批矩阵）；下面旧案例的 `10` 只用于展示 `controlConfig`/`participantConfig` 结构，工作台新配置不要采用。
-- 电子签名控件在 `startUpControls[].signatureConfig`：`isShowSignatureMean` 显示签名含义、`isRequiredMean` 含义必填、`signatureMeanName` 标题、`signatureMeanOptions[].value` 含义选项（内联，没有独立字典接口）、`isShowSignatureRemark` + `signatureRemarkName` + `reasonInputType: 20`（备注）、`isRequirePosition`（选职位）、`isRequireUserName`（填用户名）、`isRequiredSignature`（签名必填）。更新时保留已有 option 的 `id`，只改 `value` 文案。
+- 电子签名控件在 `startUpControls[].signatureConfig`：`isShowSignatureMean` 显示签名含义、`isRequiredMean` 含义必填、`signatureMeanName` 标题、`signatureMeanOptions[].value` 含义选项（内联，没有独立字典接口）、`isShowSignatureRemark` + `signatureRemarkName` + `reasonInputType: 20`（备注）、`isRequirePosition`（选职位）、`isRequireUserName`（填用户名）、`isRequiredSignature`（签名必填参数）。注意：开始节点只要存在签名控件，实际执行就按必填处理；`isRequiredSignature` 回读为 false 时也不能当成“可选”（用户 2026-11-26 口径）。更新时保留已有 option 的 `id`，只改 `value` 文案。
 
 **案例**
 

@@ -150,10 +150,12 @@
 - **审批工作流标准骨架**：开始（10）→ 任务（30）→ 判断（70）→ 已通过/已退回动作（90）→ 结束（20）。
   判断规则用 `logicType: 40`，`logicValue` 是**带引号的同意按钮 id**；`userControlIds` 是字符串
   （传数组 400）；审批人从对象字段取时，开始节点 `selectUserType: 40` + `fielsObjectIds`。
-- **审批意见签名**：签名挂在审批按钮上（`isRequireSign` / `isHaveSign`），任务级签名不用；标准做法
-  还要勾「签名备注」（`isShowResons` + `reasonInputType: 20` + `resonTitle`）、「签名含义」
-  （`isShowResponsibilities` + `isRequireResponsibilities` + `responsibleOptions`）和
-  **「选择职位」（`isRequirePosition: true`）**。拒绝按钮的签名备注必填（`isRequiredResons: true`）。
+- **审批意见签名（2026-11-26 v3 实测）**：任务审核的两个按钮都 `isHaveSign: true`、
+  `isRequireSign: true`（**两个按钮都必填电子签名**）；同意 `isRequiredResons: false`（签名备注可选），
+  拒绝 `isRequiredResons: true`（签名备注必填）。两者都 `isShowResons: true`、`reasonInputType: 20`、
+  `resonTitle: "签名备注"`、`isShowResponsibilities: true`、`isRequireResponsibilities: true`、
+  `responsibieTitle: "签名含义"`、`isRequirePosition: true`。任务级 `stepTaskConfig.isRequireSign`
+  仍为 false，签名落在按钮上，不要用任务级开关代替按钮开关。
 - **提醒工作流**：任务节点配 `isNotifyTaskType: true` + `isRequireApproval: false` + 空
   `stepTaskApprovals`，任务名直接写提醒语；`notifyType: -10` 是「使用提醒策略」。
 - **生命周期**：默认的「开启 / 关闭」两个状态要改名复用（头尾），中间态按流转顺序排 sort；状态不能删、
@@ -166,7 +168,9 @@
 
 ## 工作流配置规则（2026-11-22 用户口径）
 
-- **开始节点不是空入口**：开始节点要配参与者 + 电子签名。参与者表示“谁能够参与”，不是“谁能够发起”；谁能够发起由状态上的用户动作/进入动作与入口权限决定，不能从开始节点参与者推断。
+- **开始节点不是空入口（2026-11-26 实测）**：开始节点要配参与者 + 电子签名；**用户动作挂载的审批流必须配开始电子签名**。参与者表示“谁能够参与”，不是“谁能够发起”；谁能够发起由状态上的用户动作/进入动作与入口权限决定，不能从开始节点参与者推断。签名控件 `ctrlType: 60`，`signatureConfig` 至少包含 `isRequirePosition: true`、`isShowSignatureMean: true`、`isRequiredMean: true`、`isShowSignatureRemark: true`、`reasonInputType: 20`、`signatureMeanName: "签名含义"`、`signatureRemarkName: "签名备注"` 和一个含义选项（本次为“提交授权账号处理结果”）；本次回读 `isRequiredSignature: false`，但**只要开始节点存在电子签名控件，实际执行即按必填处理**（用户 2026-11-26 口径），不能因参数回读 false 就判断“可选”；`isShowSignatureRemark: true` 只显示备注、备注不必填。
+- **节点命名（2026-11-26 实测）**：中间节点统一 `【类型】：名称`；动作统一 `【动作】：修改状态为‘X’`（“为”不能漏），任务 `【任务】：X`，判断 `【判断】：X`。本次开始/结束保留平台默认“开始”“结束”；若平台允许改名再统一，不擅自假设。
+- **编辑已发布流程会生成新版本（2026-11-26 实测）**：在 UI 编辑已发布流程，`workflowBasicId` 不变，但 `workflowConfigId`、`versionNo` 和全部 step id 会变（本次 v1 `3a4ec3aa-124c-597d-b32b-3a25266fb331` → v2 `8f10d3f8-9aff-6a8b-6eb9-3a2526928a36` → v3 `fb875bdb-1f7d-a876-63d6-3a2526a36838`，旧 step id 全失效）。保存/发布后必须重新读取 workflowConfigId 与全部 step id；禁止缓存旧 id。
 - **发起入口单独检查**：`isAllowTrigger` 只控制是否允许进入动作/事件动作自动启动；审批流仍要挂用户动作（`behaviorType: 7`）作为触发器。初始状态绑定 `lifecycleStatusIds` 不等于触发器。
 - **创建任务节点前，只判断开始节点中有无对应参与者**：有对应参与者控件就把任务 `userControlIds` 指向它；没有就回开始节点补。矩阵规则、角色成员、通知接收人是否齐全，属于发布前/运行风险检查，不作为创建任务节点的前置门槛。
 - **参与者控件只允许两种（2026-11-22 用户口径）**：`使用字段作为参与者`（`selectUserType: 40`，配 `fielsObjectIds`）或 `使用审批矩阵作为参与者`（`selectUserType: 50`，配审批矩阵）。不得使用指定用户、指定用户组、指定用户+用户组、使用角色、使用自定义动作等其它类型；已有流程如用了其它类型，另行评估迁移，不在新建/调整时继续使用。
