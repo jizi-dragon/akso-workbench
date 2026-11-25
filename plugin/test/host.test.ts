@@ -1457,6 +1457,56 @@ test('工作流编辑态：发布用 20，切「编辑中」走 UpdateWorkflowBa
   assert.ok(status.notes?.some((note) => note.includes('未实测')), '本接口直接传 40 未实测，必须标出来')
 })
 
+/* ─────────────── 从零建流程：新建即草稿、自动建首尾节点、Step 更新回显 ─────────────── */
+
+test('从零建流程：create 不需先切 40、自动建开始/结束，四个 Step update 返回 data.step', () => {
+  const byId = new Map(CAPABILITIES.map((cap) => [cap.id, cap]))
+
+  const create = byId.get('workflow.create')
+  assert.ok(create, '缺少 workflow.create')
+  assert.match(String(create.returns), /aciton/, '返回必须提平台拼写 aciton')
+  assert.ok(
+    JSON.stringify(create.example).includes('objectLayoutCode'),
+    '示例必须带 objectLayoutCode（从零建时 UI 必传）',
+  )
+  assert.ok(create.notes?.some((note) => note.includes('自动建')), '必须说明开始/结束节点自动建好')
+  assert.ok(
+    create.notes?.some((note) => note.includes('不用先切 40')),
+    '必须说明 10 草稿可以直接加节点（旧的"必须先切 40"是错的）',
+  )
+  assert.ok(
+    !create.notes?.some((note) => note.includes('加步骤前必须先切到 40')),
+    '不能再保留"加步骤前必须先切到 40"',
+  )
+
+  for (const id of ['workflow.start.update', 'workflow.task.update', 'workflow.decision.update', 'workflow.action.update']) {
+    const cap = byId.get(id)
+    assert.ok(cap, `缺少 ${id}`)
+    assert.match(String(cap.returns), /data\.step/, `${id} 的 returns 必须是 data.step（实测回显完整节点）`)
+    assert.doesNotMatch(String(cap.returns), /data: true/, `${id} 不能再说 data: true`)
+  }
+
+  const action = byId.get('workflow.action.add')
+  assert.ok(action, '缺少 workflow.action.add')
+  assert.ok(action.notes?.some((note) => note.includes('46')), '动作节点必须记 behaviorType 46')
+  assert.ok(
+    action.notes?.some((note) => note.includes('修改相关对象生命周期状态')),
+    '46 的含义必须是「修改相关对象生命周期状态」',
+  )
+  assert.ok(action.notes?.some((note) => note.includes('多个动作')), '必须说明一个动作节点可挂多个动作')
+
+  const decision = byId.get('workflow.decision.add')
+  assert.ok(decision, '缺少 workflow.decision.add')
+  assert.ok(decision.notes?.some((note) => note.includes('targetId')), '判断节点必须说明 details[].targetId 填上一步 stepId')
+
+  const copy = byId.get('workflow.step.copy')
+  assert.ok(copy, '缺少 workflow.step.copy')
+  assert.ok(
+    copy.notes?.some((note) => note.includes('原样继承')),
+    '复制步骤必须说明只给名字/编码，其余配置原样继承',
+  )
+})
+
 /* ─────────────── 令牌详情：只给时间戳（原文不出 host），且必须带自定义头 ─────────────── */
 
 test('令牌详情：只回从 JWT 解出的签发/到期时间，原文不出 host', async () => {

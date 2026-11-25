@@ -948,13 +948,15 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 ### workflow.create 新建工作流
 
-> 绑定到对象（可再绑生命周期）建一条流程，返回 configId 与 workflowBasicId。
+> 绑定到对象（可再绑生命周期）建一条流程，返回 configId 与 workflowBasicId；开始/结束两个节点由本接口自动建好。
 
-**返回**：data.basicConfig.id（= workflowConfigId）与 data.basicConfig.workflowBasicId（两个 id 别混用）。
+**返回**：data.basicConfig.id（= workflowConfigId）与 data.basicConfig.workflowBasicId（两个 id 别混用）；同一响应还带 variables 与拼写为 aciton 的字段（平台原样）。
 
 **要点**
 
-- status=10 草稿；加步骤前必须先切到 40 编辑中；发布用 ChangeWorkflowBasicStatus 置 status=20。
+- status=10 的草稿可以直接加节点、改节点、直接发布，不用先切 40；只有「已启用(20)的流程要再改」才必须先 workflow.update 开 40 草稿，改完再发布那个新 id。
+- 本接口会自动建 开始(stepType 10, sort 1) 与 结束(stepType 20, sort 10000) 两个节点，code 由工作流 code 派生：`…__c` → `…_Start__c` / `…_End__c`。所以没有「新建开始节点」这种调用，workflow.start.update 只是往已存在的开始节点上挂控件。
+- 从零建流程时 basicConfig 要带 objectLayoutCode（对象默认布局 code），UI 实测必传；只读回改的话原样带回即可。
 - isAllowTrigger 只对应「允许从进入动作和事件动作自动启动」：提醒流设为 true；用户动作/状态按钮拉起的审批流保持 false（aa__c 实测 false），不要为了让流程出现在进入动作下拉或为了签名而误开——该开关启用后不可取消。
 - isEnable 不是发布开关：aa__c 与 df__c 发布后 isEnable 仍为 false，以 status=20 为准。
 
@@ -965,6 +967,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 ```json
 {
   "basicConfig": {
+    "objectLayoutCode": "computerized_system_authorization_base_layout__ak",
     "name": "变更审批流",
     "code": "change_approval",
     "status": 10,
@@ -1200,6 +1203,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 - 单条件也用 `logicType: 40`（所有断言等于）；`41`（至少一个断言等于）只在同一组挂多条断言时用。
 - logicValue 是带双引号的 UUID 字符串，写成裸 UUID 会不生效。
 - rules 里的 nextStepId 是"满足时"，stepDecision.nextStepId 是 else。
+- details[].targetId 填**按钮所属那一步的 stepId**（不是按钮 id），targetCode 同步填该步 code；2026-11-25 联邦制药实测 targetId=f6e81732-…（上一步审批节点）、targetCode=Task_Supervisor_Approval__c。用 step 里的 id 去查 tasks/steps 再填。
 - 审批流的 else 分支应指向「修改状态：已驳回」动作节点，再由它连结束；直接指结束会导致拒绝后状态不变。
 
 **案例**
@@ -1258,7 +1262,9 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 **要点**
 
-- behaviorType 9 = 改生命周期状态（behaviorValue.statusId）；7 = 触发工作流（behaviorValue.workflowId 填 workflowBasicId）。
+- behaviorType 9 = 改本对象生命周期状态（behaviorValue.statusId）；7 = 触发工作流（behaviorValue.workflowId 填 workflowBasicId）；46 = 修改相关对象生命周期状态（behaviorValue: relationId / relatedObjectId / relationType:1 / targetStatusId / isSetCondition:false / filterStatusIds:[]）。
+- 一个动作节点可以挂多个动作：stepAction.actions[] 每项是一组要一次执行的动作，configs[] 里可以放多个 behaviorType（顺序执行）。
+- 2026-11-25 联邦制药实测：「修改状态待审核」节点同时给了 behaviorType 9 与 46，读回整份再写时要保留 configs 里原有的 id/__observed，凭空造全零 GUID 也能被接受但会丢关联。
 
 **案例**
 
@@ -1305,10 +1311,12 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 > 开始节点的表单控件：谁能在发起时选人、必填与否。整份 step 覆盖写入。
 
-**返回**：data: true。
+**返回**：data.step（服务端回显的完整开始节点，不是 data:true）。
 
 **要点**
 
+- 开始节点由 workflow.create 自动建好（code `…_Start__c`、sort 1、stepType 10），本接口只挂/改 startUpControls，没有「新建开始节点」的调用。
+- 2026-11-25 联邦制药实测：从零建流程时 UI 随加控件多次调用本接口，startUpControls 1→2→4 个，每次整份覆盖（1.9KB→12.8KB）。
 - controlConfig.value 是 participantConfig 的 JSON 字符串（字符串，不是对象）。
 - 全量覆盖：先 GetWorkflowStepControls 读回再加。
 - 参与者控件只允许 `selectUserType: 40`（字段）或 `50`（审批矩阵）；下面旧案例的 `10` 只用于展示 `controlConfig`/`participantConfig` 结构，工作台新配置不要采用。
@@ -1385,7 +1393,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 > 先 GetWorkflowStepWithDetails 读整份，改完整个 step 写回。
 
-**返回**：data: true。
+**返回**：data.step（服务端回显的完整节点，不是 data:true）。
 
 **要点**
 
@@ -1418,11 +1426,12 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 > 同上，读回 stepDecision 后整份写回。
 
-**返回**：data: true。
+**返回**：data.step（服务端回显的完整节点，不是 data:true）。
 
 **要点**
 
 - rules 传 [] 等于清空全部分支。
+- 回显的 stepDecision 里多一个 stepId（本节点 id），回写时留着不影响；nextStepList 是两条分支的摘要。
 
 **案例**
 
@@ -1448,11 +1457,12 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 > 读回 stepAction 后整份写回。
 
-**返回**：data: true。
+**返回**：data.step（服务端回显的完整节点，不是 data:true）。
 
 **要点**
 
 - actions 传 [] 会清空动作。
+- 一个动作节点可挂多个动作：actions[] 每项是独立一组（configs[] 里可多 behaviorType，顺序执行）；读回整份再回写即可保留，UI 实测每项还带 __observed 字段，原样带回即可。
 
 **案例**
 
@@ -1479,6 +1489,11 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 > 复制一个已有步骤（连同配置），常用于批量建审批节点。
 
 **返回**：data: true（不返回新 stepId，需再查 GetWorkflowSteps 按 code 找）。
+
+**要点**
+
+- 只传 stepName / stepCode / workflowConfigId / stepId（被复制的源节点），节点类型、按钮、参与者配置、表单控件全部原样继承；复制完要复核 code 与 nextStepId 链路（新节点不会自动接进链路）。
+- 2026-11-25 联邦制药实测：从「任务：上级审批」复制出「任务：系统授权人审批」，body 仅 158B。
 
 **案例**
 

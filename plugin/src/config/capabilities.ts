@@ -992,17 +992,24 @@ export const CAPABILITIES: Capability[] = [
     id: 'workflow.create',
     domain: 'workflow',
     title: '新建工作流',
-    description: '绑定到对象（可再绑生命周期）建一条流程，返回 configId 与 workflowBasicId。',
+    description: '绑定到对象（可再绑生命周期）建一条流程，返回 configId 与 workflowBasicId；开始/结束两个节点由本接口自动建好。',
     method: 'POST',
     path: '/api/platform/Workflow/AddWorkflowBasic',
     risk: 'medium',
     evidence: 'verified',
     params: [
-      p('basicConfig', 'body', true, 'object', 'name / code / status / objectId / lifecycleId / workflowType / isSingleRecord'),
+      p(
+        'basicConfig',
+        'body',
+        true,
+        'object',
+        'name / code / status / objectId / lifecycleId / workflowType / isSingleRecord / objectLayoutCode（从零建流程时 UI 必传，取对象默认布局 code）',
+      ),
       p('variables', 'body', false, 'array'),
     ],
     example: {
       basicConfig: {
+        objectLayoutCode: 'computerized_system_authorization_base_layout__ak',
         name: '变更审批流',
         code: 'change_approval',
         status: 10,
@@ -1013,9 +1020,11 @@ export const CAPABILITIES: Capability[] = [
       },
       variables: [],
     },
-    returns: 'data.basicConfig.id（= workflowConfigId）与 data.basicConfig.workflowBasicId（两个 id 别混用）。',
+    returns:
+      'data.basicConfig.id（= workflowConfigId）与 data.basicConfig.workflowBasicId（两个 id 别混用）；同一响应还带 variables 与拼写为 aciton 的字段（平台原样）。',
     notes: [
-      'status=10 草稿；加步骤前必须先切到 40 编辑中；发布用 ChangeWorkflowBasicStatus 置 status=20。',
+      'status=10 的草稿可以直接加节点、改节点、直接发布，不用先切 40；只有「已启用(20)的流程要再改」才必须先 workflow.update 开 40 草稿，改完再发布那个新 id。',
+      '本接口会自动建 开始(stepType 10, sort 1) 与 结束(stepType 20, sort 10000) 两个节点，code 由工作流 code 派生：`…__c` → `…_Start__c` / `…_End__c`。所以没有「新建开始节点」这种调用，workflow.start.update 只是往已存在的开始节点上挂控件。',
       'isAllowTrigger 只对应「允许从进入动作和事件动作自动启动」：提醒流设为 true；用户动作/状态按钮拉起的审批流保持 false（aa__c 实测 false），不要为了让流程出现在进入动作下拉或为了签名而误开——该开关启用后不可取消。',
       'isEnable 不是发布开关：aa__c 与 df__c 发布后 isEnable 仍为 false，以 status=20 为准。',
       '工作流不会自己触发：审批流由对象/状态上的动作（behaviorType 7）拉起，提醒流由进入动作拉起；同一对象多条已发布流程可并存。',
@@ -1261,6 +1270,7 @@ export const CAPABILITIES: Capability[] = [
       'targetType=7 表示"上一步的按钮"；logicType 40/41 对应按钮的两种结果。',
       'logicValue 是带双引号的 UUID 字符串，写成裸 UUID 会不生效。',
       'rules 里的 nextStepId 是"满足时"，stepDecision.nextStepId 是 else。',
+      'details[].targetId 填**按钮所属那一步的 stepId**（不是按钮 id），targetCode 同步填该步 code；2026-11-25 tulmed 实测 targetId=f6e81732-…（上一步审批节点）、targetCode=Task_Supervisor_Approval__c。',
     ],
   },
   {
@@ -1304,7 +1314,11 @@ export const CAPABILITIES: Capability[] = [
       },
     },
     returns: 'data.step。',
-    notes: ['behaviorType 9 = 改生命周期状态（behaviorValue.statusId）；7 = 触发工作流（behaviorValue.workflowId 填 workflowBasicId）。'],
+    notes: [
+      'behaviorType 9 = 改本对象生命周期状态（behaviorValue.statusId）；7 = 触发工作流（behaviorValue.workflowId 填 workflowBasicId）；46 = 修改相关对象生命周期状态（behaviorValue: relationId / relatedObjectId / relationType:1 / targetStatusId / isSetCondition:false / filterStatusIds:[]）。',
+      '一个动作节点可以挂多个动作：stepAction.actions[] 每项是一组要一次执行的动作，configs[] 里可以放多个 behaviorType（顺序执行）。',
+      '2026-11-25 联邦制药 tulmed 环境实测：AddWorkflowActionStep 建「修改状态待审核」时同一 actions[0].configs 里同时给了 behaviorType 9 与 46。',
+    ],
   },
   {
     id: 'workflow.start.update',
@@ -1378,8 +1392,13 @@ export const CAPABILITIES: Capability[] = [
         ],
       },
     },
-    returns: 'data: true。',
-    notes: ['controlConfig.value 是 participantConfig 的 JSON 字符串（字符串，不是对象）。', '全量覆盖：先 GetWorkflowStepControls 读回再加。'],
+    returns: 'data.step（服务端回显的完整开始节点，不是 data:true）。',
+    notes: [
+      'controlConfig.value 是 participantConfig 的 JSON 字符串（字符串，不是对象）。',
+      '全量覆盖：先 GetWorkflowStepControls 读回再加。',
+      '开始节点由 workflow.create 自动建好（code `…_Start__c`、sort 1、stepType 10），本接口只挂/改 startUpControls，没有「新建开始节点」的调用；ctrlType 20 是参与者控件（participantConfig: selectUserType / allowRoleIds / approveMatrix）。',
+      '2026-11-25 tulmed 实测：从零建流程时 UI 会随加控件多次调用本接口（startUpControls 1→2→4 个），每次都是整份覆盖。',
+    ],
   },
   {
     id: 'workflow.task.update',
@@ -1402,7 +1421,7 @@ export const CAPABILITIES: Capability[] = [
         stepTaskApprovals: [],
       },
     },
-    returns: 'data: true。',
+    returns: 'data.step（服务端回显的完整节点，不是 data:true）。',
     notes: [
       'stepTaskApprovals 传 [] 会删光按钮，改按钮时保留原数组。',
       '节点通知模板在 step.stepTaskConfig.notifyTemplateId（填 notice.template.create / notice.template.list 给的模板 id）；notifyTemplateCode 留空，提醒节点同时给 isNotifyTaskType: true。',
@@ -1429,7 +1448,7 @@ export const CAPABILITIES: Capability[] = [
         stepDecision: { rules: [], nextStepId: '<elseNextStepId>' },
       },
     },
-    returns: 'data: true。',
+    returns: 'data.step（服务端回显的完整节点，不是 data:true）。',
     notes: ['rules 传 [] 等于清空全部分支。'],
   },
   {
@@ -1452,8 +1471,11 @@ export const CAPABILITIES: Capability[] = [
         stepAction: { belongType: 3, actions: [] },
       },
     },
-    returns: 'data: true。',
-    notes: ['actions 传 [] 会清空动作。'],
+    returns: 'data.step（服务端回显的完整节点，不是 data:true）。',
+    notes: [
+      'actions 传 [] 会清空动作。',
+      '一个动作节点可挂多个动作：actions[] 每项是独立一组（configs[] 里可多 behaviorType，顺序执行），读回后整份回写即可保留。',
+    ],
   },
   {
     id: 'workflow.step.copy',
@@ -1477,6 +1499,10 @@ export const CAPABILITIES: Capability[] = [
       stepId: '<stepId>',
     },
     returns: 'data: true（不返回新 stepId，需再查 GetWorkflowSteps 按 code 找）。',
+    notes: [
+      '只传 stepName / stepCode / workflowConfigId / stepId（被复制的源节点），节点类型、按钮、参与者配置、表单控件全部原样继承；复制完要复核 code 与 nextStepId 链路。',
+      '2026-11-25 tulmed 实测：从「任务：上级审批」复制出「任务：系统授权人审批」，body 158B→响应 `data:true`。',
+    ],
   },
   {
     id: 'workflow.step.delete',
