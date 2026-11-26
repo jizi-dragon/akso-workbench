@@ -677,6 +677,43 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 }
 ```
 
+### lifecycle.useraction.update 更新用户动作
+
+> 更新某个状态上已有用户动作（按钮）的名称、code、排序或绑定流程；改按钮必须走这条能力并留下审批记录。
+
+**返回**：data: true。
+
+**要点**
+
+- `actions` 是完整数组，不是增量；先 `lifecycle.useraction.list` 读出，再只改目标按钮。
+- 改流程只需替换该按钮 `configs[0].behaviorValue.workflowId`，填 workflowBasicId。
+- 该接口不会创建或删除按钮；不要再用直接 PATCH 绕过审批。
+
+**案例**
+
+#### 案例 · 更新按钮流程绑定
+
+```json
+{
+  "id": "<userActionId>",
+  "lifecycleStatusId": "<statusId>",
+  "isEnabled": true,
+  "actions": [
+    {
+      "name": "提交",
+      "code": "submit",
+      "configs": [
+        {
+          "behaviorType": 7,
+          "behaviorValue": { "workflowId": "<workflowBasicId>" },
+          "sort": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
 ### query.lifecycle.status.config.list 读生命周期状态配置
 
 > 读生命周期状态的配置详情，补足 openapi 状态列表没有的 `isEnabled` / `sort`。**2026-11-25 标准验证环境复测已入账。**

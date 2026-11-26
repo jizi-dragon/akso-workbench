@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { validateBlueprint, type Blueprint } from './blueprint.ts'
 import { validateTaskBindings, type BindingContext } from './bindings.ts'
 import {
+  CONFIG_ENGINE_BUILD,
   applyPlan,
   buildPlan,
   consumeApproval,
@@ -49,6 +50,7 @@ export interface Task {
   taskId: string
   createdAt: number
   expiresAt: number
+  engineBuild?: string
   name: string
   env: string
   target: { baseUrl: string; accountId: string | null; account: string }
@@ -76,6 +78,7 @@ export function taskHash(task: Task): string {
   const material = {
     env: task.env,
     target: task.target,
+    engineBuild: task.engineBuild ?? null,
     stages: task.stages.map((stage) => ({ name: stage.name, blueprint: stage.blueprint })),
   }
   return createHash('sha256').update(stableStringify(material)).digest('hex')
@@ -145,6 +148,7 @@ export function createTask(session: EgmpSession, input: { name: string; stages: 
     taskId: newTaskId(),
     createdAt: Date.now(),
     expiresAt: Date.now() + TASK_TTL_MS,
+    engineBuild: CONFIG_ENGINE_BUILD,
     name: input.name,
     env,
     target: { baseUrl: session.baseUrl, accountId: session.accountId ?? null, account: session.account },
@@ -225,6 +229,12 @@ export async function applyTask(
 ): Promise<Task> {
   const task = loadTask(workspaceRoot, taskId)
   if (task === null) throw new EgmpError(`任务不存在：${taskId}`, { code: 'TASK_MISSING' })
+  if (task.engineBuild !== CONFIG_ENGINE_BUILD) {
+    throw new EgmpError(
+      `这条任务由旧引擎生成（${task.engineBuild ?? '未标记'}，当前 ${CONFIG_ENGINE_BUILD}），已拒绝执行；请重载插件后重新生成任务`,
+      { code: 'ENGINE_STALE' },
+    )
+  }
   if (Date.now() > task.expiresAt) throw new EgmpError('任务已过期（60 分钟），请重新生成', { code: 'TASK_EXPIRED' })
   if (task.status === 'applied') return task
 

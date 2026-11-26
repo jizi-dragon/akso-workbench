@@ -14,7 +14,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CAPABILITIES } from './capabilities.ts'
-import { applyPlan, loadPlan, planBlueprint, planHash, recordApprovalDecision, saveApproval, type Plan, type Step } from './engine.ts'
+import { CONFIG_ENGINE_BUILD, applyPlan, loadPlan, planBlueprint, planHash, recordApprovalDecision, saveApproval, type Plan, type Step } from './engine.ts'
 import { applyTask, createTask, loadTask, mergeTaskPreview, parseTaskInput, previewTaskPlans, saveTask, taskHash, type Task } from './task.ts'
 import type { ApprovalBusinessGroup, ApprovalGate, ApprovalReport, ApprovalReportStep } from './approval.ts'
 import { attachApprovalReview, finalizeApprovalReview, loadApprovalReview, reviewMatchesPlan, type ApprovalReviewInput } from './approval-review.ts'
@@ -299,6 +299,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
           return {
             ok: true,
             taskId: task.taskId,
+            engineBuild: task.engineBuild,
             expiresAt: task.expiresAt,
             target: task.target,
             summary: merged.summary,
@@ -327,6 +328,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
         return {
           ok: true,
           planId: plan.planId,
+          engineBuild: plan.engineBuild,
           expiresAt: plan.expiresAt,
           target: plan.target,
           summary: plan.summary,
@@ -429,6 +431,12 @@ async function gateApproval(
   return { ok: true, reviewPath }
 }
 
+/** 审批文档生成前就挡住旧构建，避免先生成一份注定不能执行的审核文档。 */
+function stalePlanBuild(build: string | undefined): string | null {
+  if (build === CONFIG_ENGINE_BUILD) return null
+  return `这份计划由旧引擎生成（${build ?? '未标记'}，当前 ${CONFIG_ENGINE_BUILD}），已拒绝执行；请重载插件后重新生成计划`
+}
+
 async function runTaskApply(
   deps: ConfigToolDeps,
   session: EgmpSession,
@@ -436,6 +444,8 @@ async function runTaskApply(
   input: { review?: ApprovalReviewInput; prepareOnly?: boolean; reviewPath?: string },
   exec: unknown,
 ): Promise<unknown> {
+  const stale = stalePlanBuild(task.engineBuild)
+  if (stale !== null) return { ok: false, error: stale }
   let plans: Plan[]
   try {
     plans = await previewTaskPlans(session, task)
@@ -571,6 +581,9 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
 
       const plan = loadPlan(requireWorkspaceRoot(exec, deps.dshHome), planId)
       if (plan === null) return { ok: false, error: `计划不存在：${planId}` }
+
+      const stale = stalePlanBuild(plan.engineBuild)
+      if (stale !== null) return { ok: false, error: stale }
 
       const writes = plan.steps.filter((step) => step.action !== 'skip')
       const needsApproval = writes.length > 0 && deps.requireApproval()

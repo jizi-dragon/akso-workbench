@@ -19,6 +19,35 @@ import type { Blueprint, CallResource, FieldResource, FormLayoutResource, ListLa
 import { validateBlueprint } from './blueprint.ts'
 import { resolveBindings, validatePlanBindings, type BindingContext } from './bindings.ts'
 
+/** 引擎语义版本。计划会带上它，apply 时不一致就拒绝，防止“新代码的计划被旧 host 执行”。 */
+export const CONFIG_ENGINE_BUILD = '2026-11-26.1'
+
+/**
+ * 这些写能力必须有回读结论；`unverified` 视为失败并阻断后续步骤。
+ * 工作流/状态按钮没有可靠回读时，宁可停下让人看，也不继续发布错误连线。
+ */
+const STRICT_VERIFY_CAPABILITIES: ReadonlySet<string> = new Set([
+  'workflow.create',
+  'workflow.update',
+  'workflow.delete',
+  'workflow.start.update',
+  'workflow.task.update',
+  'workflow.decision.update',
+  'workflow.action.update',
+  'workflow.task.add',
+  'workflow.decision.add',
+  'workflow.action.add',
+  'workflow.status.change',
+  'lifecycle.useraction.create',
+  'lifecycle.useraction.update',
+  'lifecycle.enteraction.create',
+  'lifecycle.enteraction.update',
+])
+
+export function requiresVerifiedWrite(capabilityId: string): boolean {
+  return STRICT_VERIFY_CAPABILITIES.has(capabilityId)
+}
+
 export interface Step {
   id: string
   kind: ResourceKind
@@ -45,6 +74,8 @@ export interface Plan {
   planId: string
   createdAt: number
   expiresAt: number
+  /** 生成计划的引擎版本；旧计划可能没有，apply 只拒绝“有值且不一致”的计划。 */
+  engineBuild?: string
   env: string
   /** 生成计划时的目标环境与账号（旧计划文件没有这个字段 → 拒绝执行）。 */
   target?: PlanTarget
@@ -395,6 +426,78 @@ export function normalizeStepCall(
  * 只把蓝图算成计划，**不落盘、不发审批**。任务级审批会按阶段重新算一遍（顺序执行，
  * 后一阶段要用前一阶段刚建出来的对象/字段），所以这里必须能单独拿出来用。
  */
+/**
+ * 审批前的静态预检：会查平台的，必须先查；不会因为“先建了再说”浪费一次审批。
+ * 只做命名/编码/审核签名这类确定性问题，不替 apply 做差异判断。
+ */
+async function preflightPlan(session: EgmpSession, steps: Step[]): Promise<void> {
+  for (const step of steps) {
+    if (step.action === 'skip') continue
+    const params = (step.params ?? {}) as Record<string, unknown>
+
+    if (step.capabilityId === 'workflow.create') {
+      const basic = (params.basicConfig ?? {}) as Record<string, unknown>
+      const name = typeof basic.name === 'string' ? basic.name.trim() : ''
+      const code = typeof basic.code === 'string' ? basic.code.trim() : ''
+      if (name === '' || code === '') continue
+      const seen = new Map<string, Record<string, unknown>>()
+      for (const keyword of [name, code]) {
+        const json = await invokeCapability(session, 'workflow.page.list', {
+          pageIndex: 1,
+          pageSize: 100,
+          keywords: keyword,
+          keyword,
+          filters: [],
+        })
+        for (const row of rowsOf(json)) seen.set(`${String(row.id ?? '')}:${String(row.versionNo ?? '')}`, row)
+      }
+      const hit = [...seen.values()].find((row) => String(row.name ?? '').trim() === name || String(row.code ?? '').trim() === code)
+      if (hit !== undefined) {
+        throw new EgmpError(
+          `工作流名称或 code 已存在：${String(hit.name ?? '')} / ${String(hit.code ?? '')}（status=${String(hit.status ?? '?')}，version=${String(hit.versionNo ?? '?')}）；请先换唯一名称/code，或在已有流程上用 workflow.update`,
+          { code: 'WORKFLOW_DUPLICATE' },
+        )
+      }
+    }
+
+    if (step.capabilityId === 'lifecycle.useraction.create') {
+      const statusId = typeof params.lifecycleStatusId === 'string'
+        ? params.lifecycleStatusId
+        : typeof params.belongId === 'string' ? params.belongId : ''
+      const codes = (Array.isArray(params.actions) ? (params.actions as Array<Record<string, unknown>>) : [])
+        .map((action) => String(action.code ?? '').trim())
+        .filter((code) => code !== '')
+      if (statusId === '' || codes.length === 0) continue
+      const json = await invokeCapability(session, 'lifecycle.useraction.list', { statusId })
+      const existing = new Set(rowsOf(json).map((row) => String(row.code ?? '').trim()))
+      const duplicate = codes.filter((code) => existing.has(code))
+      if (duplicate.length > 0) {
+        throw new EgmpError(
+          `状态上已存在用户动作 code：${duplicate.join('、')}；创建接口不合并，重跑会多按钮，请改用 update 或换 code`,
+          { code: 'USER_ACTION_DUPLICATE' },
+        )
+      }
+    }
+
+    if (step.capabilityId === 'workflow.task.add' || step.capabilityId === 'workflow.task.update') {
+      const task = (params.step ?? {}) as Record<string, unknown>
+      const config = (task.stepTaskConfig ?? {}) as Record<string, unknown>
+      const approvals = Array.isArray(task.stepTaskApprovals) ? (task.stepTaskApprovals as Array<Record<string, unknown>>) : []
+      if (config.isRequireApproval === true && approvals.length > 0) {
+        const unsigned = approvals
+          .filter((approval) => approval.isHaveSign !== true || approval.isRequireSign !== true)
+          .map((approval) => String(approval.name ?? '未命名按钮'))
+        if (unsigned.length > 0) {
+          throw new EgmpError(
+            `审核任务按钮必须配置电子签名且勾选必填：${unsigned.join('、')}；同意/拒绝都要签名，拒绝还需备注必填`,
+            { code: 'TASK_SIGNATURE_MISSING' },
+          )
+        }
+      }
+    }
+  }
+}
+
 export async function buildPlan(session: EgmpSession, input: Blueprint): Promise<Plan> {
   const validation = validateBlueprint(input)
   if (!validation.valid) {
@@ -634,6 +737,8 @@ export async function buildPlan(session: EgmpSession, input: Blueprint): Promise
   const bindingErrors = validatePlanBindings(steps)
   if (bindingErrors.length > 0) throw new EgmpError(`计划输出绑定校验失败：${bindingErrors.join('；')}`)
 
+  await preflightPlan(session, steps)
+
   const summary = { create: 0, update: 0, skip: 0, irreversible: 0 }
   for (const step of steps) {
     if (step.action === 'create') summary.create += 1
@@ -645,6 +750,7 @@ export async function buildPlan(session: EgmpSession, input: Blueprint): Promise
     planId: newId('pln'),
     createdAt: Date.now(),
     expiresAt: Date.now() + 30 * 60 * 1000,
+    engineBuild: CONFIG_ENGINE_BUILD,
     env: input.env ?? '',
     target: { baseUrl: session.baseUrl, accountId: session.accountId ?? null, account: session.account },
     summary,
@@ -929,7 +1035,7 @@ export async function verifyCallCapability(
     return { verified: true, message: `回读布局：分区 ${gotSections}、控件 ${gotControls.length}` }
   }
 
-  if (capabilityId === 'lifecycle.useraction.create') {
+  if (capabilityId === 'lifecycle.useraction.create' || capabilityId === 'lifecycle.useraction.update') {
     const statusId = typeof params.lifecycleStatusId === 'string' ? params.lifecycleStatusId : ''
     const codes = (Array.isArray(params.actions) ? (params.actions as Array<Record<string, unknown>>) : [])
       .map((action) => String(action.code ?? ''))
@@ -1331,6 +1437,12 @@ export interface ApplyOptions {
 export async function applyPlan(session: EgmpSession, planId: string, dshHome: string, options: ApplyOptions = {}, workspaceRoot: string = dshHome): Promise<Plan> {
   const plan = loadPlan(workspaceRoot, planId)
   if (plan === null) throw new EgmpError(`计划不存在：${planId}`)
+  if (plan.engineBuild !== CONFIG_ENGINE_BUILD) {
+    throw new EgmpError(
+      `这个计划由旧引擎生成（${plan.engineBuild ?? '未标记'}，当前 ${CONFIG_ENGINE_BUILD}），已拒绝执行；请重载插件后重新生成计划`,
+      { code: 'ENGINE_STALE' },
+    )
+  }
   if (Date.now() > plan.expiresAt) throw new EgmpError('计划已过期（30 分钟），请重新生成')
   if (plan.status === 'applied') return plan
 
@@ -1383,19 +1495,28 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
       const { message, after } = await applyStep(ctx, step, res, bindings)
       if (after !== undefined) stepOutputs[step.id] = after
       const verify = await verifyStep(ctx, step, res)
+      const strict = requiresVerifiedWrite(step.capabilityId)
+      const blocked = strict && !verify.verified
       const result: StepResult = {
         stepId: step.id,
         title: step.title,
         kind: step.kind,
         action: step.action,
-        status: verify.verified ? 'verified' : 'unverified',
-        message: `${message}；${verify.message}`,
+        status: blocked ? 'failed' : verify.verified ? 'verified' : 'unverified',
+        message: blocked
+          ? `${message}；回读未通过，已阻断后续步骤：${verify.message}`
+          : `${message}；${verify.message}`,
         traceId: null,
         durationMs: Date.now() - t0,
         after,
       }
       plan.results.push(result)
       audit(dshHome, plan, step, result)
+      if (blocked) {
+        plan.status = 'failed'
+        savePlan(workspaceRoot, plan)
+        return plan
+      }
     } catch (error) {
       // 平台有「写进去了却回未授权」的端点（2026-10-27 实测 `picklist.save`：HTTP 200 + code=401
       // Unauthorized，但数据已落库）。所以失败也要回读一次：确认已是期望态就不算失败，

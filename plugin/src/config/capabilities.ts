@@ -768,6 +768,41 @@ export const CAPABILITIES: Capability[] = [
     ],
   },
   {
+    id: 'lifecycle.useraction.update',
+    domain: 'lifecycle',
+    title: '更新用户动作',
+    description: '更新某个状态上已有用户动作（按钮）的名称、code、排序或绑定流程；改 already-published 按钮必须走这条能力并留下审批记录。',
+    method: 'PATCH',
+    path: '/api/config/lifecycle/UserAction/Update',
+    risk: 'medium',
+    evidence: 'verified',
+    params: [
+      p('id', 'body', true, 'string', '用户动作 id'),
+      p('lifecycleStatusId', 'body', false, 'string', '所属状态 id，回读用'),
+      p('actions', 'body', true, 'array', '完整动作数组；改哪个按钮就替换其 name/code/configs'),
+      p('isEnabled', 'body', false, 'boolean'),
+      p('sort', 'body', false, 'number'),
+    ],
+    example: {
+      id: '<userActionId>',
+      lifecycleStatusId: '<statusId>',
+      isEnabled: true,
+      actions: [
+        {
+          name: '提交',
+          code: 'submit',
+          configs: [{ behaviorType: 7, behaviorValue: { workflowId: '<workflowBasicId>' }, sort: 0 }],
+        },
+      ],
+    },
+    returns: 'data: true。',
+    notes: [
+      '全量更新：actions 是完整数组，不是增量；先 lifecycle.useraction.list 读出，再只改要改的那个按钮。',
+      '该接口不会创建新按钮，也不会删除未列出的旧按钮；删按钮需平台侧另行处理。',
+      '审批记录必须绑定这条更新；不要再用直接 PATCH 绕过 config_apply。',
+    ],
+  },
+  {
     id: 'lifecycle.useraction.get',
     domain: 'lifecycle',
     title: '读状态用户动作的权限角色',

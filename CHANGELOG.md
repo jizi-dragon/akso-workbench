@@ -1,5 +1,18 @@
 # 变更记录
 
+## 0.2.17（2026-11-26）
+
+**配置引擎硬门禁：旧计划拒绝、回读失败阻断、审批前查重/查签名**
+
+- 现象：工作流用了至少 8 次间断审批，发布后才发现 `action_pending` 仍指向结束；apply 结果把关键写入标成 `unverified` 却继续后续步骤；拉取 0.2.16 后只 build 未 reload，运行时仍是旧引擎。
+- 改法：
+  - `engine.ts` 新增 `CONFIG_ENGINE_BUILD='2026-11-26.1'`，每个 Plan 写入 `engineBuild`；`applyPlan` 对旧构建生成或旧任务直接抛 `ENGINE_STALE`。`task.ts` 的 Task 同样带 `engineBuild`。
+  - 新增 `STRICT_VERIFY_CAPABILITIES` / `requiresVerifiedWrite`：workflow.create/update/delete、start/task/decision/action.update、task/decision/action.add、status.change、lifecycle.useraction/enteraction create/update 的回读 `unverified` 视为失败，立即停止，不再继续发布。
+  - `buildPlan` 增加 `preflightPlan`：`workflow.create` 按 name/code 查重（`WORKFLOW_DUPLICATE`）、`lifecycle.useraction.create` 按状态查重（`USER_ACTION_DUPLICATE`）、审核任务每个按钮必须 `isHaveSign && isRequireSign`（`TASK_SIGNATURE_MISSING`）。
+  - 新增 `lifecycle.useraction.update`（PATCH `/api/config/lifecycle/UserAction/Update`），已发布按钮改走计划/审批，不再直连 PATCH。
+- 测试：旧计划/旧任务拒绝、严格/非严格能力分类、任务级 output binding 端到端；`npm run check` 全绿（capture 31/31、插件 146/146、build）。
+- 诚实边界：`preflightPlan` 的查重依赖 `workflow.page.list` 的 keywords 命中；极大数据量下可能分页漏检，但正常命名查重足够。
+
 ## 0.2.16（2026-11-26）
 
 **配置计划不再对「没有判据」的 step 一律报人工确认：从 5 类扩到 14 类写能力都能回读**

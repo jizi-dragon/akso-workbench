@@ -24,7 +24,7 @@ import { test } from 'node:test'
 import { errorMessage, uiState } from '../src/cloud.ts'
 import { saveFailedAnalysisHistory } from '../src/analysis-history.ts'
 import { CAPABILITIES } from '../src/config/capabilities.ts'
-import { applyPlan, normalizeStepCall, planBlueprint, saveApproval, savePlan, verifyCallCapability } from '../src/config/engine.ts'
+import { CONFIG_ENGINE_BUILD, applyPlan, normalizeStepCall, planBlueprint, saveApproval, savePlan, verifyCallCapability } from '../src/config/engine.ts'
 import { attachApprovalReview, finalizeApprovalReview, reviewMatchesPlan } from '../src/config/approval-review.ts'
 import type { ApprovalReport } from '../src/config/approval.ts'
 import { writeEgmpSession } from '../src/config/session.ts'
@@ -803,6 +803,7 @@ function planFixture(
     planId,
     createdAt: Date.now(),
     expiresAt: Date.now() + 30 * 60 * 1000,
+    engineBuild: CONFIG_ENGINE_BUILD,
     env: 'test',
     target: { baseUrl, accountId: ACCOUNT_ID, account: 'tester' },
     summary: { create: overrides.create, update: overrides.update, skip: 0, irreversible: overrides.irreversible },
@@ -1995,6 +1996,7 @@ test('选项集回读：平台留下的旧选项不算失败，只在消息里�
       planId: 'pln_extra',
       createdAt: Date.now(),
       expiresAt: Date.now() + 30 * 60 * 1000,
+      engineBuild: CONFIG_ENGINE_BUILD,
       env: 'test',
       target: { baseUrl: egmp.baseUrl, accountId: ACCOUNT_ID, account: 'tester' },
       summary: { create: 0, update: 1, skip: 0, irreversible: 0 },

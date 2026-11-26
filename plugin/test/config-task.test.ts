@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { saveApproval, type Plan } from '../src/config/engine.ts'
+import { CONFIG_ENGINE_BUILD, applyPlan, buildPlan, requiresVerifiedWrite, saveApproval, savePlan, type Plan } from '../src/config/engine.ts'
 import {
   applyTask,
   createTask,
@@ -40,6 +40,7 @@ function planFixture(planId: string, steps: Plan['steps']): Plan {
     planId,
     createdAt: Date.now(),
     expiresAt: Date.now() + 30 * 60 * 1000,
+    engineBuild: CONFIG_ENGINE_BUILD,
     env: 'test',
     target: { baseUrl: 'https://example.test', accountId: 'a_1', account: 'lyy' },
     summary: { create: 0, update: 0, skip: 0, irreversible: 0 },
@@ -175,6 +176,79 @@ test('taskHash：绑定模板参与指纹，改引用就变', () => {
     stages: [{ name: 's1', blueprint: withRef('steps.s1.after') }, { name: 's2', blueprint: withRef('stages.1.steps.s2.after') }],
   })
   assert.notEqual(taskHash(a), taskHash(b))
+})
+
+test('引擎版本门禁：旧计划/旧任务在写入前拒绝', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'akw-engine-gate-'))
+  try {
+    const oldPlan = { ...planFixture('pln_stale', []), engineBuild: 'old-build' }
+    savePlan(home, oldPlan)
+    await assert.rejects(applyPlan(session(), oldPlan.planId, home, { requireApproval: false }, home), /旧引擎生成|重载插件/)
+
+    const task = createTask(session(), { name: '旧任务', stages: [{ name: '阶段', blueprint: blueprint('x__c') }] })
+    task.engineBuild = 'old-build'
+    saveTask(home, task)
+    await assert.rejects(applyTask(session(), task.taskId, home, { requireApproval: false }, home), /旧引擎生成|重载插件/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('回读硬门禁：只有写工作流的严格能力才阻断 unverified', () => {
+  assert.equal(CONFIG_ENGINE_BUILD.length > 0, true)
+  assert.equal(requiresVerifiedWrite('workflow.action.update'), true)
+  assert.equal(requiresVerifiedWrite('workflow.create'), true)
+  assert.equal(requiresVerifiedWrite('lifecycle.useraction.update'), true)
+  assert.equal(requiresVerifiedWrite('picklist.save'), false)
+  assert.equal(requiresVerifiedWrite('workflow.steps.list'), false)
+})
+
+test('预检：workflow.create 同名或同 code 在建计划阶段拒绝', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    code: 0,
+    data: { datas: [{ id: 'wf_old', name: '重复流程', code: 'dup_flow__c', status: 20, versionNo: 1 }] },
+  }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch
+  try {
+    const input = {
+      version: '1',
+      env: 'test',
+      resources: [{
+        kind: 'call',
+        capability: 'workflow.create',
+        params: {
+          basicConfig: {
+            name: '重复流程', code: 'dup_flow__c', status: 10, objectId: 'obj', lifecycleId: 'lc',
+            workflowType: 10, isSingleRecord: true, objectLayoutCode: 'obj_layout',
+          },
+        },
+      }],
+    } as unknown as Blueprint
+    await assert.rejects(buildPlan(session(), input), /名称或 code 已存在/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('预检：审核任务按钮缺必签在计划阶段拒绝', async () => {
+  const input = {
+    version: '1',
+    env: 'test',
+    resources: [{
+      kind: 'call',
+      capability: 'workflow.task.add',
+      params: {
+        step: {
+          stepTaskConfig: { isRequireApproval: true, name: '审核' },
+          stepTaskApprovals: [
+            { name: '同意', isHaveSign: true, isRequireSign: false },
+            { name: '拒绝', isHaveSign: true, isRequireSign: true },
+          ],
+        },
+      },
+    }],
+  } as unknown as Blueprint
+  await assert.rejects(buildPlan(session(), input), /必须配置电子签名/)
 })
 
 test('applyTask：跨阶段 $ref 在执行时填入前序返回', async () => {

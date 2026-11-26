@@ -78,6 +78,11 @@
   （任务跨阶段，阶段号从 1 开始）。只能引用更早步骤/已执行阶段；引用模板会进 `planHash`/`taskHash`,
   执行时按真实返回解析，缺失/未来步骤/未来阶段/坏路径都在计划或执行前报错。任务级多段依赖（工作流拿
   上一步的 id、字段拿对象 id）应装进一条任务、只审一次，不要为每个 id 重开一张审批。
+- **配置引擎硬门禁（2026-11-26）**：计划/任务都带 `engineBuild`，与当前源码常量不一致时拒绝执行；
+  工作流/状态按钮等严格写入的 `unverified` 回读视为失败并立即停止，不再继续发布。`buildPlan` 还会预检：
+  `workflow.create` 按 name/code 查重（`WORKFLOW_DUPLICATE`）、`lifecycle.useraction.create` 按状态查重
+  （`USER_ACTION_DUPLICATE`）、`workflow.task.add/update` 的审核按钮必须 `isHaveSign && isRequireSign`
+  （`TASK_SIGNATURE_MISSING`）。改已发布按钮用 `lifecycle.useraction.update`，不要再直接 PATCH 绕过审批。
 - 审核文档分两类：`kind:'create'` 用于大规模创建/调整，文件名 `<任务名>-YYYYMMDD-HHmmss.md`，含完整执行明细；
   `kind:'update'` 用于已执行任务的小范围优化/更新，文件名 `<任务名>-更新-YYYYMMDD-HHmmss.md`，篇幅更短，
   只含任务概述/调整计划/预期 checklist/本次操作清单，可带 `previousReviewPath` 与 `reason`。
