@@ -118,6 +118,15 @@
   只有严格写入（workflow.*、state 按钮等）回读未通过才停。
 - **重试只对瞬时错误**：`isTransientFailure` = HTTP 502/503/504 或 `ECONNRESET/ETIMEDOUT/EAI_AGAIN/
   socket hang up/fetch failed`；只重试**一次**。写成功却回 401 的那类由回读兜底，**绝不重试**（会写两遍）。
+- **小错就地修（`AUTO_REPAIR`）**：回读没过、或写入报错时，若这一步属于**幂等写入**
+  （`canAutoRepair`：field/picklist/layout/listlayout/lifecycle.status.update/lifecycle.useraction.update/
+  workflow.update/workflow.status.change/四类 `workflow.*Step.update`），引擎按**原审批范围**重放一次
+  （等 400 ms 后重放 + 重新回读），不回到审批窗、不扩大写入范围；通过记 `AUTO_REPAIR_OK`，
+  仍不过记 `AUTO_REPAIR_FAILED`。新建类（`*.create` / `*.add`）**绝不自动重放**。
+- **严格验证必须对得上判据**：单测断言「严格集 ⊆ 有回读判据的能力集」（`hasReadbackCriteria`），
+  否则会出现「要求严格回读 → 却没判据 → 永远 failed」的死锁。新增严格能力时必须同时补判据。
+- **接口的“假成功”要写进判据**：`lifecycle.status.update` 的 `sort` 平台不落库（2026-11-26 三次实测），
+  现在提交了 `sort` 就必须核回来，核不上记成不一致（非严格，不阻断，台账留痕）。
 - **执行后确认**：`engine.verifyAppliedPlan(session, plan)` 用全新查询上下文把每一步重新读一遍，
   产出 `VerificationReport`；apply 结束自动跑一次并写 `plan.verification`。菜单已有回读判据
   （`menu.list` 按 code 核对父菜单与绑定对象），不再「需人工在控制台确认」；工作流另外跑

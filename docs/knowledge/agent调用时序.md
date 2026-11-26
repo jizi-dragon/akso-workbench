@@ -296,6 +296,13 @@ checkpoint）；**写成功但回读没确认**记 `unverified`，继续后面�
 （`$DSH_HOME/akso-workbench/config-audit/issues-<YYYY-MM>.jsonl` + journal 的 `issue.recorded`），
 随返回值带 `issues[]`，不打断施工。
 
+**小错就地修（`AUTO_REPAIR`）**：回读没过、或写入报错时，如果这一步是**幂等写入**（`field.save`、
+`picklist.save`、`layout.save`、`listlayout.*`、`lifecycle.status.update`、`lifecycle.useraction.update`、
+`workflow.update`、`workflow.status.change`、四类 `workflow.*Step.update`），引擎按**原审批范围**重放
+一次（等 400 ms 后重放 + 重新回读），不回到审批窗、不扩大写入范围；重放通过记 `AUTO_REPAIR_OK`，
+仍不过记 `AUTO_REPAIR_FAILED` 并按原规则处理。新建类（`*.create` / `*.add`）**绝不自动重放**——
+多建一条记录的代价比多问一次人大得多。
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -327,7 +334,12 @@ sequenceDiagram
                     alt 这次对上
                         H->>F: 记 verified + issue VERIFY_EVENTUAL
                     else 仍然没确认
-                        H->>F: config-audit 记 unverified（严格写入则 failed 并停）
+                        H->>H: 幂等写入？按原审批范围重放一次（记 issue AUTO_REPAIR）
+                        alt 重放后回读通过
+                            H->>F: 记 verified + issue AUTO_REPAIR_OK
+                        else 仍然没确认
+                            H->>F: config-audit 记 unverified（严格写入则 failed 并停）
+                        end
                     end
                 end
             else 写入报错
@@ -335,8 +347,13 @@ sequenceDiagram
                 alt 回读确认已生效
                     H->>F: config-audit 记 verified + issue WRITE_ERROR_BUT_APPLIED
                 else 回读也没确认
-                    H->>F: 记 failed，保存计划（checkpoint）
-                    H-->>A: ok=false / status=failed / results
+                    H->>H: 幂等写入？自动重放一次（记 issue AUTO_REPAIR）
+                    alt 重放后回读通过
+                        H->>F: 记 verified + issue AUTO_REPAIR_OK
+                    else 仍然没确认
+                        H->>F: 记 failed，保存计划（checkpoint）
+                        H-->>A: ok=false / status=failed / results
+                    end
                 end
             end
         end
@@ -354,6 +371,13 @@ sequenceDiagram
   计划整体仍可能是 `applied`，要人工核对这一步。
 - **菜单也有回读判据了**：`menu.list`（`?menuType=1`）按 code 找菜单，核对父菜单与绑定对象，
   不再返回「平台无按 code 回查菜单的接口，需人工确认」。
+
+两条「别信接口返回」的实测教训：
+
+- `lifecycle.status.update` 的 `sort` 是**假成功**：2026-11-26 三次改排序都返回成功，`Status/GetList`
+  读回来还是旧值。现在只要提交了 `sort` 就必须核回来，核不上记成不一致（非严格，不阻断，但台账留痕）。
+- 「严格验证」和「有没有判据」必须对齐：单测断言严格集 ⊆ 有回读判据的能力集，否则会出现
+  「要求严格回读 → 却没判据 → 永远 failed」的死锁。
 
 ### 5.3 任务级：多段一条任务，只审一次
 
@@ -525,7 +549,7 @@ sequenceDiagram
 | 每步 `unverified` | 写请求没报错，但回读没确认 | 可能已写 | 人工回读核对；它不阻断后续步骤，计划仍可能 `applied` |
 | `status: no-approval-needed` | 计划/任务里全是只读查询，或调试模式关了审批 | 没有写入 | 正常结果，不是错误；`approval.reason` 说明是 `read-only` 还是 `disabled` |
 | `reviewRegenerated: true` | 传的 `reviewPath` 已过期/指纹不符/文档已结束，host 按当前计划补了一份新文档 | 没有 | 正常结果，旧文档保留；把新路径告诉用户再决定要不要继续 |
-| 返回里的 `issues[]` 非空 | 回读晚一拍、瞬时 5xx 重试成功、非阻断未验证、写报错但已生效 | 视条目而定 | 不是失败；按 `code`（`VERIFY_EVENTUAL` / `TRANSIENT_RETRY` / `WRITE_ERROR_BUT_APPLIED` 等）判断要不要人工复核 |
+| 返回里的 `issues[]` 非空 | 回读晚一拍、瞬时 5xx 重试成功、幂等写入自动重放、非阻断未验证、写报错但已生效 | 视条目而定 | 不是失败；按 `code`（`VERIFY_EVENTUAL` / `TRANSIENT_RETRY` / `AUTO_REPAIR` / `AUTO_REPAIR_OK` / `WRITE_ERROR_BUT_APPLIED` 等）判断要不要人工复核 |
 
 > 表里引号中的中文是工具返回的 `error` 文本；对应的英文 code（`APPROVAL_REQUIRED`、
 > `TARGET_CHANGED` 等）是引擎内部的 `EgmpError.code`，不随工具返回，排查时按中文文本 grep。

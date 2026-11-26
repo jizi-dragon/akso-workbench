@@ -24,7 +24,7 @@ import { test } from 'node:test'
 import { errorMessage, uiState } from '../src/cloud.ts'
 import { saveFailedAnalysisHistory } from '../src/analysis-history.ts'
 import { CAPABILITIES } from '../src/config/capabilities.ts'
-import { CONFIG_ENGINE_BUILD, applyPlan, normalizeStepCall, planBlueprint, saveApproval, savePlan, verifyCallCapability } from '../src/config/engine.ts'
+import { CONFIG_ENGINE_BUILD, applyPlan, canAutoRepair, hasReadbackCriteria, normalizeStepCall, planBlueprint, requiresVerifiedWrite, saveApproval, savePlan, verifyCallCapability } from '../src/config/engine.ts'
 import { attachApprovalReview, finalizeApprovalReview, reviewMatchesPlan } from '../src/config/approval-review.ts'
 import type { ApprovalReport } from '../src/config/approval.ts'
 import { writeEgmpSession } from '../src/config/session.ts'
@@ -2604,5 +2604,133 @@ test('审批门：只有只读查询的计划/任务不弹审批窗，也不生�
     assert.match(String(appliedTask.message ?? ''), /只读/)
   } finally {
     await egmp.close()
+  }
+})
+
+test('严格验证集必须是「有回读判据」的子集：不允许再出现严格+无判据=永远失败', () => {
+  const ids = new Set(CAPABILITIES.map((cap) => cap.id))
+  const strict = CAPABILITIES.map((cap) => cap.id).filter((id) => requiresVerifiedWrite(id))
+  assert.ok(strict.length >= 10, `严格集太小了（${strict.length}），像是被误删`)
+  const withoutCriteria = strict.filter((id) => !hasReadbackCriteria(id))
+  assert.deepEqual(withoutCriteria, [], `这些能力要求严格回读，却没有判据：${withoutCriteria.join('、')}`)
+  // 死锁的另一半：strict 里若写了能力目录里不存在的 id，永远没人能验证它。
+  const ghosts = [...new Set(['lifecycle.enteraction.update'])].filter((id) => requiresVerifiedWrite(id) && !ids.has(id))
+  assert.deepEqual(ghosts, [], `严格集里有能力目录里不存在的 id：${ghosts.join('、')}`)
+  // 自动修复只对幂等写入开放，新建类绝不能重放。
+  assert.equal(canAutoRepair('workflow.create'), false)
+  assert.equal(canAutoRepair('field.save'), true)
+  assert.equal(canAutoRepair('workflow.task.update'), true)
+})
+
+test('call 步骤回读：状态排序改不动必须说出来，不能假装成功', async () => {
+  const state = {
+    rows: [{ id: 'st-1', code: 'status_draft__c', name: '草稿', lifecycleId: 'lc-1', isEnabled: true, sort: 1 }] as Array<Record<string, unknown>>,
+  }
+  const fake = await startRoutingFake((_method, path) => {
+    if (path.endsWith('/lifecycle/Status/GetList')) return { datas: state.rows }
+    return null
+  })
+  const ctx = {
+    session: { baseUrl: fake.baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() },
+    objects: new Map(),
+    fields: new Map(),
+    picklists: new Map(),
+    statuses: new Map(),
+  }
+  try {
+    const same = await verifyCallCapability(ctx, 'lifecycle.status.update', {
+      id: 'st-1',
+      code: 'status_draft__c',
+      lifecycleId: 'lc-1',
+      name: '草稿',
+      isEnabled: true,
+      sort: 1,
+    })
+    assert.equal(same?.verified, true, String(same?.message))
+
+    // 平台的真实行为：sort 返回成功但不落库 —— 必须判成不一致，并在消息里点明原因
+    const ignored = await verifyCallCapability(ctx, 'lifecycle.status.update', {
+      id: 'st-1',
+      code: 'status_draft__c',
+      lifecycleId: 'lc-1',
+      name: '草稿',
+      isEnabled: true,
+      sort: 2,
+    })
+    assert.equal(ignored?.verified, false)
+    assert.match(String(ignored?.message), /sort 提交 2、回读 1/)
+    assert.match(String(ignored?.message), /不落 sort/)
+
+    // 改名核得上就还是 verified
+    state.rows = [{ id: 'st-1', code: 'status_draft__c', name: '拟稿', lifecycleId: 'lc-1', isEnabled: true, sort: 1 }]
+    const renamed = await verifyCallCapability(ctx, 'lifecycle.status.update', {
+      id: 'st-1',
+      code: 'status_draft__c',
+      lifecycleId: 'lc-1',
+      name: '拟稿',
+      isEnabled: true,
+      sort: 1,
+    })
+    assert.equal(renamed?.verified, true, String(renamed?.message))
+  } finally {
+    await fake.close()
+  }
+})
+
+test('执行中的小错就地修：幂等写入自动重放一次，不用回去再要一次审批', async () => {
+  const state = {
+    rows: [{ code: 'material_name__c', name: '旧名' }] as Array<Record<string, unknown>>,
+    saves: 0,
+  }
+  const fake = await startRoutingFake((method, path) => {
+    if (method === 'POST' && path.endsWith('/BasicObject/SaveField')) {
+      state.saves += 1
+      // 第一次写“成功但读回来还是旧值”（平台常见），重放之后才真的生效
+      if (state.saves >= 2) state.rows = [{ code: 'material_name__c', name: '新物料名称' }]
+      return {}
+    }
+    if (path.endsWith('/BasicObject/FieldPage')) return { datas: state.rows }
+    return null
+  })
+  const home = freshHome()
+  const session = { baseUrl: fake.baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() }
+  try {
+    savePlan(home, {
+      planId: 'pln_repair',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1000,
+      engineBuild: CONFIG_ENGINE_BUILD,
+      env: 'test',
+      target: { baseUrl: fake.baseUrl, accountId: ACCOUNT_ID, account: 'tester' },
+      summary: { create: 0, update: 1, skip: 0, irreversible: 0 },
+      steps: [
+        {
+          id: 's1',
+          kind: 'call',
+          action: 'update',
+          title: '改字段名',
+          naturalKey: 'field.material_name__c',
+          risk: 'low',
+          irreversible: false,
+          capabilityId: 'field.save',
+          params: { objectId: 'obj-1', code: 'material_name__c', name: '新物料名称', dataType: 1 },
+          dependsOn: [],
+          warnings: [],
+        },
+      ],
+      warnings: [],
+      status: 'planned',
+      results: [],
+    } as never)
+
+    const applied = await applyPlan(session, 'pln_repair', home, { requireApproval: false })
+    assert.equal(state.saves, 2, '第一次回读没通过后应自动重放一次')
+    assert.equal(applied.status, 'applied')
+    const codes = (applied.issues ?? []).map((issue) => issue.code)
+    assert.ok(codes.includes('AUTO_REPAIR'), `台账里要有 AUTO_REPAIR：${codes.join(',')}`)
+    assert.ok(codes.includes('AUTO_REPAIR_OK'), `台账里要有 AUTO_REPAIR_OK：${codes.join(',')}`)
+    assert.equal(applied.results.find((result) => result.stepId === 's1')?.status, 'verified')
+  } finally {
+    await fake.close()
   }
 })

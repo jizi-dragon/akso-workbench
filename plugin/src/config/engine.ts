@@ -44,8 +44,32 @@ const STRICT_VERIFY_CAPABILITIES: ReadonlySet<string> = new Set([
   'lifecycle.useraction.create',
   'lifecycle.useraction.update',
   'lifecycle.enteraction.create',
-  'lifecycle.enteraction.update',
 ])
+
+/**
+ * 幂等写入：重放一次不会多建一条记录（改、整份覆盖、状态收口）。
+ * 只这些能力允许「执行中小错自动重跑一次」，新建类绝不自动重放。
+ */
+const IDEMPOTENT_WRITE_CAPABILITIES: ReadonlySet<string> = new Set([
+  'field.save',
+  'picklist.save',
+  'layout.save',
+  'listlayout.columns.set',
+  'listlayout.filter.save',
+  'listlayout.save',
+  'lifecycle.status.update',
+  'lifecycle.useraction.update',
+  'workflow.update',
+  'workflow.status.change',
+  'workflow.start.update',
+  'workflow.task.update',
+  'workflow.decision.update',
+  'workflow.action.update',
+])
+
+export function canAutoRepair(capabilityId: string): boolean {
+  return IDEMPOTENT_WRITE_CAPABILITIES.has(capabilityId)
+}
 
 export function requiresVerifiedWrite(capabilityId: string): boolean {
   return STRICT_VERIFY_CAPABILITIES.has(capabilityId)
@@ -1208,6 +1232,11 @@ export async function verifyCallCapability(
     if (typeof params.isEnabled === 'boolean' && Boolean(hit.isEnabled) !== params.isEnabled) {
       diffs.push(`isEnabled 回读 ${String(hit.isEnabled)}`)
     }
+    // sort 是这条接口的“假成功”：2026-11-26 三次改排序都返回成功，Status/GetList 读回来还是旧值。
+    // 不假装成功——提交了 sort 就必须核回来，核不上就记成不一致（非严格，不阻断，但台账里留一条）。
+    if (typeof params.sort === 'number' && Number(hit.sort ?? NaN) !== params.sort) {
+      diffs.push(`sort 提交 ${params.sort}、回读 ${String(hit.sort ?? '空')}（平台 Status/Update 不落 sort，只能在界面拖）`)
+    }
     return diffs.length > 0
       ? { verified: false, message: `回读状态「${String(hit.name ?? code)}」：${diffs.join('；')}` }
       : { verified: true, message: `回读状态「${String(hit.name ?? code)}」：共 ${mine.length} 个状态` }
@@ -1334,6 +1363,43 @@ export async function verifyCallCapability(
   }
 
   return null
+}
+
+/**
+ * 有专属回读判据的能力（`verifyCallCapability` 里的分支）。
+ * 用途：卡死「严格验证 + 没有判据 = 永远失败」这种死锁——单测会断言
+ * `STRICT_VERIFY_CAPABILITIES ⊆ hasReadbackCriteria`。
+ */
+const CALL_VERIFY_CAPABILITIES: ReadonlySet<string> = new Set([
+  'approvalmatrix.rule.add',
+  'field.save',
+  'layout.save',
+  'lifecycle.enteraction.create',
+  'lifecycle.status.create',
+  'lifecycle.status.update',
+  'lifecycle.useraction.create',
+  'lifecycle.useraction.update',
+  'listlayout.columns.set',
+  'listlayout.filter.save',
+  'listlayout.save',
+  'menu.submit',
+  'notice.template.create',
+  'notice.template.update',
+  'object.save',
+  'picklist.save',
+  'workflow.create',
+  'workflow.delete',
+  'workflow.status.change',
+  'workflow.decision.add',
+  'workflow.action.add',
+  'workflow.step.copy',
+  'workflow.step.delete',
+  'workflow.task.add',
+  'workflow.update',
+])
+
+export function hasReadbackCriteria(capabilityId: string): boolean {
+  return CALL_VERIFY_CAPABILITIES.has(capabilityId) || STEP_UPDATE_CAPABILITIES.has(capabilityId)
 }
 
 /** 把五花八门的响应（data[] / data.datas[] / data.rows[] / data.data[]）统一成行数组。 */
@@ -1691,7 +1757,15 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
         }
       }
       const strict = requiresVerifiedWrite(step.capabilityId)
-      const blocked = strict && !verify.verified
+      let blocked = strict && !verify.verified
+      // 小错就地修：写进去了但回读没通过（或严格校验将要阻断）时，按原审批范围重放一次。
+      if (!verify.verified) {
+        const repair = await autoRepair(session, step, res, bindings, issues, verify.message)
+        if (repair.verify?.verified === true) {
+          verify = repair.verify
+          blocked = false
+        }
+      }
       if (!blocked && !verify.verified) {
         issues.record({
           level: 'warn',
@@ -1731,6 +1805,16 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
         message: verifyError instanceof Error ? verifyError.message : String(verifyError),
       }))
       const failure = error instanceof Error ? error.message : String(error)
+      // 写报错也可能只是“写完回未授权”或平台抖动：幂等写入按原审批范围重放一次再判。
+      let repaired = false
+      if (!verify.verified) {
+        const repair = await autoRepair(session, step, res, bindings, issues, `写入报「${failure}」`)
+        if (repair.verify?.verified === true) {
+          repaired = true
+          verify.verified = repair.verify.verified
+          verify.message = repair.verify.message
+        }
+      }
       const result: StepResult = {
         stepId: step.id,
         title: step.title,
@@ -1738,7 +1822,9 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
         action: step.action,
         status: verify.verified ? 'verified' : 'failed',
         message: verify.verified
-          ? `写入报「${failure}」，但回读确认已生效：${verify.message}`
+          ? repaired
+            ? `写入报「${failure}」，按原审批范围自动重放一次后回读确认：${verify.message}`
+            : `写入报「${failure}」，但回读确认已生效：${verify.message}`
           : `${failure}；回读未确认：${verify.message}`,
         traceId: error instanceof EgmpError ? error.traceId : null,
         durationMs: Date.now() - t0,
@@ -1787,6 +1873,64 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
   plan.issues = issues.all()
   savePlan(workspaceRoot, plan)
   return plan
+}
+
+/**
+ * 执行中的小错就地修：同一能力、同一目标、幂等写入，重放**一次**，全程记台账。
+ * 不扩大审批范围——重放的只是人已经批准过的这一步；新建类或非幂等能力一律不自动重放，
+ * 免得把“小错”变成“多一条记录”。
+ */
+async function autoRepair(
+  session: EgmpSession,
+  step: Step,
+  res: Resolution,
+  bindings: BindingContext,
+  issues: IssueLog,
+  reason: string,
+): Promise<{ message: string; verify: { verified: boolean; message: string } | null }> {
+  if (!canAutoRepair(step.capabilityId)) return { message: reason, verify: null }
+  issues.record({
+    level: 'warn',
+    code: 'AUTO_REPAIR',
+    message: `${step.title}：${reason}；这是原审批范围内的幂等写入，自动重放一次`,
+    stepId: step.id,
+    capabilityId: step.capabilityId,
+  })
+  await sleep(400)
+  try {
+    const { message } = await applyStep(freshContext(session), step, res, bindings)
+    const verify = await verifyStep(freshContext(session), step, res).catch((error: unknown) => ({
+      verified: false,
+      message: errorText(error),
+    }))
+    if (verify.verified) {
+      issues.record({
+        level: 'info',
+        code: 'AUTO_REPAIR_OK',
+        message: `${step.title}：自动重放后回读通过`,
+        stepId: step.id,
+        capabilityId: step.capabilityId,
+      })
+    } else {
+      issues.record({
+        level: 'error',
+        code: 'AUTO_REPAIR_FAILED',
+        message: `${step.title}：自动重放仍未通过——${verify.message}`,
+        stepId: step.id,
+        capabilityId: step.capabilityId,
+      })
+    }
+    return { message, verify }
+  } catch (error) {
+    issues.record({
+      level: 'error',
+      code: 'AUTO_REPAIR_FAILED',
+      message: `${step.title}：自动重放报错——${errorText(error)}`,
+      stepId: step.id,
+      capabilityId: step.capabilityId,
+    })
+    return { message: reason, verify: null }
+  }
 }
 
 /** 瞬时故障重试一次；重试前后都记台账，失败也不吞。 */
