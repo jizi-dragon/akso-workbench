@@ -28,6 +28,10 @@
  * 2026-11-25 晚按用户要求补 7 条通知模板读写能力（通桥环境抓包确认，未实测）：
  * `notice.template.page/get/create/update`、`notice.channel.list`、`notice.variable.fixed.list`、`notice.variable.field.list`。
  * 目录 53 → 60，本名单仍 53——新 7 条在卡片上标「过期」，等真跑一遍、用户点头后再追加。
+ * 2026-11-27 在 standard-val 实测两条生命周期能力并各自独立回读确认，用户核对输入/输出后确认：
+ * `lifecycle.status.sort`（抓包拿到 `Status/Sort` 收裸数组 `[{id, sort}]`，回读状态顺序一致）与
+ * `lifecycle.useraction.update`（顶层 id 是记录/容器 id，不是按钮 id；改名后回读 name 与流程绑定均一致）。
+ * 本名单 53 → 55。
  */
 export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   // 对象
@@ -57,7 +61,9 @@ export const APPROVED_TOOL_IDS: ReadonlySet<string> = new Set<string>([
   // 生命周期
   'lifecycle.status.create',
   'lifecycle.status.update',
+  'lifecycle.status.sort',
   'lifecycle.useraction.create',
+  'lifecycle.useraction.update',
   'lifecycle.useraction.get',
   'lifecycle.useraction.list',
   'lifecycle.enteraction.create',

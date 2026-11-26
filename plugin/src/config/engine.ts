@@ -23,7 +23,7 @@ import { createIssueLog, type IssueLog, type IssueRecord } from './issues.ts'
 import { buildVerificationReport, summarizeVerification, type VerificationCheck, type VerificationReport } from './verification.ts'
 
 /** 引擎语义版本。计划会带上它，apply 时不一致就拒绝，防止“新代码的计划被旧 host 执行”。 */
-export const CONFIG_ENGINE_BUILD = '2026-11-26.2'
+export const CONFIG_ENGINE_BUILD = '2026-11-27.2'
 
 /**
  * 这些写能力必须有回读结论；`unverified` 视为失败并阻断后续步骤。
@@ -44,6 +44,7 @@ const STRICT_VERIFY_CAPABILITIES: ReadonlySet<string> = new Set([
   'lifecycle.useraction.create',
   'lifecycle.useraction.update',
   'lifecycle.enteraction.create',
+  'lifecycle.status.sort',
 ])
 
 /**
@@ -58,6 +59,7 @@ const IDEMPOTENT_WRITE_CAPABILITIES: ReadonlySet<string> = new Set([
   'listlayout.filter.save',
   'listlayout.save',
   'lifecycle.status.update',
+  'lifecycle.status.sort',
   'lifecycle.useraction.update',
   'workflow.update',
   'workflow.status.change',
@@ -94,6 +96,13 @@ export interface Step {
    * 判定仍然回落到 `isReadOnlyCapability(capabilityId)`（见 approval-policy.ts）。
    */
   readonly?: boolean
+  /**
+   * 执行时真正发出去的参数（已解析 `$ref`）。回读必须用它，不能用 `params`：
+   * 后者是计划原文，跨步骤引用还是 `{"$ref": …}` 对象，拿去和平台返回值比会假判不一致
+   * （2026-11-27 实测：workflow.decision.add 写对了却被判「nextStepId 与提交不一致」）。
+   * 只在内存里补，planHash 不覆盖它，所以不影响审批指纹。
+   */
+  resolvedParams?: Record<string, unknown>
 }
 
 /** 计划绑定的目标：环境 + 账号。apply 时逐项比对，防止跨环境/跨账号执行。 */
@@ -220,7 +229,68 @@ export async function invokeCapability(session: EgmpSession, capabilityId: strin
     if (cap.method === 'GET') query[key] = value
     else body[key] = value
   }
+  // 裸数组体（Status/Sort 这类）：把指定参数原样当 body，其余参数留在 query 里。
+  if (cap.arrayBody !== undefined) {
+    const payload = params[cap.arrayBody]
+    if (!Array.isArray(payload)) throw new EgmpError(`${capabilityId} 的 ${cap.arrayBody} 必须是数组`)
+    const rest: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(body)) if (key !== cap.arrayBody) rest[key] = value
+    return await call(session, cap.method, path, payload, Object.keys({ ...query, ...rest }).length > 0 ? { ...query, ...rest } : undefined)
+  }
   return await call(session, cap.method, path, cap.method === 'GET' ? undefined : body, cap.method === 'GET' ? query : undefined)
+}
+
+/* ───────────────────── 回读重试（只读，写入永不重试） ───────────────────── */
+
+/**
+ * 2026-11-27 实测：`workflow.action.add` 写成功之后**紧接着**回读 `workflow.steps.list` 会抛 HTTP 400，
+ * 隔十几秒再读正常；同一形状的抖动也在别处出现过。写操作绝不能重试（会写两遍），但**只读回读是幂等的**，
+ * 重试一次就能把「平台抖一下」和「真的对不上」分开。
+ *
+ * 判据只认 HTTP 状态与网络错误，**不认业务错误码**（业务错误重试也不会变对，只会白等）。
+ */
+const READ_RETRY_STATUS = new Set([400, 408, 409, 425, 429, 500, 502, 503, 504])
+const READ_RETRY_DELAY_MS = 300
+
+/** 只读类失败（瞬时）：状态码在重试集合里，或底层是网络抖动。 */
+export function isRetryableReadFailure(error: unknown): boolean {
+  if (!(error instanceof EgmpError)) return false
+  if (error.status !== null && READ_RETRY_STATUS.has(error.status)) return true
+  return /ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|fetch failed/i.test(String(error.message ?? ''))
+}
+
+/**
+ * 回读专用调用：只包**只读**能力（GET 或 readonly），失败按 `isRetryableReadFailure` 重试一次。
+ * 写入一律走 `invokeCapability`，绝不经过这里 —— 写重放会写两遍，比失败更糟。
+ */
+export async function invokeReadCapability(
+  session: EgmpSession,
+  capabilityId: string,
+  params: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const cap = findCapability(capabilityId)
+  const readonly = cap !== undefined && (cap.readonly === true || cap.method === 'GET')
+  try {
+    return await invokeCapability(session, capabilityId, params)
+  } catch (error) {
+    if (!readonly || !isRetryableReadFailure(error)) throw error
+    await sleep(READ_RETRY_DELAY_MS)
+    return await invokeCapability(session, capabilityId, params)
+  }
+}
+
+/**
+ * 把一整段「只读核对」包一层重试：段落里可能串好几个 GET，任一步抛可重试错误就等 300ms 整段重跑。
+ * 只给预检、回读这类纯读路径用（`preflightPlan` / `verifyStep` / `verifyAppliedPlan`）。
+ */
+export async function withReadRetry<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run()
+  } catch (error) {
+    if (!isRetryableReadFailure(error)) throw error
+    await sleep(READ_RETRY_DELAY_MS)
+    return await run()
+  }
 }
 
 /* ───────────────────────────── 计划 ───────────────────────────── */
@@ -532,6 +602,150 @@ async function preflightPlan(session: EgmpSession, steps: Step[]): Promise<void>
         }
       }
     }
+
+    /*
+     * 2026-11-27 新增的三段硬拦：把「审批通过后才发现写不成」提前到出计划时。
+     * 这三类都是实测踩过的坑（每次都要重新出任务、重新审批，代价一次 5–10 分钟），
+     * 而且判据是确定性的，不存在误杀：宁可不出计划，也不要拿一张写不成的计划去弹审批窗。
+     */
+
+    // ① Status/Update 不收 sort：提交值与平台现状不同就一定对不上（2026-11-26 三次实测）。
+    //    改顺序只能走 lifecycle.status.sort（整份 [{id, sort}] 裸数组）。
+    if (step.capabilityId === 'lifecycle.status.update') {
+      const id = typeof params.id === 'string' ? params.id : ''
+      const sort = typeof params.sort === 'number' ? params.sort : null
+      if (id !== '' && sort !== null) {
+        const rows = rowsOf(await invokeReadCapability(session, 'query.lifecycle.status.config.list', {}))
+        const row = rows.find((item) => String(item.id ?? '') === id)
+        if (row !== undefined && Number(row.sort) !== sort) {
+          throw new EgmpError(
+            `状态「${String(row.name ?? id)}」的 sort 提交 ${sort}、平台当前 ${String(row.sort)}：Status/Update 不落 sort（2026-11-26 三次实测），提交与现状不同的值一定回读不一致；要改顺序请用 lifecycle.status.sort（按 id+sort 整份提交裸数组）`,
+            { code: 'STATUS_SORT_NOT_PERSISTED' },
+          )
+        }
+      }
+    }
+
+    // ② useraction.update 的顶层 id 必须是记录（容器）id，不是按钮 id。
+    //    传按钮 id 时平台当新建处理，撞唯一约束（Repeat FullPath）或报 source 为 null。
+    if (step.capabilityId === 'lifecycle.useraction.update') {
+      const id = typeof params.id === 'string' ? params.id : ''
+      const statusId = typeof params.lifecycleStatusId === 'string'
+        ? params.lifecycleStatusId
+        : typeof params.belongId === 'string' ? params.belongId : ''
+      if (id !== '' && statusId !== '') {
+        const rows = rowsOf(await invokeReadCapability(session, 'lifecycle.useraction.list', { statusId }))
+        const hit = rows.find((row) => String(row.id ?? '') === id)
+        if (hit !== undefined) {
+          throw new EgmpError(
+            `lifecycle.useraction.update 的 id 传成了按钮 id（${id}，code ${String(hit.code ?? '')}）：这条接口的顶层 id 必须是记录（容器）id，传按钮 id 平台会按新建去插；先用 lifecycle.useraction.record.list 按 statusId 取记录 id，再整份回写 actions`,
+            { code: 'USER_ACTION_ID_IS_ACTION_ID' },
+          )
+        }
+      }
+    }
+
+    // ③ layout.save 的控件必须挂真实字段、真实分区：fieldId 不在对象字段表里、
+    //    sectionId 既不是已有分区也不是本次提交的分区，整份布局都写不进去。
+    if (step.capabilityId === 'layout.save') {
+      const controls = Array.isArray(params.controls) ? (params.controls as Array<Record<string, unknown>>) : []
+      const submitted = Array.isArray(params.sections) ? (params.sections as Array<Record<string, unknown>>) : []
+      const layoutCode = typeof params.code === 'string' ? params.code : ''
+      // 布局 code 的约定是 `<对象 code 去掉 __c>_base_layout__ak`（实测 equipment_repair_request_base_layout__ak
+      // 对应对象 equipment_repair_request__c），所以两个候选都要试，不能只切后缀。
+      const stem = layoutCode.endsWith('_base_layout__ak') ? layoutCode.slice(0, -'_base_layout__ak'.length) : ''
+      if (controls.length > 0 && stem !== '') {
+        let fields: Array<Record<string, unknown>> = []
+        for (const candidate of [`${stem}__c`, stem]) {
+          fields = rowsOf(await invokeReadCapability(session, 'query.fields.list', { objectCode: candidate }))
+          if (fields.length > 0) break
+        }
+        if (fields.length > 0) {
+          const objectCode = stem
+          const fieldIds = new Set(fields.map((field) => String(field.id ?? '')))
+          const unknown = controls
+            .filter((control) => {
+              const fieldId = String(control.fieldId ?? '')
+              return fieldId !== '' && !fieldIds.has(fieldId)
+            })
+            .map((control) => String(control.code ?? control.id ?? '未命名控件'))
+          if (unknown.length > 0) {
+            throw new EgmpError(
+              `布局控件挂的 fieldId 不在对象 ${objectCode} 的字段表里：${unknown.join('、')}；控件必须挂真实字段 id（先 query.fields.list 取 id），否则整份布局写不进去`,
+              { code: 'LAYOUT_FIELD_UNKNOWN' },
+            )
+          }
+        }
+        // 关联控件（AKSelectorObject / AKSelectorObjects）必须带齐 attrs：objectId、listLayoutId、
+        // createRecordMode。平台允许只写 readPrettyShowType 就保存成功，但界面上"列表布局""创建记录方式"
+        // 会是空的（2026-11-27 现场反馈：保存后这几项有时看不到），所以出计划时就拦。
+        const objectControls = controls.filter((control) => String(control.type ?? '').startsWith('AKSelectorObject'))
+        if (objectControls.length > 0) {
+          const plain = (value: unknown): string => String(value ?? '').replace(/^"|"$/g, '').trim()
+          const missing: string[] = []
+          const targets: Array<{ label: string; objectId: string; listLayoutId: string }> = []
+          for (const control of objectControls) {
+            const attrs = (control.attrs ?? {}) as Record<string, unknown>
+            const label = String(control.code ?? control.id ?? '未命名控件')
+            const objectId = plain(attrs.objectId)
+            const listLayoutId = plain(attrs.listLayoutId)
+            const createRecordMode = plain(attrs.createRecordMode)
+            if (objectId === '' || listLayoutId === '' || createRecordMode === '') {
+              missing.push(`${label}（缺${[
+                objectId === '' ? 'objectId' : '',
+                listLayoutId === '' ? 'listLayoutId' : '',
+                createRecordMode === '' ? 'createRecordMode' : '',
+              ].filter(Boolean).join('/')}）`)
+              continue
+            }
+            targets.push({ label, objectId, listLayoutId })
+          }
+          if (missing.length > 0) {
+            throw new EgmpError(
+              `关联控件缺少必需的 attrs：${missing.join('、')}；对象字段做成控件时必须给 attrs.objectId、attrs.listLayoutId（被关联对象的列表布局）、attrs.createRecordMode（"3" = 可新建关联记录），只给 readPrettyShowType 也能保存成功，但界面上这几项是空的`,
+              { code: 'LAYOUT_OBJECT_CONTROL_ATTRS_MISSING' },
+            )
+          }
+          const byObject = new Map<string, Array<{ label: string; listLayoutId: string }>>()
+          for (const target of targets) {
+            const list = byObject.get(target.objectId) ?? []
+            list.push({ label: target.label, listLayoutId: target.listLayoutId })
+            byObject.set(target.objectId, list)
+          }
+          for (const [objectId, list] of byObject) {
+            const rows = rowsOf(await invokeReadCapability(session, 'listlayout.list', { objectId }))
+            if (rows.length === 0) continue
+            const ids = new Set(rows.map((row) => String(row.id ?? '')))
+            const wrong = list.filter((item) => !ids.has(item.listLayoutId)).map((item) => item.label)
+            if (wrong.length > 0) {
+              throw new EgmpError(
+                `关联控件的 listLayoutId 不是被关联对象 ${objectId} 的列表布局：${wrong.join('、')}；先 listlayout.list 取该对象的列表布局 id，填错界面上会空白或列错乱`,
+                { code: 'LAYOUT_OBJECT_CONTROL_LAYOUT_UNKNOWN' },
+              )
+            }
+          }
+        }
+        const layoutId = typeof params.id === 'string' ? params.id : ''
+        if (layoutId !== '') {
+          const detail = await invokeReadCapability(session, 'layout.detail', { layoutId })
+          const data = (detail.data ?? {}) as Record<string, unknown>
+          const existing = Array.isArray(data.sections) ? (data.sections as Array<Record<string, unknown>>) : []
+          const sectionIds = new Set([...existing, ...submitted].map((section) => String(section.id ?? '')))
+          const orphan = controls
+            .filter((control) => {
+              const sectionId = String(control.sectionId ?? '')
+              return sectionId !== '' && !sectionIds.has(sectionId)
+            })
+            .map((control) => String(control.code ?? control.id ?? '未命名控件'))
+          if (orphan.length > 0) {
+            throw new EgmpError(
+              `布局控件的 sectionId 既不在已有分区里、也不在本次提交的分区里：${orphan.join('、')}；先把分区 id 定下来（新分区顺位追加到 sections 末尾），再挂控件`,
+              { code: 'LAYOUT_SECTION_UNKNOWN' },
+            )
+          }
+        }
+      }
+    }
   }
 }
 
@@ -775,7 +989,7 @@ export async function buildPlan(session: EgmpSession, input: Blueprint): Promise
   const bindingErrors = validatePlanBindings(steps)
   if (bindingErrors.length > 0) throw new EgmpError(`计划输出绑定校验失败：${bindingErrors.join('；')}`)
 
-  await preflightPlan(session, steps)
+  await withReadRetry(() => preflightPlan(session, steps))
 
   const summary = { create: 0, update: 0, skip: 0, irreversible: 0, readonly: 0 }
   for (const step of steps) {
@@ -879,6 +1093,9 @@ async function applyStep(ctx: QueryContext, step: Step, res: Resolution, binding
     throw new EgmpError(`步骤 ${step.id} 的参数必须是对象`, { code: 'BINDING_INVALID' })
   }
   const params = resolved as Record<string, unknown>
+  // 回读要用「真正发出去的参数」：`params` 里的 `$ref` 已经在这里解析成真实 id，
+  // 把它记到 step 上，verifyStep / verifyAppliedPlan 才不会拿 `{"$ref": …}` 去比平台返回值。
+  step.resolvedParams = params
   if (step.kind === 'listLayout') return await applyListLayout(ctx, step, res, params)
   if (step.kind === 'object' || step.kind === 'picklist' || step.kind === 'call') {
     const json = await invokeCapability(ctx.session, step.capabilityId, params)
@@ -937,6 +1154,20 @@ async function applyStep(ctx: QueryContext, step: Step, res: Resolution, binding
     return { message: 'ok', after: json.data ?? null }
   }
   throw new EgmpError(`不支持的步骤类型：${step.kind}`)
+}
+
+/**
+ * 从用户动作（按钮）里取 behaviorType 7 绑定的流程 id；取不到返回空串。
+ * 回读 update 时用它比对「按钮还在、但流程绑定被改坏」这种情况。
+ */
+function actionWorkflowId(action: Record<string, unknown>): string {
+  const configs = Array.isArray(action.configs) ? (action.configs as Array<Record<string, unknown>>) : []
+  for (const config of configs) {
+    if (Number(config.behaviorType ?? 0) !== 7) continue
+    const value = (config.behaviorValue ?? {}) as Record<string, unknown>
+    if (typeof value.workflowId === 'string') return value.workflowId
+  }
+  return ''
 }
 
 /**
@@ -1074,7 +1305,7 @@ export async function verifyCallCapability(
     return { verified: true, message: `回读布局：分区 ${gotSections}、控件 ${gotControls.length}` }
   }
 
-  if (capabilityId === 'lifecycle.useraction.create' || capabilityId === 'lifecycle.useraction.update') {
+  if (capabilityId === 'lifecycle.useraction.create') {
     const statusId = typeof params.lifecycleStatusId === 'string' ? params.lifecycleStatusId : ''
     const codes = (Array.isArray(params.actions) ? (params.actions as Array<Record<string, unknown>>) : [])
       .map((action) => String(action.code ?? ''))
@@ -1087,6 +1318,34 @@ export async function verifyCallCapability(
     return missing.length === 0
       ? { verified: true, message: `回读状态按钮 ${rows.length} 个，含 ${codes.join('、')}` }
       : { verified: false, message: `回读按钮缺 ${missing.join('、')}` }
+  }
+
+  // update 的判据必须核对**按钮名与流程绑定**：按 code 查「在不在」会把没写成的更新判成成功
+  //（2026-11-27 实测：首次 update 报 Value cannot be null.、回读 name 没变，仍被判 verified）。
+  if (capabilityId === 'lifecycle.useraction.update') {
+    const recordId = typeof params.id === 'string' ? params.id : ''
+    const wanted = Array.isArray(params.actions) ? (params.actions as Array<Record<string, unknown>>) : []
+    if (recordId === '' || wanted.length === 0) return { verified: false, message: '没有记录 id（容器 id）或按钮数组，无法回读' }
+    const json = await invokeCapability(ctx.session, 'lifecycle.useraction.record.get', { id: recordId })
+    const record = (json.data ?? {}) as Record<string, unknown>
+    const rows = Array.isArray(record.actions) ? (record.actions as Array<Record<string, unknown>>) : []
+    const byCode = new Map(rows.map((row) => [String(row.code ?? ''), row]))
+    const diffs: string[] = []
+    for (const action of wanted) {
+      const code = String(action.code ?? '')
+      const hit = byCode.get(code)
+      if (hit === undefined) {
+        diffs.push(`缺按钮 ${code === '' ? '(空 code)' : code}`)
+        continue
+      }
+      const wantName = typeof action.name === 'string' ? action.name : ''
+      if (wantName !== '' && String(hit.name ?? '') !== wantName) diffs.push(`${code} 名称回读「${String(hit.name ?? '')}」≠ 提交「${wantName}」`)
+      const wantFlow = actionWorkflowId(action)
+      if (wantFlow !== '' && actionWorkflowId(hit) !== wantFlow) diffs.push(`${code} 绑定流程回读 ${actionWorkflowId(hit) || '(空)'} ≠ 提交 ${wantFlow}`)
+    }
+    return diffs.length === 0
+      ? { verified: true, message: `回读记录 ${recordId}：${wanted.length} 个按钮的名称与流程绑定都对得上` }
+      : { verified: false, message: `回读记录 ${recordId}：${diffs.join('；')}` }
   }
 
   if (capabilityId === 'menu.submit') {
@@ -1233,13 +1492,39 @@ export async function verifyCallCapability(
       diffs.push(`isEnabled 回读 ${String(hit.isEnabled)}`)
     }
     // sort 是这条接口的“假成功”：2026-11-26 三次改排序都返回成功，Status/GetList 读回来还是旧值。
-    // 不假装成功——提交了 sort 就必须核回来，核不上就记成不一致（非严格，不阻断，但台账里留一条）。
+    // 不假装成功——提交了 sort 就必须核回来；真要改顺序用 `lifecycle.status.sort`（2026-11-27 起）。
     if (typeof params.sort === 'number' && Number(hit.sort ?? NaN) !== params.sort) {
-      diffs.push(`sort 提交 ${params.sort}、回读 ${String(hit.sort ?? '空')}（平台 Status/Update 不落 sort，只能在界面拖）`)
+      diffs.push(`sort 提交 ${params.sort}、回读 ${String(hit.sort ?? '空')}（Status/Update 不落 sort，改顺序请用 lifecycle.status.sort）`)
     }
     return diffs.length > 0
       ? { verified: false, message: `回读状态「${String(hit.name ?? code)}」：${diffs.join('；')}` }
       : { verified: true, message: `回读状态「${String(hit.name ?? code)}」：共 ${mine.length} 个状态` }
+  }
+
+  if (capabilityId === 'lifecycle.status.sort') {
+    const wanted = (Array.isArray(params.statuses) ? (params.statuses as Array<Record<string, unknown>>) : [])
+      .map((item) => ({ id: String(item.id ?? ''), sort: Number(item.sort ?? NaN) }))
+      .filter((item) => item.id !== '' && Number.isFinite(item.sort))
+    if (wanted.length === 0) return { verified: false, message: '提交内容里没有 statuses 数组，无法回读' }
+    const json = await invokeCapability(ctx.session, 'query.lifecycle.status.config.list', {})
+    const rows = rowsOf(json)
+    const byId = new Map(rows.map((row) => [String(row.id ?? ''), row]))
+    const missing = wanted.filter((item) => !byId.has(item.id)).map((item) => item.id)
+    if (missing.length > 0) return { verified: false, message: `回读找不到状态 ${missing.slice(0, 3).join('、')}` }
+    // 只比相对顺序：平台把 sort 存成 0-based，界面读回可能是 1-based，硬比数字会误判。
+    const wantOrder = [...wanted].sort((a, b) => a.sort - b.sort).map((item) => item.id)
+    const gotOrder = [...wanted]
+      .map((item) => byId.get(item.id) as Record<string, unknown>)
+      .sort((a, b) => Number(a.sort ?? 0) - Number(b.sort ?? 0))
+      .map((row) => String(row.id ?? ''))
+    const nameOf = (id: string): string => String((byId.get(id) as Record<string, unknown> | undefined)?.name ?? id)
+    if (wantOrder.join(',') !== gotOrder.join(',')) {
+      return {
+        verified: false,
+        message: `回读顺序与提交不一致：提交 ${wantOrder.map(nameOf).join(' → ')}，平台 ${gotOrder.map(nameOf).join(' → ')}`,
+      }
+    }
+    return { verified: true, message: `回读生命周期状态顺序：${gotOrder.map(nameOf).join(' → ')}` }
   }
 
   if (capabilityId === 'lifecycle.enteraction.create') {
@@ -1377,6 +1662,7 @@ const CALL_VERIFY_CAPABILITIES: ReadonlySet<string> = new Set([
   'lifecycle.enteraction.create',
   'lifecycle.status.create',
   'lifecycle.status.update',
+  'lifecycle.status.sort',
   'lifecycle.useraction.create',
   'lifecycle.useraction.update',
   'listlayout.columns.set',
@@ -1429,6 +1715,14 @@ export interface VerifyOutcome {
   verified: boolean
   message: string
   noCriteria?: boolean
+}
+
+/**
+ * 回读用的参数：优先取执行时解析过 `$ref` 的那份（`resolvedParams`）。
+ * 计划原文里跨步骤引用还是 `{"$ref": …}`，直接拿去比对必然对不上。
+ */
+function stepParams(step: Step): Record<string, unknown> {
+  return step.resolvedParams ?? ((step.params ?? {}) as Record<string, unknown>)
 }
 
 async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promise<VerifyOutcome> {
@@ -1510,7 +1804,8 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
           : { verified: false, message: `菜单已存在但有 ${problems.length} 处不符：${problems.join('、')}` }
       }
       case 'call': {
-        const params = (step.params ?? {}) as Record<string, unknown>
+        // 用解析过 `$ref` 的参数（step.resolvedParams）；拿计划原文比会把 `$ref` 对象当值，假判不一致。
+        const params = stepParams(step)
         const code = typeof params.code === 'string' ? params.code : ''
         if (step.capabilityId === 'object.save' && code !== '') {
           const object = await getObject(ctx, code)
@@ -1529,6 +1824,9 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
         return { verified: false, noCriteria: true, message: '未知类型，没有回读判据' }
     }
   } catch (error) {
+    // 回读途中的瞬时失败（平台刚写完就 400 / 网络抖动）不能当成「对不上」：
+    // 抛出去交给 withReadRetry 重试一次，只有确定性的失败才降级成 verified:false。
+    if (isRetryableReadFailure(error)) throw error
     return { verified: false, message: error instanceof Error ? error.message : String(error) }
   }
 }
@@ -1595,7 +1893,7 @@ export async function verifyAppliedPlan(session: EgmpSession, plan: Plan): Promi
       })
       continue
     }
-    const verify = await verifyStep(ctx, step, res).catch((error: unknown) => ({ verified: false, message: errorText(error) }))
+    const verify = await withReadRetry(() => verifyStep(ctx, step, res)).catch((error: unknown) => ({ verified: false, message: errorText(error) }))
     // 没有回读判据的写入：确认不了，但也不是失败，按「未确认」记在 message 里，别把报告全涂红。
     const noCriteria = (verify as VerifyOutcome).noCriteria === true
     checks.push({
@@ -1626,7 +1924,7 @@ async function workflowChainNotes(ctx: QueryContext, plan: Plan): Promise<string
   const workflowIds = [
     ...new Set(
       plan.steps
-        .map((step) => literalId(step.params.workflowConfigId))
+        .map((step) => literalId(stepParams(step).workflowConfigId))
         .filter((id) => id !== ''),
     ),
   ]
@@ -1645,7 +1943,7 @@ async function workflowChainNotes(ctx: QueryContext, plan: Plan): Promise<string
         ...new Set(
           plan.steps
             .filter((step) => step.capabilityId.startsWith('workflow.'))
-            .map((step) => literalId(step.params.id ?? step.params.stepId))
+            .map((step) => literalId(stepParams(step).id ?? stepParams(step).stepId))
             .filter((id) => id !== ''),
         ),
       ]
@@ -1748,12 +2046,12 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
         audit(dshHome, plan, step, result)
         continue
       }
-      let verify = await verifyStep(ctx, step, res)
+      let verify = await withReadRetry(() => verifyStep(ctx, step, res))
       if (!verify.verified) {
         // 平台有“写完立刻读还是旧值”的时序（工作流节点链、布局详情都出现过）。
         // 先用干净缓存等 300ms 再读一次，能省掉一次人工复核。
         await sleep(300)
-        const retried = await verifyStep(freshContext(session), step, res).catch((error: unknown) => ({ verified: false, message: errorText(error) }))
+        const retried = await withReadRetry(() => verifyStep(freshContext(session), step, res)).catch((error: unknown) => ({ verified: false, message: errorText(error) }))
         if (retried.verified) {
           issues.record({
             level: 'info',
@@ -1811,7 +2109,7 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
       // 平台有「写进去了却回未授权」的端点（2026-10-27 实测 `picklist.save`：HTTP 200 + code=401
       // Unauthorized，但数据已落库）。所以失败也要回读一次：确认已是期望态就不算失败，
       // 否则这条路会让 agent 重试同一步、把数据写两遍。
-      const verify = await verifyStep(ctx, step, res).catch((verifyError: unknown) => ({
+      const verify = await withReadRetry(() => verifyStep(ctx, step, res)).catch((verifyError: unknown) => ({
         verified: false,
         message: verifyError instanceof Error ? verifyError.message : String(verifyError),
       }))
@@ -1910,7 +2208,7 @@ async function autoRepair(
   await sleep(400)
   try {
     const { message } = await applyStep(freshContext(session), step, res, bindings)
-    const verify = await verifyStep(freshContext(session), step, res).catch((error: unknown) => ({
+    const verify = await withReadRetry(() => verifyStep(freshContext(session), step, res)).catch((error: unknown) => ({
       verified: false,
       message: errorText(error),
     }))

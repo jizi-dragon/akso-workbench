@@ -24,7 +24,7 @@ import { test } from 'node:test'
 import { errorMessage, uiState } from '../src/cloud.ts'
 import { saveFailedAnalysisHistory } from '../src/analysis-history.ts'
 import { CAPABILITIES } from '../src/config/capabilities.ts'
-import { CONFIG_ENGINE_BUILD, applyPlan, canAutoRepair, hasReadbackCriteria, normalizeStepCall, planBlueprint, requiresVerifiedWrite, saveApproval, savePlan, verifyCallCapability } from '../src/config/engine.ts'
+import { CONFIG_ENGINE_BUILD, applyPlan, buildPlan, canAutoRepair, hasReadbackCriteria, invokeCapability, invokeReadCapability, normalizeStepCall, planBlueprint, requiresVerifiedWrite, saveApproval, savePlan, verifyCallCapability } from '../src/config/engine.ts'
 import { attachApprovalReview, finalizeApprovalReview, reviewMatchesPlan } from '../src/config/approval-review.ts'
 import type { ApprovalReport } from '../src/config/approval.ts'
 import { writeEgmpSession } from '../src/config/session.ts'
@@ -2689,6 +2689,87 @@ test('call 步骤回读：状态排序改不动必须说出来，不能假装成
   }
 })
 
+test('状态排序：Status/Sort 收裸数组，引擎必须原样发出去而不是包成对象', async () => {
+  // 界面拖拽走的就是这条接口（2026-11-27 抓包实测）：body 是 [{id, sort}]，不是 {statuses: [...]}。
+  const seen: Array<{ method: string; path: string; body: string }> = []
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = []
+    req.on('data', (chunk) => chunks.push(chunk as Buffer))
+    req.on('end', () => {
+      seen.push({ method: req.method ?? '', path: (req.url ?? '/').split('?')[0], body: Buffer.concat(chunks).toString('utf8') })
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ code: 0, message: 'ok', data: true }))
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as AddressInfo
+  try {
+    const session = { baseUrl: `http://127.0.0.1:${port}`, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() }
+    const statuses = [{ id: 'st-1', sort: 0 }, { id: 'st-2', sort: 1 }]
+    const json = await invokeCapability(session, 'lifecycle.status.sort', { statuses })
+    assert.equal(json.data, true)
+    assert.equal(seen.length, 1)
+    assert.equal(seen[0].method, 'POST')
+    assert.match(seen[0].path, /\/lifecycle\/Status\/Sort$/)
+    const body = JSON.parse(seen[0].body) as unknown
+    assert.ok(Array.isArray(body), `Status/Sort 收裸数组，实际发的是 ${seen[0].body.slice(0, 80)}`)
+    assert.deepEqual(body, statuses)
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+test('call 步骤回读：状态顺序按相对顺序比对，顺序不对必须说出来', async () => {
+  // 平台可能 0-based、界面读回 1-based —— 只能比相对顺序，硬比数字会误判。
+  const state = {
+    rows: [
+      { id: 'st-1', code: 'init_status__c', name: '待提交', lifecycleId: 'lc-1', sort: 1 },
+      { id: 'st-2', code: 'pending__c', name: '待审批', lifecycleId: 'lc-1', sort: 2 },
+      { id: 'st-3', code: 'complete_status__c', name: '已完成', lifecycleId: 'lc-1', sort: 3 },
+    ] as Array<Record<string, unknown>>,
+  }
+  const fake = await startRoutingFake((_method, path) => (path.endsWith('/lifecycle/Status/GetList') ? { datas: state.rows } : null))
+  const ctx = {
+    session: { baseUrl: fake.baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() },
+    objects: new Map(),
+    fields: new Map(),
+    picklists: new Map(),
+    statuses: new Map(),
+  }
+  const submitted = {
+    statuses: [
+      { id: 'st-1', sort: 0 },
+      { id: 'st-2', sort: 1 },
+      { id: 'st-3', sort: 2 },
+    ],
+  }
+  try {
+    const same = await verifyCallCapability(ctx, 'lifecycle.status.sort', submitted)
+    assert.equal(same?.verified, true, String(same?.message))
+    assert.match(String(same?.message), /待提交 → 待审批 → 已完成/)
+
+    // 把「已完成」排到中间：顺序变了就必须判不一致，不能因为 sort 数字看着对就放过
+    state.rows = [
+      { id: 'st-1', code: 'init_status__c', name: '待提交', lifecycleId: 'lc-1', sort: 1 },
+      { id: 'st-3', code: 'complete_status__c', name: '已完成', lifecycleId: 'lc-1', sort: 2 },
+      { id: 'st-2', code: 'pending__c', name: '待审批', lifecycleId: 'lc-1', sort: 3 },
+    ]
+    const swapped = await verifyCallCapability(ctx, 'lifecycle.status.sort', submitted)
+    assert.equal(swapped?.verified, false)
+    assert.match(String(swapped?.message), /顺序与提交不一致/)
+    assert.match(String(swapped?.message), /待提交 → 已完成 → 待审批/)
+
+    // 状态被删/读不到时不能装作通过
+    state.rows = state.rows.filter((row) => row.id !== 'st-3')
+    const missing = await verifyCallCapability(ctx, 'lifecycle.status.sort', submitted)
+    assert.equal(missing?.verified, false)
+    assert.match(String(missing?.message), /找不到状态/)
+  } finally {
+    await fake.close()
+  }
+})
+
 test('执行中的小错就地修：幂等写入自动重放一次，不用回去再要一次审批', async () => {
   const state = {
     rows: [{ code: 'material_name__c', name: '旧名' }] as Array<Record<string, unknown>>,
@@ -2844,5 +2925,247 @@ test('没有回读判据的写入：记 NO_CRITERIA 继续，不把整条计划�
     assert.doesNotMatch(applied.results[0]!.message, /已阻断后续步骤/)
   } finally {
     await fake.close()
+  }
+})
+
+/* ─────────── 预检硬拦 + 只读回读重试（2026-11-27） ─────────── */
+
+function preflightSession(baseUrl: string) {
+  return { baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() }
+}
+
+test('预检硬拦：Status/Update 提交与平台现状不同的 sort，出计划就拦下来', async () => {
+  const fake = await startRoutingFake((_method, path) => {
+    if (path.endsWith('/lifecycle/Status/GetList')) {
+      return { datas: [{ id: 'status-1', name: '已完成', code: 'complete_status__c', sort: 2, isEnabled: true }] }
+    }
+    return null
+  })
+  const blueprint = (sort: number) => ({
+    version: 1,
+    env: 'test',
+    resources: [
+      {
+        kind: 'call',
+        capability: 'lifecycle.status.update',
+        params: {
+          id: 'status-1',
+          name: '已完成',
+          code: 'complete_status__c',
+          lifecycleId: 'life-1',
+          isEnabled: true,
+          isDeleted: false,
+          isRecordDeactivate: false,
+          description: '',
+          source: 3,
+          sort,
+          workflowCancelStatus: '00000000-0000-0000-0000-000000000000',
+        },
+      },
+    ],
+  })
+  try {
+    await assert.rejects(
+      () => buildPlan(preflightSession(fake.baseUrl), blueprint(5) as never),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, 'STATUS_SORT_NOT_PERSISTED')
+        assert.match(String((error as Error).message), /lifecycle\.status\.sort/)
+        return true
+      },
+    )
+    // 与平台一致（等价空操作）必须放过：这是常见写法，不能误杀
+    const plan = await buildPlan(preflightSession(fake.baseUrl), blueprint(2) as never)
+    assert.equal(plan.steps.length, 1)
+  } finally {
+    await fake.close()
+  }
+})
+
+test('预检硬拦：useraction.update 的 id 传成按钮 id 时，出计划就拦下来', async () => {
+  const fake = await startRoutingFake((_method, path) => {
+    if (path.endsWith('/UserAction/GetListByStatusId')) {
+      return [{ id: 'action-1', code: 'submit_x', configs: [] }]
+    }
+    return null
+  })
+  const blueprint = {
+    version: 1,
+    env: 'test',
+    resources: [
+      {
+        kind: 'call',
+        capability: 'lifecycle.useraction.update',
+        params: {
+          id: 'action-1',
+          lifecycleStatusId: 'status-1',
+          belongId: 'status-1',
+          belongType: 2,
+          actions: [{ id: 'action-1', code: 'submit_x', name: '提交' }],
+        },
+      },
+    ],
+  }
+  try {
+    await assert.rejects(
+      () => buildPlan(preflightSession(fake.baseUrl), blueprint as never),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, 'USER_ACTION_ID_IS_ACTION_ID')
+        assert.match(String((error as Error).message), /record\.list/)
+        return true
+      },
+    )
+  } finally {
+    await fake.close()
+  }
+})
+
+test('预检硬拦：layout.save 控件挂的 fieldId 不在对象字段表里时，出计划就拦下来', async () => {
+  const fake = await startRoutingFake((_method, path) => {
+    if (path.endsWith('/BasicObject/field/equipment_repair_request__c')) {
+      return [{ id: 'field-1', code: 'equipment_name__c', dataType: 1 }]
+    }
+    if (path.endsWith('/Layout/LayoutDetail')) {
+      return { sections: [{ id: 'sec-1', code: 'basic_info__cs' }], controls: [], pages: [] }
+    }
+    return null
+  })
+  const blueprint = (fieldId: string) => ({
+    version: 1,
+    env: 'test',
+    resources: [
+      {
+        kind: 'call',
+        capability: 'layout.save',
+        params: {
+          id: 'layout-1',
+          objectId: 'obj-1',
+          objectTypeId: 'ot-1',
+          name: '默认布局',
+          code: 'equipment_repair_request_base_layout__ak',
+          source: 2,
+          status: 1,
+          isMain: true,
+          sections: [{ id: 'sec-1', code: 'basic_info__cs', name: '基本信息', type: 1 }],
+          controls: [{ id: 'ctl-1', sectionId: 'sec-1', fieldId, code: 'equipment_name__c', name: '设备名称', type: 'AKInput', gridSpan: 1 }],
+          pages: [],
+        },
+      },
+    ],
+  })
+  try {
+    await assert.rejects(
+      () => buildPlan(preflightSession(fake.baseUrl), blueprint('field-404') as never),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, 'LAYOUT_FIELD_UNKNOWN')
+        assert.match(String((error as Error).message), /equipment_name__c/)
+        return true
+      },
+    )
+    const plan = await buildPlan(preflightSession(fake.baseUrl), blueprint('field-1') as never)
+    assert.equal(plan.steps.length, 1)
+  } finally {
+    await fake.close()
+  }
+})
+
+test('预检硬拦：对象字段做成控件时没给 objectId/listLayoutId/createRecordMode，出计划就拦下来', async () => {
+  const fake = await startRoutingFake((_method, path) => {
+    if (path.endsWith('/BasicObject/field/inspection_record__c')) {
+      return [{ id: 'field-1', code: 'asset_ref__c', dataType: 7 }]
+    }
+    if (path.endsWith('/Layout/LayoutDetail')) {
+      return { sections: [{ id: 'sec-1', code: 'basic_info__cs' }], controls: [], pages: [] }
+    }
+    if (path.endsWith('/Listlayout/List')) {
+      return [{ id: 'layout-ledger', code: 'asset_ledger_table__ak', source: 2 }]
+    }
+    return null
+  })
+  const blueprint = (attrs: Record<string, unknown>) => ({
+    version: 1,
+    env: 'test',
+    resources: [
+      {
+        kind: 'call',
+        capability: 'layout.save',
+        params: {
+          id: 'layout-1',
+          objectId: 'obj-1',
+          objectTypeId: 'ot-1',
+          name: '默认布局',
+          code: 'inspection_record_base_layout__ak',
+          source: 2,
+          status: 1,
+          isMain: true,
+          sections: [{ id: 'sec-1', code: 'basic_info__cs', name: '基本信息', type: 1 }],
+          controls: [{ id: 'ctl-3', sectionId: 'sec-1', fieldId: 'field-1', code: 'asset_ref__c', name: '所属设备', type: 'AKSelectorObject', gridSpan: 1, attrs }],
+          pages: [],
+        },
+      },
+    ],
+  })
+  try {
+    await assert.rejects(
+      () => buildPlan(preflightSession(fake.baseUrl), blueprint({ readPrettyShowType: '1' }) as never),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, 'LAYOUT_OBJECT_CONTROL_ATTRS_MISSING')
+        assert.match(String((error as Error).message), /asset_ref__c/)
+        return true
+      },
+    )
+    await assert.rejects(
+      () =>
+        buildPlan(
+          preflightSession(fake.baseUrl),
+          blueprint({ objectId: '"obj-ledger"', listLayoutId: '"layout-404"', createRecordMode: '3', readPrettyShowType: '1' }) as never,
+        ),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, 'LAYOUT_OBJECT_CONTROL_LAYOUT_UNKNOWN')
+        assert.match(String((error as Error).message), /asset_ref__c/)
+        return true
+      },
+    )
+    const plan = await buildPlan(
+      preflightSession(fake.baseUrl),
+      blueprint({ objectId: '"obj-ledger"', listLayoutId: '"layout-ledger"', createRecordMode: '3', readPrettyShowType: '1' }) as never,
+    )
+    assert.equal(plan.steps.length, 1)
+  } finally {
+    await fake.close()
+  }
+})
+
+test('回读重试：只读 GET 偶发 400 会重试一次，写入永不重试', async () => {
+  let menuReads = 0
+  let writes = 0
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    const send = (status: number, payload: unknown) => {
+      res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(payload))
+    }
+    if (url.pathname.endsWith('/Menu/GetMenuList')) {
+      menuReads += 1
+      if (menuReads === 1) return send(400, { code: 400, message: 'bad request' })
+      return send(200, { code: 0, message: 'ok', data: [{ code: 'menu__c', name: '菜单' }] })
+    }
+    if (url.pathname.endsWith('/Menu/Submit')) {
+      writes += 1
+      return send(400, { code: 400, message: 'bad request' })
+    }
+    return send(200, { code: 0, message: 'ok', data: null })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address() as AddressInfo
+  const session = preflightSession(`http://127.0.0.1:${address.port}`)
+  try {
+    const data = await invokeReadCapability(session, 'menu.list', { menuType: 1 })
+    assert.equal(Array.isArray(data.data), true)
+    assert.equal(menuReads, 2, '只读失败必须重试一次')
+    await assert.rejects(() => invokeReadCapability(session, 'menu.submit', { name: '菜单', code: 'menu__c', menuActionType: 3 }))
+    assert.equal(writes, 1, '写入绝不重试')
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })

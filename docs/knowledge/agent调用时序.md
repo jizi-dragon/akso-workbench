@@ -331,6 +331,7 @@ sequenceDiagram
             end
             alt 写入成功
                 H->>E: verifyStep 回读
+                Note over H: 回读走 invokeReadCapability：只读能力遇到 400/408/429/5xx 或网络抖动时<br/>等 300 ms 重读一次（verifyStep 整段还包在 withReadRetry 里）<br/>写入路径不经过它 —— 写重放会写两遍
                 alt 回读一致
                     H->>F: config-audit 记 verified
                 else 没有回读判据（能力目录里没有对应查询）

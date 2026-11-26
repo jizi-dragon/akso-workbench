@@ -362,10 +362,24 @@ export async function readWorkflowAnalysis(
     const row = pickWorkflowRow(rows, basicId)
     const statusIds = row === null ? [] : text(row.lifecycleStatusIds).split(',').map((value) => value.trim()).filter((value) => value !== '')
     const statusNameList = row === null ? [] : text(row.lifeStatusName).split(',').map((value) => value.trim())
-    const statusBindings = statusIds.map((statusId, index) => ({
+    const declared: Array<{ statusId: string; statusName: string }> = statusIds.map((statusId, index) => ({
       statusId,
       statusName: statusNames.get(statusId) ?? statusNameList[index] ?? statusId,
     }))
+    // 状态按钮（用户动作 behaviorType 7）或进入动作直接引用本流程，也算挂到了那个状态：
+    // 平台不会把这种挂载写回 lifecycleStatusIds（2026-11-27 实测为空），但运行时的发起正是靠它。
+    // 只按 lifecycleStatusIds 判定，会把「状态按钮拉起」的整条流程漏掉。
+    const actionBound: Array<{ statusId: string; statusName: string }> = statuses
+      .filter((status) =>
+        [...status.userActions, ...status.enterActions].some((action) => action.workflowIds.includes(basicId)),
+      )
+      .map((status) => ({ statusId: status.id, statusName: status.name }))
+    const seenStatus = new Set<string>()
+    const statusBindings = [...declared, ...actionBound].filter((binding) => {
+      if (seenStatus.has(binding.statusId)) return false
+      seenStatus.add(binding.statusId)
+      return true
+    })
     // 用户口径：分析范围内的工作流必须挂到启用中的生命周期状态上。
     // 只挂停用状态、或完全没有状态绑定（无法确认挂载）的流程不进入分析。
     if (!statusBindings.some((binding) => enabledStatusIds.has(binding.statusId))) continue

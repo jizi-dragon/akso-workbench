@@ -145,6 +145,29 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 }
 ```
 
+### query.field.get 按 code 取单个字段
+
+> 拿一个字段的 id / dataType / picklistId；做表单/列表布局时按编码取 fieldId，省掉先跑探针再手工抄 id。
+
+**返回**：data 是单个字段对象：id / name / code / dataType / picklistId …
+
+**要点**
+
+- 路径就是 `GET /api/openapi/v1.0/BasicObject/field/{objectCode}/{fieldCode}`，两个参数都走路径。
+- 计划里直接把 `{"$ref": "steps.sN.after.id"}` 当 `controls[].fieldId` 用，一步到位。
+- 字段 code 写错按「查不到」处理；对象 code 写错才会报错。
+
+**案例**
+
+#### 案例 · 取对象字段控件要挂的 fieldId
+
+```json
+{
+  "objectCode": "inspection_record__c",
+  "fieldCode": "asset_ref__c"
+}
+```
+
 ### field.save 新建 / 更新字段
 
 > 按 code upsert 字段；dataType 决定附加参数（选项、关联、日期格式…）。
@@ -189,6 +212,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 **要点**
 
 - 传入字段编码或字段 id 会得到 data:null。
+- 编码**不存在**时平台返回 HTTP 500 `Object reference not set to an instance of an object.`，不是 data:null（2026-11-27 实测）：存量清查时按「查不到」处理，别当成接口坏了。
 
 **案例**
 
@@ -623,6 +647,37 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 }
 ```
 
+### lifecycle.status.sort 调整生命周期状态顺序
+
+> 整条生命周期一次提交新的显示顺序；**请求体是裸数组** `[{id, sort}]`，不是 `{statuses: […]}`。
+
+**返回**：data: true。
+
+**要点**
+
+- 2026-11-27 界面拖拽抓包 + 回读实测：body 就是数组，sort 从 0 连续递增，必须带该生命周期下**全部**状态（含停用的）。
+- 顺序与「开启/关闭」语义无关：`init_status__c` 只表示初始状态，不保证排第一。
+- `lifecycle.status.update` 里的 `sort` 平台不落库，改顺序只能走这条接口。
+- 回读用 `query.lifecycle.status.config.list` 按 id 比顺序（读回的 sort 就是这条接口写进去的 0-based 值）。
+
+**案例**
+
+#### 案例 · 把「已完成」排到最后
+
+```json
+{
+  "statuses": [
+    { "id": "279a0fbd-d73e-dca5-6847-9eed15ef4ebd", "sort": 0 },
+    { "id": "2e6c48ce-231f-701a-ba11-e12a411b22bc", "sort": 1 },
+    { "id": "dc88c8e9-1b71-db33-b6ba-fa9dcf12e9f2", "sort": 2 },
+    { "id": "c2b8fa0b-f1b1-7f52-71c2-cde26e50636c", "sort": 3 },
+    { "id": "3939188d-a293-4ac3-f74d-adf6ed4a5ddc", "sort": 4 }
+  ]
+}
+```
+
+预期：界面状态顺序变成 待提交 → 待审批 → 已通过 → 已退回 → 已完成。
+
 ### lifecycle.useraction.create 新建用户动作
 
 > 在某个状态上新建一个用户动作（平台界面叫按钮），动作可绑定"提交流程"。每调一次都会新建一个。
@@ -679,40 +734,81 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 ### lifecycle.useraction.update 更新用户动作
 
-> 更新某个状态上已有用户动作（按钮）的名称、code、排序或绑定流程；改按钮必须走这条能力并留下审批记录。
+> 更新某个状态上已有用户动作记录（按钮组）里的按钮名称、排序或流程绑定；改已发布按钮必须走这条能力并留下审批记录。**2026-11-27 抓包 + 实测：顶层 id 必须是「记录（容器）id」，不是按钮 id。**
 
-**返回**：data: true。
+**返回**：data 为更新后的记录 id（容器 id）。
 
 **要点**
 
-- `actions` 是完整数组，不是增量；先 `lifecycle.useraction.list` 读出，再只改目标按钮。
-- 改流程只需替换该按钮 `configs[0].behaviorValue.workflowId`，填 workflowBasicId。
-- 该接口不会创建或删除按钮；不要再用直接 PATCH 绕过审批。
+- 顶层 `id` 是**记录（容器）id**（`lifecycle.useraction.record.list` 拿），不是 `actions[].id`；传按钮 id 平台会当成新建，报 `Value cannot be null. (Parameter 'source')` 或 `[lifecycle_status_user_action，Insert] Repeat FullPath: …`。
+- `actions` 要整份回写（含 `id` / `preConfigDto` / `uid`），只改要改的字段；`actions[].name` 才是界面上的按钮名。
+- `executionConditionGroups` 必须传 `[]`，缺了平台 500。
+- 读-改-写顺序：`lifecycle.useraction.record.list` → `lifecycle.useraction.record.get` → 本接口；回读用 `record.get` 比 `actions[].name` 与 `configs[].behaviorValue.workflowId`。
 
 **案例**
 
-#### 案例 · 更新按钮流程绑定
+#### 案例 · 把「重新提交」改名为「重新提交（退回后）」
 
 ```json
 {
-  "id": "<userActionId>",
-  "lifecycleStatusId": "<statusId>",
+  "id": "<userActionRecordId>",
+  "code": "",
   "isEnabled": true,
+  "belongId": "<statusId>",
+  "belongType": 2,
+  "sort": 2,
+  "executeType": 1,
+  "description": "重新提交并再次启动设备维修申请审批流",
+  "lifecycleId": "<lifecycleId>",
+  "lifecycleStatusId": "<statusId>",
+  "executionConditionGroups": [],
+  "enableSignatures": true,
+  "basicObjectId": "<objectId>",
+  "objectCode": "<objectCode>",
   "actions": [
     {
-      "name": "提交",
-      "code": "submit",
+      "id": "<actionId>",
+      "sort": 0,
+      "code": "resubmit_equipment_repair",
+      "name": "重新提交（退回后）",
+      "icon": "CheckOutlined",
+      "group": 1,
+      "groupSort": 1,
+      "isCommonly": true,
+      "isNotShowOperation": false,
+      "lifecycleStatusId": "<statusId>",
       "configs": [
         {
+          "id": "00000000-0000-0000-0000-000000000000",
           "behaviorType": 7,
-          "behaviorValue": { "workflowId": "<workflowBasicId>" },
-          "sort": 0
+          "behaviorValue": {
+            "workflowId": "<workflowBasicId>",
+            "isBeforeWorkflowCompleteReminderTask": true
+          }
         }
-      ]
+      ],
+      "isSubmitAndExecute": false,
+      "isNeedSignature": false,
+      "preConfigDto": {
+        "code": null,
+        "description": "重新提交并再次启动设备维修申请审批流",
+        "failPrompt": null,
+        "condition": null,
+        "executionConditionGroups": [],
+        "executionPromptConditionGroups": null,
+        "executeType": 1,
+        "enableExecutionConfirmation": false,
+        "confirmationType": 0,
+        "promptTitle": null,
+        "promptMessage": null
+      },
+      "uid": "<uid>"
     }
   ]
 }
 ```
+
+预期：平台返回 `data` 为记录 id；回读按钮列表 `name` 变成「重新提交（退回后）」，`configs` 里 behaviorType 7 的 workflowId 不变。
 
 ### query.lifecycle.status.config.list 读生命周期状态配置
 
@@ -775,6 +871,53 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
   "statusId": "<statusId>"
 }
 ```
+
+### lifecycle.useraction.record.list 读取用户动作记录（容器）
+
+> 按状态 id 返回状态上的用户动作**记录**（界面里的按钮组容器），带容器 id；改按钮前先用它拿 id。**2026-11-27 界面抓包 + 实测。**
+
+**返回**：data 为记录数组；每项含 `id`（容器 id）/ `sort` / `description` / `actions`（按钮名数组）/ `actionList`（name + icon）。
+
+**要点**
+
+- `lifecycle.useraction.list` 把动作摊平成一行一个按钮，**拿不到容器 id**；`lifecycle.useraction.update` 要的 `id` 是这里的容器 id。
+- 同一状态可以有多个记录，一个记录里可以有多个按钮。
+- `lifecycle.useraction.create` 的返回其实就是这个容器 id，建完可以直接拿去改。
+
+**案例**
+
+#### 案例 · 读某个状态上的按钮记录
+
+```json
+{
+  "statusId": "<statusId>"
+}
+```
+
+预期：返回该状态的记录数组；只有「重新提交」一个按钮时是 `[{ "id": "<容器 id>", "actions": ["重新提交"], … }]`。
+
+### lifecycle.useraction.record.get 读单条用户动作记录（含完整 actions）
+
+> 按容器 id 读一条用户动作记录，返回可直接回写给 `lifecycle.useraction.update` 的完整结构。**2026-11-27 抓包 + 实测。**
+
+**返回**：data 为记录对象：`id / sort / description / belongId / belongType / lifecycleId / lifecycleStatusId / executeType / executionConditionGroups / enableSignatures / actions[]`（每个按钮含 `id / name / code / icon / group / groupSort / configs[] / preConfigDto / uid`）。
+
+**要点**
+
+- 读-改-写就用它：取 data 后只改要改的字段，整份 PATCH 回 `lifecycle.useraction.update`。
+- `actions[].name` 才是界面上的按钮名；记录级 `description` 是按钮组说明。
+
+**案例**
+
+#### 案例 · 改名前读出整条记录
+
+```json
+{
+  "id": "<userActionRecordId>"
+}
+```
+
+预期：返回记录对象，`actions` 里带着原按钮名与 `configs` 的 behaviorType 7 绑定。
 
 ### lifecycle.useraction.list 读取用户动作
 
@@ -1443,6 +1586,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 - **`stepTaskConfig.workflowConfigId` / `stepTaskConfig.stepId` 必须是真实 id**（当前 workflowConfigId / 本节点 id）：给全零 GUID 保存不报错，但**跑流程建任务时**抛 `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测）。同批检查 `stepTaskApprovals[].workflowConfigId/stepId` 也用真实值。
 - 控件形状同 `workflow.start.update`：Get 回的是摊平形态，回写前要包成 `{id,sort,name,controlConfig,…}`，否则服务端抛 NRE。
 - 与 UI 建的参照流程对齐时，任务节点还应给 `isRequireSign: true`、`isRequireObjectField: true`、`isApprovalShowAsButton: true`（缺了不报错，但审批界面行为与 UI 建的不一致）。
+- **`workflow.task.add` 之后不要再用这条补 `stepTaskConfig.workflowConfigId/stepId`**：平台在 add 时已经自己填对了（2026-11-27 standard-val 实测，`task.add` → `step.get` 回读两 id 已就位）；而本接口要**全量字段体**，拿最小体重放直接 HTTP 400（AUTO_REPAIR 重放仍 400）。task.add 给全 `step.workflowConfigId` + `stepTaskConfig.userControlIds` 就够了。
 
 **案例**
 

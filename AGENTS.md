@@ -79,11 +79,16 @@
   （任务跨阶段，阶段号从 1 开始）。只能引用更早步骤/已执行阶段；引用模板会进 `planHash`/`taskHash`,
   执行时按真实返回解析，缺失/未来步骤/未来阶段/坏路径都在计划或执行前报错。任务级多段依赖（工作流拿
   上一步的 id、字段拿对象 id）应装进一条任务、只审一次，不要为每个 id 重开一张审批。
-- **配置引擎硬门禁（2026-11-26）**：计划/任务都带 `engineBuild`，与当前源码常量不一致时拒绝执行；
+- **配置引擎硬门禁（2026-11-26，2026-11-27 扩预检）**：计划/任务都带 `engineBuild`，与当前源码常量不一致时拒绝执行；
   工作流/状态按钮等严格写入的 `unverified` 回读视为失败并立即停止，不再继续发布。`buildPlan` 还会预检：
   `workflow.create` 按 name/code 查重（`WORKFLOW_DUPLICATE`）、`lifecycle.useraction.create` 按状态查重
   （`USER_ACTION_DUPLICATE`）、`workflow.task.add/update` 的审核按钮必须 `isHaveSign && isRequireSign`
-  （`TASK_SIGNATURE_MISSING`）。改已发布按钮用 `lifecycle.useraction.update`，不要再直接 PATCH 绕过审批。
+  （`TASK_SIGNATURE_MISSING`）；2026-11-27 再加三条（都是实测踩过的坑，判据确定性、不误杀）：
+  `lifecycle.status.update` 的 `sort` 与平台现状不同时直接拒（`STATUS_SORT_NOT_PERSISTED`，改顺序只能走
+  `lifecycle.status.sort`）、`lifecycle.useraction.update` 的顶层 `id` 命中了某个按钮 `actions[].id` 时拒
+  （`USER_ACTION_ID_IS_ACTION_ID`，传按钮 id 平台会当新建）、`layout.save` 的控件 `fieldId` 不在对象字段表里
+  （`LAYOUT_FIELD_UNKNOWN`）或 `sectionId` 既不在已有分区也不在本次提交分区里（`LAYOUT_SECTION_UNKNOWN`）时拒。
+  改已发布按钮用 `lifecycle.useraction.update`，不要再直接 PATCH 绕过审批。
 - 审核文档分两类：`kind:'create'` 用于大规模创建/调整，文件名 `<任务名>-YYYYMMDD-HHmmss.md`，含完整执行明细；
   `kind:'update'` 用于已执行任务的小范围优化/更新，文件名 `<任务名>-更新-YYYYMMDD-HHmmss.md`，篇幅更短，
   只含任务概述/调整计划/预期 checklist/本次操作清单，可带 `previousReviewPath` 与 `reason`。
@@ -124,6 +129,12 @@
   的 id，衍生对象 code 也未必按约定），这两类要靠 capture 监听或人工在界面确认，回报时必须说「已执行、未确认」。
 - **重试只对瞬时错误**：`isTransientFailure` = HTTP 502/503/504 或 `ECONNRESET/ETIMEDOUT/EAI_AGAIN/
   socket hang up/fetch failed`；只重试**一次**。写成功却回 401 的那类由回读兜底，**绝不重试**（会写两遍）。
+- **回读也重试一次（2026-11-27 实测后加）**：`workflow.action.add` 写成功之后**立刻**回读
+  `workflow.steps.list` 会抛 HTTP 400，隔十几秒再读就正常。所以只读回读走 `invokeReadCapability`
+  （GET / `readonly` 能力，判据是 HTTP 400/408/409/425/429/500/502/503/504 与网络抖动，**不认业务错误码**），
+  失败等 300 ms 重试一次；`preflightPlan` / `verifyStep` / `verifyAppliedPlan` 整段包在 `withReadRetry` 里。
+  **写入路径一行都不经过它** —— 写重放会写两遍，比失败更糟；`*.add` 写成功但回读失败时，
+  只靠 `workflow.steps.list` 确认节点在链上，然后从下一个节点继续，绝不复跑 add。
 - **小错就地修（`AUTO_REPAIR`）**：回读没过、或写入报错时，若这一步属于**幂等写入**
   （`canAutoRepair`：field/picklist/layout/listlayout/lifecycle.status.update/lifecycle.useraction.update/
   workflow.update/workflow.status.change/四类 `workflow.*Step.update`），引擎按**原审批范围**重放一次
@@ -131,8 +142,13 @@
   仍不过记 `AUTO_REPAIR_FAILED`。新建类（`*.create` / `*.add`）**绝不自动重放**。
 - **严格验证必须对得上判据**：单测断言「严格集 ⊆ 有回读判据的能力集」（`hasReadbackCriteria`），
   否则会出现「要求严格回读 → 却没判据 → 永远 failed」的死锁。新增严格能力时必须同时补判据。
-- **接口的“假成功”要写进判据**：`lifecycle.status.update` 的 `sort` 平台不落库（2026-11-26 三次实测），
+- **接口的“假成功”要写进判据**：`lifecycle.status.update` 的 `sort` 平台不落库（2026-11-26 三次实测，2026-11-27 复核），
   现在提交了 `sort` 就必须核回来，核不上记成不一致（非严格，不阻断，台账留痕）。
+- **改状态顺序用 `lifecycle.status.sort`（2026-11-27 抓包 + 回读实测）**：`POST /api/config/lifecycle/Status/Sort`，
+  请求体是**裸数组** `[{id, sort}]`（不是 `{statuses: […]}`），`sort` 从 0 连续递增、必须带该生命周期下全部状态；
+  引擎靠能力里的 `arrayBody: 'statuses'` 把该参数原样当 body 发出去。它已进严格回读集，判据是
+  `query.lifecycle.status.config.list` 回读后按 sort 比**相对顺序**（平台可能回 0-based/1-based，不比数字）。
+  所以「sort 只能界面拖」的旧结论作废：界面拖拽走的就是这条接口。
 - **执行后确认**：`engine.verifyAppliedPlan(session, plan)` 用全新查询上下文把每一步重新读一遍，
   产出 `VerificationReport`；apply 结束自动跑一次并写 `plan.verification`。菜单已有回读判据
   （`menu.list` 按 code 核对父菜单与绑定对象），不再「需人工在控制台确认」；工作流另外跑
@@ -213,8 +229,15 @@
 - **表单/列表布局**：新组件 id 必须先经 `Layout/GetStableComponentIds` 换成稳定 id 再 `layout.save`；
   **新增分区必须顺位追加**：sections 数组保持现有顺序，新分区放数组最后、`sort` 取现有最大 `sort + 1`，
   不能插到第一位（平台按数组顺序归一化 sort；2026-11-21 实测）；
-  关联控件 `AKSelectorObject` 的 `listLayoutId` 要填**被关联对象**的列表布局（填全零会空白/列错乱）：
-  没特殊要求就改默认布局，不新建。
+  关联控件 `AKSelectorObject`（对象字段做成控件）的 `attrs` 必须**三项齐**：`objectId`（被关联对象）、
+  `listLayoutId`（**被关联对象**的列表布局，没特殊要求就用它的默认布局，不新建）、`createRecordMode`
+  （`"3"` = 可新建关联记录）。只给 `readPrettyShowType` 平台也能保存成功，但界面上「列表布局 / 创建记录方式」
+  会是空的；值可以写成普通字符串，平台自己存的是带引号的字符串（`"\"uuid\""`），两种形态都认。
+  引擎出计划时硬拦：缺项报 `LAYOUT_OBJECT_CONTROL_ATTRS_MISSING`，`listLayoutId` 不属于该对象报
+  `LAYOUT_OBJECT_CONTROL_LAYOUT_UNKNOWN`（2026-11-27 加）。
+  **记录为可能发生的情况（2026-11-27 用户现场反馈）**：用户打开该控件设置时看到这三项是空的，
+  但抓到的 3 次 `Layout/SaveLayoutDetail` 请求体里三项一直都在、三次语义完全一致（只有 attrs 键顺序变化），
+  与平台 UI 建的同类控件写法也一致，因此暂按「偶发显示问题」记录，不认定为写入丢失；再遇到时先抓包比对请求体。
 
 ## 工作流配置规则（2026-11-22 用户口径）
 
@@ -223,6 +246,7 @@
 - **编辑已发布流程会生成新版本（2026-11-26 实测）**：在 UI 编辑已发布流程，`workflowBasicId` 不变，但 `workflowConfigId`、`versionNo` 和全部 step id 会变（本次 v1 `3a4ec3aa-124c-597d-b32b-3a25266fb331` → v2 `8f10d3f8-9aff-6a8b-6eb9-3a2526928a36` → v3 `fb875bdb-1f7d-a876-63d6-3a2526a36838`，旧 step id 全失效）。保存/发布后必须重新读取 workflowConfigId 与全部 step id；禁止缓存旧 id。
 - **发起入口单独检查**：`isAllowTrigger` 只控制是否允许进入动作/事件动作自动启动；审批流仍要挂用户动作（`behaviorType: 7`）作为触发器。初始状态绑定 `lifecycleStatusIds` 不等于触发器。
 - **创建任务节点前，只判断开始节点中有无对应参与者**：有对应参与者控件就把任务 `userControlIds` 指向它；没有就回开始节点补。矩阵规则、角色成员、通知接收人是否齐全，属于发布前/运行风险检查，不作为创建任务节点的前置门槛。
+- **`workflow.task.add` 之后不要再补 `workflow.task.update`（2026-11-27 实测）**：平台在 add 时已经把 `stepTaskConfig.workflowConfigId` / `stepTaskConfig.stepId` 自己填对了（回读 `workflow.step.get` 两 id 已就位）；而 `UpdateWorkflowTaskStep` 要**全量字段体**，拿最小体重放直接 HTTP 400，AUTO_REPAIR 重放同样 400，白费一次审批窗。task.add 给全 `step.workflowConfigId` + `stepTaskConfig.userControlIds` 就够了；确实要改节点才读整份再写回。
 - **参与者控件只允许两种（2026-11-22 用户口径）**：`使用字段作为参与者`（`selectUserType: 40`，配 `fielsObjectIds`）或 `使用审批矩阵作为参与者`（`selectUserType: 50`，配审批矩阵）。不得使用指定用户、指定用户组、指定用户+用户组、使用角色、使用自定义动作等其它类型；已有流程如用了其它类型，另行评估迁移，不在新建/调整时继续使用。
 - **配置工作流前先出三张清单**：参与者清单（只能是字段/审批矩阵）、节点清单（开始/状态/任务/判断/动作/结束）、节点关系图（含判断分支与拒绝回退）；执行顺序固定为「先建参与者 → 再建节点 → 最后收口节点关系」。当前 `workflow.*.add/update` 的 `nextStepId` 是必填，节点可先带临时指向占位，节点全部建完后再用 `workflow.*.update` 统一收口；最终必须回读 `nextStepId/nextStepList` 与判断分支，不能把临时指向留在发布版本里。
 - **审批矩阵两个配置不能混**：`constraintRoleIds` 是“应用角色约束”（限制哪些角色可参与）；`constraintsCondition` 是“使用的条件”（特殊情况下的更原始字段/角色过滤）。两者不是互相替代关系。
