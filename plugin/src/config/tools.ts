@@ -242,8 +242,17 @@ export function buildApprovalReport(plan: Plan, session: EgmpSession, hashOverri
   }
 }
 
-export function buildConfigPlanTool(deps: ConfigToolDeps) {
-  return {
+/** 执行口径写进返回值：写一步、马上回读一步，回读不过就停，不往下带错。 */
+const STEP_VERIFY_NOTE = '执行口径：每步写入后立即回读校验；回读不符先按原审批范围就地修一次，仍不符就停在该步，不继续往下配。'
+
+function stoppedStepNote(results: Array<{ title: string; status: string; message: string }>): string {
+  const index = results.findIndex((result) => result.status === 'failed')
+  if (index < 0) return ''
+  const found = results[index]!
+  return `停在第 ${index + 1} 步「${found.title}」：${found.message}`
+}
+
+export function buildConfigPlanTool(deps: ConfigToolDeps) {  return {
     name: 'akso_workbench_config_plan',
     description:
       '把一份配置蓝图（JSON）转换成执行计划：读取平台现状、去重、按依赖排序、标出风险与不可逆步骤。'
@@ -501,6 +510,8 @@ async function runTaskApply(
       )
       .filter((path) => path !== '')
     const failedChecks = applied.results.flatMap((stage) => (stage.verification?.checks ?? []).filter((check) => !check.ok))
+    const flatSteps = applied.results.flatMap((stage) => stage.steps.map((step) => ({ ...step, title: `${stage.name} · ${step.title}` })))
+    const stopped = stoppedStepNote(flatSteps)
     return {
       ok,
       status: applied.status,
@@ -509,6 +520,8 @@ async function runTaskApply(
       approval: scope,
       message: [
         describeScope(scope),
+        STEP_VERIFY_NOTE,
+        stopped,
         failedChecks.length === 0 ? '' : `执行后确认发现 ${failedChecks.length} 项不一致：${failedChecks.slice(0, 3).map((check) => `${check.title}（${check.message}）`).join('；')}`,
         summarizeIssues(issues),
       ].filter((line) => line !== '').join(' '),
@@ -665,6 +678,7 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
           ? ''
           : writeVerificationReport(workspaceRoot, verification, { planTitle: report.title, env: applied.env, target: applied.target?.baseUrl })
         const failedChecks = (verification?.checks ?? []).filter((check) => !check.ok)
+        const stopped = stoppedStepNote(applied.results)
         return {
           ok,
           status: applied.status,
@@ -673,6 +687,8 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
           approval: scope,
           message: [
             describeScope(scope),
+            STEP_VERIFY_NOTE,
+            stopped,
             verification === undefined ? '执行后确认：未生成（计划是只读的或确认步骤被跳过）。' : summarizeVerification(verification),
             summarizeIssues(issues),
           ].filter((line) => line !== '').join(' '),

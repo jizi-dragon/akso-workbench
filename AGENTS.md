@@ -111,11 +111,15 @@
   按**当前计划重新生成**一份（旧文档原样保留），返回 `reviewRegenerated: true` 并在 message 里说清；
   只有连文档都写不出来（没有工作区根）才 `review-unavailable`。
 - **小问题台账**：`plugin/src/config/issues.ts`。执行中「回读晚一拍才生效」「瞬时 5xx 重试成功」
-  「非阻断的未验证」「写报错但回读证明已生效」都记一条 `IssueRecord`，追加写
+  「写报错但回读证明已生效」都记一条 `IssueRecord`，追加写
   `$DSH_HOME/akso-workbench/config-audit/issues-<YYYY-MM>.jsonl`，同时投一条 `issue.recorded` journal 事件；
   `config_apply` 的返回带 `issues[]` 与一句话摘要，`config_plan` 的返回带 `approval` 预览
-  （`needed/reason/writes/readonly`，出计划时就先说清这次要不要弹窗）。**小问题不阻断**——
-  只有严格写入（workflow.*、state 按钮等）回读未通过才停。
+  （`needed/reason/writes/readonly`，出计划时就先说清这次要不要弹窗）。
+- **执行一次、验证一次（2026-11-27 用户口径）**：每一步写入**立刻**回读，回读不符先就地修一次，
+  **仍不符就停在这一步**，后面的步骤一个包都不发（`plan.status` 直接 failed，返回里点명「停在第 N 步」）。
+  判据是「这一步有没有可核对的东西」：有判据的写入**一律是门**（不再分严格/非严格）；
+  只有能力目录里根本没有对应查询接口的写入才降级——记 `NO_CRITERIA` 继续跑，台账里留痕。
+  用户要的是“配完四步工作流节点，就该有四次回读”，不是最后再统一跑一轮。
 - **重试只对瞬时错误**：`isTransientFailure` = HTTP 502/503/504 或 `ECONNRESET/ETIMEDOUT/EAI_AGAIN/
   socket hang up/fetch failed`；只重试**一次**。写成功却回 401 的那类由回读兜底，**绝不重试**（会写两遍）。
 - **小错就地修（`AUTO_REPAIR`）**：回读没过、或写入报错时，若这一步属于**幂等写入**

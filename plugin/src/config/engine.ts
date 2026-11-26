@@ -1424,7 +1424,14 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promise<{ verified: boolean; message: string }> {
+/** 回读结论。`noCriteria: true` 表示「这个能力根本没有可核对的查询接口」，不是失败。 */
+export interface VerifyOutcome {
+  verified: boolean
+  message: string
+  noCriteria?: boolean
+}
+
+async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promise<VerifyOutcome> {
   try {
     switch (step.kind) {
       case 'picklist': {
@@ -1516,10 +1523,10 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
         const checked = await verifyCallCapability(ctx, step.capabilityId, params)
         if (checked !== null) return checked
         const cap = findCapability(step.capabilityId)
-        return { verified: false, message: `${cap?.title ?? step.capabilityId} 没有回读判据（能力目录里没有与之对应的查询接口），需人工确认` }
+        return { verified: false, noCriteria: true, message: `${cap?.title ?? step.capabilityId} 没有回读判据（能力目录里没有与之对应的查询接口），只能记台账、靠人工或监听确认` }
       }
       default:
-        return { verified: false, message: '未知类型' }
+        return { verified: false, noCriteria: true, message: '未知类型，没有回读判据' }
     }
   } catch (error) {
     return { verified: false, message: error instanceof Error ? error.message : String(error) }
@@ -1589,6 +1596,8 @@ export async function verifyAppliedPlan(session: EgmpSession, plan: Plan): Promi
       continue
     }
     const verify = await verifyStep(ctx, step, res).catch((error: unknown) => ({ verified: false, message: errorText(error) }))
+    // 没有回读判据的写入：确认不了，但也不是失败，按「未确认」记在 message 里，别把报告全涂红。
+    const noCriteria = (verify as VerifyOutcome).noCriteria === true
     checks.push({
       stepId: step.id,
       title: step.title,
@@ -1596,8 +1605,8 @@ export async function verifyAppliedPlan(session: EgmpSession, plan: Plan): Promi
       kind: step.kind,
       action: step.action,
       readonly: false,
-      ok: verify.verified,
-      message: verify.message,
+      ok: verify.verified || noCriteria,
+      message: noCriteria ? `${verify.message}（未确认，不是失败）` : verify.message,
     })
   }
   const notes = await workflowChainNotes(ctx, plan)
@@ -1757,7 +1766,9 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
         }
       }
       const strict = requiresVerifiedWrite(step.capabilityId)
-      let blocked = strict && !verify.verified
+      // 执行一次、验证一次：只要有回读判据，回读不符就停在这里等处置，不拿错误状态继续往下配。
+      // 只有「根本没有判据」的写入才降级为台账记录并继续（否则永远没法配完没有查询接口的能力）。
+      let blocked = !verify.verified && verify.noCriteria !== true
       // 小错就地修：写进去了但回读没通过（或严格校验将要阻断）时，按原审批范围重放一次。
       if (!verify.verified) {
         const repair = await autoRepair(session, step, res, bindings, issues, verify.message)
@@ -1769,7 +1780,7 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
       if (!blocked && !verify.verified) {
         issues.record({
           level: 'warn',
-          code: 'VERIFY_UNVERIFIED',
+          code: verify.noCriteria === true ? 'NO_CRITERIA' : 'VERIFY_UNVERIFIED',
           message: `${step.title}：${verify.message}`,
           stepId: step.id,
           capabilityId: step.capabilityId,
@@ -1782,7 +1793,7 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
         action: step.action,
         status: blocked ? 'failed' : verify.verified ? 'verified' : 'unverified',
         message: blocked
-          ? `${message}；回读未通过，已阻断后续步骤：${verify.message}`
+          ? `${message}；回读未通过，已阻断后续步骤${strict ? '（严格写入）' : ''}：${verify.message}`
           : `${message}；${verify.message}`,
         traceId: null,
         durationMs: Date.now() - t0,

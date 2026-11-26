@@ -288,11 +288,15 @@ sequenceDiagram
 
 引擎（`plugin/src/config/engine.ts` 的 `applyPlan`）不信任工具：计划指纹、目标 `baseUrl`、
 `accountId`、审批记录未用过，全部再验一遍；通过后先把审批标记为已用，**中途失败也不能拿同一张
-审批重试**。每一步写完后都回读校验，但停不停分两种情况：**写入报错且回读也没确认**才停（返回
-checkpoint）；**写成功但回读没确认**记 `unverified`，继续后面的步骤。
+审批重试**。
+
+**执行一次、验证一次**（2026-11-27 用户口径）：每一步写入后**立刻**回读，回读不符先就地修一次，
+**仍不符就停在这一步**——后面的步骤一个包都不发，返回里点明「停在第 N 步」。判据只有一条：
+这一步有没有可核对的东西。**有判据的写入一律是门**（不再区分严格/非严格）；只有能力目录里根本
+没有对应查询接口的写入才降级，记 `NO_CRITERIA` 继续跑，台账里留痕。
 
 小问题不进「失败」，进台账：回读晚一拍（等 300 ms 用新上下文重读一次就对上）、瞬时 5xx / 连接被
-重置（只重试一次）、非阻断的 `unverified`、写报错但回读证明已生效——各记一条 `IssueRecord`
+重置（只重试一次）、就地修好或修不好、写报错但回读证明已生效——各记一条 `IssueRecord`
 （`$DSH_HOME/akso-workbench/config-audit/issues-<YYYY-MM>.jsonl` + journal 的 `issue.recorded`），
 随返回值带 `issues[]`，不打断施工。
 
@@ -329,7 +333,9 @@ sequenceDiagram
                 H->>E: verifyStep 回读
                 alt 回读一致
                     H->>F: config-audit 记 verified
-                else 回读没确认（可能只是晚一拍）
+                else 没有回读判据（能力目录里没有对应查询）
+                    H->>F: 记 unverified + issue NO_CRITERIA，继续下一步
+                else 回读没对上（可能只是晚一拍）
                     H->>H: 等 300 ms，用新上下文再读一次
                     alt 这次对上
                         H->>F: 记 verified + issue VERIFY_EVENTUAL
@@ -337,8 +343,9 @@ sequenceDiagram
                         H->>H: 幂等写入？按原审批范围重放一次（记 issue AUTO_REPAIR）
                         alt 重放后回读通过
                             H->>F: 记 verified + issue AUTO_REPAIR_OK
-                        else 仍然没确认
-                            H->>F: config-audit 记 unverified（严格写入则 failed 并停）
+                        else 仍然对不上
+                            H->>F: 记 failed（有判据即门），后面的步骤不发包
+                            H-->>A: ok=false / status=failed / results
                         end
                     end
                 end
@@ -351,7 +358,7 @@ sequenceDiagram
                     alt 重放后回读通过
                         H->>F: 记 verified + issue AUTO_REPAIR_OK
                     else 仍然没确认
-                        H->>F: 记 failed，保存计划（checkpoint）
+                        H->>F: 记 failed，保存计划（checkpoint），后面的步骤不发包
                         H-->>A: ok=false / status=failed / results
                     end
                 end
@@ -367,8 +374,9 @@ sequenceDiagram
 
 - 平台存在「HTTP 200 + `code=401`，但数据已经落库」的端点（实测 `picklist.save`）。所以**写报错
   也要回读一次**：回读确认已生效就记 `verified`，否则记 `failed` 并停，避免模型重试把数据写两遍。
-- 结果里的 `unverified` 表示「写请求没报错，但回读没确认」，不等于没写；它**不阻断**后续步骤，
-  计划整体仍可能是 `applied`，要人工核对这一步。
+- 结果里的 `unverified` 现在只剩一种来源：**能力目录里没有回读判据**（`NO_CRITERIA`）。有判据的
+  写入回读不上就是 `failed` 并停——「执行一次、验证一次」要求配四步工作流节点就有四次回读，不能
+  拿错误状态继续往下配。
 - **菜单也有回读判据了**：`menu.list`（`?menuType=1`）按 code 找菜单，核对父菜单与绑定对象，
   不再返回「平台无按 code 回查菜单的接口，需人工确认」。
 
@@ -546,10 +554,10 @@ sequenceDiagram
 | 「这个计划没有绑定账号」 | 计划没有 `accountId` | 没有 | 账号条选好账号后重新 plan |
 | 「计划已过期（30 分钟）」 | plan 太久没执行 | 没有 | 重新 plan |
 | `status: failed` | 某步写入报错且回读也没确认，已停 | **可能写过**（前面的步骤） | 看 `results` 与 audit；不要重跑同一计划，重新 plan |
-| 每步 `unverified` | 写请求没报错，但回读没确认 | 可能已写 | 人工回读核对；它不阻断后续步骤，计划仍可能 `applied` |
+| 每步 `unverified` | 能力目录里没有回读判据（`NO_CRITERIA`），写请求本身没报错 | 可能已写 | 人工回读核对；它能继续跑，但有判据的写入回读不上会直接 `failed` 并停 |
 | `status: no-approval-needed` | 计划/任务里全是只读查询，或调试模式关了审批 | 没有写入 | 正常结果，不是错误；`approval.reason` 说明是 `read-only` 还是 `disabled` |
 | `reviewRegenerated: true` | 传的 `reviewPath` 已过期/指纹不符/文档已结束，host 按当前计划补了一份新文档 | 没有 | 正常结果，旧文档保留；把新路径告诉用户再决定要不要继续 |
-| 返回里的 `issues[]` 非空 | 回读晚一拍、瞬时 5xx 重试成功、幂等写入自动重放、非阻断未验证、写报错但已生效 | 视条目而定 | 不是失败；按 `code`（`VERIFY_EVENTUAL` / `TRANSIENT_RETRY` / `AUTO_REPAIR` / `AUTO_REPAIR_OK` / `WRITE_ERROR_BUT_APPLIED` 等）判断要不要人工复核 |
+| 返回里的 `issues[]` 非空 | 回读晚一拍、瞬时 5xx 重试成功、幂等写入自动重放、没有回读判据的降级（`NO_CRITERIA`）、写报错但已生效 | 视条目而定 | 不是失败；按 `code`（`VERIFY_EVENTUAL` / `TRANSIENT_RETRY` / `AUTO_REPAIR` / `AUTO_REPAIR_OK` / `NO_CRITERIA` / `WRITE_ERROR_BUT_APPLIED` 等）判断要不要人工复核 |
 
 > 表里引号中的中文是工具返回的 `error` 文本；对应的英文 code（`APPROVAL_REQUIRED`、
 > `TARGET_CHANGED` 等）是引擎内部的 `EgmpError.code`，不随工具返回，排查时按中文文本 grep。

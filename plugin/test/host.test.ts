@@ -954,7 +954,7 @@ test('配置写入先在对话里弹审批窗：人点同意才发请求', async
   const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')
   assert.ok(applyTool !== undefined, '执行工具应当注册')
 
-  const egmp = await startFakeEgmp()
+  const egmp = await startFakeEgmp([{ code: 'major__c', name: '主要变更' }])
   writeAccount(home, egmp.baseUrl)
   process.env.AKSO_WORKBENCH_REVIEW_DIR = join(home, 'reviews')
   try {
@@ -2730,6 +2730,106 @@ test('执行中的小错就地修：幂等写入自动重放一次，不用回�
     assert.ok(codes.includes('AUTO_REPAIR'), `台账里要有 AUTO_REPAIR：${codes.join(',')}`)
     assert.ok(codes.includes('AUTO_REPAIR_OK'), `台账里要有 AUTO_REPAIR_OK：${codes.join(',')}`)
     assert.equal(applied.results.find((result) => result.stepId === 's1')?.status, 'verified')
+  } finally {
+    await fake.close()
+  }
+})
+
+test('执行一次、验证一次：回读对不上就停在这里，后面的步骤一个包都不发', async () => {
+  const state = { saves: [] as string[], rows: [{ code: 'material_name__c', name: '旧名' }] as Array<Record<string, unknown>> }
+  const fake = await startRoutingFake((method, path) => {
+    if (method === 'POST' && path.endsWith('/BasicObject/SaveField')) {
+      // 两次（原始 + 自动重放）都“成功”，但平台就是不生效：这条链必须断在这里
+      state.saves.push(path)
+      return {}
+    }
+    if (path.endsWith('/BasicObject/FieldPage')) return { datas: state.rows }
+    return null
+  })
+  const home = freshHome()
+  const session = { baseUrl: fake.baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() }
+  const stepOf = (id: string, code: string): Record<string, unknown> => ({
+    id,
+    kind: 'call',
+    action: 'update',
+    title: `改字段名 ${code}`,
+    naturalKey: `field.${code}`,
+    risk: 'low',
+    irreversible: false,
+    capabilityId: 'field.save',
+    params: { objectId: 'obj-1', code, name: '新名', dataType: 1 },
+    dependsOn: [],
+    warnings: [],
+  })
+  try {
+    savePlan(home, {
+      planId: 'pln_gate',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1000,
+      engineBuild: CONFIG_ENGINE_BUILD,
+      env: 'test',
+      target: { baseUrl: fake.baseUrl, accountId: ACCOUNT_ID, account: 'tester' },
+      summary: { create: 0, update: 2, skip: 0, irreversible: 0 },
+      steps: [stepOf('s1', 'material_name__c'), stepOf('s2', 'unit__c')],
+      warnings: [],
+      status: 'planned',
+      results: [],
+    } as never)
+
+    const applied = await applyPlan(session, 'pln_gate', home, { requireApproval: false })
+    assert.equal(applied.status, 'failed', '回读没通过的计划不能算成功')
+    assert.equal(state.saves.length, 2, '第一步写 + 就地修一次，就到此为止（第二个字段一次都没写）')
+    assert.equal(applied.results.length, 1, '第二步不该被执行')
+    const first = applied.results[0]!
+    assert.equal(first.status, 'failed')
+    assert.match(first.message, /已阻断后续步骤/)
+  } finally {
+    await fake.close()
+  }
+})
+
+test('没有回读判据的写入：记 NO_CRITERIA 继续，不把整条计划拦死', async () => {
+  const fake = await startRoutingFake((method, path) => {
+    if (method === 'POST' && path.endsWith('/ApproveMatrix/CreateConfigApproveMatrix')) return {}
+    return null
+  })
+  const home = freshHome()
+  const session = { baseUrl: fake.baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() }
+  try {
+    savePlan(home, {
+      planId: 'pln_nocrit',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1000,
+      engineBuild: CONFIG_ENGINE_BUILD,
+      env: 'test',
+      target: { baseUrl: fake.baseUrl, accountId: ACCOUNT_ID, account: 'tester' },
+      summary: { create: 1, update: 0, skip: 0, irreversible: 0 },
+      steps: [
+        {
+          id: 's1',
+          kind: 'call',
+          action: 'create',
+          title: '创建审批矩阵',
+          naturalKey: 'approvalmatrix:akw_matrix__c',
+          risk: 'high',
+          irreversible: false,
+          capabilityId: 'approvalmatrix.create',
+          params: { status: 1, name: '验证矩阵', code: 'akw_matrix__c', objectId: 'obj-1', lifecycleId: 'lc-1', objectTypeId: 'ot-1' },
+          dependsOn: [],
+          warnings: [],
+        },
+      ],
+      warnings: [],
+      status: 'planned',
+      results: [],
+    } as never)
+
+    const applied = await applyPlan(session, 'pln_nocrit', home, { requireApproval: false })
+    assert.equal(applied.status, 'applied')
+    assert.equal(applied.results[0]!.status, 'unverified')
+    const codes = (applied.issues ?? []).map((issue) => issue.code)
+    assert.ok(codes.includes('NO_CRITERIA'), `台账里要有 NO_CRITERIA：${codes.join(',')}`)
+    assert.doesNotMatch(applied.results[0]!.message, /已阻断后续步骤/)
   } finally {
     await fake.close()
   }
