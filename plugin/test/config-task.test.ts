@@ -287,7 +287,11 @@ test('applyTask：跨阶段 $ref 在执行时填入前序返回', async () => {
     saveTask(home, task)
     const applied = await applyTask(session(), task.taskId, home, { requireApproval: false })
     assert.equal(applied.status, 'applied', JSON.stringify(applied.results, null, 2))
-    assert.match(urls[1] ?? '', /wf_from_stage_1/)
+    // 阶段二那一步的 id 必须是阶段一**返回的** id（$ref 在执行时才解析）。
+    // 这里不按 urls 下标断言：执行后的自动确认会再读一遍工作流节点链，多出几条 GET。
+    const bound = urls.find((url) => url.includes('GetWorkflowStepWithDetails'))
+    assert.ok(bound !== undefined, `阶段二没发出读步骤详情的请求：${urls.join(' | ')}`)
+    assert.match(bound, /wf_from_stage_1/)
   } finally {
     globalThis.fetch = originalFetch
     rmSync(home, { recursive: true, force: true })

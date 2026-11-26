@@ -17,9 +17,9 @@
   - host 日志打 `[UID] invoke/done/failed <tool>`，DSH 侧一次调用能与 host 日志对上。
 - **稳定性**：UID 一旦用于排查就**不复用**到别的工具；工具删除时保留 UID 并注明 retired，
   避免历史日志对错工具。
-- **验证**：`plugin/test/host.test.ts` 断言四个注册工具的 UID 齐全、唯一、格式正确，
+- **验证**：`plugin/test/host.test.ts` 断言五个注册工具的 UID 齐全、唯一、格式正确，
   且未登记工具会被拒绝；加工具时必须同步更新该断言。
-- **调用链文档**：四个工具一次调用的完整链路（账号门 / 审批窗 / 引擎复验 / 分析读取 / 运行日志）见
+- **调用链文档**：五个工具一次调用的完整链路（账号门 / 审批窗 / 引擎复验 / 分析读取 / 运行日志）见
   `docs/knowledge/agent调用时序.md`；改工具、改审批判定、改会话来源、改 journal 事件时**同一提交里改图**，
   并按该文档 §12 重渲染 `docs/knowledge/diagrams/agent-flows/` 的 PNG。
 
@@ -62,7 +62,8 @@
   `.akso-workbench` 或 `docs/analysis`**；`AKSO_WORKBENCH_REVIEW_DIR` / `AKSO_WORKBENCH_APPROVAL_DIR` 仅作测试/显式覆盖。
   弹窗显示任务概述、文档地址与「在右侧打开」，用 DSH 的 `sidebarRight.openResource` 打开。
   文档同时写计划指纹与执行明细（方法/路径/参数），`config_apply` 在审批前校验文档存在且指纹匹配；
-  生成失败或指纹不一致返回 `review-unavailable`，**不进入审批、平台一步不写**。
+  **指纹不一致或文档已结束时自动按当前计划补一份新文档**（见下节），只有文档根本写不出来
+  （没有工作区根）才 `review-unavailable`，**不进入审批、平台一步不写**。
   可传 `review{kind,taskName,problem,approach,expected[]}` 补充内容。
 - 两步审批：先 `config_apply({planId, review, prepareOnly:true})` 只生成审核文档并返回路径/地址
   （`status:'prepared'`，不弹窗、不写平台）；assistant 先把目标/方案/结果和文件链接发给用户，
@@ -97,6 +98,34 @@
   本机不再接受明文口令（`session.login` / `POST config/login` / `auth.login` 能力都已删除）。
 - 改完跑：`npm run check`（根 typecheck + capture 测试 + 插件 typecheck / 测试 / 构建）。只改插件时可跑
   `npm run typecheck:plugin`、`npm --prefix plugin test`、`npm --prefix plugin run build`。
+
+## 审批判定 / 容错 / 执行后确认（2026-11-27）
+
+- **审批判定只有一处**：`plugin/src/config/approval-policy.ts` 的 `approvalScope(steps, requireApproval)`。
+  `tools.ts`（弹不弹窗、生不生成文档）与 `engine.applyPlan`（要不要审批记录）**必须共用它**，
+  各写一份判据就会出现「工具跳过审批、引擎仍要审批记录」的死路。
+  只读判据 = 能力目录 `readonly === true` 或 `method === 'GET'`（蓝图 `call` 步骤把它记进 `step.readonly`）；
+  `writes === 0` 时 `reason: 'read-only'`，**不弹窗、不生成审核文档**，返回 `status: 'no-approval-needed'`。
+  报告里的 `approval{needed,reason,writes,readonly,skipped}` 就是这件事的对外说法。
+- **审核文档不再白跑**：`config_apply({reviewPath})` 发现文档指纹与当前计划不符、或文档已结束时，
+  按**当前计划重新生成**一份（旧文档原样保留），返回 `reviewRegenerated: true` 并在 message 里说清；
+  只有连文档都写不出来（没有工作区根）才 `review-unavailable`。
+- **小问题台账**：`plugin/src/config/issues.ts`。执行中「回读晚一拍才生效」「瞬时 5xx 重试成功」
+  「非阻断的未验证」「写报错但回读证明已生效」都记一条 `IssueRecord`，追加写
+  `$DSH_HOME/akso-workbench/config-audit/issues-<YYYY-MM>.jsonl`，同时投一条 `issue.recorded` journal 事件；
+  `config_apply` 的返回带 `issues[]` 与一句话摘要，`config_plan` 的返回带 `approval` 预览
+  （`needed/reason/writes/readonly`，出计划时就先说清这次要不要弹窗）。**小问题不阻断**——
+  只有严格写入（workflow.*、state 按钮等）回读未通过才停。
+- **重试只对瞬时错误**：`isTransientFailure` = HTTP 502/503/504 或 `ECONNRESET/ETIMEDOUT/EAI_AGAIN/
+  socket hang up/fetch failed`；只重试**一次**。写成功却回 401 的那类由回读兜底，**绝不重试**（会写两遍）。
+- **执行后确认**：`engine.verifyAppliedPlan(session, plan)` 用全新查询上下文把每一步重新读一遍，
+  产出 `VerificationReport`；apply 结束自动跑一次并写 `plan.verification`。菜单已有回读判据
+  （`menu.list` 按 code 核对父菜单与绑定对象），不再「需人工在控制台确认」；工作流另外跑
+  `workflow.steps.list` 核对节点链（开始 `stepType 10`、结束 `20`、计划里的 step id 是否都在链上）。
+- **确认工具** `akso_workbench_config_verify`（`AKW-TOOL-CONFIG-VERIFY-V1`，只读、不弹窗）：
+  传 `planId` / `taskId` 复验并把报告写到 `<当前工作区>/akso-workbench-data/verifications/验证-*.md`；
+  传 `workflowConfigId` 只列节点链。**执行完配置要向用户报结论时用它**（或读 apply 返回的
+  `verification`），不要凭印象说“应该已经好了”。
 
 ## 监听数据边界（2026-11-23 用户口径）
 

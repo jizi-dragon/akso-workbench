@@ -33,7 +33,7 @@ import { cloudCredentialProvider } from './credentials.ts'
 import { applyPlan, invokeCapability, loadPlan, planBlueprint, readAudit } from './config/engine.ts'
 import { createApprovalGate } from './config/approval.ts'
 import { EgmpError, clearEgmpSession, publicSession, readEgmpSession, tokenView, writeEgmpSession, type EgmpSession } from './config/session.ts'
-import { buildConfigApplyTool, buildConfigPlanTool, sessionIdOf, workspaceRootOf } from './config/tools.ts'
+import { buildConfigApplyTool, buildConfigPlanTool, buildConfigVerifyTool, sessionIdOf, workspaceRootOf } from './config/tools.ts'
 import { analyzeObject } from './analysis.ts'
 import { buildAnalysisTool } from './analysis-tool.ts'
 import { writeAnalysisArtifacts, type AnalysisArtifacts } from './analysis-output.ts'
@@ -1335,11 +1335,14 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         openSession: openWriteSession,
         approvals,
         requireApproval,
+        onEvent: (kind: string, data: Record<string, unknown>) => { recordEvent(kind, data) },
       }
       const planTool = withToolUid(buildConfigPlanTool(configDeps), toolLog)
       const applyTool = withToolUid(buildConfigApplyTool(configDeps), toolLog)
+      const verifyTool = withToolUid(buildConfigVerifyTool(configDeps), toolLog)
       ctx.effect(() => registry.register(planTool), 'akso-workbench: config plan tool')
       ctx.effect(() => registry.register(applyTool), 'akso-workbench: config apply tool')
+      ctx.effect(() => registry.register(verifyTool), 'akso-workbench: config verify tool')
       const analysisTool = withToolUid(buildAnalysisTool({
         run: async (query, exec) => {
           const workspaceRoot = workspaceRootOf(exec) ?? resolveWorkspaceRoot(sessionIdOf(exec))

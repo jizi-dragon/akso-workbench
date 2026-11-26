@@ -45,7 +45,7 @@
 
 ## 1. 一次工具调用的外壳
 
-四个工具都经 `withToolUid()` 注册（`plugin/src/tool-uids.ts`）。包装层只做三件事：给 description
+五个工具都经 `withToolUid()` 注册（`plugin/src/tool-uids.ts`）。包装层只做三件事：给 description
 追加 UID、开始/结束打日志、给返回值注入 `_uid`。业务结果（拒批、缺账号等）用返回值表达，
 **不抛异常**，所以 `done` 里要同时看 `ok=`；真正抛异常才会出现 `failed`。
 
@@ -66,13 +66,14 @@ sequenceDiagram
     D-->>A: 结果（成功时带 _uid）
 ```
 
-四个工具的 UID：
+五个工具的 UID：
 
 | 工具 | UID |
 |---|---|
 | `akso_workbench_accounts` | `AKW-TOOL-ACCOUNTS-V1` |
 | `akso_workbench_config_plan` | `AKW-TOOL-CONFIG-PLAN-V1` |
 | `akso_workbench_config_apply` | `AKW-TOOL-CONFIG-APPLY-V1` |
+| `akso_workbench_config_verify` | `AKW-TOOL-CONFIG-VERIFY-V1` |
 | `akso_workbench_object_analysis` | `AKW-TOOL-OBJECT-ANALYSIS-V1` |
 
 ## 2. 公共前置：账号门与换票
@@ -221,12 +222,18 @@ sequenceDiagram
 通过 `ctx.sidebarRight.openResource` 在 DSH 右侧文件预览打开；弹窗常驻「调整内容」文本框，填写后只能
 「提交调整」，空内容时只能「同意」。`config_apply` 可传
 `review{kind,taskName,previousReviewPath,problem,approach,expected[],reason,workspaceDir}` 覆盖自动
-生成的内容；审批前会校验文档存在、类型匹配且计划指纹匹配，不匹配或写失败返回
-`review-unavailable`，不进入审批。
+生成的内容；审批前会校验文档存在、类型匹配且计划指纹匹配。**指纹不符或文档已结束时不再直接失败**：
+host 会按当前计划补一份新文档（旧文档原样保留），返回值带 `reviewRegenerated: true`，然后继续审批；
+只有文档根本写不出来（没有工作区根）才返回 `review-unavailable`。
 两步审批：先 `prepareOnly:true` 只生成文档并返回 `status:'prepared'` + 路径/URL（不弹窗、不写平台），
 模型把目标和文件链接发给用户；之后用 `reviewPath` 再调用，复用同一份文档进入审批，不会重新生成。
 任务成功后 host 才把文档标记为「已结束（审核文件作废，仅作历史记录）」并附执行结果；拒批 / 超时 /
 失败不作废。**已结束文档禁止再修改**，后续调整必须新建 `update` 文档。
+
+**要不要审批只看「有没有写入」**（`plugin/src/config/approval-policy.ts` 的 `approvalScope`）：
+能力目录里 `readonly: true` 或 `method: 'GET'` 的步骤不算写入。全是只读时**不弹窗、不生成审核文档**，
+直接执行并返回 `status:'no-approval-needed'` + `approval{needed:false, reason:'read-only'}`；
+调试模式关掉审批时 `reason:'disabled'`。这一处判据由工具与引擎共用，不允许各写一份。
 
 ```mermaid
 sequenceDiagram
@@ -248,6 +255,10 @@ sequenceDiagram
         H->>H: buildApprovalReport：业务摘要 + 逐条方法/路径/参数/风险 + 计划指纹
         H->>F: 写 akso-workbench-data/reviews/<任务名>-<时间戳>.md
         H->>H: 校验文件存在且计划指纹匹配
+        alt 指纹不符 / 文档已结束
+            H->>F: 按当前计划补一份新文档（旧文档保留）
+            H->>H: reviewRegenerated = true
+        end
         H->>H: report.review = 三节文档 + checklist + 执行明细
         H->>H: approvals.request：挂起，8 分钟超时，同时只挂一条
         loop 每 2 秒
@@ -268,17 +279,22 @@ sequenceDiagram
             H->>F: 写一条审批审计（busy 不记）
             H-->>A: ok=false / status=denied / supplement / approval-timeout / cancelled / busy
         end
-    else 无需审批（没有写入，或调试模式关掉了审批）
-        Note over H: 直接进入 5.2
+    else 无需审批（只有只读查询，或调试模式关掉了审批）
+        Note over H: 不弹窗、不写审核文档<br/>approval.reason = read-only / disabled，直接进入 5.2
     end
 ```
 
-### 5.2 执行：引擎复验 + 逐步回读
+### 5.2 执行：引擎复验 + 逐步回读 + 事后确认
 
 引擎（`plugin/src/config/engine.ts` 的 `applyPlan`）不信任工具：计划指纹、目标 `baseUrl`、
 `accountId`、审批记录未用过，全部再验一遍；通过后先把审批标记为已用，**中途失败也不能拿同一张
 审批重试**。每一步写完后都回读校验，但停不停分两种情况：**写入报错且回读也没确认**才停（返回
 checkpoint）；**写成功但回读没确认**记 `unverified`，继续后面的步骤。
+
+小问题不进「失败」，进台账：回读晚一拍（等 300 ms 用新上下文重读一次就对上）、瞬时 5xx / 连接被
+重置（只重试一次）、非阻断的 `unverified`、写报错但回读证明已生效——各记一条 `IssueRecord`
+（`$DSH_HOME/akso-workbench/config-audit/issues-<YYYY-MM>.jsonl` + journal 的 `issue.recorded`），
+随返回值带 `issues[]`，不打断施工。
 
 ```mermaid
 sequenceDiagram
@@ -293,19 +309,31 @@ sequenceDiagram
     loop plan.steps
         alt action=skip
             H->>H: 记 skipped（已存在且一致）
+        else 只读查询
+            H->>E: invokeCapability
+            H->>H: 记 ok（只读查询，不写平台），不参与审批判定
         else 真正写入
             H->>E: invokeCapability（method + path + params）
+            alt 瞬时错误（502/503/504、连接被重置）
+                H->>H: isTransientFailure → 等 500 ms 重试一次，记 issue TRANSIENT_RETRY
+                H->>E: 重试
+            end
             alt 写入成功
                 H->>E: verifyStep 回读
                 alt 回读一致
                     H->>F: config-audit 记 verified
-                else 回读没确认
-                    H->>F: config-audit 记 unverified，不阻断，继续下一步
+                else 回读没确认（可能只是晚一拍）
+                    H->>H: 等 300 ms，用新上下文再读一次
+                    alt 这次对上
+                        H->>F: 记 verified + issue VERIFY_EVENTUAL
+                    else 仍然没确认
+                        H->>F: config-audit 记 unverified（严格写入则 failed 并停）
+                    end
                 end
             else 写入报错
                 H->>E: 失败也要回读一次（防「报错但已落库」）
                 alt 回读确认已生效
-                    H->>F: config-audit 记 verified
+                    H->>F: config-audit 记 verified + issue WRITE_ERROR_BUT_APPLIED
                 else 回读也没确认
                     H->>F: 记 failed，保存计划（checkpoint）
                     H-->>A: ok=false / status=failed / results
@@ -313,16 +341,19 @@ sequenceDiagram
             end
         end
     end
-    H->>F: 计划状态 applied 或 failed + 汇总行
-    H-->>A: ok / status / results（每步 status + message + durationMs）
+    H->>H: 执行完跑一次 verifyAppliedPlan：换全新查询上下文，<br/>把每一步重新读一遍（工作流另核 workflow.steps.list 节点链）
+    H->>F: 写 plan.verification + plan.issues，计划状态 applied 或 failed
+    H-->>A: ok / status / results / approval / issues / verification
 ```
 
-两个容易误判的细节：
+三个容易误判的细节：
 
 - 平台存在「HTTP 200 + `code=401`，但数据已经落库」的端点（实测 `picklist.save`）。所以**写报错
   也要回读一次**：回读确认已生效就记 `verified`，否则记 `failed` 并停，避免模型重试把数据写两遍。
 - 结果里的 `unverified` 表示「写请求没报错，但回读没确认」，不等于没写；它**不阻断**后续步骤，
   计划整体仍可能是 `applied`，要人工核对这一步。
+- **菜单也有回读判据了**：`menu.list`（`?menuType=1`）按 code 找菜单，核对父菜单与绑定对象，
+  不再返回「平台无按 code 回查菜单的接口，需人工确认」。
 
 ### 5.3 任务级：多段一条任务，只审一次
 
@@ -358,6 +389,22 @@ sequenceDiagram
 - 审批指纹保留原始 `$ref` 模板，执行时按真实返回解析；审核文档的「输出绑定」段会列出引用，避免
   审批时是一套值、执行时换成另一套值。
 - 任务级多段依赖应装进**一条任务、一次审批**；任一段失败即停，已执行段的 `after` 会保留在 checkpoint。
+
+### 5.5 事后确认：`akso_workbench_config_verify` 怎么读
+
+执行完配置、或拿不准平台现在到底是不是目标状态时，用只读工具 `akso_workbench_config_verify`
+（`AKW-TOOL-CONFIG-VERIFY-V1`，不弹审批、不写平台）重新确认一遍。它不信任 apply 时的那次回读：
+换一个全新的查询上下文，把计划里每一步重新读一遍，产出 `VerificationReport`，并把报告写到
+`<当前工作区>/akso-workbench-data/verifications/验证-<标题>-YYYYMMDD-HHmmss.md`。
+
+| 传什么 | 它做什么 | 结论怎么看 |
+|---|---|---|
+| `planId` | 按计划文件逐步复验 | `ok` 全绿说明现在确实是目标状态；`failed` 段逐条列出哪一步对不上与原因 |
+| `taskId` | 取 `results[].planId`，逐段复验 | 段级 `verification` 各自独立，`failed` 段即问题所在 |
+| `workflowConfigId` | 只列节点链 | `hasStart`/`hasEnd` 为真、计划里的 step id 都在链上，才算流程结构完整 |
+
+`plan.status === 'planned'` 说明**还没执行过**，这时确认的是「现在是否已经是目标状态」，不是「我写成功了吗」。
+`unverified` 的段在报告里会单独列出，别把「没确认」当成「没写」。
 
 ## 6. `akso_workbench_object_analysis`：只读分析
 
@@ -476,6 +523,9 @@ sequenceDiagram
 | 「计划已过期（30 分钟）」 | plan 太久没执行 | 没有 | 重新 plan |
 | `status: failed` | 某步写入报错且回读也没确认，已停 | **可能写过**（前面的步骤） | 看 `results` 与 audit；不要重跑同一计划，重新 plan |
 | 每步 `unverified` | 写请求没报错，但回读没确认 | 可能已写 | 人工回读核对；它不阻断后续步骤，计划仍可能 `applied` |
+| `status: no-approval-needed` | 计划/任务里全是只读查询，或调试模式关了审批 | 没有写入 | 正常结果，不是错误；`approval.reason` 说明是 `read-only` 还是 `disabled` |
+| `reviewRegenerated: true` | 传的 `reviewPath` 已过期/指纹不符/文档已结束，host 按当前计划补了一份新文档 | 没有 | 正常结果，旧文档保留；把新路径告诉用户再决定要不要继续 |
+| 返回里的 `issues[]` 非空 | 回读晚一拍、瞬时 5xx 重试成功、非阻断未验证、写报错但已生效 | 视条目而定 | 不是失败；按 `code`（`VERIFY_EVENTUAL` / `TRANSIENT_RETRY` / `WRITE_ERROR_BUT_APPLIED` 等）判断要不要人工复核 |
 
 > 表里引号中的中文是工具返回的 `error` 文本；对应的英文 code（`APPROVAL_REQUIRED`、
 > `TARGET_CHANGED` 等）是引擎内部的 `EgmpError.code`，不随工具返回，排查时按中文文本 grep。
@@ -496,7 +546,9 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
    - `akso-workbench-data/config-tasks/tsk_*.json`：任务原文（阶段、指纹、过期时间）
    - `config-approvals/pln_*.json`：`hash`、`at`、`usedAt`（有 `usedAt` = 已消费，日志系统数据）
    - `config-audit/`：`<YYYY-MM>.jsonl` 每步一条（`status` / `traceId` / `durationMs`），
-     `approvals-<YYYY-MM>.jsonl` 审批决策一条（日志系统数据）
+     `approvals-<YYYY-MM>.jsonl` 审批决策一条（日志系统数据），
+     `issues-<YYYY-MM>.jsonl` 执行期的小问题台账（`code` / `stepId` / `message`）
+   - `akso-workbench-data/verifications/验证-*.md`：事后确认报告（`akso_workbench_config_verify` 或 apply 结束时自动生成）
    - `akso-workbench-data/reviews/<任务名>-<YYYYMMDD-HHmmss>.md`：创建/调整任务的审核文档（工作区下，不入库）；
      任务成功后状态改为「已结束（审核文件作废）」并附执行结果；已结束文档不可再改
    - `akso-workbench-data/reviews/<任务名>-更新-<YYYYMMDD-HHmmss>.md`：已执行任务的小范围更新文档，
@@ -513,8 +565,11 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
 |---|---|
 | `plugin/src/tool-uids.ts` | UID 登记、`withToolUid()` 包装（日志 / `_uid` / 未登记抛错） |
 | `plugin/src/tool.ts` | `akso_workbench_accounts` 的实现与返回字段裁剪 |
-| `plugin/src/config/tools.ts` | `config_plan` / `config_apply` 工具；审批报告与业务摘要 |
-| `plugin/src/config/engine.ts` | 读现状、diff、计划文件、`applyPlan` 复验、逐步执行与回读、审计 |
+| `plugin/src/config/tools.ts` | `config_plan` / `config_apply` / `config_verify` 工具；审批报告与业务摘要 |
+| `plugin/src/config/engine.ts` | 读现状、diff、计划文件、`applyPlan` 复验、逐步执行与回读、`verifyAppliedPlan` 事后确认、审计 |
+| `plugin/src/config/approval-policy.ts` | 审批判定单一来源：什么算写入、要不要弹窗、`approval{needed,reason,writes,readonly,skipped}` |
+| `plugin/src/config/issues.ts` | 小问题台账：`IssueRecord`、`issues-<YYYY-MM>.jsonl`、`issue.recorded` 事件 |
+| `plugin/src/config/verification.ts` | 事后确认报告：`VerificationReport`、Markdown 渲染、写 `akso-workbench-data/verifications/` |
 | `plugin/src/config/approval.ts` | 审批门：单条、8 分钟超时、abort 结算 |
 | `plugin/src/config/approval-review.ts` | 生成 `create` / `update` 两类审核文档、计划指纹校验、任务结束作废；已结束文档禁止再改，更新另起新文件 |
 | `plugin/src/index.ts` | HTTP 路由、`snapshot`、`ensureEgmpSession` / `openWriteSession`、工具注册 |
@@ -530,7 +585,9 @@ HTTP 直调（页面/调试口）也过同一套门：`POST /api/akso-workbench/
 ## 11. 什么时候要改这篇
 
 - 新增/改名/删除工具：先登记 UID（`plugin/src/tool-uids.ts`），再补一张图和 §1 的表。
-- 改审批判定（新增 verdict、改超时、改「一次只挂一条」）：改 5.1 与 §8。
+- 改审批判定（新增 verdict、改超时、改「一次只挂一条」、改「哪些步骤算写入」）：改 5.1、`approval-policy.ts` 的说明与 §8。
+- 改执行期的容错（新增 issue 码、改重试策略、改回读判据）：改 5.2 与 §8，并同步 `AGENTS.md` 的那节。
+- 新增/改事后确认（`verifyAppliedPlan`、`config_verify` 的入参或结论口径）：改 5.5。
 - 改会话来源（不再只认账号条、换票端点变化）：改 §2。
 - 新增会写平台的路径（新工具、新 HTTP 直调口）：补图，并确认它过 `applyPlan` 的同一道门。
 - 新增落盘文件：补 §9。

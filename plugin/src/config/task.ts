@@ -30,6 +30,8 @@ import {
 } from './engine.ts'
 import { workspaceDataPath } from '../workspace-data.ts'
 import { EgmpError, type EgmpSession } from './session.ts'
+import type { IssueRecord } from './issues.ts'
+import type { VerificationReport } from './verification.ts'
 
 export interface TaskStage {
   /** 人话阶段名，审核文档与结果里用；缺省按顺序编号。 */
@@ -44,6 +46,10 @@ export interface TaskStageResult {
   status: 'ok' | 'failed' | 'skipped'
   message: string
   steps: StepResult[]
+  /** 这一阶段执行中记录的小问题（重试、平台不落库等），见 issues.ts。 */
+  issues?: IssueRecord[]
+  /** 这一阶段执行完的独立回读确认，见 verification.ts。 */
+  verification?: VerificationReport
 }
 
 export interface Task {
@@ -308,6 +314,8 @@ export async function applyTask(
         status: failed ? 'failed' : 'ok',
         message: failed ? '这一阶段有步骤失败，后面的阶段没有执行' : `用时 ${Date.now() - started}ms（累计）`,
         steps: applied.results,
+        ...(applied.issues === undefined ? {} : { issues: applied.issues }),
+        ...(applied.verification === undefined ? {} : { verification: applied.verification }),
       })
       if (failed) {
         task.status = 'failed'

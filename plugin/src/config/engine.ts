@@ -18,9 +18,12 @@ import { workspaceDataPath } from '../workspace-data.ts'
 import type { Blueprint, CallResource, FieldResource, FormLayoutResource, ListLayoutResource, MenuResource, ObjectResource, PicklistResource, LifecycleResource, ResourceKind } from './blueprint.ts'
 import { validateBlueprint } from './blueprint.ts'
 import { resolveBindings, validatePlanBindings, type BindingContext } from './bindings.ts'
+import { approvalScope, isReadOnlyCapability, isWriteStep } from './approval-policy.ts'
+import { createIssueLog, type IssueLog, type IssueRecord } from './issues.ts'
+import { buildVerificationReport, summarizeVerification, type VerificationCheck, type VerificationReport } from './verification.ts'
 
 /** 引擎语义版本。计划会带上它，apply 时不一致就拒绝，防止“新代码的计划被旧 host 执行”。 */
-export const CONFIG_ENGINE_BUILD = '2026-11-26.1'
+export const CONFIG_ENGINE_BUILD = '2026-11-26.2'
 
 /**
  * 这些写能力必须有回读结论；`unverified` 视为失败并阻断后续步骤。
@@ -61,6 +64,12 @@ export interface Step {
   expected?: Record<string, unknown>
   dependsOn: string[]
   warnings: string[]
+  /**
+   * 只读步骤：执行完什么都不改。
+   * `call` 资源在建计划时就按能力目录写好；旧计划文件没有这个字段，
+   * 判定仍然回落到 `isReadOnlyCapability(capabilityId)`（见 approval-policy.ts）。
+   */
+  readonly?: boolean
 }
 
 /** 计划绑定的目标：环境 + 账号。apply 时逐项比对，防止跨环境/跨账号执行。 */
@@ -79,11 +88,15 @@ export interface Plan {
   env: string
   /** 生成计划时的目标环境与账号（旧计划文件没有这个字段 → 拒绝执行）。 */
   target?: PlanTarget
-  summary: { create: number; update: number; skip: number; irreversible: number }
+  summary: { create: number; update: number; skip: number; irreversible: number; readonly?: number }
   steps: Step[]
   warnings: string[]
   status: 'planned' | 'applied' | 'failed' | 'partial'
   results: StepResult[]
+  /** 执行中记录的小问题（重试、平台不落库的字段、指纹重生成等），见 issues.ts。 */
+  issues?: IssueRecord[]
+  /** 执行完的独立回读确认（见 verification.ts）。 */
+  verification?: VerificationReport
 }
 
 export interface StepResult {
@@ -724,6 +737,7 @@ export async function buildPlan(session: EgmpSession, input: Blueprint): Promise
           capabilityId: cap.id,
           params,
           dependsOn: [],
+          readonly: cap.readonly === true || cap.method === 'GET',
           warnings: [cap.method === 'GET'
             ? `只读调用：按能力目录 ${cap.method} ${cap.path} 查询，执行后回显结果`
             : `按能力目录原样调用 ${cap.method} ${cap.path}，不做差异比对`,
@@ -739,12 +753,13 @@ export async function buildPlan(session: EgmpSession, input: Blueprint): Promise
 
   await preflightPlan(session, steps)
 
-  const summary = { create: 0, update: 0, skip: 0, irreversible: 0 }
+  const summary = { create: 0, update: 0, skip: 0, irreversible: 0, readonly: 0 }
   for (const step of steps) {
     if (step.action === 'create') summary.create += 1
     else if (step.action === 'update') summary.update += 1
     else summary.skip += 1
     if (step.irreversible) summary.irreversible += 1
+    if (step.action !== 'skip' && !isWriteStep(step)) summary.readonly += 1
   }
   const plan: Plan = {
     planId: newId('pln'),
@@ -1398,8 +1413,29 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
         const missing = need.filter((c) => !have.has(c))
         return { verified: missing.length === 0, message: missing.length === 0 ? `列齐全（${need.length}）` : `缺少列：${missing.join(', ')}` }
       }
-      case 'menu':
-        return { verified: false, message: '平台无按 code 回查菜单的接口，需人工在控制台确认' }
+      case 'menu': {
+        // 以前这里返回「平台无按 code 回查菜单的接口」，等于菜单永远只能人工确认。
+        // 实测 `GET /api/platform/Menu/GetMenuList?menuType=1` 能拉到全量扁平菜单，按 code 就能核对。
+        const params = (step.params ?? {}) as Record<string, unknown>
+        const code = String(params.code ?? '')
+        if (code === '') return { verified: false, message: '步骤里没有菜单 code，无法回读' }
+        const menus = rowsOf(await invokeCapability(ctx.session, 'menu.list', { menuType: 1 }))
+        const hit = menus.find((menu) => String(menu.code ?? '') === code)
+        if (hit === undefined) return { verified: false, message: `回读没有找到菜单 ${code}` }
+        const problems: string[] = []
+        if (typeof params.parentMenuId === 'string' && params.parentMenuId !== '' && String(hit.parentMenuId ?? '') !== params.parentMenuId) {
+          problems.push('父菜单不符')
+        }
+        const objectCode = typeof params.objectCode === 'string' ? params.objectCode : ''
+        if (objectCode !== '') {
+          const objectId = await resolveObjectId(ctx, res, objectCode).catch(() => '')
+          if (objectId === '') problems.push('绑定对象已不存在的 code')
+          else if (String(hit.objectId ?? '') !== objectId) problems.push('绑定对象不符')
+        }
+        return problems.length === 0
+          ? { verified: true, message: `菜单「${String(hit.name ?? code)}」存在${typeof params.parentMenuId === 'string' ? '，父菜单对得上' : ''}` }
+          : { verified: false, message: `菜单已存在但有 ${problems.length} 处不符：${problems.join('、')}` }
+      }
       case 'call': {
         const params = (step.params ?? {}) as Record<string, unknown>
         const code = typeof params.code === 'string' ? params.code : ''
@@ -1432,6 +1468,122 @@ export interface ApplyOptions {
   requireApproval?: boolean
   /** 任务级执行时传入已完成阶段的输出；单计划不需要。 */
   bindings?: BindingContext
+  /** 小问题台账的外部观察者（runner 用它同时投一条 journal 事件）。 */
+  onIssue?: (issue: IssueRecord) => void
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+/**
+ * 值得重试一次的失败：网关抖动 / 连接被重置 / 平台瞬时 5xx。
+ * 只重试「还没写进去」的错误 —— 写进去却回 401 的那种由回读兜底，重试反而会把数据写两遍。
+ */
+function isTransientFailure(error: unknown): boolean {
+  if (!(error instanceof EgmpError)) return false
+  const status = error.status ?? 0
+  if (status === 502 || status === 503 || status === 504) return true
+  return /ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|fetch failed|network/i.test(error.message)
+}
+
+/** 干净缓存：回读重试必须绕开上一次读到的旧值，否则“重读”读的还是缓存。 */
+function freshContext(session: EgmpSession): QueryContext {
+  return { session, objects: new Map(), fields: new Map(), picklists: new Map(), statuses: new Map() }
+}
+
+/**
+ * 执行后独立确认：把计划里每个会写平台的步骤重新回读一遍，
+ * 再补上单步判据覆盖不到的检查（工作流节点链是否齐全、有没有开始/结束节点）。
+ *
+ * 与 `verifyStep` 的区别：`verifyStep` 发生在**写入那一刻**，用同一份缓存；
+ * 这里用全新的查询上下文，等于「关掉编辑器重新打开看一眼」。
+ */
+export async function verifyAppliedPlan(session: EgmpSession, plan: Plan): Promise<VerificationReport> {
+  const ctx = freshContext(session)
+  const res: Resolution = { objects: new Map(), fields: new Map(), picklists: new Map(), lifecycles: new Map() }
+  const checks: VerificationCheck[] = []
+  for (const step of plan.steps) {
+    if (step.action === 'skip') continue
+    const executed = plan.results.some((result) => result.stepId === step.id && result.status !== 'failed')
+    const readonly = step.readonly === true || isReadOnlyCapability(step.capabilityId)
+    if (readonly) {
+      checks.push({
+        stepId: step.id,
+        title: step.title,
+        capabilityId: step.capabilityId,
+        kind: step.kind,
+        action: step.action,
+        readonly: true,
+        ok: executed,
+        message: executed ? '只读查询已执行（不写平台，无需回读）' : '计划里没有这一步的执行记录',
+      })
+      continue
+    }
+    const verify = await verifyStep(ctx, step, res).catch((error: unknown) => ({ verified: false, message: errorText(error) }))
+    checks.push({
+      stepId: step.id,
+      title: step.title,
+      capabilityId: step.capabilityId,
+      kind: step.kind,
+      action: step.action,
+      readonly: false,
+      ok: verify.verified,
+      message: verify.message,
+    })
+  }
+  const notes = await workflowChainNotes(ctx, plan)
+  return buildVerificationReport(plan.planId, checks, notes)
+}
+
+/** 工作流「建了没、节点在不在」：靠 `workflow.steps.list` 把整条链读回来核对。 */
+async function workflowChainNotes(ctx: QueryContext, plan: Plan): Promise<string[]> {
+  // 只拿「字面 id」。跨阶段引用（{"$ref":"stages.1.steps.s3.after.workflowConfigId"}）在这里是
+  // 没解析的字符串，拿它去查会把 $ref 当参数发出去（以前就是这样把测试打红的），而且查了也没意义。
+  const literalId = (value: unknown): string => {
+    if (typeof value !== 'string') return ''
+    const text = value.trim()
+    if (text === '' || text.includes('{') || text.includes('$ref')) return ''
+    return text
+  }
+  const workflowIds = [
+    ...new Set(
+      plan.steps
+        .map((step) => literalId(step.params.workflowConfigId))
+        .filter((id) => id !== ''),
+    ),
+  ]
+  if (workflowIds.length === 0) return []
+  const notes: string[] = []
+  for (const workflowConfigId of workflowIds) {
+    try {
+      const steps = rowsOf(await invokeCapability(ctx.session, 'workflow.steps.list', { workflowConfigId }))
+      const nodes = steps.map((item) => {
+        const nested = item.step
+        const detail = nested !== null && typeof nested === 'object' ? (nested as Record<string, unknown>) : item
+        return { id: String(detail.id ?? ''), stepType: Number(detail.stepType ?? 0) }
+      })
+      const present = new Set(nodes.map((node) => node.id))
+      const expected = [
+        ...new Set(
+          plan.steps
+            .filter((step) => step.capabilityId.startsWith('workflow.'))
+            .map((step) => literalId(step.params.id ?? step.params.stepId))
+            .filter((id) => id !== ''),
+        ),
+      ]
+      const missing = expected.filter((id) => !present.has(id))
+      const hasStart = nodes.some((node) => node.stepType === 10)
+      const hasEnd = nodes.some((node) => node.stepType === 20)
+      const head = `工作流 ${shortId(workflowConfigId)}：链上 ${nodes.length} 个节点，${hasStart ? '有' : '缺'}开始节点、${hasEnd ? '有' : '缺'}结束节点`
+      notes.push(missing.length === 0 ? `${head}；计划涉及的 ${expected.length} 个节点全部存在。` : `${head}；计划涉及的节点有 ${missing.length} 个查不到：${missing.slice(0, 5).map(shortId).join('、')}。`)
+    } catch (error) {
+      notes.push(`工作流 ${shortId(workflowConfigId)} 的节点链没读回来：${errorText(error)}`)
+    }
+  }
+  return notes
 }
 
 export async function applyPlan(session: EgmpSession, planId: string, dshHome: string, options: ApplyOptions = {}, workspaceRoot: string = dshHome): Promise<Plan> {
@@ -1449,8 +1601,10 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
   // ── 门在引擎里，不在工具里：谁调用 applyPlan 都要过这一关 ──
   // 判据取自 plan.steps（真实要写的动作），不再看 summary —— summary 是文件里的一行数字，
   // 改一行就能把"有写入"说成"没写入"。
-  const writes = plan.steps.filter((step) => step.action !== 'skip')
-  if (writes.length > 0) {
+  // 只读查询（能力目录 readonly / method=GET）不算写入：既不弹审批窗，也不校验审批记录。
+  // 判据与工具侧共用 approval-policy，避免出现"工具放行、引擎拦下"的死路。
+  const scope = approvalScope(plan.steps, options.requireApproval !== false)
+  if (scope.needed) {
     const target = plan.target
     if (target === undefined) {
       throw new EgmpError('这个计划没有记录目标环境与账号，不能执行；请重新生成计划', { code: 'TARGET_MISSING' })
@@ -1480,10 +1634,16 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
     }
   }
 
-  const ctx: QueryContext = { session, objects: new Map(), fields: new Map(), picklists: new Map(), statuses: new Map() }
+  const ctx: QueryContext = freshContext(session)
   const res: Resolution = { objects: new Map(), fields: new Map(), picklists: new Map(), lifecycles: new Map() }
   const stepOutputs: Record<string, unknown> = {}
   const bindings: BindingContext = { ...(options.bindings ?? {}), steps: stepOutputs }
+  const issues = createIssueLog({
+    dir: auditDir(dshHome),
+    ...(options.onIssue === undefined
+      ? {}
+      : { onEvent: (kind: string, data: Record<string, unknown>) => { options.onIssue?.(data as unknown as IssueRecord) } }),
+  })
   const started = Date.now()
   for (const step of plan.steps) {
     if (step.action === 'skip') {
@@ -1491,12 +1651,56 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
       continue
     }
     const t0 = Date.now()
+    const readonly = step.readonly === true || isReadOnlyCapability(step.capabilityId)
     try {
-      const { message, after } = await applyStep(ctx, step, res, bindings)
+      const { message, after } = await applyWithRetry(ctx, step, res, bindings, issues)
       if (after !== undefined) stepOutputs[step.id] = after
-      const verify = await verifyStep(ctx, step, res)
+      if (readonly) {
+        // 只读步骤：执行成功就是结果，没有“回读”这回事。旧引擎会把它标成 unverified 并写
+        // 「没有回读判据」，看起来像失败，agent 会因此反复重试查询。
+        const result: StepResult = {
+          stepId: step.id,
+          title: step.title,
+          kind: step.kind,
+          action: step.action,
+          status: 'ok',
+          message: `${message}（只读查询，不写平台）`,
+          traceId: null,
+          durationMs: Date.now() - t0,
+          after,
+        }
+        plan.results.push(result)
+        audit(dshHome, plan, step, result)
+        continue
+      }
+      let verify = await verifyStep(ctx, step, res)
+      if (!verify.verified) {
+        // 平台有“写完立刻读还是旧值”的时序（工作流节点链、布局详情都出现过）。
+        // 先用干净缓存等 300ms 再读一次，能省掉一次人工复核。
+        await sleep(300)
+        const retried = await verifyStep(freshContext(session), step, res).catch((error: unknown) => ({ verified: false, message: errorText(error) }))
+        if (retried.verified) {
+          issues.record({
+            level: 'info',
+            code: 'VERIFY_EVENTUAL',
+            message: `${step.title}：首次回读未通过（${verify.message}），300ms 后重读确认已生效`,
+            stepId: step.id,
+            capabilityId: step.capabilityId,
+          })
+          verify = retried
+        }
+      }
       const strict = requiresVerifiedWrite(step.capabilityId)
       const blocked = strict && !verify.verified
+      if (!blocked && !verify.verified) {
+        issues.record({
+          level: 'warn',
+          code: 'VERIFY_UNVERIFIED',
+          message: `${step.title}：${verify.message}`,
+          stepId: step.id,
+          capabilityId: step.capabilityId,
+        })
+      }
       const result: StepResult = {
         stepId: step.id,
         title: step.title,
@@ -1514,6 +1718,7 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
       audit(dshHome, plan, step, result)
       if (blocked) {
         plan.status = 'failed'
+        plan.issues = issues.all()
         savePlan(workspaceRoot, plan)
         return plan
       }
@@ -1541,16 +1746,76 @@ export async function applyPlan(session: EgmpSession, planId: string, dshHome: s
       plan.results.push(result)
       audit(dshHome, plan, step, result)
       if (!verify.verified) {
+        issues.record({
+          level: 'error',
+          code: 'STEP_FAILED',
+          message: `${step.title} 执行失败：${failure}`,
+          stepId: step.id,
+          capabilityId: step.capabilityId,
+          detail: verify.message,
+        })
         plan.status = 'failed'
+        plan.issues = issues.all()
         savePlan(workspaceRoot, plan)
         return plan
       }
+      issues.record({
+        level: 'warn',
+        code: 'WRITE_ERROR_BUT_APPLIED',
+        message: `${step.title}：接口报错「${failure}」，回读确认已生效，按成功处理`,
+        stepId: step.id,
+        capabilityId: step.capabilityId,
+      })
     }
   }
   plan.status = plan.results.some((r) => r.status === 'failed') ? 'failed' : 'applied'
   plan.results.push({ stepId: '-', title: '汇总', kind: 'object', action: 'update', status: 'ok', message: `用时 ${Date.now() - started}ms`, traceId: null, durationMs: Date.now() - started })
+  // ── 执行完再独立确认一遍 ──
+  try {
+    plan.verification = await verifyAppliedPlan(session, plan)
+    if (!plan.verification.ok) {
+      issues.record({
+        level: 'error',
+        code: 'POST_VERIFY_FAILED',
+        message: summarizeVerification(plan.verification),
+        detail: plan.verification.checks.filter((check) => !check.ok).map((check) => `${check.stepId} ${check.title}：${check.message}`).join('；'),
+      })
+    }
+  } catch (error) {
+    issues.record({ level: 'warn', code: 'POST_VERIFY_ERROR', message: `执行后确认本身失败：${errorText(error)}` })
+  }
+  plan.issues = issues.all()
   savePlan(workspaceRoot, plan)
   return plan
+}
+
+/** 瞬时故障重试一次；重试前后都记台账，失败也不吞。 */
+async function applyWithRetry(ctx: QueryContext, step: Step, res: Resolution, bindings: BindingContext, issues: IssueLog): Promise<{ message: string; after: unknown }> {
+  try {
+    return await applyStep(ctx, step, res, bindings)
+  } catch (error) {
+    if (!isTransientFailure(error)) throw error
+    issues.record({
+      level: 'warn',
+      code: 'TRANSIENT_RETRY',
+      message: `${step.title}：遇到瞬时故障「${errorText(error)}」，0.5s 后重试一次`,
+      stepId: step.id,
+      capabilityId: step.capabilityId,
+    })
+    await sleep(500)
+    try {
+      return await applyStep(ctx, step, res, bindings)
+    } catch (second) {
+      issues.record({
+        level: 'error',
+        code: 'TRANSIENT_RETRY_FAILED',
+        message: `${step.title}：重试仍然失败「${errorText(second)}」`,
+        stepId: step.id,
+        capabilityId: step.capabilityId,
+      })
+      throw second
+    }
+  }
 }
 
 /* ───────────────────────────── 持久化 ───────────────────────────── */

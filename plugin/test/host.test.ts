@@ -611,8 +611,8 @@ test('工具经 ctx.tools 真注册，且读到的是**同一条链路**的数�
     const { routes, tools } = mount(freshHome(), cloud.url, true)
     assert.deepEqual(
       tools.map((tool) => tool.name).sort(),
-      ['akso_workbench_accounts', 'akso_workbench_config_apply', 'akso_workbench_config_plan', 'akso_workbench_object_analysis'],
-      '插件应把四个工具都注册进 tools 服务',
+      ['akso_workbench_accounts', 'akso_workbench_config_apply', 'akso_workbench_config_plan', 'akso_workbench_config_verify', 'akso_workbench_object_analysis'],
+      '插件应把五个工具都注册进 tools 服务',
     )
     const snapshotTool = tools.find((tool) => tool.name === 'akso_workbench_accounts')
     assert.ok(snapshotTool, '缺 akso_workbench_accounts')
@@ -2203,7 +2203,7 @@ test('工具 UID：四个注册工具都有唯一 UID，未登记的工具拒绝
   // ① DSH 侧能看到的四个工具都在表里（新增工具必须同步）
   assert.deepEqual(
     Object.keys(TOOL_UIDS).sort(),
-    ['akso_workbench_accounts', 'akso_workbench_config_apply', 'akso_workbench_config_plan', 'akso_workbench_object_analysis'],
+    ['akso_workbench_accounts', 'akso_workbench_config_apply', 'akso_workbench_config_plan', 'akso_workbench_config_verify', 'akso_workbench_object_analysis'],
   )
 
   // ② 格式与唯一性
@@ -2542,7 +2542,13 @@ test('任务级：一条任务只生成一份审核文档，步骤按阶段编�
       name: '任务级验证',
       stages: [{
         name: '阶段一',
-        blueprint: { resources: [{ kind: 'call', capability: 'layout.list', params: { basicObjectId: 'obj-1' } }] },
+        blueprint: {
+          resources: [{
+            kind: 'call',
+            capability: 'picklist.save',
+            params: { name: '任务级验证选项集', code: 'akw_task_pk__c', options: [] },
+          }],
+        },
       }],
     })
     const planned = await planTool.execute({ task }, { workspaceDir: home, agent: { id: 'agent-task' } }) as Record<string, any>
@@ -2558,6 +2564,44 @@ test('任务级：一条任务只生成一份审核文档，步骤按阶段编�
     assert.match(markdown, /任务级验证/)
     assert.match(markdown, /阶段一 · /)
     assert.match(markdown, /计划指纹/)
+  } finally {
+    await egmp.close()
+  }
+})
+
+test('审批门：只有只读查询的计划/任务不弹审批窗，也不生成审核文档', async () => {
+  const home = freshHome()
+  const mounted = mount(home, undefined, true)
+  const planTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_plan')!
+  const applyTool = mounted.tools.find((tool) => tool.name === 'akso_workbench_config_apply')!
+  const egmp = await startFakeEgmp()
+  writeAccount(home, egmp.baseUrl)
+  try {
+    // 单计划：只有一步 GET 查询，从前这种计划会被当成「写入」而弹审批窗，人一拒绝就一步也跑不了。
+    const planned = await planTool.execute({
+      blueprint: JSON.stringify({ version: 1, env: 'test', resources: [{ kind: 'call', capability: 'layout.list', params: { basicObjectId: 'obj-1' } }] }),
+    }, { workspaceDir: home, agent: { id: 'agent-readonly' } }) as Record<string, any>
+    assert.equal(planned.ok, true, String(planned.error ?? ''))
+    const applied = await applyTool.execute({ planId: planned.planId }, { workspaceDir: home, agent: { id: 'agent-readonly' } }) as Record<string, any>
+    assert.equal(applied.ok, true, String(applied.error ?? ''))
+    assert.equal(applied.approval?.needed, false)
+    assert.equal(applied.approval?.reason, 'read-only')
+    assert.equal(applied.reviewPath, undefined, '只读计划不该生成审核文档')
+
+    // 任务：两个只读阶段同样直接跑，approval 说明里点明「只读」。
+    const task = JSON.stringify({
+      name: '只读任务',
+      stages: [
+        { name: '阶段一', blueprint: { resources: [{ kind: 'call', capability: 'layout.list', params: { basicObjectId: 'obj-1' } }] } },
+        { name: '阶段二', blueprint: { resources: [{ kind: 'call', capability: 'query.fields.list', params: { objectCode: 'homework__c' } }] } },
+      ],
+    })
+    const plannedTask = await planTool.execute({ task }, { workspaceDir: home, agent: { id: 'agent-readonly' } }) as Record<string, any>
+    assert.equal(plannedTask.ok, true, String(plannedTask.error ?? ''))
+    const appliedTask = await applyTool.execute({ taskId: plannedTask.taskId }, { workspaceDir: home, agent: { id: 'agent-readonly' } }) as Record<string, any>
+    assert.equal(appliedTask.ok, true, String(appliedTask.error ?? ''))
+    assert.equal(appliedTask.approval?.needed, false)
+    assert.match(String(appliedTask.message ?? ''), /只读/)
   } finally {
     await egmp.close()
   }

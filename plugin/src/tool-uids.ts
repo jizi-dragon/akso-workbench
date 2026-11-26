@@ -12,6 +12,7 @@ export const TOOL_UIDS = {
   akso_workbench_accounts: 'AKW-TOOL-ACCOUNTS-V1',
   akso_workbench_config_plan: 'AKW-TOOL-CONFIG-PLAN-V1',
   akso_workbench_config_apply: 'AKW-TOOL-CONFIG-APPLY-V1',
+  akso_workbench_config_verify: 'AKW-TOOL-CONFIG-VERIFY-V1',
   akso_workbench_object_analysis: 'AKW-TOOL-OBJECT-ANALYSIS-V1',
 } as const
 

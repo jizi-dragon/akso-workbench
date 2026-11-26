@@ -14,11 +14,14 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CAPABILITIES } from './capabilities.ts'
-import { CONFIG_ENGINE_BUILD, applyPlan, loadPlan, planBlueprint, planHash, recordApprovalDecision, saveApproval, type Plan, type Step } from './engine.ts'
+import { CONFIG_ENGINE_BUILD, applyPlan, invokeCapability, loadPlan, planBlueprint, planHash, recordApprovalDecision, saveApproval, verifyAppliedPlan, type Plan, type Step } from './engine.ts'
 import { applyTask, createTask, loadTask, mergeTaskPreview, parseTaskInput, previewTaskPlans, saveTask, taskHash, type Task } from './task.ts'
 import type { ApprovalBusinessGroup, ApprovalGate, ApprovalReport, ApprovalReportStep } from './approval.ts'
 import { attachApprovalReview, finalizeApprovalReview, loadApprovalReview, reviewMatchesPlan, type ApprovalReviewInput } from './approval-review.ts'
 import type { EgmpSession } from './session.ts'
+import { approvalScope, describeScope, type ApprovalScope } from './approval-policy.ts'
+import { summarizeIssues, type IssueRecord } from './issues.ts'
+import { summarizeVerification, writeVerificationReport, type VerificationReport } from './verification.ts'
 
 /** host 解析出来的写入会话；`session: null` 时 `reason` 一定是人话。 */
 export interface WriteSession {
@@ -34,6 +37,8 @@ export interface ConfigToolDeps {
   approvals: ApprovalGate
   /** 当前是否要求审批（环境变量优先，其次页面开关；默认要求）。 */
   requireApproval: () => boolean
+  /** journal 事件（host 注入）：执行中记录的小问题也投一条，页面「运行日志」能看见。 */
+  onEvent?: (kind: string, data: Record<string, unknown>) => void
 }
 
 const NEEDS_ACCOUNT_HINT = '写入必须使用底部账号条里选中的账号：请先在账号条里连接一个账号（没有就点「添加账号」），再让我重试。'
@@ -296,6 +301,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
           const plans = await previewTaskPlans(session, task)
           saveTask(requireWorkspaceRoot(exec, deps.dshHome), task)
           const merged = mergeTaskPreview(task, plans)
+          const scope = approvalScope(plans.flatMap((plan) => plan.steps), deps.requireApproval())
           return {
             ok: true,
             taskId: task.taskId,
@@ -304,13 +310,16 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
             target: task.target,
             summary: merged.summary,
             warnings: merged.warnings,
+            approval: scope,
             stages: plans.map((plan, index) => ({
               stage: index + 1,
               name: task.stages[index]?.name ?? `第 ${index + 1} 阶段`,
               summary: plan.summary,
               steps: plan.steps.map(stepView),
             })),
-            next: `这条任务含 ${task.stages.length} 个阶段、${merged.summary.create + merged.summary.update} 步变更，其中 ${merged.summary.irreversible} 步不可逆。请让用户确认后，用 taskId=${task.taskId} 调用 akso_workbench_config_apply（整条任务只弹一次审批窗）。`,
+            next: scope.needed
+              ? `${describeScope(scope)}这条任务含 ${task.stages.length} 个阶段、${merged.summary.create + merged.summary.update} 步变更，其中 ${merged.summary.irreversible} 步不可逆。请让用户确认后，用 taskId=${task.taskId} 调用 akso_workbench_config_apply（整条任务只弹一次审批窗）。`
+              : `${describeScope(scope)}用 taskId=${task.taskId} 调用 akso_workbench_config_apply 即可直接执行，不会弹审批窗。`,
           }
         } catch (error) {
           return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -325,6 +334,7 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
       }
       try {
         const plan = await planBlueprint(session, blueprint as never, requireWorkspaceRoot(exec, deps.dshHome))
+        const scope = approvalScope(plan.steps, deps.requireApproval())
         return {
           ok: true,
           planId: plan.planId,
@@ -333,8 +343,11 @@ export function buildConfigPlanTool(deps: ConfigToolDeps) {
           target: plan.target,
           summary: plan.summary,
           warnings: plan.warnings,
+          approval: scope,
           steps: plan.steps.map(stepView),
-          next: `涉及 ${plan.summary.irreversible} 个不可逆步骤。请让用户确认后，用 planId=${plan.planId} 调用 akso_workbench_config_apply（会弹审批窗，人点「同意」才写）。`,
+          next: scope.needed
+            ? `${describeScope(scope)}涉及 ${plan.summary.irreversible} 个不可逆步骤。请让用户确认后，用 planId=${plan.planId} 调用 akso_workbench_config_apply（会弹审批窗，人点「同意」才写）。`
+            : `${describeScope(scope)}用 planId=${plan.planId} 调用 akso_workbench_config_apply 即可直接执行，不会弹审批窗。`,
         }
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -353,33 +366,34 @@ async function gateApproval(
   planForAudit: Plan,
   input: { review?: ApprovalReviewInput; prepareOnly?: boolean; reviewPath?: string },
   exec: unknown,
-  needsApproval: boolean,
-): Promise<{ ok: true; reviewPath?: string } | { ok: false; result: Record<string, unknown> }> {
+  scope: ApprovalScope,
+): Promise<{ ok: true; reviewPath?: string; reviewRegenerated?: boolean } | { ok: false; result: Record<string, unknown> }> {
   const ref = { planId: report.planId }
-  if (!needsApproval) {
+  if (!scope.needed) {
     if (input.prepareOnly === true) {
-      return { ok: false, result: { ok: true, status: 'no-approval-needed', ...ref, message: '没有需要审批的写入步骤；未生成审核文档，平台一步都没写。' } }
+      return {
+        ok: false,
+        result: { ok: true, status: 'no-approval-needed', ...ref, approval: scope, message: `${describeScope(scope)}没有需要审批的写入步骤，所以不生成审核文档，平台一步都没写。` },
+      }
     }
     return { ok: true }
   }
   let reviewPath: string | undefined = textOf(input.reviewPath)
+  let reviewRegenerated = false
   const sessionId = sessionIdOf(exec)
+  const workspaceRoot = textOf(input.review?.workspaceDir) ?? requireWorkspaceRoot(exec, deps.dshHome)
   if (reviewPath !== undefined) {
     const loaded = loadApprovalReview(reviewPath, report, sessionId)
-    if (loaded === null) {
-      return {
-        ok: false,
-        result: {
-          ok: false,
-          status: 'review-unavailable',
-          ...ref,
-          message: '指定的审核文档不存在、已结束或与当前计划指纹不一致；本次不进入审批、平台一步都没写。',
-        },
-      }
+    if (loaded !== null) {
+      report.review = loaded
+    } else {
+      // 以前这里直接返回 review-unavailable，于是“计划被重算 → 旧文档指纹不符 → 白跑一轮”。
+      // 现在按当前计划补一份新文档继续审批，旧文档原样留着（它记的是上一版计划）。
+      // 这一条只影响“用哪份文档给人看”，不放宽任何写入条件：人点「同意」才会写。
+      attachApprovalReview(report, { ...(input.review ?? {}), previousReviewPath: reviewPath }, deps.dshHome, sessionId, workspaceRoot)
+      reviewRegenerated = true
     }
-    report.review = loaded
   } else {
-    const workspaceRoot = textOf(input.review?.workspaceDir) ?? requireWorkspaceRoot(exec, deps.dshHome)
     attachApprovalReview(report, input.review, deps.dshHome, sessionId, workspaceRoot)
   }
   reviewPath = report.review?.path
@@ -390,6 +404,7 @@ async function gateApproval(
         ok: false,
         status: 'review-unavailable',
         ...ref,
+        approval: scope,
         message: '审核文档没有生成或与当前计划不一致，本次不进入审批、平台一步都没写。请确认工作区可写后重试。',
       },
     }
@@ -402,6 +417,8 @@ async function gateApproval(
         status: 'prepared',
         ...ref,
         review: report.review,
+        approval: scope,
+        ...(reviewRegenerated ? { reviewRegenerated: true } : {}),
         message: '审核文档已生成，审批窗尚未打开，平台一步都没写。请先把目标/方案/预期结果和文件链接发给用户；确认后再调用 config_apply，并带 reviewPath。',
       },
     }
@@ -413,7 +430,7 @@ async function gateApproval(
   }
   const fail = (status: string, message: string, extra: Record<string, unknown> = {}): { ok: false; result: Record<string, unknown> } => ({
     ok: false,
-    result: { ok: false, status, ...ref, ...extra, message },
+    result: { ok: false, status, ...ref, approval: scope, ...extra, message },
   })
   if (decision.verdict === 'busy') return fail('busy', '已经有一条审批在等回复，这一条没有执行。')
   if (decision.verdict === 'timeout') return fail('approval-timeout', '审批窗等了 8 分钟没有回应，平台一步都没写。')
@@ -428,7 +445,7 @@ async function gateApproval(
     )
   }
   saveApproval(deps.dshHome, { planId: report.planId, hash: report.hash, at: Date.now() })
-  return { ok: true, reviewPath }
+  return { ok: true, reviewPath, ...(reviewRegenerated ? { reviewRegenerated: true } : {}) }
 }
 
 /** 审批文档生成前就挡住旧构建，避免先生成一份注定不能执行的审核文档。 */
@@ -453,15 +470,16 @@ async function runTaskApply(
     return { ok: false, error: `任务预览失败：${error instanceof Error ? error.message : String(error)}` }
   }
   const merged = mergeTaskPreview(task, plans)
-  const writes = merged.steps.filter((step) => step.action !== 'skip')
-  const needsApproval = writes.length > 0 && deps.requireApproval()
+  // 审批范围只按「会不会写」判：整条任务全是只读查询时不弹窗、不校验审批记录。
+  const scope = approvalScope(merged.steps, deps.requireApproval())
   const report = buildApprovalReport(merged, session, taskHash(task))
   // 任务级审核文档用任务名做标题，而不是「N 步变更」。
   const gateInput = { ...input, review: { ...(input.review ?? {}), taskName: input.review?.taskName ?? task.name } }
-  const gate = await gateApproval(deps, report, merged, gateInput, exec, needsApproval)
+  const gate = await gateApproval(deps, report, merged, gateInput, exec, scope)
   if (!gate.ok) return gate.result
   try {
-    const applied = await applyTask(session, task.taskId, deps.dshHome, { requireApproval: needsApproval }, requireWorkspaceRoot(exec, deps.dshHome))
+    const workspaceRoot = requireWorkspaceRoot(exec, deps.dshHome)
+    const applied = await applyTask(session, task.taskId, deps.dshHome, { requireApproval: scope.needed }, workspaceRoot)
     const ok = applied.status === 'applied' && applied.results.every((stage) => stage.status !== 'failed')
     if (ok) {
       finalizeApprovalReview(
@@ -475,11 +493,37 @@ async function runTaskApply(
         }))),
       )
     }
+    const issues = applied.results.flatMap((stage) => stage.issues ?? [])
+    const verificationPaths = applied.results
+      .flatMap((stage) => (stage.verification === undefined ? [] : [{ stage, verification: stage.verification }]))
+      .map(({ stage, verification }: { stage: { name: string }; verification: VerificationReport }) =>
+        writeVerificationReport(workspaceRoot, verification, { planTitle: `${task.name}-${stage.name}`, env: task.env, target: task.target.baseUrl }),
+      )
+      .filter((path) => path !== '')
+    const failedChecks = applied.results.flatMap((stage) => (stage.verification?.checks ?? []).filter((check) => !check.ok))
     return {
       ok,
       status: applied.status,
       taskId: task.taskId,
-      approved: needsApproval,
+      approved: scope.needed,
+      approval: scope,
+      message: [
+        describeScope(scope),
+        failedChecks.length === 0 ? '' : `执行后确认发现 ${failedChecks.length} 项不一致：${failedChecks.slice(0, 3).map((check) => `${check.title}（${check.message}）`).join('；')}`,
+        summarizeIssues(issues),
+      ].filter((line) => line !== '').join(' '),
+      ...(issues.length === 0 ? {} : { issues }),
+      verification: {
+        ok: failedChecks.length === 0,
+        reports: verificationPaths,
+        stages: applied.results.map((stage) => ({
+          stage: stage.stage,
+          name: stage.name,
+          ok: stage.verification?.ok ?? null,
+          passed: stage.verification?.passed ?? 0,
+          total: stage.verification?.total ?? 0,
+        })),
+      },
       stages: applied.results.map((stage) => ({
         stage: stage.stage,
         name: stage.name,
@@ -585,14 +629,23 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
       const stale = stalePlanBuild(plan.engineBuild)
       if (stale !== null) return { ok: false, error: stale }
 
-      const writes = plan.steps.filter((step) => step.action !== 'skip')
-      const needsApproval = writes.length > 0 && deps.requireApproval()
+      const scope = approvalScope(plan.steps, deps.requireApproval())
       const report = buildApprovalReport(plan, session)
-      const gate = await gateApproval(deps, report, plan, input, exec, needsApproval)
+      const gate = await gateApproval(deps, report, plan, input, exec, scope)
       if (!gate.ok) return gate.result
 
       try {
-        const applied = await applyPlan(session, planId, deps.dshHome, { requireApproval: needsApproval }, requireWorkspaceRoot(exec, deps.dshHome))
+        const workspaceRoot = requireWorkspaceRoot(exec, deps.dshHome)
+        const applied = await applyPlan(
+          session,
+          planId,
+          deps.dshHome,
+          {
+            requireApproval: scope.needed,
+            onIssue: (issue: IssueRecord) => { deps.onEvent?.('issue.recorded', { ...issue }) },
+          },
+          workspaceRoot,
+        )
         const ok = applied.results.every((r) => r.status !== 'failed')
         if (ok) {
           finalizeApprovalReview(
@@ -606,11 +659,39 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
             })),
           )
         }
+        const issues = applied.issues ?? []
+        const verification = applied.verification
+        const verificationPath = verification === undefined
+          ? ''
+          : writeVerificationReport(workspaceRoot, verification, { planTitle: report.title, env: applied.env, target: applied.target?.baseUrl })
+        const failedChecks = (verification?.checks ?? []).filter((check) => !check.ok)
         return {
           ok,
           status: applied.status,
           planId,
-          approved: needsApproval,
+          approved: scope.needed,
+          approval: scope,
+          message: [
+            describeScope(scope),
+            verification === undefined ? '执行后确认：未生成（计划是只读的或确认步骤被跳过）。' : summarizeVerification(verification),
+            summarizeIssues(issues),
+          ].filter((line) => line !== '').join(' '),
+          ...(issues.length === 0 ? {} : { issues }),
+          ...(verification === undefined
+            ? {}
+            : {
+                verification: {
+                  ok: verification.ok,
+                  passed: verification.passed,
+                  total: verification.total,
+                  notes: verification.notes,
+                  reportPath: verificationPath === '' ? null : verificationPath,
+                  mismatched: failedChecks.map((check) => ({ step: check.title, message: check.message })),
+                },
+              }),
+          ...(gate.reviewRegenerated === true
+            ? { reviewRegenerated: true, note: '计划指纹与上一份审核文档不一致，已按当前计划重新生成审核文档（旧文档保留）；人点「同意」后才会写。' }
+            : {}),
           results: applied.results.map((r) => ({
             step: r.title,
             status: r.status,
@@ -620,6 +701,153 @@ export function buildConfigApplyTool(deps: ConfigToolDeps) {
         }
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    },
+  }
+}
+
+/**
+ * 执行后的独立确认工具（只读）：不写平台、不弹审批。
+ *
+ * 回答三个具体问题：
+ *   1. 「刚才那批写入真的生效了吗？」—— 把 `planId` / `taskId` 里每一步重新回读一次；
+ *   2. 「工作流建出来了吗、节点还在吗？」—— 读 `workflow.steps.list`，核对每个计划涉及的节点，
+ *      并确认链上确实有开始（stepType 10）与结束（stepType 20）；
+ *   3. 「菜单/状态/布局落到平台上了吗？」—— 复用各 domain 的回读判据（引擎 verifyStep）。
+ *
+ * 结果同时写 `<workspace>/akso-workbench-data/verifications/`，与审核文档、计划 JSON 对得上号。
+ */
+export function buildConfigVerifyTool(deps: ConfigToolDeps) {
+  return {
+    name: 'akso_workbench_config_verify',
+    description:
+      '执行后的独立确认（只读，不写平台、不弹审批窗）。'
+      + '传 planId 或 taskId：把那次执行里每一步重新回读一次，核对菜单/状态/字段/布局/工作流是否真的在平台上生效；'
+      + '传 workflowConfigId：只读一条工作流的节点链，核对节点是否齐全、有没有开始与结束节点。'
+      + '返回逐条结论（一致 / 不一致 + 原因）与报告文件路径。'
+      + '小问题（重试、平台不落库的字段、只能确认接口成功）会列在 issues 里。',
+    parameters: {
+      type: 'object',
+      properties: {
+        planId: { type: 'string', description: '计划 id（pln_ 开头）：确认这份计划执行后平台是否已是目标状态' },
+        taskId: { type: 'string', description: '任务 id（tsk_ 开头）：逐阶段确认整条任务' },
+        workflowConfigId: {
+          type: 'string',
+          description: '只查一条工作流：列出它的节点链（code / 名称 / stepType / nextStepId），确认节点存在与首尾齐全',
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+    output: {
+      schema: { type: 'object' },
+      render(_args: unknown, value: unknown) {
+        return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
+      },
+    },
+    async execute(args: unknown, exec?: unknown): Promise<unknown> {
+      const input = (args ?? {}) as { planId?: string; taskId?: string; workflowConfigId?: string }
+      const planId = textOf(input.planId)
+      const taskId = textOf(input.taskId)
+      const workflowConfigId = textOf(input.workflowConfigId)
+      if (planId === undefined && taskId === undefined && workflowConfigId === undefined) {
+        return { ok: false, error: 'planId / taskId / workflowConfigId 至少给一个' }
+      }
+      const opened = await deps.openSession()
+      const session = opened.session
+      if (session === null) {
+        return { ok: false, status: 'needs-account', error: opened.reason ?? '账号条没有可用的账号', hint: NEEDS_ACCOUNT_HINT }
+      }
+      const workspaceRoot = requireWorkspaceRoot(exec, deps.dshHome)
+
+      if (workflowConfigId !== undefined && planId === undefined && taskId === undefined) {
+        try {
+          const json = await invokeCapability(session, 'workflow.steps.list', { workflowConfigId })
+          const data = json.data
+          const raw = Array.isArray(data)
+            ? (data as Array<Record<string, unknown>>)
+            : (data as { datas?: unknown } | null)?.datas
+          const rows = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : []
+          const nodes = rows.map((item) => {
+            const nested = item.step
+            const node = nested !== null && typeof nested === 'object' ? (nested as Record<string, unknown>) : item
+            return {
+              id: String(node.id ?? ''),
+              code: String(node.code ?? ''),
+              name: String(node.name ?? ''),
+              stepType: Number(node.stepType ?? 0),
+              nextStepId: String(node.nextStepId ?? ''),
+            }
+          })
+          const hasStart = nodes.some((node) => node.stepType === 10)
+          const hasEnd = nodes.some((node) => node.stepType === 20)
+          return {
+            ok: nodes.length > 0 && hasStart && hasEnd,
+            kind: 'workflow',
+            workflowConfigId,
+            nodes,
+            hasStart,
+            hasEnd,
+            message: nodes.length === 0
+              ? '这条工作流一个节点都没查到（可能没建，或 workflowConfigId 不是当前版本的）'
+              : `共 ${nodes.length} 个节点，${hasStart ? '有' : '缺'}开始节点、${hasEnd ? '有' : '缺'}结束节点。`,
+          }
+        } catch (error) {
+          return { ok: false, error: error instanceof Error ? error.message : String(error) }
+        }
+      }
+
+      const reports: Array<{ label: string; planId: string; ok: boolean; passed: number; total: number; reportPath: string | null }> = []
+      const checks: Array<{ label: string; step: string; ok: boolean; message: string }> = []
+      const notes: string[] = []
+      const plans: Array<{ label: string; plan: Plan }> = []
+      if (planId !== undefined) {
+        const plan = loadPlan(workspaceRoot, planId)
+        if (plan === null) return { ok: false, error: `计划不存在：${planId}` }
+        plans.push({ label: plan.planId, plan })
+      }
+      if (taskId !== undefined) {
+        const task = loadTask(workspaceRoot, taskId)
+        if (task === null) return { ok: false, error: `任务不存在：${taskId}` }
+        const stagePlanIds = task.results.map((stage) => stage.planId).filter((id): id is string => typeof id === 'string')
+        if (stagePlanIds.length === 0) {
+          return { ok: false, error: '这条任务还没有执行过（没有阶段计划），没有可确认的内容' }
+        }
+        for (const [index, stagePlanId] of stagePlanIds.entries()) {
+          const plan = loadPlan(workspaceRoot, stagePlanId)
+          if (plan === null) {
+            notes.push(`任务第 ${index + 1} 阶段的计划文件已不在（${stagePlanId}），跳过`)
+            continue
+          }
+          plans.push({ label: `第 ${index + 1} 阶段`, plan })
+        }
+      }
+      for (const { label, plan } of plans) {
+        const verification = await verifyAppliedPlan(session, plan).catch((error: unknown) => {
+          notes.push(`${label} 的确认本身失败：${error instanceof Error ? error.message : String(error)}`)
+          return null
+        })
+        if (verification === null) continue
+        const reportPath = writeVerificationReport(workspaceRoot, verification, { planTitle: `${label}-${plan.planId}`, env: plan.env, target: plan.target?.baseUrl })
+        reports.push({ label, planId: plan.planId, ok: verification.ok, passed: verification.passed, total: verification.total, reportPath: reportPath === '' ? null : reportPath })
+        for (const check of verification.checks) {
+          checks.push({ label, step: check.title, ok: check.ok, message: check.message })
+        }
+        notes.push(...verification.notes)
+        if (plan.status === 'planned') notes.push(`${label} 还没执行过：这里确认的是“现在是否已是目标状态”，不是“执行成功了没有”`)
+      }
+      const failed = checks.filter((check) => !check.ok)
+      return {
+        ok: reports.length > 0 && reports.every((report) => report.ok),
+        kind: 'plan',
+        reports,
+        checks,
+        notes,
+        message: reports.length === 0
+          ? '没有可确认的内容'
+          : failed.length === 0
+            ? `确认通过：${checks.length} 项全部与平台实际状态一致。`
+            : `确认发现 ${failed.length}/${checks.length} 项不一致：${failed.slice(0, 3).map((check) => `${check.step}（${check.message}）`).join('；')}`,
       }
     },
   }
