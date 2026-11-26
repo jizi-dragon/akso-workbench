@@ -28,3 +28,31 @@
   4. 跑 `npm run check`
 - 插件运行时通过 `plugin/package.json` 读取客户端版本；根 `package.json` 与插件版本必须相同，避免界面/云端看到的版本不一致。
 - 发布后的 tag、Release、资产 URL、校验和应写进提交说明或发布说明；没有发布就不写。
+
+## Release 资产只装**构建产物**（2026-11-26 用户口径）
+
+> 用户口径（2026-11-26）：打包成 release 时，上传的必须是**构建后的产物** —— 用户拿走后
+> **能直接使用**。此条同样适用于 `akso-pass`。
+
+本仓库发出去的是**DSH 插件包**（不是 Electron 安装器），所以「构建产物」= `plugin/lib/` 下由
+`npm run check`（内含 `plugin` 的 `node build.mjs`）产出的两个 bundle，加上插件运行时要读的知识文档。
+
+| 必须包含 | 必须不包含 |
+|---|---|
+| `plugin/package.json`（host 靠它认 `main`、`dsh.bundle.patch`、版本号） | `plugin/src/**` 的 `.ts`/`.tsx` 源码 |
+| `plugin/cordis.patch.yml` | `plugin/test/**`、`node_modules/`、`*.map` |
+| `plugin/lib/index.js`、`plugin/lib/client.js`（构建产物） | `_pack/`、`akso-workbench-data/`、`.git/`、两个 `package-lock.json` |
+| `docs/knowledge/**`（host 按 mtime 现读；**必须与 `plugin/` 同级**） | 任何本地路径/密钥/会话文件 |
+| 一份给最终用户的安装说明（`.md`） | |
+
+- 打包前先跑 `npm run check`（它会重新构建 `plugin/lib/`）；`plugin/package.json` 与根
+  `package.json` 的版本必须相同。
+- 压缩包解压后根层是包目录（如 `akso-workbench-0.2.13/`），其下直接是 `plugin/` 与 `docs/`。
+- **判据**（发出去之前自己过一遍，四条都要过）：
+  1. 解压后 `plugin/package.json`、`plugin/lib/index.js`、`plugin/lib/client.js` 都在；
+  2. 递归搜不到 `plugin/src/`、`plugin/test/`、`node_modules/`、`*.map`；
+  3. `plugin/package.json` 里 `main` 与 `dsh.bundle.patch` 指向的文件都在包里，且 `docs/knowledge/`
+     与 `plugin/` 同级；
+  4. 在干净的 DSH 里按安装说明装一次：插件页显示与 `package.json` 一致的版本、工具列表可见、
+     三份知识文档找得到（`AKSO_WORKBENCH_API_GUIDE` 未设时能按「从插件目录向上 10 级」命中）。
+

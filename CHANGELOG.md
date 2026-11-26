@@ -1,5 +1,15 @@
 # 变更记录
 
+## 0.2.14（2026-11-26）
+
+**把「Release 资产只装构建产物」写成规则**
+
+- 用户口径（2026-11-26）：打包成 release 时，上传的必须是**构建后的产物**，用户拿走后能直接使用；适用于 `akso-pass` 与 `akso-workbench`。
+- `VERSIONING.md` 新增「Release 资产只装构建产物」：本仓库发的是 DSH 插件包，必须包含 `plugin/package.json`、`plugin/cordis.patch.yml`、`plugin/lib/index.js`、`plugin/lib/client.js`、`docs/knowledge/**`（须与 `plugin/` 同级）与安装说明；必须排除 `plugin/src/**`、`plugin/test/**`、`node_modules/`、`*.map`、`_pack/`、两个 `package-lock.json`。
+- 四条判据：解压后 `plugin/package.json` 与两个 lib 都在 / 递归无 src·test·node_modules / `package.json` 里 `main` 与 `dsh.bundle.patch` 指向的文件齐全且 `docs/knowledge/` 同级 / 干净 DSH 里按说明装一次能看到版本、工具与知识文档。
+- `AGENTS.md` §版本与发布 加一行指针指向该节；`npm run check` 141 个测试全过、`plugin/lib` 重新构建。
+- 纯文档改动，未触动代码。
+
 ## 0.2.13（2026-11-26）
 
 **工作流规则文档校正（v3 实测）**

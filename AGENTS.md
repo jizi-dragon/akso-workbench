@@ -48,6 +48,7 @@
 - 用户明确要求「打 tag / 打包 release / 发布正式版」：**MINOR +1**、PATCH 归零（`0.1.4 → 0.2.0`）。
 - **MAJOR +1** 只在项目架构发生重大变化且用户明确要求时进行（`0.10.0 → 1.0.0`）。
 - 根 `package.json`、`plugin/package.json`、两个 `package-lock.json` 必须同版本；客户端版本从 `plugin/package.json` 读取。
+- **发 release 时上传的资产只装构建产物**：`plugin/{package.json,cordis.patch.yml}` + `plugin/lib/index.js` + `plugin/lib/client.js` + `docs/knowledge/**` + 安装说明；**不装** `plugin/src/**`、`plugin/test/**`、`node_modules/`、`_pack/`（口径与四条判据见 [`VERSIONING.md`](VERSIONING.md) §Release 资产）。
 
 ## 其他既有约束
 
