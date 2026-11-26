@@ -1323,6 +1323,8 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 - 全量覆盖：先 GetWorkflowStepControls 读回再加。
 - 参与者控件只允许 `selectUserType: 40`（字段）或 `50`（审批矩阵）；下面旧案例的 `10` 只用于展示 `controlConfig`/`participantConfig` 结构，工作台新配置不要采用。
 - 电子签名控件在 `startUpControls[].signatureConfig`：`isShowSignatureMean` 显示签名含义、`isRequiredMean` 含义必填、`signatureMeanName` 标题、`signatureMeanOptions[].value` 含义选项（内联，没有独立字典接口）、`isShowSignatureRemark` + `signatureRemarkName` + `reasonInputType: 20`（备注）、`isRequirePosition`（选职位）、`isRequireUserName`（填用户名）、`isRequiredSignature`（签名必填参数）。注意：开始节点只要存在签名控件，实际执行就按必填处理；`isRequiredSignature` 回读为 false 时也不能当成“可选”（用户 2026-11-26 口径）。更新时保留已有 option 的 `id`，只改 `value` 文案。
+- **控件形状必须是包裹形态**：`{id, sort, name, controlConfig:{workflowConfigId, stepId, name, code, ctrlType, isRequired, value, id, sort, isHidden, …}, participantConfig, signatureConfig}`。`workflow.step.get` / `GetWorkflowStepWithDetails` 回的是**摊平**形态（ctrlType、value、stepId 全在控件对象顶层），把 Get 的结果原样回传，服务端会抛 `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测，同一份 Get 结果回传必崩）。「读回→改→写回」要把每个控件重新包一层。
+- **签名含义 option 的 `id` 必须是真实 GUID**：`signatureMeanOptions[].controlId` 可以是全零（UI 也发全零），但 `id` 给全零保存不报错、跑流程时报 `Object reference not set to an instance of an object.`（2026-11-26 实测）。
 
 **案例**
 
@@ -1401,6 +1403,9 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 - stepTaskApprovals 传 [] 会删光按钮，改按钮时保留原数组。
 - 改签名文案（`responsibleOptions[].value`）时保留原 option 的 `id`，其余开关按 `workflow.task.add` 的按钮签名四开关写。
+- **`stepTaskConfig.workflowConfigId` / `stepTaskConfig.stepId` 必须是真实 id**（当前 workflowConfigId / 本节点 id）：给全零 GUID 保存不报错，但**跑流程建任务时**抛 `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测）。同批检查 `stepTaskApprovals[].workflowConfigId/stepId` 也用真实值。
+- 控件形状同 `workflow.start.update`：Get 回的是摊平形态，回写前要包成 `{id,sort,name,controlConfig,…}`，否则服务端抛 NRE。
+- 与 UI 建的参照流程对齐时，任务节点还应给 `isRequireSign: true`、`isRequireObjectField: true`、`isApprovalShowAsButton: true`（缺了不报错，但审批界面行为与 UI 建的不一致）。
 
 **案例**
 
@@ -1434,6 +1439,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 - rules 传 [] 等于清空全部分支。
 - 回显的 stepDecision 里多一个 stepId（本节点 id），回写时留着不影响；nextStepList 是两条分支的摘要。
+- 控件形状同 `workflow.start.update`：Get 回的是摊平形态，回写前要包成 `{id,sort,name,controlConfig,…}`，否则服务端抛 `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测）。
 
 **案例**
 
@@ -1465,6 +1471,7 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 - actions 传 [] 会清空动作。
 - 一个动作节点可挂多个动作：actions[] 每项是独立一组（configs[] 里可多 behaviorType，顺序执行）；读回整份再回写即可保留，UI 实测每项还带 __observed 字段，原样带回即可。
+- 控件形状同 `workflow.start.update`：Get 回的是摊平形态，回写前要包成 `{id,sort,name,controlConfig,…}`，否则服务端抛 `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测）。
 
 **案例**
 
@@ -1535,6 +1542,10 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 > 取单个步骤的完整配置，更新前必须先读。
 
 **返回**：data.step（完整 step，可直接改后回传）。
+
+**要点**
+
+- 返回的 `startUpControls[]` 是**摊平**形态（ctrlType / value / stepId 都在控件对象顶层），而四个 `*Step.update` 要的是包裹形态（`{id,sort,name,controlConfig,…}`）。「读回→改→写回」必须先把控件重新包一层，否则服务端抛 `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测）。
 
 **案例**
 
@@ -1614,6 +1625,30 @@ akso-workbench「配置工具」页的接口卡片，文案就从这份文档里
 
 ```json
 {}
+```
+
+### menu.list 菜单列表（按 code 回查菜单）
+
+> 列出菜单树（扁平数组），建完菜单用它回查 code / 层级 / 对象与两套布局 id —— 这是 `menu.submit` 唯一的回读判据。
+
+**返回**：data 为扁平菜单数组（实测 1050 条）：name / code / parentMenuId / menuActionType / objectId / listLayoutId / layoutId / createType / sort / isShow / id。
+
+**要点**
+
+- 子菜单的 `parentMenuId` 指向母菜单 id；`menuActionType` 3 = 母（分组）/ 1 = 对象列表（子）。
+- 带 `menuType=1` 过滤和不带，条数不同（实测 1041 / 1050）；回查具体菜单按 code 匹配，别依赖条数。
+- 同族的 `GET /api/platform/Menu/GetUserMenuPermission?menuType=1` 只返回**当前用户可见**的菜单（字段更少），权限受限的账号看不到别人建的菜单；回读要用 `Menu/GetMenuList`。
+- 2026-11-26 standard-val 实测：天气预报管理（母，`weather_broadcast_menu__c`，605363b7-…）→ 天气预报播报（子，`weather_broadcast_menu_item__c`，95390fc9-…，objectId / listLayoutId / layoutId 三件套齐全）。
+- 引擎执行 `menu.submit` 后会自动调本接口按 code 回读，校验 `parentMenuId` 与 `objectId` / `listLayoutId` / `layoutId`，所以审批日志里能看到「回读菜单「…」：层级与对象/两套布局 id 都对得上」。
+
+**案例**
+
+#### 案例 · 基础调用
+
+```json
+{
+  "menuType": 1
+}
 ```
 
 ## 通知（补充）

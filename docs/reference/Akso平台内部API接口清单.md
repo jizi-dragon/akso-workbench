@@ -102,6 +102,8 @@
 | --- | --- | --- | --- |
 | POST | `/api/platform/Menu/Submit` | 创建菜单（母/子） | 端点是 **Submit 不是 Save**；母 `menuActionType=3`、子 `=1` 且需 `parentMenuId/objectId/listLayoutId/layoutId`；返回 `data.Id` |
 | POST | `/api/platform/Menu/Sort` | 菜单树排序（**全量替换**） | body 就是数组 `[{key:菜单UUID,children:[]}]`；不在数组里的菜单不保留 |
+| GET | `/api/platform/Menu/GetMenuList` | 菜单列表（扁平数组） | `?menuType=1` 过滤普通菜单（实测 1041 / 不过滤 1050）；每项含 `code/parentMenuId/menuActionType/objectId/listLayoutId/layoutId`；**建完菜单用它按 code 回读校验**（2026-11-26 standard-val 实测） |
+| GET | `/api/platform/Menu/GetUserMenuPermission` | 当前用户可见菜单 | `?menuType=1`；字段更少、受权限过滤，权限受限的账号看不到别人建的菜单，回读别用它 |
 | POST | `/api/platform/MenuGroup/QueryList` | 查询菜单组 | body `{}`；建菜单前先查 appId / 菜单组 |
 | POST | `/api/platform/notice/GetMessageTemplateByObject` | 按对象查消息模板 | `id=objectId`；返回 `title/content/jumplink` 等 |
 
@@ -1316,7 +1318,7 @@ POST /api/platform/Notice/SubmitAsyncMessageTemplate
 
 > 2026-11-09 变更：`auth.oauth.login`、`auth.oauth.refresh` 经实测**无作用**（见上文认证两节），
 > `auth.login` 随后也删了（写入只保留 akso-cloud 代登录，本机不再接受明文口令）；按 2026-11-09 夜快照，
-> 能力目录 47 条（44 已验证 + 3 条抓包确认、仍标「过期」），`menu.sort` 已按用户要求删除。
+> 能力目录 61 条（全部「已验证」，含 2026-11-26 新增的 `menu.list`），`menu.sort` 已按用户要求删除。
 
 | 域 | 条数 | 能力 id |
 | --- | --- | --- |
@@ -1327,7 +1329,7 @@ POST /api/platform/Notice/SubmitAsyncMessageTemplate
 | 列表布局 | 6 | `listlayout.list`、`listlayout.columns.get`、`listlayout.save`、`listlayout.columns.set`、`listlayout.filter.save`、`listlayout.filter.get` |
 | 生命周期 | 8 | `query.lifecycle.status.list`、`lifecycle.status.create`、`lifecycle.status.update`、`lifecycle.useraction.create`、`lifecycle.useraction.get`、`lifecycle.useraction.list`、`lifecycle.enteraction.create`、`lifecycle.enteraction.list` |
 | 工作流 | 18 | `workflow.create` / `get` / `update` / `page.list` / `status.change` / `delete` / `steps.list` / `task.add` / `decision.add` / `action.add` / `start.update` / `task.update` / `decision.update` / `action.update` / `step.copy` / `step.delete` / `step.get` / `controls.list` |
-| 菜单 | 2 | `menu.submit`、`menu.group.list` |
+| 菜单 | 3 | `menu.submit`、`menu.group.list`、`menu.list` |
 | 通知 | 8 | `notice.template.list` / `page` / `get` / `create` / `update`、`notice.channel.list`、`notice.variable.fixed.list`、`notice.variable.field.list` |
 
 > 2026-11-25 补的通知 7 条（page / get / create / update / channel.list / variable.fixed.list / variable.field.list）来自通桥环境实抓，
@@ -1359,7 +1361,26 @@ POST /api/platform/Notice/SubmitAsyncMessageTemplate
 }
 ```
 
-`call` 按能力目录**原样调用**、不比对现状，风险与「不可逆」标记从目录继承；plan 阶段会校验目录里 `required:true` 的参数是否齐（缺了直接报 `call <id> 缺少必填参数：…`）。回读方面只有对象/选项集有稳定判据，其余 step 明确报「暂无稳定回读方式，需人工确认」，不会假装验证过。
+`call` 按能力目录**原样调用**、不比对现状，风险与「不可逆」标记从目录继承；plan 阶段会校验目录里 `required:true` 的参数是否齐（缺了直接报 `call <id> 缺少必填参数：…`）。
+
+回读方面（2026-11-26 起，覆盖 14 类写能力，每条都带证据进审批日志）：
+
+- 对象 / 选项集 / 字段：`field.save` 走 `call` 时回读 `object.field.page` 比 code + name；
+- 四个 `*Step.update`：回读 `workflow.step.get`，比 name / code / nextStepId / 控件 code / 签名含义 option / `stepTaskConfig` 的 configId 与 stepId / 审批按钮条数 / 判断规则 / 动作 behaviorType；
+- `workflow.status.change`：回读 `workflow.get` 比 status（消息里带 versionNo）；
+- `layout.save`：回读 `layout.detail` 比「分区 N、控件 M」与控件 code；
+- `lifecycle.useraction.create`：回读 `lifecycle.useraction.list` 比 code；
+- `menu.submit`：回读 `menu.list` 比 parentMenuId / objectId / listLayoutId / layoutId；
+- `workflow.create` / `workflow.update`：回读 `workflow.page.list`（**按 name 搜再按 code 挑**，`filters` 不生效）—— create 要求 status=10 且 objectId 对得上，update 要求 status=40 且 versionNo 变大；
+- `workflow.delete` / `workflow.step.delete`：`workflow.get` / `workflow.step.get` **读不到才算删成功**（还读得到就是没删，不恭喜）；
+- `workflow.task.add` / `decision.add` / `action.add` / `step.copy`：回读 `workflow.steps.list` 按 code 找，比 stepType 与 nextStepId；
+- `lifecycle.status.create` / `update`：回读 `query.lifecycle.status.config.list`（该接口不吃 lifecycleId，客户端过滤）比 name / isEnabled；
+- `lifecycle.enteraction.create`：回读 `lifecycle.enteraction.list` 按 name 认（这个接口不返回 code）；
+- `listlayout.save` / `columns.set` / `filter.save`：分别回读 `listlayout.list` / `listlayout.columns.get` / `listlayout.filter.get`；
+- `notice.template.create` / `update`：回读 `notice.template.list`，create 按 code 认、update 按 id 认；
+- `approvalmatrix.rule.add`：回读 `approvalmatrix.rule.list` 按 code 认。
+
+仍然报「没有回读判据（能力目录里没有与之对应的查询接口），需人工确认」的只剩三个**确实没有查询接口**的：`approvalmatrix.create`、`approvalmatrix.matchfield.add`、`layout.stable.ids`（它只是换 id 的辅助步骤）。引擎不会假装验证过。
 
 
 ## 写入报未授权但已生效（2026-10-27 实测）

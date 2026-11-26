@@ -24,7 +24,7 @@ import { test } from 'node:test'
 import { errorMessage, uiState } from '../src/cloud.ts'
 import { saveFailedAnalysisHistory } from '../src/analysis-history.ts'
 import { CAPABILITIES } from '../src/config/capabilities.ts'
-import { applyPlan, planBlueprint, saveApproval, savePlan } from '../src/config/engine.ts'
+import { applyPlan, normalizeStepCall, planBlueprint, saveApproval, savePlan, verifyCallCapability } from '../src/config/engine.ts'
 import { attachApprovalReview, finalizeApprovalReview, reviewMatchesPlan } from '../src/config/approval-review.ts'
 import type { ApprovalReport } from '../src/config/approval.ts'
 import { writeEgmpSession } from '../src/config/session.ts'
@@ -1457,7 +1457,368 @@ test('工作流编辑态：发布用 20，切「编辑中」走 UpdateWorkflowBa
   assert.ok(status.notes?.some((note) => note.includes('未实测')), '本接口直接传 40 未实测，必须标出来')
 })
 
+/* ─────────── call 步骤的回读校验：能读回来的必须真的读回来 ─────────── */
+
+async function startRoutingFake(
+  handler: (method: string, path: string, query: URLSearchParams) => unknown,
+): Promise<{ baseUrl: string; close: () => Promise<void> }> {
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    const produced = handler(req.method ?? 'GET', url.pathname, url.searchParams)
+    // handler 返回 { __raw: {...} } 时当作整份信封（用来模拟 code!==0 的平台错误）
+    const envelope =
+      produced !== null && typeof produced === 'object' && '__raw' in (produced as Record<string, unknown>)
+        ? (produced as { __raw: unknown }).__raw
+        : { code: 0, message: 'ok', data: produced }
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify(envelope))
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address() as AddressInfo
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise<void>((resolve) => {
+      server.closeAllConnections()
+      server.close(() => resolve())
+    }),
+  }
+}
+
+test('call 步骤回读：节点/工作流/布局/状态按钮/菜单都要真的读回来，读不到才说人工确认', async () => {
+  const fake = await startRoutingFake((method, path, query) => {
+    if (path.endsWith('/Workflow/GetWorkflowStepWithDetails')) {
+      return {
+        step: {
+          id: 'step-1',
+          name: '开始',
+          code: 'sf_start__c',
+          nextStepId: 'next-1',
+          startUpControls: [
+            { code: 'broadcaster_participant__c', ctrlType: 20, signatureConfig: { signatureMeanOptions: [] } },
+            { code: 'signature__c', ctrlType: 60, signatureConfig: { signatureMeanOptions: [{ id: 'sig-1', controlId: '00000000-0000-0000-0000-000000000000' }] } },
+          ],
+        },
+      }
+    }
+    if (path.endsWith('/Workflow/GetWorkflowBasic')) return { status: 20, versionNo: 2 }
+    if (path.endsWith('/Layout/LayoutDetail')) {
+      return {
+        sections: [{ code: 'a__cs' }, { code: 'b__cs' }],
+        controls: [{ code: 'name__ak' }, { code: 'city__c' }, { code: 'advice__c' }],
+      }
+    }
+    if (path.endsWith('/UserAction/GetListByStatusId')) return [{ code: 'submit' }, { code: 'other' }]
+    if (path.endsWith('/Menu/GetMenuList')) {
+      return [
+        {
+          code: 'menu_child__c',
+          name: '子菜单',
+          parentMenuId: 'parent-1',
+          objectId: 'obj-1',
+          listLayoutId: 'list-1',
+          layoutId: 'form-1',
+        },
+      ]
+    }
+    void method
+    void query
+    return null
+  })
+  const ctx = {
+    session: { baseUrl: fake.baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() },
+    objects: new Map(),
+    fields: new Map(),
+    picklists: new Map(),
+    statuses: new Map(),
+  }
+  try {
+    // ① 节点：该对的都对上 ⇒ verified，且消息里带证据
+    const okStep = await verifyCallCapability(ctx, 'workflow.start.update', {
+      step: {
+        id: 'step-1',
+        name: '开始',
+        code: 'sf_start__c',
+        nextStepId: 'next-1',
+        startUpControls: [
+          { id: 'c1', controlConfig: { code: 'broadcaster_participant__c' } },
+          { id: 'c2', controlConfig: { code: 'signature__c' }, signatureConfig: { signatureMeanOptions: [{ id: 'sig-1' }] } },
+        ],
+      },
+    })
+    assert.equal(okStep?.verified, true, `期望 verified，实际：${okStep?.message}`)
+    assert.match(String(okStep?.message), /回读节点「开始」/)
+    assert.match(String(okStep?.message), /控件 2 个/)
+
+    // ② 节点：nextStepId 回读对不上 ⇒ unverified，且指出是哪一项
+    const badStep = await verifyCallCapability(ctx, 'workflow.start.update', {
+      step: { id: 'step-1', name: '开始', code: 'sf_start__c', nextStepId: 'other-next', startUpControls: [] },
+    })
+    assert.equal(badStep?.verified, false)
+    assert.match(String(badStep?.message), /nextStepId 与提交不一致/)
+
+    // ③ 发布：status 对得上
+    const published = await verifyCallCapability(ctx, 'workflow.status.change', { ids: ['cfg-1'], status: 20 })
+    assert.equal(published?.verified, true)
+    assert.match(String(published?.message), /status=20/)
+    const notPublished = await verifyCallCapability(ctx, 'workflow.status.change', { ids: ['cfg-1'], status: 40 })
+    assert.equal(notPublished?.verified, false)
+
+    // ④ 布局：分区数与控件数、控件 code 都要对上
+    const layoutOk = await verifyCallCapability(ctx, 'layout.save', {
+      id: 'layout-1',
+      sections: [{ code: 'a__cs' }, { code: 'b__cs' }],
+      controls: [{ code: 'name__ak' }, { code: 'city__c' }, { code: 'advice__c' }],
+    })
+    assert.equal(layoutOk?.verified, true, String(layoutOk?.message))
+    assert.match(String(layoutOk?.message), /分区 2、控件 3/)
+    const layoutBad = await verifyCallCapability(ctx, 'layout.save', {
+      id: 'layout-1',
+      sections: [{ code: 'a__cs' }],
+      controls: [{ code: 'name__ak' }],
+    })
+    assert.equal(layoutBad?.verified, false)
+
+    // ⑤ 状态按钮：code 找得到
+    const buttonOk = await verifyCallCapability(ctx, 'lifecycle.useraction.create', {
+      lifecycleStatusId: 'status-1',
+      actions: [{ code: 'submit' }],
+    })
+    assert.equal(buttonOk?.verified, true, String(buttonOk?.message))
+    assert.match(String(buttonOk?.message), /含 submit/)
+    const buttonBad = await verifyCallCapability(ctx, 'lifecycle.useraction.create', {
+      lifecycleStatusId: 'status-1',
+      actions: [{ code: 'missing_action' }],
+    })
+    assert.equal(buttonBad?.verified, false)
+
+    // ⑥ 菜单：code 找到并且 parent/objectId/listLayoutId/layoutId 都对上
+    const menuOk = await verifyCallCapability(ctx, 'menu.submit', {
+      name: '子菜单',
+      code: 'menu_child__c',
+      menuActionType: 1,
+      parentMenuId: 'parent-1',
+      objectId: 'obj-1',
+      listLayoutId: 'list-1',
+      layoutId: 'form-1',
+    })
+    assert.equal(menuOk?.verified, true, String(menuOk?.message))
+    assert.match(String(menuOk?.message), /回读菜单「子菜单」/)
+    const menuBadParent = await verifyCallCapability(ctx, 'menu.submit', {
+      code: 'menu_child__c',
+      parentMenuId: 'wrong-parent',
+    })
+    assert.equal(menuBadParent?.verified, false)
+    assert.match(String(menuBadParent?.message), /parentMenuId 不一致/)
+    const menuMissing = await verifyCallCapability(ctx, 'menu.submit', { code: 'nope__c' })
+    assert.equal(menuMissing?.verified, false)
+    assert.match(String(menuMissing?.message), /回读未找到/)
+
+    // ⑦ 没有专门回读路径的能力：返回 null（交给兜底文案，不假装验过）
+    //    审批矩阵的匹配字段到现在也没有查询接口，留作"确实没有判据"的代表
+    assert.equal(await verifyCallCapability(ctx, 'approvalmatrix.matchfield.add', { matrixConfigId: 'm', fieldId: 'f' }), null)
+
+    // ⑧ 菜单回读能力本身要进目录，否则第 ⑥ 步在真实环境里走不通
+    const menuList = CAPABILITIES.find((cap) => cap.id === 'menu.list')
+    assert.ok(menuList, '缺少 menu.list')
+    assert.equal(menuList.method, 'GET')
+    assert.equal(menuList.path, '/api/platform/Menu/GetMenuList')
+    assert.equal(menuList.readonly, true)
+  } finally {
+    await fake.close()
+  }
+})
+
+test('call 步骤回读（扩展）：工作流本体、三类节点、状态、列表列、模板、矩阵规则、字段都要按 code 读回来', async () => {
+  const state = {
+    workflowRows: [{ code: 'wf__c', name: '播报审批流', status: 10, versionNo: 0, objectId: 'obj-1' }] as Array<Record<string, unknown>>,
+    stepRows: [{ id: 's1', code: 'task__c', name: '审批', stepType: 30, nextStepId: 'next-1' }] as Array<Record<string, unknown>>,
+    statusRows: [{ code: 'status_pending__c', name: '待审批', lifecycleId: 'lc-1', isEnabled: true }] as Array<Record<string, unknown>>,
+    columnRows: [{ fieldPath: 'name__ak', sort: 1 }, { fieldPath: 'city__c', sort: 2 }] as Array<Record<string, unknown>>,
+    templateRows: [{ id: 'tpl-1', code: 'tpl__c', name: '播报提醒' }] as Array<Record<string, unknown>>,
+    ruleRows: [{ code: 'rule__c', name: '规则1' }] as Array<Record<string, unknown>>,
+    fieldRows: [{ code: 'city__c', name: '城市' }] as Array<Record<string, unknown>>,
+    gone: false,
+  }
+  const fake = await startRoutingFake((_method, path) => {
+    if (path.endsWith('/Workflow/GetWorkflowBasicPageViewList')) return { count: state.workflowRows.length, datas: state.workflowRows }
+    if (path.endsWith('/Workflow/GetWorkflowSteps')) return state.stepRows
+    if (path.endsWith('/Workflow/GetWorkflowStepWithDetails')) {
+      return state.gone ? { __raw: { code: 404, message: '节点不存在' } } : { step: state.stepRows[0] }
+    }
+    if (path.endsWith('/Workflow/GetWorkflowBasic')) {
+      return state.gone ? { __raw: { code: 404, message: '工作流不存在' } } : { status: 20 }
+    }
+    if (path.endsWith('/lifecycle/Status/GetList')) return { datas: state.statusRows }
+    if (path.endsWith('/Listlayout/Columns')) return state.columnRows
+    if (path.endsWith('/notice/GetMessageTemplateByObject')) return state.templateRows
+    if (path.endsWith('/ApproveMatrix/GetMatrixRuleList')) return state.ruleRows
+    if (path.endsWith('/BasicObject/FieldPage')) return { datas: state.fieldRows }
+    return null
+  })
+  const ctx = {
+    session: { baseUrl: fake.baseUrl, account: 'tester', accountId: ACCOUNT_ID, token: 'jwt', savedAt: Date.now() },
+    objects: new Map(),
+    fields: new Map(),
+    picklists: new Map(),
+    statuses: new Map(),
+  }
+  try {
+    // ① workflow.create：按名称搜到、code 对上、status 是 10 草稿
+    const created = await verifyCallCapability(ctx, 'workflow.create', {
+      basicConfig: { name: '播报审批流', code: 'wf__c', status: 10, objectId: 'obj-1' },
+    })
+    assert.equal(created?.verified, true, String(created?.message))
+    assert.match(String(created?.message), /status=10/)
+
+    // ② workflow.update：落成 40 草稿且 versionNo +1
+    state.workflowRows = [{ code: 'wf__c', name: '播报审批流', status: 40, versionNo: 1, objectId: 'obj-1' }]
+    const updated = await verifyCallCapability(ctx, 'workflow.update', {
+      basicConfig: { name: '播报审批流', code: 'wf__c', versionNo: 0, status: 20 },
+    })
+    assert.equal(updated?.verified, true, String(updated?.message))
+    assert.match(String(updated?.message), /status=40、versionNo=1/)
+    const stale = await verifyCallCapability(ctx, 'workflow.update', {
+      basicConfig: { name: '播报审批流', code: 'wf__c', versionNo: 1, status: 20 },
+    })
+    assert.equal(stale?.verified, false)
+
+    // ③ 三类节点 add：节点列表里按 code 找得到
+    const nodeAdded = await verifyCallCapability(ctx, 'workflow.task.add', {
+      step: { workflowConfigId: 'cfg-1', code: 'task__c', stepType: 30, nextStepId: 'next-1' },
+    })
+    assert.equal(nodeAdded?.verified, true, String(nodeAdded?.message))
+    assert.match(String(nodeAdded?.message), /共 1 个节点/)
+    const nodeWrong = await verifyCallCapability(ctx, 'workflow.action.add', {
+      step: { workflowConfigId: 'cfg-1', code: 'task__c', stepType: 30, nextStepId: 'other' },
+    })
+    assert.equal(nodeWrong?.verified, false)
+
+    // ④ 删节点/删流程：Get 报 404 ⇒ 视为已删
+    state.gone = true
+    const stepDeleted = await verifyCallCapability(ctx, 'workflow.step.delete', { id: 's1' })
+    assert.equal(stepDeleted?.verified, true, String(stepDeleted?.message))
+    assert.match(String(stepDeleted?.message), /视为已删/)
+    const workflowDeleted = await verifyCallCapability(ctx, 'workflow.delete', { id: 'cfg-1' })
+    assert.equal(workflowDeleted?.verified, true, String(workflowDeleted?.message))
+    state.gone = false
+
+    // ⑤ 生命周期状态：按 lifecycleId 过滤后按 code 找
+    const statusCreated = await verifyCallCapability(ctx, 'lifecycle.status.create', {
+      lifecycleId: 'lc-1',
+      code: 'status_pending__c',
+      name: '待审批',
+      isEnabled: true,
+    })
+    assert.equal(statusCreated?.verified, true, String(statusCreated?.message))
+    const statusBad = await verifyCallCapability(ctx, 'lifecycle.status.update', {
+      lifecycleId: 'lc-1',
+      code: 'status_pending__c',
+      name: '待审核',
+    })
+    assert.equal(statusBad?.verified, false)
+
+    // ⑥ 列表列：按 fieldPath 比，缺列要报出来
+    const columnsOk = await verifyCallCapability(ctx, 'listlayout.columns.set', {
+      listlayoutId: 'list-1',
+      listlayoutColumns: [{ fieldPath: 'name__ak' }, { fieldPath: 'city__c' }],
+    })
+    assert.equal(columnsOk?.verified, true, String(columnsOk?.message))
+    const columnsBad = await verifyCallCapability(ctx, 'listlayout.columns.set', {
+      listlayoutId: 'list-1',
+      listlayoutColumns: [{ fieldPath: 'name__ak' }, { fieldPath: 'advice__c' }],
+    })
+    assert.equal(columnsBad?.verified, false)
+    assert.match(String(columnsBad?.message), /缺列 advice__c/)
+
+    // ⑦ 消息模板：按对象取模板列表，按 code 找
+    const templateOk = await verifyCallCapability(ctx, 'notice.template.create', {
+      objectid: 'obj-1',
+      code: 'tpl__c',
+      name: '播报提醒',
+    })
+    assert.equal(templateOk?.verified, true, String(templateOk?.message))
+    const templateMissing = await verifyCallCapability(ctx, 'notice.template.update', { id: 'tpl-404' })
+    assert.equal(templateMissing?.verified, false)
+
+    // ⑧ 矩阵规则 + 字段
+    const ruleOk = await verifyCallCapability(ctx, 'approvalmatrix.rule.add', { matrixConfigId: 'm-1', code: 'rule__c' })
+    assert.equal(ruleOk?.verified, true, String(ruleOk?.message))
+    const fieldOk = await verifyCallCapability(ctx, 'field.save', { objectId: 'obj-1', code: 'city__c', name: '城市' })
+    assert.equal(fieldOk?.verified, true, String(fieldOk?.message))
+    const fieldBad = await verifyCallCapability(ctx, 'field.save', { objectId: 'obj-1', code: 'city__c', name: '所属城市' })
+    assert.equal(fieldBad?.verified, false)
+  } finally {
+    await fake.close()
+  }
+})
+
 /* ─────────────── 从零建流程：新建即草稿、自动建首尾节点、Step 更新回显 ─────────────── */
+
+test('节点回写：摊平控件包成包裹形态、任务节点全零 GUID 用流程/节点 id 补上', () => {
+  const ZERO = '00000000-0000-0000-0000-000000000000'
+  const { params, warnings } = normalizeStepCall('workflow.start.update', {
+    step: {
+      id: 'step-1',
+      workflowConfigId: 'cfg-1',
+      name: '开始',
+      code: 'sf_start__c',
+      startUpControls: [
+        { id: 'ctl-1', sort: 1, name: '参与者', ctrlType: 20, code: 'broadcaster_participant__c', dispatchMode: 10, participantConfig: { id: 'pc-1', selectUserType: 40 } },
+        {
+          id: 'ctl-2',
+          sort: 2,
+          name: '签名',
+          ctrlType: 60,
+          code: 'signature__c',
+          signatureConfig: { isRequired: true, signatureMeanOptions: [{ id: ZERO, name: '已阅' }] },
+        },
+      ],
+    },
+  })
+  const step = params.step as Record<string, unknown>
+  const controls = step.startUpControls as Array<Record<string, unknown>>
+  const first = controls[0] as Record<string, unknown>
+  const firstConfig = first.controlConfig as Record<string, unknown>
+  // 摊平键被搬进 controlConfig，并补上 step 自身的流程/节点 id
+  assert.equal(firstConfig.code, 'broadcaster_participant__c')
+  assert.equal(firstConfig.ctrlType, 20)
+  assert.equal(firstConfig.workflowConfigId, 'cfg-1')
+  assert.equal(firstConfig.stepId, 'step-1')
+  assert.equal(firstConfig.id, 'ctl-1')
+  assert.equal(firstConfig.sort, 1)
+  assert.equal((first.participantConfig as Record<string, unknown>).id, 'pc-1', '参与者配置挂在外层')
+  assert.equal(first.ctrlType, undefined, '摊平键不该留在控件顶层')
+
+  // 签名含义 option 的全零 id 换成了真实 GUID，controlId 仍是全零（UI 也发全零）
+  const second = controls[1] as Record<string, unknown>
+  const options = ((second.signatureConfig as Record<string, unknown>).signatureMeanOptions as Array<Record<string, unknown>>)
+  assert.notEqual(options[0]?.id, ZERO)
+  assert.match(String(options[0]?.id), /^[0-9a-f-]{36}$/)
+
+  assert.ok(warnings.some((w) => w.includes('摊平形态')), '包裹要留 warning')
+  assert.ok(warnings.some((w) => w.includes('签名含义')), '补签名 id 要留 warning')
+
+  // 任务节点：stepTaskConfig 与审批按钮上的全零 id 用 step 的流程/节点 id 补
+  const task = normalizeStepCall('workflow.task.update', {
+    step: {
+      id: 'step-2',
+      workflowConfigId: 'cfg-1',
+      stepTaskConfig: { workflowConfigId: ZERO, stepId: ZERO, name: '审核' },
+      stepTaskApprovals: [{ id: 'btn-1', workflowConfigId: ZERO, stepId: ZERO, name: '同意' }],
+    },
+  }).params.step as Record<string, unknown>
+  const taskConfig = task.stepTaskConfig as Record<string, unknown>
+  assert.equal(taskConfig.workflowConfigId, 'cfg-1')
+  assert.equal(taskConfig.stepId, 'step-2')
+  const approval = (task.stepTaskApprovals as Array<Record<string, unknown>>)[0] as Record<string, unknown>
+  assert.equal(approval.workflowConfigId, 'cfg-1')
+  assert.equal(approval.stepId, 'step-2')
+
+  // 非 Step 更新能力：原样返回，不掺 warning
+  const untouched = normalizeStepCall('object.save', { name: 'x', code: 'y__c' })
+  assert.deepEqual(untouched.params, { name: 'x', code: 'y__c' })
+  assert.equal(untouched.warnings.length, 0)
+})
 
 test('从零建流程：create 不需先切 40、自动建开始/结束，四个 Step update 返回 data.step', () => {
   const byId = new Map(CAPABILITIES.map((cap) => [cap.id, cap]))

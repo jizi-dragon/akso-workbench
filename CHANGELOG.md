@@ -1,5 +1,34 @@
 # 变更记录
 
+## 0.2.16（2026-11-26）
+
+**配置计划不再对「没有判据」的 step 一律报人工确认：从 5 类扩到 14 类写能力都能回读**
+
+- 现象：审批日志里 `workflow.start.update`、`menu.submit` 这类 `call` 步骤一律写「暂无稳定回读方式，需人工确认」，但能力目录里明明有 `workflow.step.get`、`workflow.page.list`、`layout.detail`、`lifecycle.useraction.list`、`Menu/GetMenuList`（用户两次指出：这些查询工具本来就该用上，且同类遗漏不止一处）。
+- 根因：`verifyStep` 的 `call` 分支只对 `object.save` / `picklist.save` 做了回读，其余全部落到兜底文案；回读是「有没有写成功」的唯一证据，兜底等于把证据丢了。
+- 改法（`engine.ts` 的 `verifyCallCapability()` 按「写能力 → 目录里可用的只读接口」逐类补齐）：
+  - 节点/流程：四个 `*Step.update` 回读 `workflow.step.get`；`task.add`/`decision.add`/`action.add`/`step.copy` 回读 `workflow.steps.list`；`workflow.create`/`update` 回读 `workflow.page.list`（按 name 搜再按 code 挑，`filters` 不生效）；`workflow.delete`/`step.delete` 以「读不到」为成功；`status.change` 回读 `workflow.get` 比 status。
+  - 状态/按钮/进入动作：`lifecycle.status.create`/`update` 回读 `query.lifecycle.status.config.list`（客户端按 lifecycleId 过滤）；`enteraction.create` 回读 `lifecycle.enteraction.list`（按 name 认，接口无 code）。
+  - 布局：`layout.save` 回读 `layout.detail`；`listlayout.save`/`columns.set`/`filter.save` 分别回读 `listlayout.list`/`columns.get`/`filter.get`。
+  - 其它：`notice.template.create`/`update` 回读 `notice.template.list`；`approvalmatrix.rule.add` 回读 `approvalmatrix.rule.list`；`field.save`（call 方式）回读 `object.field.page`。
+  - 能力目录新增 `menu.list`（`GET /api/platform/Menu/GetMenuList`）：`GetUserMenuPermission` 只返回当前用户可见的菜单，回读要用全量 `GetMenuList`（standard-val 实测 1050 条、`menuType=1` 1041 条）；`menu.submit` 按 code 比 parentMenuId/objectId/两套布局 id。
+  - 确实没有查询接口的只剩 3 个，仍如实报「没有回读判据…需人工确认」：`approvalmatrix.create`、`approvalmatrix.matchfield.add`、`layout.stable.ids`（辅助步骤）。
+- 判据：`host.test.ts` 两条新测试（假平台按 path 回不同 data，正反两面都断言：节点/发布/布局/按钮/菜单；工作流本体/三类节点/删节点与删流程/状态/列表列/模板/矩阵规则/字段）；`api-guide --check` 61/61、0 告警；`npm run check` 全绿（143 个测试）。
+- 诚实边界：回读比的是「提交值 vs 平台回读值」里的关键子集，平台自己补的默认值不参与比对；`workflow.page.list` 与 `lifecycle.status.config.list` 都是「先全量/按名搜、再客户端挑」，数据量大时慢但不会误判；回读读到的若是同 code 的另一条旧记录（同名不同 code 不在此列），仍可能放过。
+## 0.2.15（2026-11-26）
+
+**修「工作流节点回写」的两个静默坑：摊平形状被原样回传、全零 GUID 存进流程**
+
+- 现象：按 `workflow.step.get` 的结果改完节点、发布成功，真跑流程报 `Object reference not set to an instance of an object.`（standard-val，天气预报播报审批流）。
+- 根因一（形状）：`workflow.step.get` 返回的控件是**摊平**形态（`ctrlType/code/value/id/participantConfig/signatureConfig/…` 都在控件对象顶层），而四个 `*Step.update` 要 UI 的**包裹**形态 `{id,sort,name,controlConfig:{…},participantConfig,signatureConfig}`。原样回传，服务端在保存节点时抛同一个 NRE。
+- 根因二（id）：任务节点 `stepTaskConfig.workflowConfigId/stepId`、`stepTaskApprovals[].workflowConfigId/stepId`、开始节点 `signatureConfig.signatureMeanOptions[].id` 允许全零保存，**运行时**建任务/取签名含义才抛 NRE。参照 UI 建的「变更关闭审核」逐键比对才看出来（结构层完全一致，语义层只这几处不同）。
+- 改法：
+  - 能力卡片：`workflow.start.update`（包裹形态 + 签名含义 option id 真实 GUID）、`workflow.task.update`（真实 workflowConfigId/stepId + 控件形状 + 与 UI 对齐的 `isRequireSign/isRequireObjectField/isApprovalShowAsButton`）、`workflow.decision.update`/`workflow.action.update`（控件形状）、`workflow.step.get`（返回摊平形态的提醒）各补 notes。
+  - 文档：`基础API使用指南.md` 五节同步；`标准配置使用规范.md` 的 `workflow.create` 校验小节加 4 条。
+  - 工具：`engine.ts` 新增 `normalizeStepCall()`，`call` 资源引用四个 Step update 时自动把摊平控件包成包裹形态、全零 GUID 用流程/节点 id 补上、签名含义 option 补随机 GUID，改动一律进 plan 的 warning 提示，不静默。
+- 判据：`host.test.ts` 新增「节点回写：摊平控件包成包裹形态、任务节点全零 GUID 用流程/节点 id 补上」，钉住包裹结果、真 GUID、补 id 与两条 warning；`npm run check` 全绿（142 个测试，`plugin/lib` 重建）。
+- 诚实边界：只覆盖「读回→改→写回」这一条路径；UI 里手工点出来的其它形状差异没穷举。修复后用户实测不再报错。
+
 ## 0.2.14（2026-11-26）
 
 **把「Release 资产只装构建产物」写成规则**

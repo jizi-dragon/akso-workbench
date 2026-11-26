@@ -1398,6 +1398,8 @@ export const CAPABILITIES: Capability[] = [
       '全量覆盖：先 GetWorkflowStepControls 读回再加。',
       '开始节点由 workflow.create 自动建好（code `…_Start__c`、sort 1、stepType 10），本接口只挂/改 startUpControls，没有「新建开始节点」的调用；ctrlType 20 是参与者控件（participantConfig: selectUserType / allowRoleIds / approveMatrix）。',
       '2026-11-25 tulmed 实测：从零建流程时 UI 会随加控件多次调用本接口（startUpControls 1→2→4 个），每次都是整份覆盖。',
+      '控件形状必须是 UI 的包裹形态：`{id, sort, name, controlConfig:{workflowConfigId,stepId,name,code,ctrlType,isRequired,value,id,sort,isHidden,…}, participantConfig, signatureConfig}`；`workflow.step.get` 返回的是摊平形态，原样回传会在服务端抛 `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测，同一份 Get 结果回传必崩）。',
+      '电子签名控件（ctrlType 60）：`signatureConfig.signatureMeanOptions[].id` 必须是真实 GUID（`controlId` 可以是全零，UI 也发全零）；给全零会在跑流程时报 `Object reference not set to an instance of an object.`。',
     ],
   },
   {
@@ -1426,6 +1428,8 @@ export const CAPABILITIES: Capability[] = [
       'stepTaskApprovals 传 [] 会删光按钮，改按钮时保留原数组。',
       '节点通知模板在 step.stepTaskConfig.notifyTemplateId（填 notice.template.create / notice.template.list 给的模板 id）；notifyTemplateCode 留空，提醒节点同时给 isNotifyTaskType: true。',
       '2026-11-25 通桥环境实测：整份 step 读回后只改 notifyTemplateId 回写成功，13 个节点挂上同一模板。',
+      '`stepTaskConfig.workflowConfigId` 与 `stepTaskConfig.stepId` 必须是真实 id（当前 workflowConfigId / 本节点 id），给全零 GUID 保存不报错，但**运行时**建任务抛 `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测）；同批检查 `stepTaskApprovals[].workflowConfigId/stepId` 也用真实值。',
+      '控件形状：同 workflow.start.update——`workflow.step.get` 的摊平控件要包裹成 `{id,sort,name,controlConfig,…}` 再回写，否则服务端同样抛 NRE。',
     ],
   },
   {
@@ -1449,7 +1453,10 @@ export const CAPABILITIES: Capability[] = [
       },
     },
     returns: 'data.step（服务端回显的完整节点，不是 data:true）。',
-    notes: ['rules 传 [] 等于清空全部分支。'],
+    notes: [
+      'rules 传 [] 等于清空全部分支。',
+      '控件形状：`workflow.step.get` 的摊平控件要包裹成 `{id,sort,name,controlConfig,…}` 再回写，否则服务端抛 `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测）。',
+    ],
   },
   {
     id: 'workflow.action.update',
@@ -1475,6 +1482,7 @@ export const CAPABILITIES: Capability[] = [
     notes: [
       'actions 传 [] 会清空动作。',
       '一个动作节点可挂多个动作：actions[] 每项是独立一组（configs[] 里可多 behaviorType，顺序执行），读回后整份回写即可保留。',
+      '控件形状：`workflow.step.get` 的摊平控件要包裹成 `{id,sort,name,controlConfig,…}` 再回写，否则服务端抛 `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测）。',
     ],
   },
   {
@@ -1531,6 +1539,9 @@ export const CAPABILITIES: Capability[] = [
     params: [p('id', 'query')],
     example: { id: '<stepId>' },
     returns: 'data.step（完整 step，可直接改后回传）。',
+    notes: [
+      '注意：返回的 `startUpControls[]` 是**摊平**形态（ctrlType / value / stepId 都在控件对象顶层），而四个 `*Step.update` 要的是包裹形态（`{id,sort,name,controlConfig,…}`）。想「读回→改→写回」必须先把控件重新包一层，否则服务端抛 `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测）。',
+    ],
   },
   {
     id: 'workflow.controls.list',
@@ -1547,7 +1558,7 @@ export const CAPABILITIES: Capability[] = [
     notes: ['文档旧版记成 POST，实测是 GET。'],
   },
 
-  /* ───────────────────────── 菜单（2）/ 通知（8） ───────────────────────── */
+  /* ───────────────────────── 菜单（3）/ 通知（8） ───────────────────────── */
   {
     id: 'menu.submit',
     domain: 'menu',
@@ -1591,7 +1602,7 @@ export const CAPABILITIES: Capability[] = [
       '母菜单 body：{source:2, menuType:1, backgroundColor:"#366EF4", status:1, name, code, menuActionType:3, childShowType:null}；顶层母菜单 `parentMenuId` 留空。',
       '子菜单必须先有 parentMenuId，且对象/布局 id 都要有效。',
       '子菜单三件套：`objectId` + `listLayoutId`（列表布局）+ `layoutId`（表单布局），再带 `createType: 4`，点进去就是对象列表、能直接新建。',
-      '返回的 id 要自己读回来（`GET /api/platform/Menu/GetMenuList`），引擎的 call 参数不做 id 插值，所以母菜单 → 子菜单必须拆成两次 plan。',
+      '返回的 id 要自己读回来（`GET /api/platform/Menu/GetMenuList`，能力 `menu.list`），引擎的 call 参数不做 id 插值，所以母菜单 → 子菜单必须拆成两次 plan；引擎执行后会按 code 回读菜单做校验（找不到会报 unverified 并给出条数）。',
       '2026-11-09 实测：作业管理（母，`homework_menu__c`，id 6c7ad784-002a-67cc-d934-3c48870e98cc）→ 作业提交（子，`homework_submit__c`，id 23b197a5-e8f0-f1f8-82a3-28961998d393），列表页/表单都正常打开。',
     ],
   },
@@ -1608,6 +1619,26 @@ export const CAPABILITIES: Capability[] = [
     params: [],
     example: {},
     returns: 'data 为分组数组（实测 6 个）：name / code / status / source / sort / id。',
+  },
+  {
+    id: 'menu.list',
+    domain: 'menu',
+    title: '菜单列表（按 code 回查菜单）',
+    description: '列出菜单树（扁平数组），建完菜单用它回查 code / 层级 / 对象与两套布局 id，是 `menu.submit` 的唯一回读判据。',
+    method: 'GET',
+    path: '/api/platform/Menu/GetMenuList',
+    risk: 'low',
+    readonly: true,
+    evidence: 'verified',
+    params: [p('menuType', 'query', false, 'number', '1 = 普通菜单；不传返回全部')],
+    example: { menuType: 1 },
+    returns: 'data 为扁平菜单数组（实测 1050 条）：name / code / parentMenuId / menuActionType / objectId / listLayoutId / layoutId / createType / sort / isShow / id。',
+    notes: [
+      '子菜单的 `parentMenuId` 指向母菜单 id，`menuActionType` 3=母（分组）/ 1=对象列表。',
+      '带 `menuType=1` 过滤与不带，条数不同（实测 1041 / 1050）；回查具体菜单用 code 匹配，别依赖条数。',
+      '另一条同族接口是 `GET /api/platform/Menu/GetUserMenuPermission?menuType=1`，只返回**当前用户可见**的菜单（同样是扁平数组、字段更少），权限受限的账号看不到别人建的菜单 —— 回读要用 `Menu/GetMenuList`。',
+      '2026-11-26 standard-val 实测：天气预报管理（母，`weather_broadcast_menu__c`，605363b7-…）→ 天气预报播报（子，`weather_broadcast_menu_item__c`，95390fc9-…，objectId/listLayoutId/layoutId 三件套都在）。',
+    ],
   },
   {
     id: 'notice.template.list',

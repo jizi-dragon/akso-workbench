@@ -7,7 +7,7 @@
  *   - 每个 domain 自己负责 inspect / applyStep / verify；
  *   - 失败即停，checkpoint 留痕，不做"猜测式重试"。
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -256,6 +256,141 @@ function fieldBody(spec: FieldResource): Record<string, unknown> {
   return body
 }
 
+const ZERO_GUID = '00000000-0000-0000-0000-000000000000'
+
+/** 四个「写节点」的能力：它们都吃同一个 `step` 对象，且都对形状敏感。 */
+const STEP_UPDATE_CAPABILITIES: ReadonlySet<string> = new Set([
+  'workflow.start.update',
+  'workflow.task.update',
+  'workflow.decision.update',
+  'workflow.action.update',
+])
+
+/** 控件摊平形态的键（`workflow.step.get` 回的就是这个形状）。 */
+const CONTROL_KEYS = [
+  'workflowConfigId', 'stepId', 'stepTaskId', 'name', 'code', 'ctrlType', 'isRequired',
+  'value', 'remark', 'dispatchMode', 'taskRequireType', 'isHidden',
+] as const
+
+/**
+ * 把 `workflow.step.get` 读回来的 step 规整成四个 `*Step.update` 认的形状。
+ *
+ * 平台对形状是苛刻的，而且**报错信息完全误导**：两个坑都表现为
+ * `Object reference not set to an instance of an object.`（2026-11-26 standard-val 实测）。
+ *
+ *   1. 控件必须是包裹形态 `{id, sort, name, controlConfig:{…}, participantConfig, signatureConfig}`，
+ *      Get 回的是摊平形态（ctrlType/value/stepId 在控件对象顶层）。
+ *   2. 任务节点的 `stepTaskConfig.workflowConfigId/stepId`（含按钮上的同名两键）不能是全零 GUID，
+ *      否则保存成功、**跑流程建任务时**才炸。
+ *
+ * 这里只做「能用 step 自身推导出来的」补全 + 形状转换，改了什么一律记 warning，不静默。
+ */
+export function normalizeStepCall(
+  capabilityId: string,
+  params: Record<string, unknown>,
+): { params: Record<string, unknown>; warnings: string[] } {
+  if (!STEP_UPDATE_CAPABILITIES.has(capabilityId)) return { params, warnings: [] }
+  const raw = params.step
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { params, warnings: [] }
+  const step = structuredClone(raw) as Record<string, unknown>
+  const warnings: string[] = []
+  const stepId = typeof step.id === 'string' ? step.id : ''
+  const wfId = typeof step.workflowConfigId === 'string' ? step.workflowConfigId : ''
+
+  const controls = step.startUpControls
+  if (Array.isArray(controls)) {
+    let wrapped = 0
+    step.startUpControls = controls.map((item) => {
+      if (item === null || typeof item !== 'object') return item
+      const c = item as Record<string, unknown>
+      if (c.controlConfig !== undefined && c.controlConfig !== null) return c // 已经是包裹形态
+      const controlConfig: Record<string, unknown> = { sort: c.sort ?? 0 }
+      for (const key of CONTROL_KEYS) {
+        if (c[key] !== undefined) controlConfig[key] = c[key]
+      }
+      if (controlConfig.workflowConfigId === undefined || controlConfig.workflowConfigId === null || controlConfig.workflowConfigId === '') {
+        controlConfig.workflowConfigId = wfId
+      }
+      if (controlConfig.stepId === undefined || controlConfig.stepId === null || controlConfig.stepId === '') {
+        controlConfig.stepId = stepId
+      }
+      if (controlConfig.id === undefined || controlConfig.id === null || controlConfig.id === '') {
+        controlConfig.id = c.id
+      }
+      const next: Record<string, unknown> = { id: c.id, sort: c.sort ?? 0, name: c.name, controlConfig }
+      for (const key of ['participantConfig', 'signatureConfig', 'dateConfig', 'fieldConfigs', 'textConfig', 'variableConfigs']) {
+        if (c[key] !== undefined && c[key] !== null) next[key] = c[key]
+      }
+      wrapped += 1
+      return next
+    })
+    if (wrapped > 0) {
+      warnings.push(
+        `startUpControls 有 ${wrapped} 个控件是摊平形态：已按 {id,sort,name,controlConfig,…} 重新包裹（原样回传会被平台抛 NRE）`,
+      )
+    }
+  }
+
+  // 签名含义 option 的 id 给全零，保存不报错、跑流程报 NRE（UI 发的是真实 GUID）。
+  // 单独一遍处理：包裹形态（UI 回传）与刚包好的控件都要扫。
+  if (Array.isArray(step.startUpControls)) {
+    let fixed = 0
+    for (const item of step.startUpControls) {
+      if (item === null || typeof item !== 'object') continue
+      const signatureConfig = (item as Record<string, unknown>).signatureConfig as Record<string, unknown> | undefined
+      const options = signatureConfig?.signatureMeanOptions
+      if (!Array.isArray(options)) continue
+      for (const option of options) {
+        if (option === null || typeof option !== 'object') continue
+        const o = option as Record<string, unknown>
+        if (typeof o.id !== 'string' || o.id === '' || o.id === ZERO_GUID) {
+          o.id = randomUUID()
+          fixed += 1
+        }
+      }
+    }
+    if (fixed > 0) {
+      warnings.push(
+        `签名含义 option 有 ${fixed} 个 id 是全零/空：已生成新 id（平台对全零 id 保存不报错，跑流程才抛 NRE）`,
+      )
+    }
+  }
+
+  const taskConfig = step.stepTaskConfig
+  if (taskConfig !== null && typeof taskConfig === 'object' && !Array.isArray(taskConfig)) {
+    const tc = taskConfig as Record<string, unknown>
+    const filled: string[] = []
+    if (tc.workflowConfigId === ZERO_GUID || tc.workflowConfigId === '' || tc.workflowConfigId === undefined) {
+      tc.workflowConfigId = wfId
+      filled.push('stepTaskConfig.workflowConfigId')
+    }
+    if (tc.stepId === ZERO_GUID || tc.stepId === '' || tc.stepId === undefined) {
+      tc.stepId = stepId
+      filled.push('stepTaskConfig.stepId')
+    }
+    const approvals = step.stepTaskApprovals
+    if (Array.isArray(approvals)) {
+      for (const item of approvals) {
+        if (item === null || typeof item !== 'object') continue
+        const a = item as Record<string, unknown>
+        if (a.workflowConfigId === ZERO_GUID || a.workflowConfigId === '') {
+          a.workflowConfigId = wfId
+          if (!filled.includes('stepTaskApprovals[].workflowConfigId')) filled.push('stepTaskApprovals[].workflowConfigId')
+        }
+        if (a.stepId === ZERO_GUID || a.stepId === '') {
+          a.stepId = stepId
+          if (!filled.includes('stepTaskApprovals[].stepId')) filled.push('stepTaskApprovals[].stepId')
+        }
+      }
+    }
+    if (filled.length > 0) {
+      warnings.push(`任务节点有全零 GUID：已用流程/节点 id 补上 ${filled.join('、')}（全零保存不报错，运行时建任务会抛 NRE）`)
+    }
+  }
+
+  return { params: { ...params, step }, warnings }
+}
+
 /**
  * 只把蓝图算成计划，**不落盘、不发审批**。任务级审批会按阶段重新算一遍（顺序执行，
  * 后一阶段要用前一阶段刚建出来的对象/字段），所以这里必须能单独拿出来用。
@@ -467,7 +602,8 @@ export async function buildPlan(session: EgmpSession, input: Blueprint): Promise
         const spec = resource as CallResource
         const cap = findCapability(spec.capability)
         if (cap === undefined) throw new EgmpError(`call 资源引用了未知能力：${spec.capability}`)
-        const params: Record<string, unknown> = { ...(spec.params ?? {}) }
+        const normalized = normalizeStepCall(cap.id, { ...(spec.params ?? {}) })
+        const params: Record<string, unknown> = normalized.params
         const missing = cap.params
           .filter((param) => param.required === true)
           .filter((param) => params[param.name] === undefined || params[param.name] === null || params[param.name] === '')
@@ -487,7 +623,8 @@ export async function buildPlan(session: EgmpSession, input: Blueprint): Promise
           dependsOn: [],
           warnings: [cap.method === 'GET'
             ? `只读调用：按能力目录 ${cap.method} ${cap.path} 查询，执行后回显结果`
-            : `按能力目录原样调用 ${cap.method} ${cap.path}，不做差异比对`],
+            : `按能力目录原样调用 ${cap.method} ${cap.path}，不做差异比对`,
+          ...normalized.warnings],
         })
         break
       }
@@ -657,6 +794,449 @@ async function applyStep(ctx: QueryContext, step: Step, res: Resolution, binding
   throw new EgmpError(`不支持的步骤类型：${step.kind}`)
 }
 
+/**
+ * `call` 步骤的回读校验。
+ *
+ * 以前这里只有 `object.save` / `picklist.save` 能验，其余一律"暂无稳定回读方式，需人工确认"——
+ * 审批日志里就出现"配置开始节点：需人工确认"，而节点到底写没写进去没人知道。
+ * 其实平台有 `workflow.step.get` / `workflow.get` / `layout.detail` / `lifecycle.useraction.list`，
+ * 能验的就逐字段比，验不了的才说"没有接口"（并把原因写具体）。
+ *
+ * 返回 null 表示"这个能力没有专门的回读路径"，交给调用方给兜底文案。
+ *
+ * 导出是为了让测试直接钉住"哪一类 call 步骤回读到什么"（不必真跑一次写入）。
+ */
+export async function verifyCallCapability(
+  ctx: QueryContext,
+  capabilityId: string,
+  params: Record<string, unknown>,
+): Promise<{ verified: boolean; message: string } | null> {
+  if (STEP_UPDATE_CAPABILITIES.has(capabilityId)) {
+    const submitted = (params.step ?? {}) as Record<string, unknown>
+    const stepId = typeof submitted.id === 'string' ? submitted.id : ''
+    if (stepId === '') return { verified: false, message: '提交内容里没有 step.id，无法回读' }
+    const json = await invokeCapability(ctx.session, 'workflow.step.get', { id: stepId })
+    const got = (json.data as { step?: Record<string, unknown> } | undefined)?.step
+    if (got === undefined) return { verified: false, message: '回读未找到节点' }
+    const diffs: string[] = []
+    const facts: string[] = []
+    const gotName = String(got.name ?? '')
+    if (String(submitted.name ?? '') !== '' && String(submitted.name) !== gotName) diffs.push(`名称回读「${gotName}」`)
+    if (String(submitted.code ?? '') !== '' && String(submitted.code) !== String(got.code ?? '')) diffs.push(`code 回读 ${String(got.code ?? '')}`)
+    const gotNext = String(got.nextStepId ?? '')
+    if (typeof submitted.nextStepId === 'string' && submitted.nextStepId !== '' && gotNext !== submitted.nextStepId) {
+      diffs.push('nextStepId 与提交不一致')
+    }
+    facts.push(`next=${gotNext === '' ? '空' : gotNext.slice(0, 8)}`)
+
+    // 控件：code 必须都在，签名含义 option 不能还是全零（那个只在跑流程时才炸）
+    const subControls = Array.isArray(submitted.startUpControls) ? (submitted.startUpControls as Array<Record<string, unknown>>) : []
+    if (subControls.length > 0) {
+      const gotControls = Array.isArray(got.startUpControls) ? (got.startUpControls as Array<Record<string, unknown>>) : []
+      const codesOf = (list: Array<Record<string, unknown>>): string[] => list.map((control) => {
+        const inner = control.controlConfig as Record<string, unknown> | undefined
+        return String(inner?.code ?? control.code ?? '')
+      })
+      const gotCodes = codesOf(gotControls)
+      const missing = codesOf(subControls).filter((code) => code !== '' && !gotCodes.includes(code))
+      if (missing.length > 0) diffs.push(`控件回读缺 ${missing.join('、')}`)
+      else facts.push(`控件 ${gotControls.length} 个`)
+      const zeroSignature = gotControls.some((control) => {
+        const options = (control.signatureConfig as Record<string, unknown> | undefined)?.signatureMeanOptions
+        return Array.isArray(options) && options.some((option) => String((option as Record<string, unknown>)?.id ?? '') === ZERO_GUID)
+      })
+      if (zeroSignature) diffs.push('签名含义 option 仍是全零 id')
+    }
+
+    // 任务节点：workflowConfigId / stepId / 审批人控件 / 按钮数
+    const submittedTask = submitted.stepTaskConfig as Record<string, unknown> | undefined
+    if (submittedTask !== undefined) {
+      const gotTask = (got.stepTaskConfig ?? {}) as Record<string, unknown>
+      if (String(gotTask.workflowConfigId ?? '') !== String(submittedTask.workflowConfigId ?? '')) diffs.push('stepTaskConfig.workflowConfigId 回读不一致')
+      if (String(gotTask.stepId ?? '') !== String(submittedTask.stepId ?? '')) diffs.push('stepTaskConfig.stepId 回读不一致')
+      if (String(gotTask.userControlIds ?? '') !== String(submittedTask.userControlIds ?? '')) diffs.push('审批人 userControlIds 回读不一致')
+      const submittedApprovals = Array.isArray(submitted.stepTaskApprovals) ? submitted.stepTaskApprovals : []
+      const gotApprovals = Array.isArray(got.stepTaskApprovals) ? got.stepTaskApprovals : []
+      if (submittedApprovals.length > 0) {
+        if (submittedApprovals.length !== gotApprovals.length) diffs.push(`审批按钮回读 ${gotApprovals.length} 个（提交 ${submittedApprovals.length}）`)
+        else facts.push(`审批按钮 ${gotApprovals.length} 个`)
+      }
+    }
+
+    // 判断节点：规则条数与各自 nextStepId
+    const submittedDecision = submitted.stepDecision as Record<string, unknown> | undefined
+    if (submittedDecision !== undefined) {
+      const gotRules = Array.isArray((got.stepDecision as Record<string, unknown> | undefined)?.rules)
+        ? ((got.stepDecision as Record<string, unknown>).rules as Array<Record<string, unknown>>)
+        : []
+      const submittedRules = Array.isArray(submittedDecision.rules) ? (submittedDecision.rules as Array<Record<string, unknown>>) : []
+      if (submittedRules.length > 0 && gotRules.length !== submittedRules.length) {
+        diffs.push(`判断规则回读 ${gotRules.length} 条（提交 ${submittedRules.length}）`)
+      } else if (submittedRules.length > 0) {
+        facts.push(`判断规则 ${gotRules.length} 条`)
+      }
+    }
+
+    // 动作节点：动作数与每组 configs 的 behaviorType 序列
+    const submittedAction = submitted.stepAction as Record<string, unknown> | undefined
+    if (submittedAction !== undefined) {
+      const gotActions = Array.isArray((got.stepAction as Record<string, unknown> | undefined)?.actions)
+        ? ((got.stepAction as Record<string, unknown>).actions as Array<Record<string, unknown>>)
+        : []
+      const behaviorOf = (action: Record<string, unknown>): string =>
+        (Array.isArray(action.configs) ? (action.configs as Array<Record<string, unknown>>) : []).map((config) => String(config.behaviorType ?? '')).join('+')
+      const submittedBehaviors = (Array.isArray(submittedAction.actions) ? (submittedAction.actions as Array<Record<string, unknown>>) : []).map(behaviorOf)
+      const gotBehaviors = gotActions.map(behaviorOf)
+      if (submittedBehaviors.length > 0 && gotBehaviors.join('|') !== submittedBehaviors.join('|')) {
+        diffs.push(`动作回读 ${gotBehaviors.join('/') || '空'}（提交 ${submittedBehaviors.join('/')}）`)
+      } else if (submittedBehaviors.length > 0) {
+        facts.push(`动作 ${gotActions.length} 个、behaviorType ${submittedBehaviors.join('/')}`)
+      }
+    }
+
+    return diffs.length > 0
+      ? { verified: false, message: `回读节点「${gotName}」：${diffs.join('；')}` }
+      : { verified: true, message: `回读节点「${gotName}」：${facts.join('、')}` }
+  }
+
+  if (capabilityId === 'workflow.status.change') {
+    const configId = Array.isArray(params.ids) ? String(params.ids[0] ?? '') : ''
+    if (configId === '') return { verified: false, message: '提交内容里没有 ids，无法回读' }
+    const json = await invokeCapability(ctx.session, 'workflow.get', { id: configId })
+    const basic = (json.data ?? {}) as Record<string, unknown>
+    const status = Number(basic.status)
+    const want = Number(params.status)
+    return status === want
+      ? { verified: true, message: `回读工作流 status=${status}（versionNo=${String(basic.versionNo ?? '?')}）` }
+      : { verified: false, message: `回读 status=${status}，提交的是 ${want}` }
+  }
+
+  if (capabilityId === 'layout.save') {
+    const layoutId = typeof params.id === 'string' ? params.id : ''
+    if (layoutId === '') return { verified: false, message: '没有布局 id，无法回读' }
+    const json = await invokeCapability(ctx.session, 'layout.detail', { layoutId })
+    const detail = (json.data ?? {}) as Record<string, unknown>
+    const gotSections = Array.isArray(detail.sections) ? detail.sections.length : 0
+    const gotControls = Array.isArray(detail.controls) ? (detail.controls as Array<Record<string, unknown>>) : []
+    const wantSections = Array.isArray(params.sections) ? params.sections.length : 0
+    const wantControls = Array.isArray(params.controls) ? (params.controls as Array<Record<string, unknown>>) : []
+    if (gotSections !== wantSections || gotControls.length !== wantControls.length) {
+      return { verified: false, message: `回读分区 ${gotSections}/${wantSections}、控件 ${gotControls.length}/${wantControls.length}` }
+    }
+    const gotCodes = new Set(gotControls.map((control) => String(control.code ?? '')))
+    const missing = wantControls.map((control) => String(control.code ?? '')).filter((code) => code !== '' && !gotCodes.has(code))
+    if (missing.length > 0) return { verified: false, message: `控件回读缺 ${missing.slice(0, 5).join('、')}` }
+    return { verified: true, message: `回读布局：分区 ${gotSections}、控件 ${gotControls.length}` }
+  }
+
+  if (capabilityId === 'lifecycle.useraction.create') {
+    const statusId = typeof params.lifecycleStatusId === 'string' ? params.lifecycleStatusId : ''
+    const codes = (Array.isArray(params.actions) ? (params.actions as Array<Record<string, unknown>>) : [])
+      .map((action) => String(action.code ?? ''))
+      .filter((code) => code !== '')
+    if (statusId === '' || codes.length === 0) return { verified: false, message: '没有状态 id 或按钮 code，无法回读' }
+    const json = await invokeCapability(ctx.session, 'lifecycle.useraction.list', { statusId })
+    const rows = Array.isArray(json.data) ? (json.data as Array<Record<string, unknown>>) : []
+    const have = new Set(rows.map((row) => String(row.code ?? '')))
+    const missing = codes.filter((code) => !have.has(code))
+    return missing.length === 0
+      ? { verified: true, message: `回读状态按钮 ${rows.length} 个，含 ${codes.join('、')}` }
+      : { verified: false, message: `回读按钮缺 ${missing.join('、')}` }
+  }
+
+  if (capabilityId === 'menu.submit') {
+    const code = typeof params.code === 'string' ? params.code : ''
+    if (code === '') return { verified: false, message: '没有菜单 code，无法回读' }
+    const menuType = Number(params.menuType)
+    const json = await invokeCapability(ctx.session, 'menu.list', Number.isFinite(menuType) && menuType > 0 ? { menuType } : {})
+    const rows = Array.isArray(json.data) ? (json.data as Array<Record<string, unknown>>) : []
+    const hit = rows.find((row) => String(row.code ?? '') === code)
+    if (hit === undefined) return { verified: false, message: `回读未找到 code=${code} 的菜单（${rows.length} 条里没有）` }
+    const diffs: string[] = []
+    const name = String(hit.name ?? '')
+    if (typeof params.name === 'string' && params.name !== '' && params.name !== name) diffs.push(`名称回读「${name}」`)
+    if (typeof params.parentMenuId === 'string' && params.parentMenuId !== '' && String(hit.parentMenuId ?? '') !== params.parentMenuId) {
+      diffs.push('parentMenuId 不一致')
+    }
+    for (const key of ['objectId', 'listLayoutId', 'layoutId'] as const) {
+      const want = typeof params[key] === 'string' ? params[key] : ''
+      const got = String(hit[key] ?? '')
+      if (want !== '' && got !== want) diffs.push(`${key} 回读 ${got === '' ? '空' : got.slice(0, 8)}`)
+    }
+    return diffs.length > 0
+      ? { verified: false, message: `回读菜单「${name}」：${diffs.join('；')}` }
+      : { verified: true, message: `回读菜单「${name}」：层级与对象/两套布局 id 都对得上` }
+  }
+
+  // ── 工作流本体：create / update / delete（2026-11-26 实测 page.list 的 keywords+keyword 真的按名称过滤） ──
+  if (capabilityId === 'workflow.create' || capabilityId === 'workflow.update') {
+    const submitted = (params.basicConfig ?? {}) as Record<string, unknown>
+    const code = String(submitted.code ?? '')
+    const name = String(submitted.name ?? '')
+    if (code === '' || name === '') return { verified: false, message: '提交内容里没有 basicConfig.code/name，无法回读' }
+    const json = await invokeCapability(ctx.session, 'workflow.page.list', {
+      pageIndex: 1,
+      pageSize: 50,
+      keywords: name,
+      keyword: name,
+      filters: [],
+    })
+    const searched = rowsOf(json)
+    const hits = searched.filter((row) => String(row.code ?? '') === code)
+    if (hits.length === 0) {
+      return { verified: false, message: `回读没找到 code=${code} 的工作流（按名称搜「${name}」返回 ${searched.length} 条）` }
+    }
+    const latest = hits.reduce((best, row) => (Number(row.versionNo ?? 0) > Number(best.versionNo ?? 0) ? row : best))
+    const gotStatus = Number(latest.status)
+    const gotVersion = Number(latest.versionNo ?? 0)
+    const diffs: string[] = []
+    const wantName = String(latest.name ?? '')
+    if (capabilityId === 'workflow.create') {
+      if (gotStatus !== 10) diffs.push(`status 回读 ${gotStatus}（新建应为 10 草稿）`)
+      if (String(submitted.objectId ?? '') !== '' && String(latest.objectId ?? '') !== String(submitted.objectId)) {
+        diffs.push(`objectId 回读 ${shortId(latest.objectId)}`)
+      }
+    } else {
+      if (gotStatus !== 40) diffs.push(`status 回读 ${gotStatus}（改已发布流程应先落成 40 草稿）`)
+      const submittedVersion = Number(submitted.versionNo ?? Number.NaN)
+      if (Number.isFinite(submittedVersion) && gotVersion <= submittedVersion) {
+        diffs.push(`versionNo 回读 ${gotVersion}（提交 ${submittedVersion}，应 +1）`)
+      }
+    }
+    return diffs.length > 0
+      ? { verified: false, message: `回读工作流「${wantName}」：${diffs.join('；')}` }
+      : { verified: true, message: `回读工作流「${wantName}」：status=${gotStatus}、versionNo=${gotVersion}` }
+  }
+
+  if (capabilityId === 'workflow.delete') {
+    const id = typeof params.id === 'string' ? params.id : ''
+    if (id === '') return { verified: false, message: '没有 workflowConfigId，无法回读' }
+    try {
+      const json = await invokeCapability(ctx.session, 'workflow.get', { id })
+      const row = (json.data ?? {}) as Record<string, unknown>
+      if (Object.keys(row).length === 0) return { verified: true, message: '回读 Get 返回空（视为已删）' }
+      return { verified: false, message: `回读仍能读到该流程（status=${String(row.status ?? '?')}）` }
+    } catch (error) {
+      // 删掉之后 Get 通常直接报错；报错文本一起带进日志，人工一眼能判断是不是别的原因
+      return { verified: true, message: `回读 Get 报错（视为已删）：${errorText(error)}` }
+    }
+  }
+
+  // ── 工作流节点：add 三类 + copy + delete ──
+  if (capabilityId === 'workflow.task.add' || capabilityId === 'workflow.decision.add' || capabilityId === 'workflow.action.add') {
+    const submitted = (params.step ?? {}) as Record<string, unknown>
+    const configId = String(submitted.workflowConfigId ?? '')
+    const code = String(submitted.code ?? '')
+    if (configId === '' || code === '') return { verified: false, message: '提交内容里没有 step.workflowConfigId/code，无法回读' }
+    const json = await invokeCapability(ctx.session, 'workflow.steps.list', { workflowConfigId: configId })
+    const steps = rowsOf(json)
+    const hit = steps.find((step) => String(step.code ?? '') === code)
+    if (hit === undefined) return { verified: false, message: `回读节点列表里没有 ${code}（共 ${steps.length} 个节点）` }
+    const diffs: string[] = []
+    if (String(submitted.stepType ?? '') !== '' && String(hit.stepType ?? '') !== String(submitted.stepType)) {
+      diffs.push(`stepType 回读 ${String(hit.stepType)}`)
+    }
+    if (String(submitted.nextStepId ?? '') !== '' && String(hit.nextStepId ?? '') !== String(submitted.nextStepId)) {
+      diffs.push('nextStepId 与提交不一致')
+    }
+    return diffs.length > 0
+      ? { verified: false, message: `回读节点「${String(hit.name ?? code)}」：${diffs.join('；')}` }
+      : {
+          verified: true,
+          message: `回读节点「${String(hit.name ?? code)}」：stepType=${String(hit.stepType)}、共 ${steps.length} 个节点`,
+        }
+  }
+
+  if (capabilityId === 'workflow.step.copy') {
+    const configId = String(params.workflowConfigId ?? '')
+    const code = String(params.stepCode ?? '')
+    if (configId === '' || code === '') return { verified: false, message: '提交内容里没有 workflowConfigId/stepCode，无法回读' }
+    const json = await invokeCapability(ctx.session, 'workflow.steps.list', { workflowConfigId: configId })
+    const steps = rowsOf(json)
+    const hit = steps.find((step) => String(step.code ?? '') === code)
+    return hit === undefined
+      ? { verified: false, message: `回读节点列表里没有复制出来的 ${code}（共 ${steps.length} 个节点）` }
+      : { verified: true, message: `回读节点「${String(hit.name ?? code)}」：已在列表里，共 ${steps.length} 个节点` }
+  }
+
+  if (capabilityId === 'workflow.step.delete') {
+    const id = typeof params.id === 'string' ? params.id : ''
+    if (id === '') return { verified: false, message: '没有节点 id，无法回读' }
+    try {
+      const json = await invokeCapability(ctx.session, 'workflow.step.get', { id })
+      const step = (json.data as { step?: Record<string, unknown> } | undefined)?.step
+      if (step === undefined || Object.keys(step).length === 0) return { verified: true, message: '回读已取不到该节点（视为已删）' }
+      return { verified: false, message: `回读仍能读到节点「${String(step.name ?? id)}」` }
+    } catch (error) {
+      return { verified: true, message: `回读 Get 报错（视为已删）：${errorText(error)}` }
+    }
+  }
+
+  // ── 生命周期状态 / 进入动作 ──
+  if (capabilityId === 'lifecycle.status.create' || capabilityId === 'lifecycle.status.update') {
+    const lifecycleId = String(params.lifecycleId ?? '')
+    const code = String(params.code ?? '')
+    if (lifecycleId === '' || code === '') return { verified: false, message: '提交内容里没有 lifecycleId/code，无法回读' }
+    const json = await invokeCapability(ctx.session, 'query.lifecycle.status.config.list', { lifecycleId })
+    const mine = rowsOf(json).filter((row) => String(row.lifecycleId ?? '') === lifecycleId)
+    const hit = mine.find((row) => String(row.code ?? '') === code)
+    if (hit === undefined) return { verified: false, message: `回读该生命周期下没有 ${code}（共 ${mine.length} 个状态）` }
+    const diffs: string[] = []
+    const wantName = String(params.name ?? '')
+    if (wantName !== '' && String(hit.name ?? '') !== wantName) diffs.push(`名称回读「${String(hit.name ?? '')}」`)
+    if (typeof params.isEnabled === 'boolean' && Boolean(hit.isEnabled) !== params.isEnabled) {
+      diffs.push(`isEnabled 回读 ${String(hit.isEnabled)}`)
+    }
+    return diffs.length > 0
+      ? { verified: false, message: `回读状态「${String(hit.name ?? code)}」：${diffs.join('；')}` }
+      : { verified: true, message: `回读状态「${String(hit.name ?? code)}」：共 ${mine.length} 个状态` }
+  }
+
+  if (capabilityId === 'lifecycle.enteraction.create') {
+    const statusId = String(params.belongId ?? '')
+    const names = (Array.isArray(params.actions) ? (params.actions as Array<Record<string, unknown>>) : [])
+      .map((action) => String(action.name ?? ''))
+      .filter((name) => name !== '')
+    if (statusId === '' || names.length === 0) return { verified: false, message: '没有状态 id 或动作 name，无法回读' }
+    const json = await invokeCapability(ctx.session, 'lifecycle.enteraction.list', { statusId })
+    const rows = rowsOf(json)
+    // 这个接口不回 code，只能按 name 认；同名多条时也仍然算"建上了"
+    const missing = names.filter((name) => !rows.some((row) => String(row.name ?? '') === name))
+    return missing.length === 0
+      ? { verified: true, message: `回读进入动作 ${rows.length} 个，含「${names.join('、')}」` }
+      : { verified: false, message: `回读进入动作里缺「${missing.join('、')}」（共 ${rows.length} 个）` }
+  }
+
+  // ── 列表布局：本体 / 列 / 筛选 ──
+  if (capabilityId === 'listlayout.save') {
+    const objectId = String(params.objectId ?? '')
+    const code = String(params.code ?? '')
+    if (objectId === '' || code === '') return { verified: false, message: '提交内容里没有 objectId/code，无法回读' }
+    const json = await invokeCapability(ctx.session, 'listlayout.list', { objectId })
+    const layouts = rowsOf(json)
+    const hit = layouts.find((layout) => String(layout.code ?? '') === code)
+    if (hit === undefined) return { verified: false, message: `回读该对象下没有列表布局 ${code}（共 ${layouts.length} 个）` }
+    const wantName = String(params.name ?? '')
+    return wantName !== '' && String(hit.name ?? '') !== wantName
+      ? { verified: false, message: `回读列表布局名称是「${String(hit.name ?? '')}」，提交的是「${wantName}」` }
+      : { verified: true, message: `回读列表布局「${String(hit.name ?? code)}」：该对象共 ${layouts.length} 个` }
+  }
+
+  if (capabilityId === 'listlayout.columns.set') {
+    const listlayoutId = String(params.listlayoutId ?? '')
+    const want = (Array.isArray(params.listlayoutColumns) ? (params.listlayoutColumns as Array<Record<string, unknown>>) : [])
+      .map((column) => String(column.fieldPath ?? ''))
+      .filter((path) => path !== '')
+    if (listlayoutId === '' || want.length === 0) return { verified: false, message: '没有列表布局 id 或列，无法回读' }
+    const json = await invokeCapability(ctx.session, 'listlayout.columns.get', { listLayoutId: listlayoutId })
+    const got = rowsOf(json).map((column) => String(column.fieldPath ?? ''))
+    const missing = want.filter((path) => !got.includes(path))
+    if (missing.length > 0) return { verified: false, message: `回读列表缺列 ${missing.slice(0, 5).join('、')}（共 ${got.length} 列）` }
+    const extra = got.filter((path) => !want.includes(path))
+    const kept = extra.length > 0 ? `（另有 ${extra.length} 列不在本次提交里：${extra.slice(0, 3).join('、')}）` : ''
+    return { verified: true, message: `回读列表列 ${got.length} 个，本次提交的都在${kept}` }
+  }
+
+  if (capabilityId === 'listlayout.filter.save') {
+    const listlayoutId = String(params.id ?? params.belongId ?? '')
+    const wantDetails = Array.isArray(params.details) ? params.details.length : 0
+    if (listlayoutId === '') return { verified: false, message: '没有列表布局 id，无法回读' }
+    try {
+      const json = await invokeCapability(ctx.session, 'listlayout.filter.get', { listLayoutId: listlayoutId })
+      const data = (json.data ?? {}) as Record<string, unknown>
+      const gotDetails = Array.isArray(data.details) ? data.details.length : 0
+      return gotDetails === wantDetails
+        ? { verified: true, message: `回读筛选 ${gotDetails} 条条件` }
+        : { verified: false, message: `回读筛选 ${gotDetails} 条（提交 ${wantDetails}）` }
+    } catch (error) {
+      // 平台对"没存过筛选"回 502 数据不存在；提交空条件时这就是预期结果
+      if (wantDetails === 0) return { verified: true, message: `回读报「没有筛选」（提交 0 条，视为已清空）：${errorText(error)}` }
+      return { verified: false, message: `回读筛选失败：${errorText(error)}` }
+    }
+  }
+
+  // ── 消息模板：平台按 code + objectid 定位，列表接口能按对象取回来 ──
+  if (capabilityId === 'notice.template.create' || capabilityId === 'notice.template.update') {
+    const objectid = String(params.objectid ?? '')
+    const code = String(params.code ?? '')
+    const id = String(params.id ?? '')
+    if (objectid === '' && id === '') return { verified: false, message: '没有 objectid / id，无法回读' }
+    const json =
+      objectid !== ''
+        ? await invokeCapability(ctx.session, 'notice.template.list', { id: objectid })
+        : await invokeCapability(ctx.session, 'notice.template.page', { pageIndex: 1, pageSize: 50, keywords: code, keyword: code, filters: [] })
+    const templates = rowsOf(json)
+    const hit = templates.find((template) =>
+      capabilityId === 'notice.template.update' && id !== '' ? String(template.id ?? '') === id : String(template.code ?? '') === code,
+    )
+    if (hit === undefined) {
+      return {
+        verified: false,
+        message:
+          capabilityId === 'notice.template.update'
+            ? `回读没找到 id=${shortId(id)} 的模板（${templates.length} 条里没有）`
+            : `回读没找到 code=${code} 的模板（该对象下 ${templates.length} 条）`,
+      }
+    }
+    const wantName = String(params.name ?? '')
+    return wantName !== '' && String(hit.name ?? '') !== wantName
+      ? { verified: false, message: `回读模板名称是「${String(hit.name ?? '')}」，提交的是「${wantName}」` }
+      : { verified: true, message: `回读模板「${String(hit.name ?? code)}」：该对象下共 ${templates.length} 条` }
+  }
+
+  // ── 审批矩阵规则 ──
+  if (capabilityId === 'approvalmatrix.rule.add') {
+    const matrixConfigId = String(params.matrixConfigId ?? '')
+    const code = String(params.code ?? '')
+    if (matrixConfigId === '' || code === '') return { verified: false, message: '没有矩阵 id 或规则 code，无法回读' }
+    const json = await invokeCapability(ctx.session, 'approvalmatrix.rule.list', { matrixConfigId })
+    const rules = rowsOf(json)
+    const hit = rules.find((rule) => String(rule.code ?? '') === code)
+    return hit === undefined
+      ? { verified: false, message: `回读矩阵下没有规则 ${code}（共 ${rules.length} 条）` }
+      : { verified: true, message: `回读规则「${String(hit.name ?? code)}」：该矩阵共 ${rules.length} 条` }
+  }
+
+  // ── 字段（call 方式建的字段，走 object.field.page 回读） ──
+  if (capabilityId === 'field.save') {
+    const objectId = String(params.objectId ?? '')
+    const code = String(params.code ?? '')
+    if (objectId === '' || code === '') return { verified: false, message: '没有 objectId 或字段 code，无法回读' }
+    const json = await invokeCapability(ctx.session, 'object.field.page', { objectId, pageIndex: 1, pageSize: 300 })
+    const fields = rowsOf(json)
+    const hit = fields.find((field) => String(field.code ?? '') === code)
+    if (hit === undefined) return { verified: false, message: `回读字段列表里没有 ${code}（共 ${fields.length} 个字段）` }
+    const wantName = String(params.name ?? '')
+    return wantName !== '' && String(hit.name ?? '') !== wantName
+      ? { verified: false, message: `回读字段名称是「${String(hit.name ?? '')}」，提交的是「${wantName}」` }
+      : { verified: true, message: `回读字段「${String(hit.name ?? code)}」：该对象共 ${fields.length} 个字段` }
+  }
+
+  return null
+}
+
+/** 把五花八门的响应（data[] / data.datas[] / data.rows[] / data.data[]）统一成行数组。 */
+function rowsOf(json: { data?: unknown }): Array<Record<string, unknown>> {
+  const data = json.data
+  if (Array.isArray(data)) return data as Array<Record<string, unknown>>
+  if (data !== null && typeof data === 'object') {
+    const boxed = data as { datas?: unknown; rows?: unknown; data?: unknown }
+    for (const candidate of [boxed.datas, boxed.rows, boxed.data]) {
+      if (Array.isArray(candidate)) return candidate as Array<Record<string, unknown>>
+    }
+  }
+  return []
+}
+
+function shortId(value: unknown): string {
+  const text = String(value ?? '')
+  return text === '' ? '空' : text.slice(0, 8)
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promise<{ verified: boolean; message: string }> {
   try {
     switch (step.kind) {
@@ -725,8 +1305,10 @@ async function verifyStep(ctx: QueryContext, step: Step, res: Resolution): Promi
           const data = await getPicklist(ctx, code)
           return { verified: data !== null, message: data === null ? '回读未找到选项集' : '选项集存在' }
         }
+        const checked = await verifyCallCapability(ctx, step.capabilityId, params)
+        if (checked !== null) return checked
         const cap = findCapability(step.capabilityId)
-        return { verified: false, message: `${cap?.title ?? step.capabilityId} 暂无稳定回读方式，需人工确认` }
+        return { verified: false, message: `${cap?.title ?? step.capabilityId} 没有回读判据（能力目录里没有与之对应的查询接口），需人工确认` }
       }
       default:
         return { verified: false, message: '未知类型' }
