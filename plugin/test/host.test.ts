@@ -2622,6 +2622,18 @@ test('严格验证集必须是「有回读判据」的子集：不允许再出�
   assert.equal(canAutoRepair('workflow.task.update'), true)
 })
 
+test('写入但没判据的能力只能是白名单：新增写入前先想清楚怎么回读', () => {
+  // 判据是「执行一次、验证一次」的地基：写不进去判据就等于这一步永远无法确认。
+  const allowed = new Set(['approvalmatrix.create', 'approvalmatrix.matchfield.add'])
+  const gaps = CAPABILITIES.filter((cap) => cap.method !== 'GET' && cap.readonly !== true)
+    .map((cap) => cap.id)
+    .filter((id) => !hasReadbackCriteria(id) && !allowed.has(id))
+  assert.deepEqual(gaps, [], `这些写入没有回读判据，也没有进白名单：${gaps.join('、')}`)
+  // 纯查询的 POST 端点必须标 readonly，否则会被算成写入、白白多要一次审批。
+  const mislabeled = CAPABILITIES.filter((cap) => cap.id === 'layout.stable.ids').map((cap) => cap.readonly === true)
+  assert.deepEqual(mislabeled, [true], 'layout.stable.ids 只是换稳定 id 的查询，必须标 readonly')
+})
+
 test('call 步骤回读：状态排序改不动必须说出来，不能假装成功', async () => {
   const state = {
     rows: [{ id: 'st-1', code: 'status_draft__c', name: '草稿', lifecycleId: 'lc-1', isEnabled: true, sort: 1 }] as Array<Record<string, unknown>>,

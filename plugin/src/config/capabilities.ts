@@ -385,6 +385,7 @@ export const CAPABILITIES: Capability[] = [
       '把要新建的 section / control 的临时 id 换成平台稳定 id；不换直接 layout.save 必报「BelongId 不正确」。',
     method: 'POST',
     path: '/api/platform/Layout/GetStableComponentIds',
+    readonly: true,
     risk: 'low',
     evidence: 'verified',
     params: [

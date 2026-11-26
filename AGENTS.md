@@ -120,6 +120,8 @@
   判据是「这一步有没有可核对的东西」：有判据的写入**一律是门**（不再分严格/非严格）；
   只有能力目录里根本没有对应查询接口的写入才降级——记 `NO_CRITERIA` 继续跑，台账里留痕。
   用户要的是“配完四步工作流节点，就该有四次回读”，不是最后再统一跑一轮。
+  当前仍无判据的写入只剩 `approvalmatrix.create` / `approvalmatrix.matchfield.add`（创建响应不返回可回查
+  的 id，衍生对象 code 也未必按约定），这两类要靠 capture 监听或人工在界面确认，回报时必须说「已执行、未确认」。
 - **重试只对瞬时错误**：`isTransientFailure` = HTTP 502/503/504 或 `ECONNRESET/ETIMEDOUT/EAI_AGAIN/
   socket hang up/fetch failed`；只重试**一次**。写成功却回 401 的那类由回读兜底，**绝不重试**（会写两遍）。
 - **小错就地修（`AUTO_REPAIR`）**：回读没过、或写入报错时，若这一步属于**幂等写入**
