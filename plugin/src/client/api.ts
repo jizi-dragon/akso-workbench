@@ -320,6 +320,47 @@ export async function downloadJournal(days: number): Promise<JournalDownloadView
   }
 }
 
+/* ── 检查更新（形状由 host 的 `plugin/src/update.ts` 决定，这里只做镜像） ── */
+
+export interface UpdateInstallHintView {
+  mode: 'link' | 'version' | 'unknown'
+  profile: string | null
+  /** `link` 模式下当前被链接的插件目录（替换目标）。 */
+  pluginDir: string | null
+  steps: string[]
+}
+
+export interface UpdateCheckView {
+  ok: boolean
+  current: string
+  latest: string | null
+  /** 正式版更新（major 或 minor 变大）—— 横幅只认这个。 */
+  hasUpdate: boolean
+  /** 同一条版本线上更高的小版本 —— 只做轻提示。 */
+  patchAhead: boolean
+  source: 'feed' | 'none'
+  feedUrl: string
+  checkedAt: string
+  releaseUrl: string | null
+  zipUrl: string | null
+  /** 清单里公布的包哈希；GitHub 兜底拿不到。 */
+  zipSha256: string | null
+  zipBytes: number | null
+  publishedAt: string | null
+  notes: string | null
+  install: UpdateInstallHintView
+  error: string | null
+}
+
+export interface UpdateDownloadView {
+  ok: boolean
+  version: string
+  path: string
+  bytes: number
+  sha256: string
+  steps: string[]
+}
+
 export const api = {
   state: () => call<ServerState>('state'),
 
@@ -410,4 +451,9 @@ export const api = {
 
   /** 运行日志概览：事件数、体积、时间范围与文件列表。 */
   journalSummary: () => call<{ ok: boolean; summary: JournalSummaryView }>('journal/summary'),
+
+  /* ── 检查更新：查正式版（MINOR 变大）→ 下载更新包 → 按安装方式给替换步骤 ──
+     换插件文件必须完全退出 DSH，页面只负责"查"与"下载到本机"，不碰运行中的目录。 */
+  updateCheck: (force = false) => call<UpdateCheckView>(`update/check${force ? '?force=1' : ''}`),
+  updateDownload: () => call<UpdateDownloadView>('update/download', post({})),
 }

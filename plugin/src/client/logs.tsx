@@ -9,10 +9,21 @@
  *   · 不显示令牌/口令/请求体：下载文件里也没有（写盘前已打码）；
  *   · 概览只统计「最近保留期」，下载按天数截取，超 12 MB 会从最旧的丢；
  *   · 页面自己也有记录：本页的下载/刷新会写 `ui.*` 事件，便于确认用户操作过什么。
+ *
+ * 另外这里是「检查更新」的落脚点（用户要求放运行日志区）：查有没有**正式版**更新
+ * （MINOR 变大才算，PATCH 只提示），有就出横幅，并把更新包下载到本机 + 给出替换步骤。
+ * 换插件文件必须完全退出 DSH —— 页面不碰运行中的目录，这是 update.ts 里定下的边界。
  */
 import { useEffect, useState } from 'react'
 
-import { api, downloadJournal, track, type JournalSummaryView } from './api.ts'
+import {
+  api,
+  downloadJournal,
+  track,
+  type JournalSummaryView,
+  type UpdateCheckView,
+  type UpdateDownloadView,
+} from './api.ts'
 
 function fmtBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -45,6 +56,12 @@ export function LogsTab() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
   const [note, setNote] = useState<string | null>(null)
+  /* 检查更新：最近一次结果、正在查/正在下、已下载的包、操作提示 */
+  const [update, setUpdate] = useState<UpdateCheckView | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const [downloaded, setDownloaded] = useState<UpdateDownloadView | null>(null)
+  const [updateNote, setUpdateNote] = useState<string | null>(null)
 
   async function load(): Promise<void> {
     setLoading(true)
@@ -95,6 +112,61 @@ export function LogsTab() {
     }
   }
 
+  /* ── 检查更新：查（有缓存，10 分钟一次）→ 下载到本机 → 给替换步骤 ── */
+
+  async function checkUpdate(force: boolean): Promise<void> {
+    setChecking(true)
+    setUpdateNote(null)
+    try {
+      const result = await api.updateCheck(force)
+      setUpdate(result)
+      track('ui.update.check', {
+        current: result.current,
+        latest: result.latest,
+        hasUpdate: result.hasUpdate,
+        patchAhead: result.patchAhead,
+        source: result.source,
+      })
+    } catch (cause) {
+      setUpdateNote(`检查更新失败：${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  async function downloadUpdate(): Promise<void> {
+    setDownloading(true)
+    setUpdateNote(null)
+    try {
+      const result = await api.updateDownload()
+      setDownloaded(result)
+      track('ui.update.download', { version: result.version, bytes: result.bytes })
+      setUpdateNote(`已下载 ${result.version}（${fmtBytes(result.bytes)}）到本机，按下面的步骤替换后重启 DSH`)
+    } catch (cause) {
+      setUpdateNote(`下载失败：${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  async function copySteps(steps: string[]): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(steps.map((step, index) => `${index + 1}. ${step}`).join('\n'))
+      setUpdateNote('安装步骤已复制，可以直接发给同事')
+    } catch {
+      setUpdateNote('复制失败，请手动选中下面每一步')
+    }
+  }
+
+  useEffect(() => {
+    void checkUpdate(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const hasOfficial = update !== null && update.hasUpdate
+  const steps = downloaded?.steps ?? update?.install.steps ?? []
+  const updateError = update?.error ?? null
+
   return (
     <div className="akw-logs">
       <div className="akw-logs__head">
@@ -106,6 +178,18 @@ export function LogsTab() {
           </p>
         </div>
         <div className="akw-logs__actions">
+          <span className="akw-update__chip" title="当前安装的插件版本">
+            v{update === null ? '—' : update.current}
+          </span>
+          <button
+            type="button"
+            className="akw-btn akw-btn--sm"
+            onClick={() => void checkUpdate(true)}
+            disabled={checking}
+            title="检查 akso-cloud 上是否有新的正式版（MINOR 变大才算正式版）"
+          >
+            {checking ? '检查中…' : '检查更新'}
+          </button>
           <button type="button" className="akw-btn akw-btn--sm" onClick={() => void load()} disabled={loading}>
             {loading ? '刷新中…' : '刷新'}
           </button>
@@ -114,6 +198,89 @@ export function LogsTab() {
           </button>
         </div>
       </div>
+
+      {hasOfficial && update !== null ? (
+        <div className="akw-update akw-update--new" role="status" aria-live="polite">
+          <div className="akw-update__main">
+            <b>
+              有新版本 <span className="akw-update__ver">{update.latest}</span>
+              （当前 {update.current}）
+            </b>
+            <span>
+              这是正式版更新{update.publishedAt === null ? '' : `，发布于 ${fmtTime(update.publishedAt)}`}。
+              更新包会下载到本机，替换插件目录后要<strong>完全退出 DSH 再打开</strong>——插件在启动时加载，刷新页面不会生效。
+            </span>
+            {update.notes === null ? null : <span className="akw-update__notes">{update.notes}</span>}
+          </div>
+          <div className="akw-update__actions">
+            <button
+              type="button"
+              className="akw-btn akw-btn--primary akw-btn--sm"
+              onClick={() => void downloadUpdate()}
+              disabled={downloading || downloaded !== null || update.zipUrl === null}
+              title={
+                update.zipUrl === null
+                  ? '本次发布没有附带安装包，点「打开发布页」自行下载'
+                  : '下载到本机并校验 sha256'
+              }
+            >
+              {downloading
+                ? '下载中…'
+                : downloaded !== null
+                  ? '已下载'
+                  : update.zipUrl === null
+                    ? '无安装包'
+                    : '下载更新包'}
+            </button>
+            {update.releaseUrl === null ? null : (
+              <a className="akw-btn akw-btn--sm" href={update.releaseUrl} target="_blank" rel="noreferrer">
+                打开发布页
+              </a>
+            )}
+            <button type="button" className="akw-btn akw-btn--sm" onClick={() => void copySteps(steps)}>
+              复制安装步骤
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {downloaded === null ? null : (
+        <div className="akw-update akw-update--ready" role="status">
+          <div className="akw-update__main">
+            <b>更新包已下载到本机（{fmtBytes(downloaded.bytes)}）</b>
+            <code className="akw-update__path">{downloaded.path}</code>
+            <span>
+              sha256 <code>{downloaded.sha256.slice(0, 16)}…</code> —— 与发布页面上公布的哈希对照一致再用。
+            </span>
+          </div>
+          <ol className="akw-update__steps">
+            {steps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {update !== null && update.patchAhead && !update.hasUpdate ? (
+        <div className="akw-notice" role="status">
+          <span className="akw-notice__grow">
+            同一条版本线上已有更高的小版本 {update.latest}（当前 {update.current}）。这类日常提交不必换插件；
+            出现新的正式版（MINOR 变大）时这里会变成提醒。
+          </span>
+        </div>
+      ) : null}
+
+      {updateError !== null ? (
+        <div className="akw-notice" role="status">
+          <span className="akw-notice__grow">检查更新没成功：{updateError}（不影响当前使用）</span>
+        </div>
+      ) : null}
+
+      {updateNote !== null ? (
+        <div className="akw-notice" role="status" aria-live="polite">
+          <span className="akw-notice__grow">{updateNote}</span>
+        </div>
+      ) : null}
 
       {error !== null ? (
         <div className="akw-notice akw-notice--err" role="alert">

@@ -720,6 +720,23 @@ export const CSS = `
 .akw-fields__scroll::-webkit-scrollbar-thumb,.akw-cfg__pane::-webkit-scrollbar-thumb{border-radius:8px;background:var(--dsw-alias-border-l4)}
 .akw-fields__scroll::-webkit-scrollbar-track,.akw-cfg__pane::-webkit-scrollbar-track{background:transparent}
 .akw-analysis__object-card>summary:focus-visible,.akw-api__fold>summary:focus-visible{outline:2px solid var(--dsw-alias-focus-ring-color);outline-offset:-2px;border-radius:8px}
+/* 检查更新：日志页头部的版本 chip + 更新横幅（正式版才竖横幅，同线 patch 只做轻提示） */
+.akw-update__chip{font-size:11px;line-height:16px;padding:2px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
+.akw-update{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border-radius:14px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1)}
+.akw-update--new{border-color:var(--dsw-alias-state-business-primary)}
+.akw-update--bar{margin:0 0 12px}
+.akw-update__main{display:flex;flex-direction:column;gap:4px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}
+.akw-update__ver{font-variant-numeric:tabular-nums}
+.akw-update__notes{margin:0;padding:6px 8px;border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-secondary);white-space:pre-wrap;max-height:120px;overflow:auto}
+.akw-update__actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.akw-update__actions a.akw-btn{display:inline-flex;align-items:center;text-decoration:none}
+.akw-update__path{display:block;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);word-break:break-all}
+.akw-update__steps{margin:0;padding-left:20px;font-size:12px;line-height:20px;color:var(--dsw-alias-label-secondary)}
+.akw-update__steps li+li{margin-top:2px}
+@keyframes akw-update-glow{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-business-primary) 18%, transparent)}}
+.akw-update--new{animation:akw-update-glow 2.4s ease-in-out 2}
+@media (prefers-reduced-motion: reduce){.akw-update--new{animation:none}}
 @media (max-width: 1119px){.akw-cfg__split.has-detail{grid-template-columns:minmax(0,1fr)}.akw-cfg__resizer,.akw-cfg__pane{display:none}}
+
 
 `

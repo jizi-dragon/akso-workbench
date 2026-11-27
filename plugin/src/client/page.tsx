@@ -30,6 +30,7 @@ import {
   togglePool,
 } from './state.ts'
 import { ConfigToolsTab } from './tools.tsx'
+import { api, type UpdateCheckView } from './api.ts'
 import { ObjectAnalysisTab } from './analysis.tsx'
 import { RunReportTab } from './runs.tsx'
 import { LogsTab } from './logs.tsx'
@@ -851,6 +852,24 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
   const [menuOpen, setMenuOpen] = useState(false)
   const now = useNow(30000)
   const loggedInRef = useRef(state.loggedIn)
+  /* 全局更新提示：进页面查一次（host 侧有 10 分钟缓存，调多次不额外打网络）。
+     只认「正式版」（MINOR 变大）；同线更高 patch 由运行日志页自己轻提示。 */
+  const [updateBanner, setUpdateBanner] = useState<UpdateCheckView | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    void api
+      .updateCheck(false)
+      .then((result) => {
+        if (alive && result.hasUpdate) setUpdateBanner(result)
+      })
+      .catch(() => {
+        // 检查更新失败不影响页面：运行日志页有入口与原因
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   useEffect(() => {
     void refresh()
@@ -892,6 +911,35 @@ export function AccountsPage(props: { t?: (key: string, vars?: Record<string, st
 
   return (
     <div className="akw-page">
+      {updateBanner === null ? null : (
+        <div className="akw-update akw-update--new akw-update--bar" role="status" aria-live="polite">
+          <div className="akw-update__main">
+            <b>
+              akso-workbench 有新版本 {updateBanner.latest}（当前 {updateBanner.current}）
+            </b>
+            <span>
+              到下方「运行日志」区可以下载更新包、复制替换步骤；换插件要<strong>完全退出 DSH 再打开</strong>，刷新页面不生效。
+            </span>
+          </div>
+          <div className="akw-update__actions">
+            <button
+              type="button"
+              className="akw-btn akw-btn--sm"
+              onClick={() => document.querySelector('.akw-logs')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            >
+              去下载
+            </button>
+            {updateBanner.releaseUrl === null ? null : (
+              <a className="akw-btn akw-btn--sm" href={updateBanner.releaseUrl} target="_blank" rel="noreferrer">
+                打开发布页
+              </a>
+            )}
+            <button type="button" className="akw-btn akw-btn--sm" onClick={() => setUpdateBanner(null)}>
+              稍后
+            </button>
+          </div>
+        </div>
+      )}
       <header className="akw-topbar">
         <div className="akw-topbar__left">
           <img className="akw-logo" src={BRAND_LOGO} alt="" aria-hidden="true" />

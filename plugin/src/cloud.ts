@@ -1,6 +1,4 @@
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { pluginVersion } from './version.ts'
 
 /**
  * akso-cloud 客户端（host 半边专用）。
@@ -97,20 +95,8 @@ type FetchImpl = typeof fetch
  */
 const CLIENT_NAME = 'akso-workbench'
 
-let cachedVersion: string | null = null
-
-/** 版本号从插件自己的 `package.json` 读（源码跑与 lib 跑都能找到「上一级」）。 */
-function clientVersion(): string {
-  if (cachedVersion !== null) return cachedVersion
-  try {
-    const here = dirname(fileURLToPath(import.meta.url))
-    const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')) as { version?: unknown }
-    cachedVersion = typeof pkg.version === 'string' ? pkg.version : ''
-  } catch {
-    cachedVersion = ''
-  }
-  return cachedVersion
-}
+/** 版本号只有一处实现（`plugin/src/version.ts`）：这里只是复用它，不再各读一份 package.json。 */
+const clientVersion = pluginVersion
 
 async function call(
   baseUrl: string,

@@ -1,15 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Akso 翻译（capture）",
-  "version": "1.0.0",
-  "description": "capture 浏览器专用的最小翻译扩展：在输入框按 Ctrl+X 翻译并复制，不包含账号、计数、换源等功能。",
+  "version": "1.1.0",
+  "description": "capture 浏览器专用的最小翻译扩展：在输入框按 Ctrl+X 翻译并复制（有道查词 → MyMemory 翻整句），不包含账号、计数、换源等功能。",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArCjOpp8fh6t9P2FinVFXnlHpLDOJGO2IAF+hv6ADfvzj7+S1e1MvbVnJVwH68Il6OXV1XHDcwrS79oh9BxVyiF3/fChuXYXm9JNd7ZrD8h40uRSOdGmyMX68n8vxd49Mc/sIvUVBU2GPGX+4kd/QO9Ee8mmJZxuPmwWrcchtNAMGiYFGUeQXGOEaWRiQNfldgqMGUlpd/MaHHsnIk0D7oUYwW3oVuWuFM4JtBb4zpm6/eIPHoFaeiLhdSfZBbufFd9weZ8pQCGgvHD9vBnq1jpzhgMZDia2f61oJDcaMHzBTP0d5u3JDTIyMeEmUU36rMnfl5Jgdf+a9cRgKFeuv6QIDAQAB",
   "permissions": ["clipboardWrite"],
   "host_permissions": [
-    "https://transmart.qq.com/*",
-    "https://api.mymemory.translated.net/*",
-    "https://lingva.ml/*"
+    "https://dict.youdao.com/*",
+    "https://api.mymemory.translated.net/*"
   ],
   "background": {
     "service_worker": "background.js"

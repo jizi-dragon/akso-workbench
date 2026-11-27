@@ -14,7 +14,8 @@
 
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -33,6 +34,17 @@ import { writePool, writePrefs } from '../src/store.ts'
 import { apply, ROUTES } from '../src/index.ts'
 import { buildSnapshotTool } from '../src/tool.ts'
 import { startFakeCloud } from './fake-cloud.mjs'
+import {
+  checkForUpdate,
+  compareSemver,
+  downloadUpdate,
+  installHint,
+  isOfficialUpgrade,
+  isPatchAhead,
+  parseFeed,
+  parseSemver,
+  resetUpdateCache,
+} from '../src/update.ts'
 
 interface Captured {
   path: string
@@ -3168,4 +3180,141 @@ test('回读重试：只读 GET 偶发 400 会重试一次，写入永不重试'
     server.closeAllConnections()
     await new Promise<void>((resolve) => server.close(() => resolve()))
   }
+})
+
+/* ── 检查更新（0.2.29）：正式版看 MINOR、PATCH 只算同线更高；清单/安装方式/下载校验 ── */
+
+/** 假 fetch：按 URL 返回给定 JSON；`fail` 为真时直接抛错（模拟没网）。 */
+function fakeFetch(payload: unknown, fail = false): typeof fetch {
+  return (async () => {
+    if (fail) throw new Error('ECONNREFUSED')
+    return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } })
+  }) as typeof fetch
+}
+
+test('检查更新：版本判据只有 MINOR 算正式版，清单/安装方式都能判出结论', () => {
+  assert.deepEqual(parseSemver('v1.2.3'), { major: 1, minor: 2, patch: 3 })
+  assert.deepEqual(parseSemver('0.2.28-beta.1'), { major: 0, minor: 2, patch: 28 })
+  assert.equal(parseSemver('1.2'), null)
+  assert.equal(parseSemver('latest'), null)
+  assert.equal(compareSemver({ major: 0, minor: 3, patch: 0 }, { major: 0, minor: 2, patch: 28 }), 1)
+  assert.equal(compareSemver({ major: 0, minor: 2, patch: 28 }, { major: 0, minor: 2, patch: 28 }), 0)
+
+  // 0.2.28 → 0.3.0 才算「有新正式版」；0.2.29 只是同线更高的小版本
+  assert.equal(isOfficialUpgrade('0.2.28', '0.3.0'), true)
+  assert.equal(isOfficialUpgrade('0.2.28', '1.0.0'), true)
+  assert.equal(isOfficialUpgrade('0.2.28', '0.2.29'), false)
+  assert.equal(isPatchAhead('0.2.28', '0.2.29'), true)
+  assert.equal(isPatchAhead('0.2.28', '0.3.0'), false)
+
+  const feed = parseFeed({
+    format: 'akso-workbench-latest',
+    version: '0.3.0',
+    zipUrl: 'https://example.com/a.zip',
+    zipSha256: 'AB'.repeat(32),
+    zipBytes: 12,
+  })
+  assert.ok(feed !== null)
+  assert.equal(feed?.zipSha256, 'ab'.repeat(32))
+  assert.equal(feed?.zipBytes, 12)
+  // 格式名对不上、版本不合法、明文 http 的包地址、非对象：都不认
+  assert.equal(parseFeed({ format: 'akso-pass-latest', version: '0.3.0' }), null)
+  assert.equal(parseFeed({ format: 'akso-workbench-latest', version: '0.3' }), null)
+  assert.equal(parseFeed({ version: '0.3.0', zipUrl: 'http://example.com/a.zip' })?.zipUrl, null)
+  assert.equal(parseFeed(null), null)
+
+  // 安装方式：profile 里 link: → 覆盖那个目录；写版本号 → dsh plugin add；读不到 → unknown + 通用步骤
+  const linkDir = mkdtempSync(join(tmpdir(), 'akw-profile-link-'))
+  writeFileSync(join(linkDir, 'package.json'), JSON.stringify({ dependencies: { 'akso-workbench-dsh-ui': 'link:D:/some/plugin' } }))
+  const linked = installHint({ DSH_PROFILE: 'desktop', DSH_PROFILE_DIR: linkDir } as NodeJS.ProcessEnv)
+  assert.equal(linked.mode, 'link')
+  assert.equal(linked.pluginDir, 'D:\\some\\plugin')
+  assert.match(linked.steps.join(' '), /D:\\some\\plugin/)
+
+  const versionDir = mkdtempSync(join(tmpdir(), 'akw-profile-version-'))
+  writeFileSync(join(versionDir, 'package.json'), JSON.stringify({ dependencies: { 'akso-workbench-dsh-ui': '0.3.0' } }))
+  const versioned = installHint({ DSH_PROFILE: 'desktop', DSH_PROFILE_DIR: versionDir } as NodeJS.ProcessEnv)
+  assert.equal(versioned.mode, 'version')
+  assert.match(versioned.steps.join(' '), /dsh plugin --profile desktop add/)
+
+  const unknown = installHint({} as NodeJS.ProcessEnv)
+  assert.equal(unknown.mode, 'unknown')
+  assert.ok(unknown.steps.length >= 2)
+})
+
+test('检查更新：清单拿不到时不抛错（页面要能说“没查到”），拿到 0.3.0 就判定有正式版', async () => {
+  resetUpdateCache()
+  const broken = await checkForUpdate({ force: true, feedUrl: 'https://example.com/latest.json', fetchImpl: fakeFetch(null, true) })
+  assert.equal(broken.ok, false)
+  assert.equal(broken.hasUpdate, false)
+  assert.match(String(broken.error), /读取清单失败/)
+  assert.equal(broken.source, 'none')
+
+  resetUpdateCache()
+  const fresh = await checkForUpdate({
+    force: true,
+    feedUrl: 'https://example.com/latest.json',
+    fetchImpl: fakeFetch({ format: 'akso-workbench-latest', version: '0.3.0', releaseUrl: 'https://example.com/r' }),
+  })
+  assert.equal(fresh.source, 'feed')
+  // 本地版本读的是 plugin/package.json（0.2.29 起才叫"有正式版"），所以这里只断言"结论与版本比较一致"
+  assert.equal(fresh.hasUpdate, isOfficialUpgrade(fresh.current, '0.3.0'))
+  assert.equal(fresh.latest, '0.3.0')
+})
+
+test('下载更新包：sha256 与大小都对才落盘，错一个字节就丢弃', async () => {
+  const payload = Buffer.from('akso-workbench-zip-bytes')
+  const sha = createHash('sha256').update(payload).digest('hex')
+  const dshHome = mkdtempSync(join(tmpdir(), 'akw-dsh-home-'))
+  const base = {
+    ok: true,
+    current: '0.2.28',
+    latest: '0.3.0',
+    hasUpdate: true,
+    patchAhead: false,
+    source: 'feed' as const,
+    feedUrl: 'https://example.com/latest.json',
+    checkedAt: new Date(0).toISOString(),
+    releaseUrl: 'https://example.com/r',
+    zipUrl: 'https://example.com/akso-workbench-0.3.0.zip',
+    zipSha256: null as string | null,
+    zipBytes: null as number | null,
+    publishedAt: null,
+    notes: null,
+    install: { mode: 'unknown' as const, profile: null, pluginDir: null, steps: ['退出 DSH'] },
+    error: null,
+  }
+  const good = await downloadUpdate({
+    dshHome,
+    check: { ...base, zipSha256: sha, zipBytes: payload.byteLength },
+    fetchImpl: (async () => new Response(payload, { status: 200 })) as typeof fetch,
+  })
+  assert.equal(existsSync(good.path), true)
+  assert.equal(good.sha256, sha)
+  assert.equal(readFileSync(good.path).byteLength, payload.byteLength)
+
+  await assert.rejects(
+    () =>
+      downloadUpdate({
+        dshHome,
+        check: { ...base, zipSha256: '0'.repeat(64), zipBytes: payload.byteLength },
+        fetchImpl: (async () => new Response(payload, { status: 200 })) as typeof fetch,
+      }),
+    /sha256 校验失败/,
+  )
+  await assert.rejects(
+    () =>
+      downloadUpdate({
+        dshHome,
+        check: { ...base, zipUrl: 'http://example.com/x.zip' },
+        fetchImpl: (async () => new Response(payload, { status: 200 })) as typeof fetch,
+      }),
+    /不是 https/,
+  )
+  await assert.rejects(() => downloadUpdate({ dshHome, check: { ...base, hasUpdate: false, patchAhead: false } }), /已是最新/)
+})
+
+test('检查更新的两条路由都在：GET /update/check 与 POST /update/download', () => {
+  assert.equal(ROUTES.updateCheck, '/api/akso-workbench/update/check')
+  assert.equal(ROUTES.updateDownload, '/api/akso-workbench/update/download')
 })

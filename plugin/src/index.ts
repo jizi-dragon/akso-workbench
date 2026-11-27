@@ -45,7 +45,7 @@ import {
   saveFailedAnalysisHistory,
 } from './analysis-history.ts'
 import { createJournal, errorText, maskEmail } from './journal.ts'
-
+import { checkForUpdate, downloadUpdate } from './update.ts'
 export const name = 'akso-workbench'
 export const inject = ['webServer']
 
@@ -148,6 +148,9 @@ export const ROUTES = {
   journalSummary: '/api/akso-workbench/journal/summary',
   journalDownload: '/api/akso-workbench/journal/download',
   journalLog: '/api/akso-workbench/journal/log',
+  /** 检查更新：查正式版（MINOR 变大）→ 下载更新包 → 按安装方式给替换步骤。 */
+  updateCheck: '/api/akso-workbench/update/check',
+  updateDownload: '/api/akso-workbench/update/download',
 } as const
 
 /* ────────────────────────────── HTTP 小工具 ────────────────────────────── */
@@ -1278,6 +1281,41 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
         : {}
       recordEvent(kind, data)
       sendJson(res, 200, { ok: true })
+    }),
+
+    /* ───────────── 检查更新：查正式版 → 下载更新包 → 按安装方式给替换步骤 ─────────────
+       版本源依次是「环境变量 > akso-cloud 清单 > GitHub Releases」（见 update.ts 头部）。
+       这里只做「查」和「下载到本机」：换插件文件必须完全退出 DSH，页面不碰运行中的目录。 */
+    route('GET', R.updateCheck, false, async (req, res) => {
+      const url = new URL(String(req.url ?? '/'), 'http://127.0.0.1')
+      const result = await checkForUpdate({ force: url.searchParams.get('force') === '1' })
+      recordEvent('update.check', {
+        current: result.current,
+        latest: result.latest,
+        hasUpdate: result.hasUpdate,
+        patchAhead: result.patchAhead,
+        source: result.source,
+        error: result.error,
+      })
+      sendJson(res, 200, result)
+    }),
+
+    route('POST', R.updateDownload, false, async (_req, res) => {
+      try {
+        const result = await downloadUpdate({ dshHome })
+        recordEvent('update.download', {
+          version: result.version,
+          bytes: result.bytes,
+          sha256Prefix: result.sha256.slice(0, 12),
+        })
+        sendJson(res, 200, result)
+      } catch (error) {
+        // 「已是最新」这类是正常结论，不是服务端故障：记一条 warn 就够，别把 error.api 打出来
+        const message = errorText(error)
+        logger.warn(`[update] 下载更新包失败：${message}`)
+        recordEvent('update.download.failed', { error: message })
+        sendJson(res, 400, { error: message })
+      }
     }),
   ]
 

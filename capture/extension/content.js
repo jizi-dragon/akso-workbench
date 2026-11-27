@@ -152,6 +152,18 @@ if (window[GUARD]) {
     })
   }
 
+  /**
+   * 成功提示里带一小段译文，演示时不用先粘贴就能读到结果。
+   * 折成一行、超过 160 字截断（剪贴板里仍是完整译文）。
+   */
+  function previewOf(text, max = 160) {
+    const oneLine = String(text || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (oneLine.length <= max) return oneLine
+    return `${oneLine.slice(0, max - 1)}…`
+  }
+
   async function translateFocused(el) {
     const text = textOf(el).trim()
     if (!text) {
@@ -167,11 +179,13 @@ if (window[GUARD]) {
     }
 
     const copied = await writeClipboard(reply.text)
+    const meta = [reply.direction, reply.engine].filter(Boolean).join(' · ')
+    const preview = previewOf(reply.text)
     if (copied) {
-      const meta = [reply.direction, reply.engine].filter(Boolean).join(' · ')
-      showToast(`✅ 已复制译文${meta ? `（${meta}）` : ''}，Ctrl+V 粘贴`, 'success')
+      const head = `✅ 已复制译文${meta ? `（${meta}）` : ''}`
+      showToast(`${head}\n${preview}\nCtrl+V 粘贴`, 'success', 5200)
     } else {
-      showToast('⚠️ 翻译完成，但复制失败；请检查浏览器剪贴板权限', 'warning', 4200)
+      showToast(`⚠️ 翻译完成，但复制失败；请检查浏览器剪贴板权限\n${preview}`, 'warning', 5200)
     }
   }
 

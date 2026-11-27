@@ -508,7 +508,15 @@ sequenceDiagram
     M->>H: POST journal/log（只收 client.* / ui.*）
     H->>D: 同上：消息 + 栈前 6 行，不记页面内容
 
-    Note over H,D: ④ 排查：按 UID / planId / historyId / 时间 grep
+    Note over U,H: ④ 检查更新（0.2.29 起）
+    U->>H: GET update/check?force=1（带 force 才忽略 10 分钟缓存）
+    H->>H: 读 akso-cloud 的 workbench/latest.json<br/>比 MINOR：0.2.28 → 0.3.0 才算正式版
+    H-->>U: 当前 / 最新 / hasUpdate / patchAhead / 安装方式 / error
+    U->>H: POST update/download（只有 hasUpdate 才给下）
+    H-->>U: 落到 $DSH_HOME/akso-workbench/updates/新版本/
+    H->>D: 记 update.check / update.download / update.download.failed
+
+    Note over H,D: ⑤ 排查：按 UID / planId / historyId / 时间 grep
 ```
 
 **记哪些事件**（`kind` 字段）：
@@ -524,6 +532,7 @@ sequenceDiagram
 | `analysis.run` | 对象分析（工具与页面共用） | `query`、`object`、`baseUrl`、`fields`、`warnings`、`ms` |
 | `error.api` / `error.tools` | 路由与工具抛错 | `message`、`code`、`traceId`、`path` |
 | `client.*` / `ui.*` | 页面请求与操作、`ui.error` | `path`、`message`、`stack`（前 6 行） |
+| `update.check` / `update.download` / `update.download.failed` | 点「检查更新」、下载更新包 | `current`、`latest`、`hasUpdate`、`source`、`version`、`bytes`、`error` |
 | `app.start` | host 装载插件 | `plugin`、`node`、`platform`、`routes`、`dshHome` |
 
 **边界**：保留 30 天；单文件 4 MB、每天最多 5 个；总量 96 MB；单次导出 12 MB（超出从最旧丢）。

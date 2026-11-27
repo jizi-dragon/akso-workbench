@@ -31,7 +31,8 @@
   - HTTP access：`[http] METHOD PATH -> STATUS Nms`，一条请求一行；2xx/4xx 走 info，5xx 走 warn。围栏挡掉的 403 也要有。
   - 运行日志 `$DSH_HOME/akso-workbench/journal/<YYYY-MM-DD>.jsonl`（见下）：给**用户下载回来**用的使用记录，与上面三类不重复写。
 - **运行日志（journal）**：`plugin/src/journal.ts` 写盘，页面「运行日志」页读概览并下载 7/30 天（`journal/summary|download|log` 三条路由）。
-  - 内容：`tool.invoke/done/fail`、`http`、`cloud.*`、`egmp.*`、`approval.*`、`plan.created`、`apply.run`、`analysis.run`、`error.*`、`client.*`、`ui.*`、`app.start`。
+  - 内容：`tool.invoke/done/fail`、`http`、`cloud.*`、`egmp.*`、`approval.*`、`plan.created`、`apply.run`、`analysis.run`、`update.*`、`error.*`、`client.*`、`ui.*`、`app.start`。
+  - 检查更新（0.2.29 起）：`GET update/check`（`?force=1` 才忽略 10 分钟缓存）、`POST update/download`；判据是 **MINOR 变大**才算正式版（同线 patch 只轻提示），来源只有 akso-cloud 的 `web/downloads/workbench/latest.json`——**不要兜底 GitHub Releases**（tag 里混着早期桌面安装器线，`releases/latest` 会把人引到不同形态的包）。更新不是热更新：插件是启动时加载的 bundle，只能下载后退出 DSH 重开。
   - 保留 30 天；单文件 4 MB 换 `.2…`（每天最多 5 个）；总量 96 MB；单次导出 12 MB（从最旧丢并在 meta 标 `truncated/dropped`）。
   - **写盘前统一打码**（`redactValue`：敏感 key → `[redacted]`，JWT/Bearer → 占位符）。新增事件只传摘要：不传 token、口令、请求体原文、完整账号表；工具参数只记形状（`summarizeArgs`）。
   - 浏览器侧 `track()` 只允许 `client.*` / `ui.*` 前缀；未捕获的 `window.onerror` / `unhandledrejection` 记 `ui.error`（消息 + 栈前 6 行）。
@@ -173,8 +174,9 @@
 - **`capture/` 是接口监听体系，必须保留**：`capture/bin/` + `capture/src/` + `capture/test/` 与
   `docs/knowledge/API-DISCOVERY.md` 是一个整体（只连回环地址）。它不参与插件运行时，但删掉/改坏就
   没法再用真实流量扩展能力目录；根 `package.json` 的 `test` 与 `tsconfig.json` 的 `include` 都覆盖它。
-  `capture/extension/` 是给 `launch` 用的最小翻译扩展（仅 Ctrl+X 翻译并复制，无账号/计数/换源），
-  不属于产品运行时，也不要打包进 workbench 发布物。
+  `capture/extension/` 是给 `launch` 用的最小翻译扩展（仅 Ctrl+X 翻译并复制，无账号/计数/换源；
+  1.1.0 起与 akso-pass 4.6.6 同步：有道查词 → MyMemory 翻整句，已移除停运的 TranSmart 与 Lingva，
+  短词输出 snake_case、整句保持句子），不属于产品运行时，也不要打包进 workbench 发布物。
 - **文档分层**：`docs/knowledge/` 放现行规范与手册，`docs/reference/` 放外部资料与只读样本，
   `docs/archive/` 放带日期的历史台账（只证明当时测过）。
   新增文档前先看 `docs/README.md` 的索引与维护约定。

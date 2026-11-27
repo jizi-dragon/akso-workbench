@@ -1,5 +1,16 @@
 # 变更记录
 
+## 0.2.29（2026-11-27）
+
+**运行日志页能检查更新；capture 监听框架的翻译扩展与 akso-pass 4.6.6 同步**
+
+- 现象：① 插件更新一直靠人工记版本，用户不知道有没有新正式版；② capture 监听框架里的翻译扩展还在用两台已经不可用的引擎（TranSmart 服务停运、Lingva 返回 403），演示时按 Ctrl+X 经常等满 8 秒再失败。
+- 改法：
+  - 检查更新：新增 `plugin/src/update.ts`（`checkForUpdate` / `downloadUpdate`）与 `plugin/src/version.ts`；`ROUTES` 加 `update/check`（`?force=1` 跳缓存）与 `update/download`；运行日志页头部加版本号 chip、「检查更新」按钮、更新横幅与下载结果面板（路径 / sha256 / 替换步骤），页面顶部另有全局横幅。判据是 **MINOR 变大**才算正式版（`0.2.28 → 0.3.0`），同线 patch 只轻提示；来源只有 akso-cloud 的 `web/downloads/workbench/latest.json`，**不兜底 GitHub Releases**（tag 里混着早期桌面安装器线）。不是热更新：下载后需退出 DSH 重开。
+  - capture 翻译扩展 1.1.0：移除 TranSmart / Lingva，改「有道查词（3s）→ MyMemory 翻整句（8s）」；有道是词典，遇到 `xx / yy`、`sth`/`sb` 这类词典式结果判为不可用继续下一路；词典查不到整句时由 MyMemory 接手。短词（单行 ≤12 字、译文 ≤4 词）输出 `snake_case`，整句保持英文句子；成功提示带译文预览，演示时不用先粘贴就能读。
+- 测试：`plugin/test/host.test.ts` 加四条（semver 判据、清单拿不到不抛错、哈希/大小校验后才落盘、路由常量）；`npm run check` 全绿（插件 166/166 + build）；`api-guide --check` 66/66、0 告警。capture 扩展只跑 `node --check` 与真实网络 smoke（有道 260ms / 32ms 命中，MyMemory 整句 0.9s）。
+- 诚实边界：`latest.json` 里 `zipUrl/zipSha256/zipBytes` 目前是 `null`（还没把 zip 传 Release 资产），所以客户端只能提示版本与步骤，不能一键下载；akso-cloud 侧清单要部署后才生效。翻译扩展属于监听工具，不进 workbench 发布物。
+
 ## 0.2.17（2026-11-26）
 
 **配置引擎硬门禁：旧计划拒绝、回读失败阻断、审批前查重/查签名**
